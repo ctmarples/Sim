@@ -20,6 +20,8 @@ WINDOW_WIDTH: int = GRID_COLS * CELL_SIZE + PANEL_WIDTH
 WINDOW_HEIGHT: int = MAP_OFFSET_Y + GRID_ROWS * CELL_SIZE
 FPS: int = 60
 SIM_SPEEDS: tuple[int, ...] = (0, 1, 2, 4, 8, 16)
+# Each logical map cell is painted as this many × this many visual sub-tiles.
+TERRAIN_SUBDIV: int = 10
 
 
 def configure_for_display(screen_w: int, screen_h: int) -> None:
@@ -77,6 +79,7 @@ def configure_for_display(screen_w: int, screen_h: int) -> None:
 # ---------------------------------------------------------------------------
 RANDOM_SEED: int = 42
 INVENTORY_CAPACITY: int = 8
+SEED_CARRY_CAPACITY: int = 20  # berry + crop seeds (separate from general cargo)
 MAX_VILLAGERS: int = 20
 BUILDING_STORAGE_CAPACITY: int = 20
 FORESTER_COST_WOOD: int = 2

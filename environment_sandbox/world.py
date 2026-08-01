@@ -124,7 +124,11 @@ class World:
         self._berry_spread_timer = BERRY_SPREAD_INTERVAL
         self._herb_timer = HERB_TICK_INTERVAL
         self._forage_rng = random.Random(seed + 123)
+        self.terrain_revision = 0
         self.generate()
+
+    def bump_terrain(self) -> None:
+        self.terrain_revision += 1
 
     # ------------------------------------------------------------------
     # Generation
@@ -308,6 +312,7 @@ class World:
             self.cells[sy][sx].feature = FeatureType.NONE
             if self.cells[sy][sx].terrain == TerrainType.WATER:
                 self.cells[sy][sx].terrain = TerrainType.GRASS
+        self.bump_terrain()
 
     def _place_clusters(
         self,
@@ -717,6 +722,7 @@ class World:
         cell.growth_ticks = 0
         cell.deposit = 0
         cell.crop_kind = None
+        self.bump_terrain()
         return True
 
     def sow_crop(self, x: int, y: int, crop_key: str, growth_ticks: int) -> bool:

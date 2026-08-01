@@ -126,7 +126,7 @@ from seasons import (
     water_frozen,
 )
 from toolbar import Toolbar
-from ui import UI, draw_feature, draw_terrain
+from ui import UI, draw_feature, draw_terrain, terrain_colour
 from wildlife import FishManager, WildlifeManager
 from world import FeatureType, TerrainType, World
 
@@ -227,6 +227,16 @@ class Game:
         self._food_rng = random.Random(99)
         # Headless: no window present; AI still uses real cooldowns.
         self.fast_forward = bool(headless)
+        # Season-neutral baked map + water alpha mask; seasonal tint/ice applied at blit time.
+        self._terrain_base: pygame.Surface | None = None
+        self._terrain_base_key: tuple | None = None
+        self._terrain_water_mask: pygame.Surface | None = None
+        self._farm_overlay: pygame.Surface | None = None
+        self._farm_overlay_key: tuple | None = None
+        self._season_mute: pygame.Surface | None = None
+        self._season_mute_key: float | None = None
+        self._ice_overlay: pygame.Surface | None = None
+        self._ice_overlay_key: float | None = None
 
     def _give_starting_resources(self) -> None:
         self.home_storage.wood = STARTING_WOOD
@@ -948,7 +958,25 @@ class Game:
         prev = self.season
         self.calendar_day = (self.calendar_day + 1) % YEAR_DAYS
         if self.season != prev:
+            self._expire_unharvested_crops(prev)
             self._set_status(f"{format_date(self.calendar_day)} begins.")
+
+    def _expire_unharvested_crops(self, ended_season: Season) -> None:
+        """Ripe field crops miss their harvest window → clear at season change."""
+        for y in range(self.world.rows):
+            for x in range(self.world.cols):
+                cell = self.world.cells[y][x]
+                if cell.feature != FeatureType.CROP_HERB:
+                    continue
+                if cell.growth_ticks > 0:
+                    continue  # still growing / newly sown
+                crop = CROP_BY_KEY.get(cell.crop_kind or "")
+                if crop is None:
+                    continue
+                if ended_season in crop.harvest_seasons:
+                    cell.feature = FeatureType.NONE
+                    cell.growth_ticks = 0
+                    cell.crop_kind = None
 
     def _seed_chance(self, base: float) -> float:
         return min(1.0, base * seed_chance_multiplier(self.calendar_day))
@@ -1443,7 +1471,7 @@ class Game:
             return False
         inventory.add_wood(taken)
         sapling_msg = ""
-        if self._drop_rng.random() < self._seed_chance(SAPLING_DROP_CHANCE) and inventory.can_add(1):
+        if self._drop_rng.random() < self._seed_chance(SAPLING_DROP_CHANCE) and inventory.can_add(1, key="saplings"):
             inventory.add_saplings(1)
             sapling_msg = " +1 sapling"
         self.world.apply_disturbance(x, y)
@@ -1547,7 +1575,7 @@ class Game:
             return False
         inventory.add_berries(taken)
         seed_msg = ""
-        if self._drop_rng.random() < self._seed_chance(BERRY_SEED_DROP_CHANCE) and inventory.can_add(1):
+        if self._drop_rng.random() < self._seed_chance(BERRY_SEED_DROP_CHANCE) and inventory.can_add(1, key="berry_seeds"):
             inventory.add_berry_seeds(1)
             seed_msg = " +1 berry seed"
         self.world.apply_disturbance(x, y)
@@ -1572,7 +1600,7 @@ class Game:
         inventory.add_item(crop.produce_key, 1)
         seed_msg = ""
         # Forage: flat 1/3 chance of a single seed.
-        if self._drop_rng.random() < crop.wild_seed_chance and inventory.can_add(1):
+        if self._drop_rng.random() < crop.wild_seed_chance and inventory.can_add(1, key=crop.seed_key):
             inventory.add_item(crop.seed_key, 1)
             seed_msg = f" +1 {crop.label.lower()} seed"
         self.world.apply_disturbance(x, y)
@@ -1596,12 +1624,12 @@ class Game:
         crop = CROP_BY_KEY.get(crop_key, CROP_BY_KEY["sage"])
         inventory.add_item(crop.produce_key, 1)
         seed_msg = ""
-        # Farm: always 1, 2, or 3 seeds (capped by inventory space).
+        # Farm: always 1, 2, or 3 seeds (capped by seed carry space).
         amounts = crop.farm_seed_amounts or FARM_SEED_AMOUNTS
         want = self._drop_rng.choice(amounts)
         got = 0
         for _ in range(want):
-            if not inventory.can_add(1):
+            if not inventory.can_add(1, key=crop.seed_key):
                 break
             inventory.add_item(crop.seed_key, 1)
             got += 1
@@ -2205,12 +2233,12 @@ class Game:
         self, villager: Villager, site: ConstructionSite, source: tuple[int, int, str]
     ) -> None:
         _, _, kind = source
-        take_wood = min(site.wood_needed, villager.inventory.capacity - villager.inventory.total)
-        take_rock = min(site.rock_needed, villager.inventory.capacity - villager.inventory.total)
+        take_wood = min(site.wood_needed, villager.inventory.capacity - villager.inventory.cargo_total)
+        take_rock = min(site.rock_needed, villager.inventory.capacity - villager.inventory.cargo_total)
 
         def pull(storage, key: str, amount: int) -> int:
             got = 0
-            while got < amount and getattr(storage, key) > 0 and villager.inventory.can_add(1):
+            while got < amount and getattr(storage, key) > 0 and villager.inventory.can_add(1, key=key):
                 setattr(storage, key, getattr(storage, key) - 1)
                 setattr(villager.inventory, key, getattr(villager.inventory, key) + 1)
                 got += 1
@@ -2220,7 +2248,11 @@ class Game:
             if site.wood_needed > 0:
                 pull(self.home_storage, "wood", take_wood)
             if site.rock_needed > 0:
-                pull(self.home_storage, "rock", min(take_rock, villager.inventory.capacity - villager.inventory.total))
+                pull(
+                    self.home_storage,
+                    "rock",
+                    min(take_rock, villager.inventory.capacity - villager.inventory.cargo_total),
+                )
         elif kind.startswith("b"):
             bid = int(kind[1:])
             building = self.buildings.get(bid)
@@ -2229,8 +2261,11 @@ class Game:
             if site.wood_needed > 0:
                 pull(building, "wood", take_wood)
             if site.rock_needed > 0:
-                pull(building, "rock", min(take_rock, villager.inventory.capacity - villager.inventory.total))
-
+                pull(
+                    building,
+                    "rock",
+                    min(take_rock, villager.inventory.capacity - villager.inventory.cargo_total),
+                )
     def _deposit_materials_at_site(self, villager: Villager, site: ConstructionSite) -> None:
         while site.wood_needed > 0 and villager.inventory.wood > 0:
             villager.inventory.wood -= 1
@@ -2414,7 +2449,7 @@ class Game:
                     if cell.terrain == TerrainType.SOIL and cell.feature == FeatureType.NONE:
                         if can_sow and (
                             getattr(villager.inventory, seed_key, 0) > 0
-                            or villager.inventory.can_add(1)
+                            or villager.inventory.can_add(1, key=seed_key)
                         ):
                             sow.append((x, y))
                         continue
@@ -2817,14 +2852,14 @@ class Game:
         can_sapling = inv.saplings > 0 or (
             building.kind == BuildingKind.FORESTER
             and self._plant_stock_at(building, "saplings") > 0
-            and inv.can_add(1)
+            and inv.can_add(1, key="saplings")
         )
         can_berry = False
         can_herb = False
         if building.kind == BuildingKind.FARM:
             can_herb = any(getattr(inv, k, 0) > 0 for k in SEED_KEYS) or (
                 any(self._plant_stock_at(building, k) > 0 for k in SEED_KEYS)
-                and inv.can_add(1)
+                and any(inv.can_add(1, key=k) for k in SEED_KEYS)
             )
         return can_sapling, can_berry, can_herb
 
@@ -2848,7 +2883,9 @@ class Game:
             return False
         if self._plant_stock_in_inv(villager, building):
             return False
-        if not villager.inventory.can_add(1):
+        # Need room for at least one plantable of this workplace's type.
+        plant_keys = building.plant_keys()
+        if not any(villager.inventory.can_add(1, key=k) for k in plant_keys):
             return False
         dest = self._plant_withdraw_destination(building)
         if dest is None:
@@ -2869,9 +2906,12 @@ class Game:
                 for key in building.plant_keys():
                     while (
                         taken < 3
-                        and villager.inventory.total < villager.inventory.capacity - 1
                         and getattr(self.home_storage, key, 0) > 0
-                        and villager.inventory.can_add(1)
+                        and villager.inventory.can_add(1, key=key)
+                        and (
+                            Inventory.is_seed_key(key)
+                            or villager.inventory.cargo_total < villager.inventory.capacity - 1
+                        )
                     ):
                         setattr(self.home_storage, key, getattr(self.home_storage, key) - 1)
                         setattr(
@@ -3441,22 +3481,153 @@ class Game:
         self.file_dialog.draw(self.screen)
         pygame.display.flip()
 
+    def _farm_field_cells(self) -> set[tuple[int, int]]:
+        cells: set[tuple[int, int]] = set()
+        for building in self.buildings.values():
+            if building.kind != BuildingKind.FARM:
+                continue
+            for field_obj in building.fields:
+                cells.update(field_obj.cells())
+        return cells
+
+    def _terrain_base_cache_key(self) -> tuple:
+        return (
+            self.world.cols,
+            self.world.rows,
+            CELL_SIZE,
+            self.world.terrain_revision,
+        )
+
+    def _invalidate_terrain_layer(self) -> None:
+        self._terrain_base = None
+        self._terrain_base_key = None
+        self._terrain_water_mask = None
+        self._farm_overlay = None
+        self._farm_overlay_key = None
+        self._season_mute = None
+        self._season_mute_key = None
+        self._ice_overlay = None
+        self._ice_overlay_key = None
+
+    def _ensure_terrain_base(self) -> tuple[pygame.Surface, pygame.Surface]:
+        """Bake season-neutral terrain + water mask once per terrain revision."""
+        key = self._terrain_base_cache_key()
+        if (
+            self._terrain_base is not None
+            and self._terrain_water_mask is not None
+            and self._terrain_base_key == key
+        ):
+            return self._terrain_base, self._terrain_water_mask
+
+        size = (GRID_COLS * CELL_SIZE, GRID_ROWS * CELL_SIZE)
+        layer = pygame.Surface(size)
+        water_mask = pygame.Surface(size, pygame.SRCALPHA)
+        water_mask.fill((0, 0, 0, 0))
+        for y in range(self.world.rows):
+            for x in range(self.world.cols):
+                cell = self.world.cells[y][x]
+                rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+                draw_terrain(
+                    layer,
+                    cell.terrain,
+                    rect,
+                    freeze=0.0,
+                    vibrancy=1.0,
+                    world=self.world,
+                    gx=x,
+                    gy=y,
+                    farm_cells=None,
+                    water_mask=water_mask,
+                )
+        self._terrain_base = layer
+        self._terrain_water_mask = water_mask
+        self._terrain_base_key = key
+        # Ice overlay depends on water mask.
+        self._ice_overlay = None
+        self._ice_overlay_key = None
+        return layer, water_mask
+
+    def _ensure_farm_overlay(
+        self, farm_cells: set[tuple[int, int]]
+    ) -> pygame.Surface | None:
+        """Cheap sharp soil overlay; rebuild only when field layout changes."""
+        if not farm_cells:
+            self._farm_overlay = None
+            self._farm_overlay_key = None
+            return None
+        farm_sig = tuple(sorted(farm_cells))
+        if self._farm_overlay is not None and self._farm_overlay_key == farm_sig:
+            return self._farm_overlay
+        overlay = pygame.Surface(
+            (GRID_COLS * CELL_SIZE, GRID_ROWS * CELL_SIZE), pygame.SRCALPHA
+        )
+        soil = terrain_colour(TerrainType.SOIL, freeze=0.0, vibrancy=1.0)
+        for x, y in farm_cells:
+            pygame.draw.rect(
+                overlay,
+                (*soil, 255),
+                pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE),
+            )
+        self._farm_overlay = overlay
+        self._farm_overlay_key = farm_sig
+        return overlay
+
+    def _ensure_season_mute(self, vibrancy: float) -> pygame.Surface | None:
+        """RGB multiply tint; lower vibrancy → cooler / duller map."""
+        bucket = round(vibrancy, 2)
+        if bucket >= 0.995:
+            return None
+        if self._season_mute is not None and self._season_mute_key == bucket:
+            return self._season_mute
+        t = bucket
+        mute = pygame.Surface((GRID_COLS * CELL_SIZE, GRID_ROWS * CELL_SIZE))
+        mute.fill(
+            (
+                int(140 + 115 * t),
+                int(148 + 107 * t),
+                int(158 + 97 * t),
+            )
+        )
+        self._season_mute = mute
+        self._season_mute_key = bucket
+        return mute
+
+    def _ensure_ice_overlay(
+        self, freeze: float, water_mask: pygame.Surface
+    ) -> pygame.Surface | None:
+        bucket = round(freeze, 2)
+        if bucket < 0.02:
+            return None
+        if self._ice_overlay is not None and self._ice_overlay_key == bucket:
+            return self._ice_overlay
+        ice = pygame.Surface(water_mask.get_size(), pygame.SRCALPHA)
+        ice.fill((210, 228, 240, int(min(1.0, bucket) * 200)))
+        ice.blit(water_mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        self._ice_overlay = ice
+        self._ice_overlay_key = bucket
+        return ice
+
     def _draw_world(self) -> None:
         day = float(self.calendar_day) + (1.0 - self.day_tick / TICKS_PER_DAY)
         freeze = freeze_amount(day)
         vibrancy = terrain_vibrancy(day)
+        farm_cells = self._farm_field_cells()
+        base, water_mask = self._ensure_terrain_base()
+        origin = (0, MAP_OFFSET_Y)
+        self.screen.blit(base, origin)
+        farm_overlay = self._ensure_farm_overlay(farm_cells)
+        if farm_overlay is not None:
+            self.screen.blit(farm_overlay, origin)
+        mute = self._ensure_season_mute(vibrancy)
+        if mute is not None:
+            self.screen.blit(mute, origin, special_flags=pygame.BLEND_RGB_MULT)
+        ice = self._ensure_ice_overlay(freeze, water_mask)
+        if ice is not None:
+            self.screen.blit(ice, origin)
         for y in range(self.world.rows):
             for x in range(self.world.cols):
                 cell = self.world.cells[y][x]
                 rect = self._cell_rect(x, y)
-                draw_terrain(
-                    self.screen,
-                    cell.terrain,
-                    rect,
-                    freeze=freeze,
-                    vibrancy=vibrancy,
-                )
-                pygame.draw.rect(self.screen, (0, 0, 0), rect, 1)
                 cx, cy = self._cell_center(x, y)
                 draw_feature(
                     self.screen,
@@ -3550,14 +3721,14 @@ class Game:
         self.screen.blit(tint, (0, MAP_OFFSET_Y))
 
     def _draw_farm_fields(self, tint: pygame.Surface, building: Building) -> None:
-        """Field boundaries + seasonal plan phase highlights."""
+        """Field boundaries + seasonal plan phase highlights (sharp edges)."""
         season = self.season
         for field_obj in building.fields:
             selected = field_obj.id == self.selected_field_id
             left, top, right, bottom = field_obj.normalised()
-            # Dim field fill when unplanned / selected outline always.
             base = COLOUR_TASK_FARM
-            alpha = 35 if not selected else 50
+            # Flat fill — no soft bleed past the field edge.
+            alpha = 55 if selected else 40
             for y in range(top, bottom + 1):
                 for x in range(left, right + 1):
                     rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
@@ -3582,14 +3753,14 @@ class Game:
                 for y in range(pt, pb + 1):
                     for x in range(pl, pr + 1):
                         rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-                        tint.fill((*colour, 90 if selected else 70), rect)
+                        tint.fill((*colour, 100 if selected else 80), rect)
                 plan_border = pygame.Rect(
                     pl * CELL_SIZE,
                     pt * CELL_SIZE + MAP_OFFSET_Y,
                     (pr - pl + 1) * CELL_SIZE,
                     (pb - pt + 1) * CELL_SIZE,
                 )
-                pygame.draw.rect(self.screen, colour, plan_border, 1)
+                pygame.draw.rect(self.screen, colour, plan_border, 2)
 
     def _draw_animals(self) -> None:
         for animal in self.wildlife.animals:

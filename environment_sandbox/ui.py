@@ -66,6 +66,7 @@ from settings import (
     MAP_OFFSET_Y,
     MAX_VILLAGERS,
     PANEL_WIDTH,
+    TERRAIN_SUBDIV,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
 )
@@ -686,6 +687,165 @@ def terrain_colour(
     return adjust_colour(base, vibrancy)
 
 
+def _hash01(x: int, y: int, salt: int = 0) -> float:
+    n = (x * 374761393 + y * 668265263 + salt * 1274126177) & 0x7FFFFFFF
+    return (n % 10007) / 10007.0
+
+
+def _mix_colours(
+    colours: list[tuple[int, int, int]], weights: list[float]
+) -> tuple[int, int, int]:
+    total = sum(weights) or 1.0
+    r = g = b = 0.0
+    for (cr, cg, cb), w in zip(colours, weights):
+        f = w / total
+        r += cr * f
+        g += cg * f
+        b += cb * f
+    return int(r), int(g), int(b)
+
+
+def _shift_colour(
+    colour: tuple[int, int, int], amount: float
+) -> tuple[int, int, int]:
+    """Lighten/darken by amount in [-1, 1]."""
+    r, g, b = colour
+    if amount >= 0:
+        return (
+            min(255, int(r + (255 - r) * amount)),
+            min(255, int(g + (255 - g) * amount)),
+            min(255, int(b + (255 - b) * amount)),
+        )
+    a = -amount
+    return (
+        max(0, int(r * (1.0 - a))),
+        max(0, int(g * (1.0 - a))),
+        max(0, int(b * (1.0 - a))),
+    )
+
+
+def _terrain_at(world: World, x: int, y: int, fallback: TerrainType) -> TerrainType:
+    cell = world.get_cell(x, y)
+    return cell.terrain if cell is not None else fallback
+
+
+def _paint_texture(
+    surface: pygame.Surface,
+    rect: pygame.Rect,
+    base: tuple[int, int, int],
+    terrain: TerrainType,
+    gx: int,
+    gy: int,
+) -> None:
+    """Deterministic speckles / strokes so tiles aren't flat colour."""
+    density = 14 if terrain == TerrainType.GRASS else 10 if terrain == TerrainType.SOIL else 8
+    if terrain == TerrainType.WATER:
+        density = 6
+    if terrain == TerrainType.ROCK:
+        density = 12
+    for i in range(density):
+        u = _hash01(gx, gy, 17 + i * 3)
+        v = _hash01(gx, gy, 91 + i * 5)
+        px = rect.left + int(u * max(1, rect.w - 1))
+        py = rect.top + int(v * max(1, rect.h - 1))
+        shade = (_hash01(gx, gy, 200 + i) - 0.5) * 0.22
+        colour = _shift_colour(base, shade)
+        if terrain == TerrainType.GRASS:
+            length = 2 + int(_hash01(gx, gy, 40 + i) * 4)
+            pygame.draw.line(
+                surface,
+                colour,
+                (px, py),
+                (px + int((_hash01(gx, gy, 55 + i) - 0.5) * 3), py - length),
+                1,
+            )
+        elif terrain == TerrainType.WATER:
+            pygame.draw.line(
+                surface,
+                _shift_colour(base, 0.12),
+                (px, py),
+                (px + 3 + int(u * 4), py + 1),
+                1,
+            )
+        elif terrain == TerrainType.ROCK:
+            pygame.draw.circle(surface, colour, (px, py), 1 + int(v * 2))
+        else:
+            pygame.draw.circle(surface, colour, (px, py), 1)
+
+
+def _water_amount(world: World, fx: float, fy: float) -> float:
+    """Organic water field (0..1). Warped distance → non-rectangular shores."""
+    ix, iy = int(fx), int(fy)
+    # Warp the sample point so coastlines aren't axis-aligned.
+    wx = fx + (_hash01(int(fx * TERRAIN_SUBDIV), int(fy * TERRAIN_SUBDIV), 3) - 0.5) * 0.45
+    wy = fy + (_hash01(int(fx * TERRAIN_SUBDIV), int(fy * TERRAIN_SUBDIV), 9) - 0.5) * 0.45
+    best = 0.0
+    for oy in range(-2, 3):
+        for ox in range(-2, 3):
+            if _terrain_at(world, ix + ox, iy + oy, TerrainType.GRASS) != TerrainType.WATER:
+                continue
+            cx = ix + ox + 0.5
+            cy = iy + oy + 0.5
+            dx = wx - cx
+            dy = wy - cy
+            dist = (dx * dx + dy * dy) ** 0.5
+            radius = 0.82 + 0.38 * (_hash01(ix + ox, iy + oy, 11) - 0.5)
+            if dist < radius:
+                best = max(best, 1.0 - dist / radius)
+    return best
+
+
+def _soft_land_colour(
+    world: World,
+    fx: float,
+    fy: float,
+    *,
+    freeze: float,
+    vibrancy: float,
+    farm_cells: set[tuple[int, int]] | None,
+) -> tuple[int, int, int]:
+    """Blend grass/rock (and non-farm soil) across sub-tile boundaries."""
+    ix, iy = int(fx), int(fy)
+    fx_f = fx - ix
+    fy_f = fy - iy
+    samples = (
+        (ix, iy, (1 - fx_f) * (1 - fy_f)),
+        (ix + 1, iy, fx_f * (1 - fy_f)),
+        (ix, iy + 1, (1 - fx_f) * fy_f),
+        (ix + 1, iy + 1, fx_f * fy_f),
+    )
+    colours: list[tuple[int, int, int]] = []
+    weights: list[float] = []
+    for sx, sy, w in samples:
+        if w <= 0.001:
+            continue
+        t = _terrain_at(world, sx, sy, TerrainType.GRASS)
+        # Keep farm soil and water out of the soft mix (handled separately).
+        if t == TerrainType.WATER:
+            t = TerrainType.GRASS
+        if farm_cells is not None and (sx, sy) in farm_cells:
+            t = TerrainType.SOIL
+            # Sharp farm: dominate weight when inside farm cell.
+            w *= 2.5 if (ix, iy) in farm_cells or (sx, sy) == (ix, iy) else 0.15
+        colours.append(terrain_colour(t, freeze=freeze, vibrancy=vibrancy))
+        weights.append(w)
+    if not colours:
+        return terrain_colour(TerrainType.GRASS, freeze=freeze, vibrancy=vibrancy)
+    return _mix_colours(colours, weights)
+
+
+# Scratch buffer for TERRAIN_SUBDIV × TERRAIN_SUBDIV colour painting.
+_SUB_SCRATCH: pygame.Surface | None = None
+
+
+def _sub_scratch() -> pygame.Surface:
+    global _SUB_SCRATCH
+    n = TERRAIN_SUBDIV
+    if _SUB_SCRATCH is None or _SUB_SCRATCH.get_size() != (n, n):
+        _SUB_SCRATCH = pygame.Surface((n, n))
+    return _SUB_SCRATCH
+
+
 def draw_terrain(
     surface: pygame.Surface,
     terrain: TerrainType,
@@ -694,36 +854,81 @@ def draw_terrain(
     freeze: float = 0.0,
     vibrancy: float = 1.0,
     frozen: bool = False,
+    world: World | None = None,
+    gx: int = 0,
+    gy: int = 0,
+    farm_cells: set[tuple[int, int]] | None = None,
+    water_mask: pygame.Surface | None = None,
 ) -> None:
+    """Draw a terrain tile as TERRAIN_SUBDIV² sub-squares with habitat blending.
+
+    Water uses a sharp organic (non-rectangular) mask. Farm cells keep sharp edges.
+    When water_mask is provided, organic water pixels are also written there (for
+    cheap seasonal ice overlays without rebaking the map).
+    """
     if frozen and freeze <= 0.0:
         freeze = 1.0
-    colour = terrain_colour(terrain, freeze=freeze, vibrancy=vibrancy)
-    pygame.draw.rect(surface, colour, rect)
-    if terrain == TerrainType.WATER and freeze > 0.25:
-        # Light ice sheen, stronger as freeze increases.
-        alpha_line = blend_colour(colour, (220, 235, 245), min(1.0, freeze))
-        pygame.draw.line(
-            surface,
-            alpha_line,
-            (rect.left + 3, rect.centery - 2),
-            (rect.right - 4, rect.centery + 3),
-            1,
-        )
-    if terrain == TerrainType.ROCK:
-        cx, cy = rect.center
-        for ox, oy in ((-6, -4), (5, -3), (-3, 5), (4, 4), (0, -7), (7, 1)):
-            px = cx + ox
-            py = cy + oy
-            if rect.collidepoint(px, py):
-                pygame.draw.circle(surface, COLOUR_ROCK_TERRAIN_DARK, (px, py), 2)
-        pygame.draw.line(
-            surface,
-            COLOUR_ROCK_TERRAIN_DARK,
-            (rect.left + 4, rect.centery + 2),
-            (rect.right - 4, rect.centery - 3),
-            1,
-        )
 
+    if world is None:
+        colour = terrain_colour(terrain, freeze=freeze, vibrancy=vibrancy)
+        pygame.draw.rect(surface, colour, rect)
+        _paint_texture(surface, rect, colour, terrain, gx, gy)
+        return
+
+    n = TERRAIN_SUBDIV
+    mini = _sub_scratch()
+    water_mini: pygame.Surface | None = None
+    if water_mask is not None:
+        water_mini = pygame.Surface((n, n), pygame.SRCALPHA)
+        water_mini.fill((0, 0, 0, 0))
+    is_farm = farm_cells is not None and (gx, gy) in farm_cells
+    water_c = terrain_colour(TerrainType.WATER, freeze=freeze, vibrancy=vibrancy)
+    soil_c = terrain_colour(TerrainType.SOIL, freeze=freeze, vibrancy=vibrancy)
+
+    for sy in range(n):
+        for sx in range(n):
+            fx = gx + (sx + 0.5) / n
+            fy = gy + (sy + 0.5) / n
+            # Sharp organic water (thresholded field — not a soft fade).
+            if _water_amount(world, fx, fy) >= 0.48:
+                shade = (_hash01(gx * n + sx, gy * n + sy, 21) - 0.5) * 0.08
+                colour = _shift_colour(water_c, shade)
+                if water_mini is not None:
+                    water_mini.set_at((sx, sy), (255, 255, 255, 255))
+            elif is_farm:
+                # Sharp farm interiors: solid soil colour, no neighbour bleed.
+                shade = (_hash01(gx * n + sx, gy * n + sy, 33) - 0.5) * 0.06
+                colour = _shift_colour(soil_c, shade)
+            else:
+                colour = _soft_land_colour(
+                    world,
+                    fx,
+                    fy,
+                    freeze=freeze,
+                    vibrancy=vibrancy,
+                    farm_cells=farm_cells,
+                )
+                shade = (_hash01(gx * n + sx, gy * n + sy, 44) - 0.5) * 0.05
+                colour = _shift_colour(colour, shade)
+            mini.set_at((sx, sy), colour)
+
+    scaled = pygame.transform.scale(mini, (rect.w, rect.h))
+    surface.blit(scaled, rect.topleft)
+    if water_mask is not None and water_mini is not None:
+        water_mask.blit(pygame.transform.scale(water_mini, (rect.w, rect.h)), rect.topleft)
+
+    # Light texture overlay (coarser, on the full cell).
+    base = (
+        soil_c
+        if is_farm
+        else water_c
+        if terrain == TerrainType.WATER
+        else terrain_colour(terrain, freeze=freeze, vibrancy=vibrancy)
+    )
+    _paint_texture(surface, rect, base, TerrainType.SOIL if is_farm else terrain, gx, gy)
+
+
+# Scratch buffer for TERRAIN_SUBDIV × TERRAIN_SUBDIV colour painting.
 
 def _draw_crop_plant(
     surface: pygame.Surface,

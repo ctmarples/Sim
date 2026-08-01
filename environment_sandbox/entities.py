@@ -6,7 +6,10 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 
 from crops import PRODUCE_KEYS, SEED_KEYS
-from settings import BUILDING_STORAGE_CAPACITY, INVENTORY_CAPACITY
+from settings import BUILDING_STORAGE_CAPACITY, INVENTORY_CAPACITY, SEED_CARRY_CAPACITY
+
+# Seeds share a dedicated carry pool (separate from wood/food/etc.).
+SEED_ITEM_KEYS: tuple[str, ...] = ("berry_seeds", *SEED_KEYS)
 
 
 class TaskType(Enum):
@@ -209,9 +212,19 @@ class Inventory:
     sage_seeds: int = 0
     hemp_seeds: int = 0
     capacity: int = INVENTORY_CAPACITY
+    seed_capacity: int = SEED_CARRY_CAPACITY
+
+    @staticmethod
+    def is_seed_key(key: str) -> bool:
+        return key in SEED_ITEM_KEYS
 
     @property
-    def total(self) -> int:
+    def seed_total(self) -> int:
+        return sum(getattr(self, key) for key in SEED_ITEM_KEYS)
+
+    @property
+    def cargo_total(self) -> int:
+        """Non-seed items (wood, food, saplings, produce, …)."""
         return (
             self.wood
             + self.rock
@@ -220,30 +233,36 @@ class Inventory:
             + self.saplings
             + self.mushrooms
             + self.berries
-            + self.berry_seeds
             + self.wheat
             + self.flax
             + self.sage
             + self.hemp
-            + self.wheat_seeds
-            + self.flax_seeds
-            + self.sage_seeds
-            + self.hemp_seeds
         )
 
     @property
+    def total(self) -> int:
+        return self.cargo_total + self.seed_total
+
+    @property
     def is_full(self) -> bool:
-        return self.total >= self.capacity
+        """True when general cargo is full (seeds use a separate pool)."""
+        return self.cargo_total >= self.capacity
+
+    @property
+    def seeds_full(self) -> bool:
+        return self.seed_total >= self.seed_capacity
 
     @property
     def is_empty(self) -> bool:
         return self.total == 0
 
-    def can_add(self, amount: int = 1) -> bool:
-        return self.total + amount <= self.capacity
+    def can_add(self, amount: int = 1, key: str | None = None) -> bool:
+        if key is not None and self.is_seed_key(key):
+            return self.seed_total + amount <= self.seed_capacity
+        return self.cargo_total + amount <= self.capacity
 
     def add_item(self, key: str, n: int = 1) -> bool:
-        if not hasattr(self, key) or not self.can_add(n):
+        if not hasattr(self, key) or not self.can_add(n, key=key):
             return False
         setattr(self, key, getattr(self, key) + n)
         return True
@@ -365,7 +384,7 @@ class HomeStorage:
     def withdraw_keys_to(self, inventory: Inventory, keys: tuple[str, ...]) -> int:
         taken = 0
         for key in keys:
-            while inventory.can_add(1) and getattr(self, key, 0) > 0:
+            while getattr(self, key, 0) > 0 and inventory.can_add(1, key=key):
                 setattr(self, key, getattr(self, key) - 1)
                 setattr(inventory, key, getattr(inventory, key) + 1)
                 taken += 1
@@ -679,12 +698,12 @@ class Building:
     ) -> None:
         use_keys = keys if keys is not None else self.haul_keys()
         for key in use_keys:
-            while inventory.can_add(1) and getattr(self, key) > 0:
+            while getattr(self, key) > 0 and inventory.can_add(1, key=key):
                 setattr(self, key, getattr(self, key) - 1)
                 setattr(inventory, key, getattr(inventory, key) + 1)
 
     def give_item_to(self, inventory: Inventory, key: str) -> bool:
-        if getattr(self, key) <= 0 or not inventory.can_add(1):
+        if getattr(self, key) <= 0 or not inventory.can_add(1, key=key):
             return False
         setattr(self, key, getattr(self, key) - 1)
         setattr(inventory, key, getattr(inventory, key) + 1)
@@ -696,18 +715,21 @@ class Building:
     def withdraw_plantables_to(
         self, inventory: Inventory, *, max_items: int = 3
     ) -> int:
-        """Pull a few planting items into inventory (never fill the pack)."""
+        """Pull a few planting items into inventory (seeds use the seed pool)."""
         taken = 0
-        # Leave at least one free slot so gather/delivery logic is not tripped.
-        while taken < max_items and inventory.total < inventory.capacity - 1:
+        while taken < max_items:
             progressed = False
             for key in self.plant_keys():
                 if taken >= max_items:
                     break
-                if getattr(self, key) <= 0 or not inventory.can_add(1):
+                if getattr(self, key) <= 0 or not inventory.can_add(1, key=key):
                     continue
-                if inventory.total >= inventory.capacity - 1:
-                    break
+                # Leave one cargo slot free when withdrawing saplings.
+                if (
+                    not Inventory.is_seed_key(key)
+                    and inventory.cargo_total >= inventory.capacity - 1
+                ):
+                    continue
                 setattr(self, key, getattr(self, key) - 1)
                 setattr(inventory, key, getattr(inventory, key) + 1)
                 taken += 1
