@@ -14,6 +14,7 @@ class TaskType(Enum):
     FULL_MANAGE = auto()
     COLLECT_ROCKS = auto()
     HUNT = auto()
+    FISH = auto()
     FORAGE_MUSHROOMS = auto()
     FORAGE_BERRIES = auto()
     FORAGE_HERBS = auto()
@@ -28,6 +29,7 @@ TASK_LABELS: dict[TaskType, str] = {
     TaskType.FULL_MANAGE: "Full manage",
     TaskType.COLLECT_ROCKS: "Collect rocks",
     TaskType.HUNT: "Hunt area",
+    TaskType.FISH: "Fish area",
     TaskType.FORAGE_MUSHROOMS: "Forage mushrooms",
     TaskType.FORAGE_BERRIES: "Forage berries",
     TaskType.FORAGE_HERBS: "Forage herbs",
@@ -57,6 +59,7 @@ class BuildingKind(Enum):
     MASON = auto()
     HUNTER = auto()
     FORAGER = auto()
+    FISHER = auto()
 
 
 BUILDING_LABELS: dict[BuildingKind, str] = {
@@ -64,6 +67,7 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
     BuildingKind.MASON: "Mason",
     BuildingKind.HUNTER: "Hunter",
     BuildingKind.FORAGER: "Forager",
+    BuildingKind.FISHER: "Fisher",
 }
 
 
@@ -79,6 +83,7 @@ class Inventory:
     wood: int = 0
     rock: int = 0
     meat: int = 0
+    fish: int = 0
     saplings: int = 0
     mushrooms: int = 0
     berries: int = 0
@@ -93,6 +98,7 @@ class Inventory:
             self.wood
             + self.rock
             + self.meat
+            + self.fish
             + self.saplings
             + self.mushrooms
             + self.berries
@@ -128,6 +134,12 @@ class Inventory:
         if not self.can_add(n):
             return False
         self.meat += n
+        return True
+
+    def add_fish(self, n: int = 1) -> bool:
+        if not self.can_add(n):
+            return False
+        self.fish += n
         return True
 
     def add_saplings(self, n: int = 1) -> bool:
@@ -189,6 +201,7 @@ class Inventory:
             "wood": self.wood,
             "rock": self.rock,
             "meat": self.meat,
+            "fish": self.fish,
             "saplings": self.saplings,
             "mushrooms": self.mushrooms,
             "berries": self.berries,
@@ -200,7 +213,7 @@ class Inventory:
         return deposited
 
     def reset(self) -> None:
-        self.wood = self.rock = self.meat = self.saplings = 0
+        self.wood = self.rock = self.meat = self.fish = self.saplings = 0
         self.mushrooms = self.berries = self.berry_seeds = 0
         self.herbs = self.herb_seeds = 0
 
@@ -210,6 +223,7 @@ class HomeStorage:
     wood: int = 0
     rock: int = 0
     meat: int = 0
+    fish: int = 0
     saplings: int = 0
     mushrooms: int = 0
     berries: int = 0
@@ -219,7 +233,8 @@ class HomeStorage:
 
     def deposit_dict(self, items: dict[str, int]) -> None:
         for key, value in items.items():
-            setattr(self, key, getattr(self, key) + value)
+            if hasattr(self, key):
+                setattr(self, key, getattr(self, key) + value)
 
     def deposit(self, wood: int = 0, rock: int = 0, meat: int = 0, saplings: int = 0, **extra) -> None:
         self.wood += wood
@@ -238,7 +253,7 @@ class HomeStorage:
         return True
 
     def reset(self) -> None:
-        self.wood = self.rock = self.meat = self.saplings = 0
+        self.wood = self.rock = self.meat = self.fish = self.saplings = 0
         self.mushrooms = self.berries = self.berry_seeds = 0
         self.herbs = self.herb_seeds = 0
 
@@ -281,6 +296,7 @@ class Building:
     wood: int = 0
     rock: int = 0
     meat: int = 0
+    fish: int = 0
     saplings: int = 0
     mushrooms: int = 0
     berries: int = 0
@@ -297,6 +313,7 @@ class Building:
             self.wood
             + self.rock
             + self.meat
+            + self.fish
             + self.saplings
             + self.mushrooms
             + self.berries
@@ -317,6 +334,8 @@ class Building:
             self._take(inventory, "rock")
         elif self.kind == BuildingKind.HUNTER:
             self._take(inventory, "meat")
+        elif self.kind == BuildingKind.FISHER:
+            self._take(inventory, "fish")
         elif self.kind == BuildingKind.FORAGER:
             for key in _FORAGE_KEYS:
                 self._take(inventory, key)
@@ -331,7 +350,7 @@ class Building:
         setattr(inventory, key, have - take)
 
     def withdraw_to_inventory(self, inventory: Inventory) -> None:
-        keys = ("wood", "saplings", "rock", "meat", *_FORAGE_KEYS)
+        keys = ("wood", "saplings", "rock", "meat", "fish", *_FORAGE_KEYS)
         for key in keys:
             while inventory.can_add(1) and getattr(self, key) > 0:
                 setattr(self, key, getattr(self, key) - 1)
@@ -356,6 +375,8 @@ class Building:
             self.draw_task_type = TaskType.COLLECT_ROCKS
         elif self.kind == BuildingKind.HUNTER:
             self.draw_task_type = TaskType.HUNT
+        elif self.kind == BuildingKind.FISHER:
+            self.draw_task_type = TaskType.FISH
         else:
             order = FORAGER_TASK_CYCLE
             idx = order.index(self.draw_task_type) if self.draw_task_type in order else 0
@@ -369,6 +390,8 @@ class Building:
             return TaskType.COLLECT_ROCKS
         if self.kind == BuildingKind.HUNTER:
             return TaskType.HUNT
+        if self.kind == BuildingKind.FISHER:
+            return TaskType.FISH
         return TaskType.FULL_FORAGE
 
 
@@ -387,6 +410,8 @@ class Villager:
     haul_building_id: int | None = None
     hunt_animal_id: int | None = None
     hunt_meat_pos: tuple[int, int] | None = None
+    fish_target_id: int | None = None
+    fish_catch_pos: tuple[int, int] | None = None
 
     def clear_assignment(self) -> None:
         self.building_id = None
@@ -394,6 +419,8 @@ class Villager:
         self.haul_building_id = None
         self.hunt_animal_id = None
         self.hunt_meat_pos = None
+        self.fish_target_id = None
+        self.fish_catch_pos = None
         self.state = VillagerState.IDLE
         self.target = None
 

@@ -62,7 +62,7 @@ def habitat_diversity(world: World, x: int, y: int, radius: int = INDICATOR_RADI
     if count == 0:
         return 0.0
     # Theoretical max categories in this prototype.
-    max_categories = 11  # terrain + features including hunter
+    max_categories = 14
     return min(1.0, len(categories) / max_categories)
 
 

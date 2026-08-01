@@ -1,14 +1,8 @@
 """Main game loop: input, buildings, villagers, update, and render.
 
-Player presses E on their cell. Click selects villagers/buildings.
-With a building selected, drag draws task areas; T cycles task mode.
+Player presses Enter/E on their cell. Toolbar handles build, tasks, speed,
+and File save/load. Click selects villagers/buildings; drag draws task areas.
 Esc clears selection (then quits if nothing selected).
-
-Future extension points:
-- more building types / upgrades
-- action costs and farm income
-- seasonal tick systems
-- save / load game state
 """
 
 from __future__ import annotations
@@ -42,11 +36,13 @@ from settings import (
     CELL_SIZE,
     COLOUR_ANIMAL,
     COLOUR_BG,
+    COLOUR_FISH,
     COLOUR_MEAT,
     COLOUR_PLAYER,
     COLOUR_SELECTED_ENTITY,
     COLOUR_TASK_AREA,
     COLOUR_TASK_CHOP,
+    COLOUR_TASK_FISH,
     COLOUR_TASK_HUNT,
     COLOUR_TASK_FORAGE,
     COLOUR_TASK_MANAGE,
@@ -55,6 +51,9 @@ from settings import (
     COLOUR_TASK_ROCK,
     COLOUR_VILLAGER,
     DISTURBANCE_DECAY_PER_TICK,
+    FISHER_COST_ROCK,
+    FISHER_COST_WOOD,
+    FISH_YIELD,
     FORESTER_COST_ROCK,
     FORESTER_COST_WOOD,
     FORAGER_COST_ROCK,
@@ -71,14 +70,19 @@ from settings import (
     MAX_VILLAGERS,
     OVERLAY_ALPHA,
     SAPLING_DROP_CHANCE,
+    SIM_SPEEDS,
     STATUS_MESSAGE_FRAMES,
+    TOOLBAR_HEIGHT,
     VILLAGER_MOVE_INTERVAL,
     VILLAGER_WORK_INTERVAL,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
 )
-from ui import UI, draw_feature, terrain_colour
-from wildlife import WildlifeManager
+from dialogs import FileDialog
+from save_load import load_from_path, save_to_path
+from toolbar import Toolbar
+from ui import UI, draw_feature, draw_terrain
+from wildlife import FishManager, WildlifeManager
 from world import FeatureType, TerrainType, World
 
 
@@ -88,6 +92,7 @@ TASK_COLOURS = {
     TaskType.PLANT_SAPLINGS: COLOUR_TASK_PLANT,
     TaskType.FULL_MANAGE: COLOUR_TASK_MANAGE,
     TaskType.HUNT: COLOUR_TASK_HUNT,
+    TaskType.FISH: COLOUR_TASK_FISH,
     TaskType.FORAGE_MUSHROOMS: COLOUR_TASK_FORAGE,
     TaskType.FORAGE_BERRIES: COLOUR_TASK_FORAGE,
     TaskType.FORAGE_HERBS: COLOUR_TASK_FORAGE,
@@ -101,6 +106,7 @@ FEATURE_FOR_BUILDING = {
     BuildingKind.MASON: FeatureType.MASON,
     BuildingKind.HUNTER: FeatureType.HUNTER,
     BuildingKind.FORAGER: FeatureType.FORAGER,
+    BuildingKind.FISHER: FeatureType.FISHER,
 }
 
 
@@ -110,6 +116,8 @@ class Game:
         pygame.display.set_caption("Environmental Farming Sandbox")
         self.clock = pygame.time.Clock()
         self.ui = UI()
+        self.toolbar = Toolbar()
+        self.file_dialog = FileDialog()
 
         self.world = World()
         self.player = Player(x=self.world.start_pos[0], y=self.world.start_pos[1])
@@ -117,8 +125,11 @@ class Game:
         self.villagers: list[Villager] = []
         self.buildings: dict[int, Building] = {}
         self.wildlife = WildlifeManager()
+        self.fish = FishManager()
         self.next_villager_id = 1
         self.next_building_id = 1
+        self.sim_speed = 1
+        self._pending_file_action: str | None = None
 
         # Selection / drawing
         self.selected_building_id: int | None = None
@@ -133,8 +144,8 @@ class Game:
         self.overlay_values: list[list[float]] = build_overlay_grid(self.world, self.overlay_mode)
 
         self.status_message = (
-            "Hire at station. B cycles build. Click building to set areas; "
-            "click villager then building/home to assign."
+            "Hire at station. Toolbar builds/tasks. Enter/E interact. "
+            "File menu to save/load."
         )
         self.status_timer = STATUS_MESSAGE_FRAMES
         self.running = True
@@ -146,7 +157,9 @@ class Game:
     def run(self) -> None:
         while self.running:
             self._handle_events()
-            self._update()
+            for _ in range(self.sim_speed):
+                self._update_simulation()
+            self._update_status_timer()
             self._draw()
             self.clock.tick(FPS)
         pygame.quit()
@@ -158,10 +171,12 @@ class Game:
         self.villagers.clear()
         self.buildings.clear()
         self.wildlife.reset()
+        self.fish.reset()
         self.next_villager_id = 1
         self.next_building_id = 1
         self._clear_selection()
         self.place_kind = None
+        self.file_dialog.close()
         self.drawing = False
         self.draw_start = None
         self.draw_current = None
@@ -185,20 +200,61 @@ class Game:
             if event.type == pygame.QUIT:
                 self.running = False
             elif event.type == pygame.KEYDOWN:
+                if self.file_dialog.open:
+                    self.file_dialog.handle_keydown(event)
+                    self._finish_file_dialog_if_needed()
+                    continue
                 self._on_keydown(event.key)
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if self.file_dialog.open:
+                    self.file_dialog.handle_click(event.pos)
+                    self._finish_file_dialog_if_needed()
+                    continue
                 self._on_mouse_down(event.pos)
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                if self.file_dialog.open:
+                    continue
                 self._on_mouse_up(event.pos)
             elif event.type == pygame.MOUSEMOTION and self.drawing:
-                self._on_mouse_drag(event.pos)
+                if not self.file_dialog.open:
+                    self._on_mouse_drag(event.pos)
             elif event.type == pygame.MOUSEWHEEL:
+                if self.file_dialog.open:
+                    continue
                 mx, my = pygame.mouse.get_pos()
-                if mx >= GRID_COLS * CELL_SIZE:
+                if mx >= GRID_COLS * CELL_SIZE and my >= TOOLBAR_HEIGHT:
                     self.ui.scroll(event.y * 28)
+
+    def _finish_file_dialog_if_needed(self) -> None:
+        if self.file_dialog.open:
+            return
+        if self.file_dialog.cancelled:
+            self._pending_file_action = None
+            self._set_status("Cancelled.")
+            return
+        path = self.file_dialog.result_path
+        if path is None:
+            return
+        action = self._pending_file_action
+        self._pending_file_action = None
+        if action == "save":
+            try:
+                save_to_path(self, path)
+                self._set_status(f"Saved to {path.name}")
+            except Exception as exc:
+                self._set_status(f"Save failed: {exc}")
+        elif action == "load":
+            try:
+                load_from_path(self, path)
+                self._set_status(f"Loaded {path.name} (speed x{self.sim_speed})")
+            except Exception as exc:
+                self._set_status(f"Load failed: {exc}")
 
     def _on_keydown(self, key: int) -> None:
         if key == pygame.K_ESCAPE:
+            if self.toolbar.file_menu_open:
+                self.toolbar.file_menu_open = False
+                return
             if (
                 self.selected_building_id is not None
                 or self.selected_villager_id is not None
@@ -211,7 +267,7 @@ class Game:
                 self.running = False
         elif key == pygame.K_r:
             self.reset()
-        elif key == pygame.K_e:
+        elif key in (pygame.K_e, pygame.K_RETURN, pygame.K_KP_ENTER):
             self._interact_at_player()
         elif key == pygame.K_b:
             self._cycle_place_kind()
@@ -236,8 +292,14 @@ class Game:
         elif key in (pygame.K_d, pygame.K_RIGHT):
             self._try_move(1, 0)
 
+    def _selected_building(self) -> Building | None:
+        if self.selected_building_id is None:
+            return None
+        return self.buildings.get(self.selected_building_id)
+
     def _map_cell_from_pos(self, pos: tuple[int, int]) -> tuple[int, int] | None:
         mx, my = pos
+        my -= TOOLBAR_HEIGHT
         map_width = GRID_COLS * CELL_SIZE
         if mx < 0 or my < 0 or mx >= map_width or my >= GRID_ROWS * CELL_SIZE:
             return None
@@ -247,7 +309,27 @@ class Game:
             return None
         return gx, gy
 
+    def _cell_rect(self, x: int, y: int) -> pygame.Rect:
+        return pygame.Rect(
+            x * CELL_SIZE, y * CELL_SIZE + TOOLBAR_HEIGHT, CELL_SIZE, CELL_SIZE
+        )
+
+    def _cell_center(self, x: int, y: int) -> tuple[int, int]:
+        return (
+            x * CELL_SIZE + CELL_SIZE // 2,
+            y * CELL_SIZE + CELL_SIZE // 2 + TOOLBAR_HEIGHT,
+        )
+
     def _on_mouse_down(self, pos: tuple[int, int]) -> None:
+        building = self._selected_building()
+        if self.toolbar.contains(pos) or self.toolbar.file_menu_open:
+            action = self.toolbar.hit_test(pos, building)
+            if action is not None:
+                self._handle_toolbar_action(action)
+            elif self.toolbar.file_menu_open:
+                self.toolbar.file_menu_open = False
+            return
+
         cell = self._map_cell_from_pos(pos)
         if cell is None:
             return
@@ -396,6 +478,7 @@ class Game:
             BuildingKind.MASON,
             BuildingKind.HUNTER,
             BuildingKind.FORAGER,
+            BuildingKind.FISHER,
             None,
         ]
         if self.place_kind not in order:
@@ -403,19 +486,77 @@ class Game:
         else:
             idx = order.index(self.place_kind)
             self.place_kind = order[(idx + 1) % len(order)]
+        self._announce_place_kind()
+
+    def _set_place_kind(self, kind: BuildingKind | None) -> None:
+        self.place_kind = kind
+        self._announce_place_kind()
+
+    def _announce_place_kind(self) -> None:
         costs = {
             BuildingKind.FORESTER: (FORESTER_COST_WOOD, FORESTER_COST_ROCK, "Forester"),
             BuildingKind.MASON: (MASON_COST_WOOD, MASON_COST_ROCK, "Mason"),
             BuildingKind.HUNTER: (HUNTER_COST_WOOD, HUNTER_COST_ROCK, "Hunter"),
             BuildingKind.FORAGER: (FORAGER_COST_WOOD, FORAGER_COST_ROCK, "Forager"),
+            BuildingKind.FISHER: (FISHER_COST_WOOD, FISHER_COST_ROCK, "Fisher"),
         }
         if self.place_kind is None:
             self._set_status("Build mode off.")
         else:
             w, r, name = costs[self.place_kind]
             self._set_status(
-                f"Build: {name} ({w}w {r}r). Stand on empty soil/grass and press E."
+                f"Build: {name} ({w}w {r}r). Stand on empty soil/grass and press Enter/E."
             )
+
+    def _set_building_task(self, task: TaskType) -> None:
+        building = self._selected_building()
+        if building is None:
+            self._set_status("Select a building first.")
+            return
+        building.draw_task_type = task
+        self._set_status(f"{BUILDING_LABELS[building.kind]} draw mode: {TASK_LABELS[task]}")
+
+    def _set_sim_speed(self, speed: int) -> None:
+        if speed not in SIM_SPEEDS:
+            return
+        self.sim_speed = speed
+        self._set_status(f"Simulation speed x{speed}")
+
+    def _handle_toolbar_action(self, action: str) -> None:
+        if action == "file_toggle":
+            self.toolbar.file_menu_open = not self.toolbar.file_menu_open
+            return
+        if action.startswith("file_"):
+            self.toolbar.file_menu_open = False
+        if action == "file_save":
+            self._pending_file_action = "save"
+            self.file_dialog.open_save("savegame")
+        elif action == "file_load":
+            self._pending_file_action = "load"
+            self.file_dialog.open_load()
+        elif action == "file_reset":
+            self.reset()
+        elif action == "file_quit":
+            self.running = False
+        elif action == "build_off":
+            self._set_place_kind(None)
+        elif action.startswith("build_"):
+            name = action[len("build_") :].upper()
+            self._set_place_kind(BuildingKind[name])
+        elif action == "task_clear":
+            self._clear_selected_building_areas()
+        elif action.startswith("task_"):
+            self._set_building_task(TaskType[action[len("task_") :]])
+        elif action.startswith("speed_"):
+            self._set_sim_speed(int(action[len("speed_") :]))
+
+    def _save_game(self) -> None:
+        self._pending_file_action = "save"
+        self.file_dialog.open_save("savegame")
+
+    def _load_game(self) -> None:
+        self._pending_file_action = "load"
+        self.file_dialog.open_load()
 
     def _cycle_selected_building_task(self) -> None:
         if self.selected_building_id is None:
@@ -506,6 +647,7 @@ class Game:
             FeatureType.MASON,
             FeatureType.HUNTER,
             FeatureType.FORAGER,
+            FeatureType.FISHER,
         ):
             building = self._building_at(x, y)
             if building is not None:
@@ -518,15 +660,24 @@ class Game:
                 )
             return
 
-        # Collect meat on this cell first if present.
+        # Collect meat / fish on this cell first if present.
         if cell.meat_deposit > 0:
             self._collect_meat(x, y, self.player.inventory, status=True)
+            return
+        if cell.fish_deposit > 0:
+            self._collect_fish(x, y, self.player.inventory, status=True)
             return
 
         # Hunt adjacent animal (within 1 square, including this cell).
         prey = self._adjacent_animal(x, y)
         if prey is not None:
             self._player_hunt(prey)
+            return
+
+        # Fish adjacent (on water within 1).
+        catch = self._adjacent_fish(x, y)
+        if catch is not None:
+            self._player_fish(catch)
             return
 
         if cell.feature == FeatureType.MUSHROOM:
@@ -564,7 +715,7 @@ class Game:
             return
 
         if cell.terrain == TerrainType.WATER:
-            self._set_status("Cannot interact with water.")
+            self._set_status("Water — stand on shore and catch fish with Enter.")
             return
 
         self._set_status("Nothing to do here.")
@@ -609,6 +760,9 @@ class Game:
         elif kind == BuildingKind.HUNTER:
             cost_w, cost_r = HUNTER_COST_WOOD, HUNTER_COST_ROCK
             default_task = TaskType.HUNT
+        elif kind == BuildingKind.FISHER:
+            cost_w, cost_r = FISHER_COST_WOOD, FISHER_COST_ROCK
+            default_task = TaskType.FISH
         else:
             cost_w, cost_r = FORAGER_COST_WOOD, FORAGER_COST_ROCK
             default_task = TaskType.FULL_FORAGE
@@ -836,11 +990,16 @@ class Game:
         self.world.apply_disturbance(hx, hy)
         self._refresh_indicators()
         if status:
-            self._set_status(
-                f"Deposited {items['wood']}w {items['rock']}r {items['meat']}m "
-                f"{items['saplings']}s {items['mushrooms']}mush "
-                f"{items['berries']}b {items['herbs']}h."
-            )
+            from resources import amounts_from_obj, format_grouped_counts
+
+            class _Bag:
+                pass
+
+            bag = _Bag()
+            for k, v in items.items():
+                setattr(bag, k, v)
+            lines = format_grouped_counts(amounts_from_obj(bag), skip_zero=True)
+            self._set_status("Deposited. " + " · ".join(lines) if lines else "Deposited.")
         return True
 
     def _collect_meat(self, x: int, y: int, inventory: Inventory, status: bool = False) -> bool:
@@ -881,6 +1040,43 @@ class Game:
         self._refresh_indicators()
         self._set_status(f"Hunted animal. {ANIMAL_MEAT_YIELD} meat on ({pos[0]}, {pos[1]}).")
 
+    def _collect_fish(self, x: int, y: int, inventory: Inventory, status: bool = False) -> bool:
+        if inventory.is_full:
+            if status:
+                self._set_status("Inventory is full.")
+            return False
+        taken = self.world.harvest_fish(x, y, amount=1)
+        if taken <= 0:
+            if status:
+                self._set_status("No fish here.")
+            return False
+        inventory.add_fish(taken)
+        if status:
+            left = self.world.get_cell(x, y)
+            remaining = left.fish_deposit if left else 0
+            self._set_status(f"Collected {taken} fish ({remaining} left).")
+        return True
+
+    def _adjacent_fish(self, x: int, y: int):
+        best = None
+        best_dist = 99
+        for item in self.fish.fish:
+            dist = max(abs(item.x - x), abs(item.y - y))
+            if dist <= 1 and dist < best_dist:
+                best = item
+                best_dist = dist
+        return best
+
+    def _player_fish(self, item) -> None:
+        pos = self.fish.kill_fish(item.id)
+        if pos is None:
+            self._set_status("Fish got away.")
+            return
+        self.world.add_fish_deposit(pos[0], pos[1], FISH_YIELD)
+        self.world.apply_disturbance(pos[0], pos[1])
+        self._refresh_indicators()
+        self._set_status(f"Caught fish. {FISH_YIELD} fish left on shore.")
+
     # ------------------------------------------------------------------
     # Villager AI
     # ------------------------------------------------------------------
@@ -906,6 +1102,9 @@ class Game:
 
         if building.kind == BuildingKind.HUNTER:
             self._update_hunter(villager, building)
+            return
+        if building.kind == BuildingKind.FISHER:
+            self._update_fisher(villager, building)
             return
 
         # Full carry → deliver to building storage.
@@ -1082,6 +1281,145 @@ class Game:
                 cell = self.world.get_cell(x, y)
                 if cell is not None and cell.meat_deposit > 0:
                     return (x, y)
+        return None
+
+    def _update_fisher(self, villager: Villager, building: Building) -> None:
+        """Fish in fish areas: approach within 1, catch, collect shore fish, deliver."""
+        if villager.inventory.is_full and villager.state != VillagerState.DELIVERING:
+            if building.space_left > 0:
+                villager.state = VillagerState.DELIVERING
+                villager.fish_target_id = None
+            else:
+                villager.state = VillagerState.IDLE
+                return
+
+        if villager.state == VillagerState.DELIVERING:
+            if (villager.x, villager.y) == (building.x, building.y):
+                building.deposit_from_inventory(villager.inventory)
+                if villager.inventory.is_empty or building.space_left == 0:
+                    villager.state = VillagerState.WORKING
+                    villager.target = None
+                return
+            self._step_villager_toward(villager, (building.x, building.y))
+            return
+
+        if villager.state == VillagerState.IDLE:
+            if not villager.inventory.is_empty and building.space_left > 0:
+                villager.state = VillagerState.DELIVERING
+                return
+            if building.areas and (
+                self._find_fish_target(villager, building) is not None
+                or self._find_fish_in_fish_areas(building) is not None
+            ):
+                if building.space_left > 0:
+                    villager.state = VillagerState.WORKING
+            return
+
+        catch_pos = villager.fish_catch_pos
+        if catch_pos is not None:
+            cell = self.world.get_cell(*catch_pos)
+            if cell is None or cell.fish_deposit <= 0:
+                villager.fish_catch_pos = None
+                catch_pos = None
+        if catch_pos is None:
+            catch_pos = self._find_fish_in_fish_areas(building)
+            if catch_pos is not None:
+                villager.fish_catch_pos = catch_pos
+
+        if catch_pos is not None and not villager.inventory.is_full:
+            dist = max(abs(villager.x - catch_pos[0]), abs(villager.y - catch_pos[1]))
+            if dist <= 1 or (villager.x, villager.y) == catch_pos:
+                if villager.work_cooldown == 0:
+                    self._collect_fish(*catch_pos, villager.inventory, status=False)
+                    villager.work_cooldown = VILLAGER_WORK_INTERVAL
+                    cell = self.world.get_cell(*catch_pos)
+                    if cell is None or cell.fish_deposit <= 0:
+                        villager.fish_catch_pos = None
+            else:
+                approach = catch_pos
+                if not self.world.is_walkable(*approach):
+                    for ny, nx in self.world.neighbourhood(*catch_pos, radius=1):
+                        if self.world.is_walkable(nx, ny):
+                            approach = (nx, ny)
+                            break
+                if self.world.is_walkable(*approach):
+                    self._step_villager_toward(villager, approach)
+                else:
+                    villager.fish_catch_pos = None
+            return
+
+        if villager.inventory.is_full:
+            return
+
+        target = self._resolve_fish_target(villager, building)
+        if target is None:
+            if not villager.inventory.is_empty and building.space_left > 0:
+                villager.state = VillagerState.DELIVERING
+            else:
+                villager.state = VillagerState.IDLE
+            return
+
+        dist = max(abs(target.x - villager.x), abs(target.y - villager.y))
+        if dist <= 1:
+            if villager.work_cooldown == 0:
+                pos = self.fish.kill_fish(target.id)
+                villager.fish_target_id = None
+                if pos is not None:
+                    self.world.add_fish_deposit(pos[0], pos[1], FISH_YIELD)
+                    self.world.apply_disturbance(pos[0], pos[1])
+                    self._refresh_indicators()
+                    # Prefer collecting from shore tile that received the deposit.
+                    shore = self._find_fish_in_fish_areas(building)
+                    villager.fish_catch_pos = shore
+                villager.work_cooldown = VILLAGER_WORK_INTERVAL
+            return
+
+        approach = (target.x, target.y)
+        if not self.world.is_walkable(*approach):
+            for ny, nx in self.world.neighbourhood(target.x, target.y, radius=1):
+                if self.world.is_walkable(nx, ny):
+                    approach = (nx, ny)
+                    break
+        self._step_villager_toward(villager, approach)
+
+    def _find_fish_target(self, villager: Villager, building: Building):
+        found = []
+        for area in building.areas:
+            if area.task_type != TaskType.FISH:
+                continue
+            found.extend(self.fish.fish_in_area(area.contains))
+        if not found:
+            return None
+        return min(found, key=lambda f: abs(f.x - villager.x) + abs(f.y - villager.y))
+
+    def _resolve_fish_target(self, villager: Villager, building: Building):
+        if villager.fish_target_id is not None:
+            for item in self.fish.fish:
+                if item.id == villager.fish_target_id:
+                    return item
+            villager.fish_target_id = None
+        item = self._find_fish_target(villager, building)
+        if item is not None:
+            villager.fish_target_id = item.id
+        return item
+
+    def _find_fish_in_fish_areas(self, building: Building) -> tuple[int, int] | None:
+        for area in building.areas:
+            if area.task_type != TaskType.FISH:
+                continue
+            for x, y in area.cells():
+                cell = self.world.get_cell(x, y)
+                if cell is not None and cell.fish_deposit > 0:
+                    return (x, y)
+            # Also check shore neighbours of water cells in the area.
+            for x, y in area.cells():
+                cell = self.world.get_cell(x, y)
+                if cell is None or cell.terrain != TerrainType.WATER:
+                    continue
+                for ny, nx in self.world.neighbourhood(x, y, radius=1):
+                    ncell = self.world.get_cell(nx, ny)
+                    if ncell is not None and ncell.fish_deposit > 0:
+                        return (nx, ny)
         return None
 
     def _update_hauler(self, villager: Villager) -> None:
@@ -1285,16 +1623,19 @@ class Game:
     def _refresh_indicators(self) -> None:
         self.overlay_values = build_overlay_grid(self.world, self.overlay_mode)
 
-    def _update(self) -> None:
-        self.world.tick(decay_per_tick=DISTURBANCE_DECAY_PER_TICK)
-        self._update_villagers()
-        self.wildlife.tick(self.world)
-        if self.overlay_mode != OverlayMode.NONE:
-            self._refresh_indicators()
+    def _update_status_timer(self) -> None:
         if self.status_timer > 0:
             self.status_timer -= 1
             if self.status_timer == 0:
                 self.status_message = ""
+
+    def _update_simulation(self) -> None:
+        self.world.tick(decay_per_tick=DISTURBANCE_DECAY_PER_TICK)
+        self._update_villagers()
+        self.wildlife.tick(self.world)
+        self.fish.tick(self.world)
+        if self.overlay_mode != OverlayMode.NONE:
+            self._refresh_indicators()
 
     # ------------------------------------------------------------------
     # Rendering
@@ -1306,6 +1647,7 @@ class Game:
             self._draw_overlay()
         self._draw_task_areas()
         self._draw_animals()
+        self._draw_fish()
         self._draw_villagers()
         self._draw_player()
         self._draw_selection_highlights()
@@ -1322,22 +1664,35 @@ class Game:
             self.place_kind,
             self.overlay_mode,
             self.status_message,
+            sim_speed=self.sim_speed,
+            fish_manager=self.fish,
         )
+        mouse = pygame.mouse.get_pos()
+        self.toolbar.draw(
+            self.screen,
+            self.place_kind,
+            self._selected_building(),
+            self.sim_speed,
+            mouse,
+        )
+        self.file_dialog.draw(self.screen)
         pygame.display.flip()
 
     def _draw_world(self) -> None:
         for y in range(self.world.rows):
             for x in range(self.world.cols):
                 cell = self.world.cells[y][x]
-                rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-                pygame.draw.rect(self.screen, terrain_colour(cell.terrain), rect)
+                rect = self._cell_rect(x, y)
+                draw_terrain(self.screen, cell.terrain, rect)
                 pygame.draw.rect(self.screen, (0, 0, 0), rect, 1)
-                cx = x * CELL_SIZE + CELL_SIZE // 2
-                cy = y * CELL_SIZE + CELL_SIZE // 2
+                cx, cy = self._cell_center(x, y)
                 draw_feature(self.screen, cell.feature, cx, cy, CELL_SIZE)
                 if cell.meat_deposit > 0:
                     pygame.draw.circle(self.screen, COLOUR_MEAT, (cx + 8, cy + 8), 5)
                     pygame.draw.circle(self.screen, (80, 20, 20), (cx + 8, cy + 8), 5, 1)
+                if cell.fish_deposit > 0:
+                    pygame.draw.circle(self.screen, COLOUR_FISH, (cx - 8, cy + 8), 5)
+                    pygame.draw.circle(self.screen, (20, 60, 90), (cx - 8, cy + 8), 5, 1)
 
     def _draw_overlay(self) -> None:
         overlay = pygame.Surface((GRID_COLS * CELL_SIZE, GRID_ROWS * CELL_SIZE), pygame.SRCALPHA)
@@ -1347,14 +1702,11 @@ class Game:
                 colour = overlay_colour(self.overlay_mode, value)
                 rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
                 overlay.fill((*colour, OVERLAY_ALPHA), rect)
-        self.screen.blit(overlay, (0, 0))
+        self.screen.blit(overlay, (0, TOOLBAR_HEIGHT))
 
     def _draw_task_areas(self) -> None:
         # Areas only visible while their building is selected.
-        if self.selected_building_id is None:
-            building = None
-        else:
-            building = self.buildings.get(self.selected_building_id)
+        building = self._selected_building()
 
         tint = pygame.Surface((GRID_COLS * CELL_SIZE, GRID_ROWS * CELL_SIZE), pygame.SRCALPHA)
         if building is not None:
@@ -1367,7 +1719,7 @@ class Game:
                         tint.fill((*colour, 55), rect)
                 border = pygame.Rect(
                     left * CELL_SIZE,
-                    top * CELL_SIZE,
+                    top * CELL_SIZE + TOOLBAR_HEIGHT,
                     (right - left + 1) * CELL_SIZE,
                     (bottom - top + 1) * CELL_SIZE,
                 )
@@ -1385,18 +1737,18 @@ class Game:
                     tint.fill((*preview, 70), rect)
             border = pygame.Rect(
                 left * CELL_SIZE,
-                top * CELL_SIZE,
+                top * CELL_SIZE + TOOLBAR_HEIGHT,
                 (right - left + 1) * CELL_SIZE,
                 (bottom - top + 1) * CELL_SIZE,
             )
             pygame.draw.rect(self.screen, COLOUR_TASK_PREVIEW, border, 2)
 
-        self.screen.blit(tint, (0, 0))
+        self.screen.blit(tint, (0, TOOLBAR_HEIGHT))
 
     def _draw_animals(self) -> None:
         for animal in self.wildlife.animals:
-            cx = animal.x * CELL_SIZE + CELL_SIZE // 2
-            cy = animal.y * CELL_SIZE + CELL_SIZE // 2 + 2
+            cx, cy = self._cell_center(animal.x, animal.y)
+            cy += 2
             pygame.draw.ellipse(
                 self.screen,
                 COLOUR_ANIMAL,
@@ -1410,16 +1762,25 @@ class Game:
             # Head
             pygame.draw.circle(self.screen, COLOUR_ANIMAL, (cx + CELL_SIZE // 6, cy - 2), max(2, CELL_SIZE // 10))
 
+    def _draw_fish(self) -> None:
+        for item in self.fish.fish:
+            cx, cy = self._cell_center(item.x, item.y)
+            body = pygame.Rect(cx - CELL_SIZE // 5, cy - 2, max(8, CELL_SIZE // 2), max(4, CELL_SIZE // 5))
+            pygame.draw.ellipse(self.screen, COLOUR_FISH, body)
+            pygame.draw.polygon(
+                self.screen,
+                COLOUR_FISH,
+                [(cx + CELL_SIZE // 5, cy), (cx + CELL_SIZE // 3, cy - 4), (cx + CELL_SIZE // 3, cy + 4)],
+            )
+
     def _draw_villagers(self) -> None:
         for villager in self.villagers:
-            cx = villager.x * CELL_SIZE + CELL_SIZE // 2
-            cy = villager.y * CELL_SIZE + CELL_SIZE // 2
+            cx, cy = self._cell_center(villager.x, villager.y)
             pygame.draw.circle(self.screen, COLOUR_VILLAGER, (cx, cy), CELL_SIZE // 4)
             pygame.draw.circle(self.screen, (40, 30, 10), (cx, cy), CELL_SIZE // 4, 2)
 
     def _draw_player(self) -> None:
-        cx = self.player.x * CELL_SIZE + CELL_SIZE // 2
-        cy = self.player.y * CELL_SIZE + CELL_SIZE // 2
+        cx, cy = self._cell_center(self.player.x, self.player.y)
         pygame.draw.circle(self.screen, COLOUR_PLAYER, (cx, cy), CELL_SIZE // 3)
         pygame.draw.circle(self.screen, (255, 255, 255), (cx, cy), CELL_SIZE // 3, 2)
 
@@ -1427,14 +1788,10 @@ class Game:
         if self.selected_villager_id is not None:
             villager = self._get_villager(self.selected_villager_id)
             if villager is not None:
-                rect = pygame.Rect(
-                    villager.x * CELL_SIZE, villager.y * CELL_SIZE, CELL_SIZE, CELL_SIZE
-                )
+                rect = self._cell_rect(villager.x, villager.y)
                 pygame.draw.rect(self.screen, COLOUR_SELECTED_ENTITY, rect, 3)
         if self.selected_building_id is not None:
             building = self.buildings.get(self.selected_building_id)
             if building is not None:
-                rect = pygame.Rect(
-                    building.x * CELL_SIZE, building.y * CELL_SIZE, CELL_SIZE, CELL_SIZE
-                )
+                rect = self._cell_rect(building.x, building.y)
                 pygame.draw.rect(self.screen, COLOUR_SELECTED_ENTITY, rect, 3)

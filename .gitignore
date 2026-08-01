@@ -33,3 +33,7 @@ Thumbs.db
 .env.*
 !.env.example
 *.log
+
+# Game saves
+saves/*.json
+!saves/.gitkeep

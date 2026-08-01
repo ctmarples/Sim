@@ -19,6 +19,8 @@ from settings import (
     CELL_SIZE,
     COLOUR_ANIMAL,
     COLOUR_BERRY,
+    COLOUR_FISH,
+    COLOUR_FISHER,
     COLOUR_FORAGER,
     COLOUR_FORESTER,
     COLOUR_GRASS,
@@ -32,6 +34,8 @@ from settings import (
     COLOUR_PANEL_BORDER,
     COLOUR_PLAYER,
     COLOUR_ROCK_FEATURE,
+    COLOUR_ROCK_TERRAIN,
+    COLOUR_ROCK_TERRAIN_DARK,
     COLOUR_SAPLING,
     COLOUR_SOIL,
     COLOUR_STATUS,
@@ -45,6 +49,8 @@ from settings import (
     FORESTER_COST_WOOD,
     FORAGER_COST_ROCK,
     FORAGER_COST_WOOD,
+    FISHER_COST_ROCK,
+    FISHER_COST_WOOD,
     GRID_COLS,
     HUNTER_COST_ROCK,
     HUNTER_COST_WOOD,
@@ -53,10 +59,16 @@ from settings import (
     MASON_COST_WOOD,
     MAX_VILLAGERS,
     PANEL_WIDTH,
+    TOOLBAR_HEIGHT,
     WINDOW_HEIGHT,
 )
-from wildlife import WildlifeManager
+from resources import amounts_from_obj, format_grouped_counts
+from wildlife import FishManager, WildlifeManager
 from world import FeatureType, TerrainType, World
+
+
+def _panel_height() -> int:
+    return WINDOW_HEIGHT - TOOLBAR_HEIGHT
 
 
 def _blit_text(
@@ -77,18 +89,18 @@ class UI:
         self.font_small = pygame.font.SysFont("menlo", 12)
         self.font_title = pygame.font.SysFont("menlo", 15, bold=True)
         self.scroll_y = 0
-        self.content_height = WINDOW_HEIGHT
+        self.content_height = _panel_height()
         # Reused each frame — allocating a tall surface every tick freezes the UI.
-        self._content = pygame.Surface((PANEL_WIDTH, WINDOW_HEIGHT))
+        self._content = pygame.Surface((PANEL_WIDTH, _panel_height()))
         self._content.fill(COLOUR_PANEL_BG)
 
     def scroll(self, delta: int) -> None:
         """delta > 0 scrolls content up (typical mouse-wheel away)."""
-        max_scroll = max(0, self.content_height - WINDOW_HEIGHT)
+        max_scroll = max(0, self.content_height - _panel_height())
         self.scroll_y = max(0, min(max_scroll, self.scroll_y - delta))
 
     def _ensure_content_surface(self, height: int) -> pygame.Surface:
-        height = max(WINDOW_HEIGHT, height)
+        height = max(_panel_height(), height)
         if self._content.get_height() < height:
             self._content = pygame.Surface((PANEL_WIDTH, height))
         return self._content
@@ -107,20 +119,23 @@ class UI:
         place_kind: BuildingKind | None,
         overlay_mode: OverlayMode,
         status_message: str,
+        sim_speed: int = 1,
+        fish_manager: FishManager | None = None,
     ) -> None:
         panel_x = GRID_COLS * CELL_SIZE
+        panel_h = _panel_height()
         # Grow if needed, then clear only the used region.
-        content = self._ensure_content_surface(max(self.content_height, WINDOW_HEIGHT + 200))
+        content = self._ensure_content_surface(max(self.content_height, panel_h + 200))
         content.fill(COLOUR_PANEL_BG)
 
         x = 10
         y = 8
 
         y = _blit_text(content, self.font_title, "Environment Sandbox", (x, y))
-        y = _blit_text(content, self.font_small, "WASD move · E interact", (x, y), COLOUR_TEXT_DIM)
-        y = _blit_text(content, self.font_small, "B build · click select", (x, y), COLOUR_TEXT_DIM)
-        y = _blit_text(content, self.font_small, "Drag areas · T task · Esc", (x, y), COLOUR_TEXT_DIM)
-        y = _blit_text(content, self.font_small, "Scroll panel: mouse wheel", (x, y), COLOUR_TEXT_DIM)
+        y = _blit_text(content, self.font_small, "WASD move · Enter/E interact", (x, y), COLOUR_TEXT_DIM)
+        y = _blit_text(content, self.font_small, "Toolbar: build · tasks · speed", (x, y), COLOUR_TEXT_DIM)
+        y = _blit_text(content, self.font_small, "File Save/Load · Esc clears", (x, y), COLOUR_TEXT_DIM)
+        y = _blit_text(content, self.font_small, f"Sim speed x{sim_speed}", (x, y), COLOUR_TEXT_DIM)
         y += 6
 
         y = _blit_text(content, self.font_title, "Player", (x, y))
@@ -149,51 +164,37 @@ class UI:
                 (x, y),
                 COLOUR_TEXT_DIM,
             )
+        if cell is not None and cell.fish_deposit > 0:
+            y = _blit_text(
+                content,
+                self.font_small,
+                f"Fish on ground: {cell.fish_deposit}",
+                (x, y),
+                COLOUR_TEXT_DIM,
+            )
         inv: Inventory = player.inventory
         y = _blit_text(
             content,
-            self.font,
-            f"Carry {inv.wood}w {inv.rock}r {inv.meat}m {inv.saplings}s",
-            (x, y),
-        )
-        y = _blit_text(
-            content,
             self.font_small,
-            f"  {inv.mushrooms}mush {inv.berries}b {inv.berry_seeds}bs "
-            f"{inv.herbs}h {inv.herb_seeds}hs",
+            f"Carry ({inv.total}/{INVENTORY_CAPACITY})",
             (x, y),
-            COLOUR_TEXT_DIM,
         )
-        y = _blit_text(
-            content,
-            self.font_small,
-            f"({inv.total}/{INVENTORY_CAPACITY})",
-            (x, y),
-            COLOUR_TEXT_DIM,
-        )
+        for line in format_grouped_counts(amounts_from_obj(inv), skip_zero=True):
+            y = _blit_text(content, self.font_small, line, (x, y), COLOUR_TEXT_DIM)
+        if inv.total == 0:
+            y = _blit_text(content, self.font_small, "(empty)", (x, y), COLOUR_TEXT_DIM)
         y += 4
 
         y = _blit_text(content, self.font_title, "Home storage", (x, y))
-        y = _blit_text(
-            content,
-            self.font,
-            f"{home_storage.wood}w {home_storage.rock}r "
-            f"{home_storage.meat}m {home_storage.saplings}s",
-            (x, y),
-        )
-        y = _blit_text(
-            content,
-            self.font_small,
-            f"  {home_storage.mushrooms}mush {home_storage.berries}b "
-            f"{home_storage.herbs}h",
-            (x, y),
-            COLOUR_TEXT_DIM,
-        )
+        for line in format_grouped_counts(amounts_from_obj(home_storage), skip_zero=True):
+            y = _blit_text(content, self.font_small, line, (x, y), COLOUR_TEXT_DIM)
+        if sum(amounts_from_obj(home_storage).values()) == 0:
+            y = _blit_text(content, self.font_small, "(empty)", (x, y), COLOUR_TEXT_DIM)
         y += 4
 
         y = _blit_text(content, self.font_title, "Build", (x, y))
         if place_kind is None:
-            y = _blit_text(content, self.font_small, "Mode: off (press B)", (x, y), COLOUR_TEXT_DIM)
+            y = _blit_text(content, self.font_small, "Mode: off", (x, y), COLOUR_TEXT_DIM)
         elif place_kind == BuildingKind.FORESTER:
             y = _blit_text(
                 content,
@@ -215,6 +216,13 @@ class UI:
                 f"Hunter ({HUNTER_COST_WOOD}w/{HUNTER_COST_ROCK}r)",
                 (x, y),
             )
+        elif place_kind == BuildingKind.FISHER:
+            y = _blit_text(
+                content,
+                self.font,
+                f"Fisher ({FISHER_COST_WOOD}w/{FISHER_COST_ROCK}r)",
+                (x, y),
+            )
         else:
             y = _blit_text(
                 content,
@@ -231,10 +239,12 @@ class UI:
             y = _blit_text(
                 content,
                 self.font_small,
-                f"Store {b.wood}w {b.rock}r {b.meat}m {b.saplings}s / {b.capacity}",
+                f"Store {b.stored_total}/{b.capacity}",
                 (x, y),
                 COLOUR_TEXT_DIM,
             )
+            for line in format_grouped_counts(amounts_from_obj(b), skip_zero=True):
+                y = _blit_text(content, self.font_small, line, (x, y), COLOUR_TEXT_DIM)
             y = _blit_text(
                 content,
                 self.font_small,
@@ -302,9 +312,7 @@ class UI:
             y = _blit_text(
                 content,
                 self.font_small,
-                f"#{v.id} {v.state.name[:4]} → {job} "
-                f"({v.inventory.wood}w{v.inventory.rock}r"
-                f"{v.inventory.meat}m{v.inventory.saplings}s)",
+                f"#{v.id} {v.state.name[:4]} → {job} ({v.inventory.total})",
                 (x, y),
                 COLOUR_TEXT_DIM,
             )
@@ -319,6 +327,15 @@ class UI:
             (x, y),
             COLOUR_TEXT_DIM,
         )
+        if fish_manager is not None:
+            fcap = fish_manager.total_capacity(world)
+            y = _blit_text(
+                content,
+                self.font_small,
+                f"Fish {len(fish_manager.fish)}/{fcap}",
+                (x, y),
+                COLOUR_TEXT_DIM,
+            )
         y += 4
 
         y = _blit_text(content, self.font_title, "Overlay", (x, y))
@@ -351,27 +368,36 @@ class UI:
                 place_kind,
                 overlay_mode,
                 status_message,
+                sim_speed=sim_speed,
+                fish_manager=fish_manager,
             )
 
-        self.content_height = max(WINDOW_HEIGHT, y)
-        max_scroll = max(0, self.content_height - WINDOW_HEIGHT)
+        panel_h = _panel_height()
+        self.content_height = max(panel_h, y)
+        max_scroll = max(0, self.content_height - panel_h)
         self.scroll_y = max(0, min(self.scroll_y, max_scroll))
 
-        panel = pygame.Rect(panel_x, 0, PANEL_WIDTH, WINDOW_HEIGHT)
+        panel = pygame.Rect(panel_x, TOOLBAR_HEIGHT, PANEL_WIDTH, panel_h)
         pygame.draw.rect(surface, COLOUR_PANEL_BG, panel)
         surface.blit(
             content,
-            (panel_x, 0),
-            pygame.Rect(0, self.scroll_y, PANEL_WIDTH, WINDOW_HEIGHT),
+            (panel_x, TOOLBAR_HEIGHT),
+            pygame.Rect(0, self.scroll_y, PANEL_WIDTH, panel_h),
         )
-        pygame.draw.line(surface, COLOUR_PANEL_BORDER, (panel_x, 0), (panel_x, WINDOW_HEIGHT), 2)
+        pygame.draw.line(
+            surface,
+            COLOUR_PANEL_BORDER,
+            (panel_x, TOOLBAR_HEIGHT),
+            (panel_x, WINDOW_HEIGHT),
+            2,
+        )
 
         if max_scroll > 0:
-            track_h = WINDOW_HEIGHT - 16
-            thumb_h = max(24, int(track_h * WINDOW_HEIGHT / self.content_height))
-            thumb_y = 8 + int((track_h - thumb_h) * (self.scroll_y / max_scroll))
+            track_h = panel_h - 16
+            thumb_h = max(24, int(track_h * panel_h / self.content_height))
+            thumb_y = TOOLBAR_HEIGHT + 8 + int((track_h - thumb_h) * (self.scroll_y / max_scroll))
             bar_x = panel_x + PANEL_WIDTH - 8
-            pygame.draw.rect(surface, (60, 62, 70), pygame.Rect(bar_x, 8, 4, track_h))
+            pygame.draw.rect(surface, (60, 62, 70), pygame.Rect(bar_x, TOOLBAR_HEIGHT + 8, 4, track_h))
             pygame.draw.rect(surface, (140, 144, 160), pygame.Rect(bar_x, thumb_y, 4, thumb_h))
 
     def _draw_legend(self, surface: pygame.Surface, x: int, y: int) -> int:
@@ -383,10 +409,12 @@ class UI:
             (COLOUR_MASON, "Mason"),
             (COLOUR_HUNTER, "Hunter"),
             (COLOUR_FORAGER, "Forager"),
+            (COLOUR_FISHER, "Fisher"),
             (COLOUR_MUSHROOM, "Mushroom"),
             (COLOUR_BERRY, "Berry bush"),
             (COLOUR_HERB, "Herb"),
             (COLOUR_MEAT, "Meat"),
+            (COLOUR_FISH, "Fish"),
             (COLOUR_PLAYER, "Player"),
             (COLOUR_VILLAGER, "Villager"),
             (COLOUR_ANIMAL, "Wild animal"),
@@ -414,14 +442,32 @@ def _wrap(text: str, width: int) -> list[str]:
 
 
 def terrain_colour(terrain: TerrainType) -> tuple[int, int, int]:
-    from settings import COLOUR_ROCK_TERRAIN
-
     return {
         TerrainType.SOIL: COLOUR_SOIL,
         TerrainType.GRASS: COLOUR_GRASS,
         TerrainType.WATER: COLOUR_WATER,
         TerrainType.ROCK: COLOUR_ROCK_TERRAIN,
     }[terrain]
+
+
+def draw_terrain(surface: pygame.Surface, terrain: TerrainType, rect: pygame.Rect) -> None:
+    """Paint terrain including a speckled rock-patch look."""
+    pygame.draw.rect(surface, terrain_colour(terrain), rect)
+    if terrain == TerrainType.ROCK:
+        # Subtle darker flecks so rock patches read as stone, not flat grey.
+        cx, cy = rect.center
+        for ox, oy in ((-6, -4), (5, -3), (-3, 5), (4, 4), (0, -7), (7, 1)):
+            px = cx + ox
+            py = cy + oy
+            if rect.collidepoint(px, py):
+                pygame.draw.circle(surface, COLOUR_ROCK_TERRAIN_DARK, (px, py), 2)
+        pygame.draw.line(
+            surface,
+            COLOUR_ROCK_TERRAIN_DARK,
+            (rect.left + 4, rect.centery + 2),
+            (rect.right - 4, rect.centery - 3),
+            1,
+        )
 
 
 def draw_feature(surface: pygame.Surface, feature: FeatureType, cx: int, cy: int, size: int) -> None:
@@ -496,6 +542,15 @@ def draw_feature(surface: pygame.Surface, feature: FeatureType, cx: int, cy: int
         pygame.draw.rect(surface, COLOUR_FORAGER, body)
         pygame.draw.circle(surface, COLOUR_BERRY, (cx - 4, cy), 3)
         pygame.draw.circle(surface, COLOUR_MUSHROOM, (cx + 4, cy - 2), 3)
+    elif feature == FeatureType.FISHER:
+        half = size // 3
+        body = pygame.Rect(cx - half, cy - half // 2, half * 2, half)
+        pygame.draw.rect(surface, COLOUR_FISHER, body)
+        pygame.draw.ellipse(
+            surface,
+            COLOUR_FISH,
+            pygame.Rect(cx - 6, cy - 2, 10, 5),
+        )
     elif feature == FeatureType.MUSHROOM:
         pygame.draw.circle(surface, COLOUR_MUSHROOM, (cx, cy - 2), max(4, size // 7))
         pygame.draw.rect(surface, (210, 200, 180), pygame.Rect(cx - 2, cy, 4, size // 8))

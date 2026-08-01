@@ -38,7 +38,10 @@ from settings import (
     NATURAL_SPROUT_INTERVAL,
     NATURAL_SPROUT_MIN_PATCH,
     RANDOM_SEED,
-    ROCK_DEPOSIT,
+    ROCK_LARGE_MAX,
+    ROCK_LARGE_MIN,
+    ROCK_SMALL_MAX,
+    ROCK_SMALL_MIN,
     SAPLING_GROWTH_TICKS,
     TREE_WOOD_DEPOSIT,
 )
@@ -62,6 +65,7 @@ class FeatureType(Enum):
     MASON = auto()
     HUNTER = auto()
     FORAGER = auto()
+    FISHER = auto()
     MUSHROOM = auto()
     BERRY_BUSH = auto()
     HERB = auto()
@@ -77,6 +81,7 @@ class Cell:
     growth_ticks: int = 0  # sapling maturity / berry regen countdown
     deposit: int = 0  # wood, rock, or berries remaining
     meat_deposit: int = 0
+    fish_deposit: int = 0
 
     def habitat_category(self) -> str:
         if self.feature != FeatureType.NONE:
@@ -116,26 +121,37 @@ class World:
             for _ in range(self.rows)
         ]
 
-        # Base terrain: mostly soil and grass, with water patches.
+        # Base terrain: only grass and soil (rock / water come in patches).
         for y in range(self.rows):
             for x in range(self.cols):
-                roll = rng.random()
-                if roll < 0.55:
-                    self.cells[y][x].terrain = TerrainType.GRASS
-                elif roll < 0.88:
-                    self.cells[y][x].terrain = TerrainType.SOIL
-                elif roll < 0.95:
-                    self.cells[y][x].terrain = TerrainType.ROCK
-                else:
-                    self.cells[y][x].terrain = TerrainType.WATER
+                self.cells[y][x].terrain = (
+                    TerrainType.GRASS if rng.random() < 0.58 else TerrainType.SOIL
+                )
 
-        # Smooth water into small ponds.
+        # Larger water patches (lakes / ponds).
         self._place_clusters(
             rng,
-            count=3,
-            radius=2,
+            count=max(2, self.cols // 14),
+            radius=4,
+            density=0.78,
             apply=lambda c: setattr(c, "terrain", TerrainType.WATER),
         )
+        # Grow water once more from existing water to keep patches contiguous.
+        self._expand_terrain_patches(rng, TerrainType.WATER, passes=1, chance=0.45)
+
+        # Grey rock terrain only in patches.
+        def _paint_rock(cell: Cell) -> None:
+            if cell.terrain != TerrainType.WATER:
+                cell.terrain = TerrainType.ROCK
+
+        self._place_clusters(
+            rng,
+            count=max(2, self.cols // 16),
+            radius=3,
+            density=0.72,
+            apply=_paint_rock,
+        )
+        self._expand_terrain_patches(rng, TerrainType.ROCK, passes=1, chance=0.4)
 
         # Tree clusters on grass/soil (not water).
         for _ in range(6):
@@ -147,18 +163,35 @@ class World:
                     cell.feature = FeatureType.TREE
                     cell.deposit = TREE_WOOD_DEPOSIT
 
-        # Scattered rock resources.
-        placed_rocks = 0
+        # Small rock deposits on soil/grass.
+        placed_small = 0
         attempts = 0
-        while placed_rocks < 12 and attempts < 200:
+        while placed_small < 14 and attempts < 300:
             attempts += 1
             x = rng.randint(0, self.cols - 1)
             y = rng.randint(0, self.rows - 1)
             cell = self.cells[y][x]
-            if cell.feature == FeatureType.NONE and cell.terrain != TerrainType.WATER:
+            if (
+                cell.feature == FeatureType.NONE
+                and cell.terrain in (TerrainType.GRASS, TerrainType.SOIL)
+            ):
                 cell.feature = FeatureType.ROCK
-                cell.deposit = ROCK_DEPOSIT
-                placed_rocks += 1
+                cell.deposit = rng.randint(ROCK_SMALL_MIN, ROCK_SMALL_MAX)
+                placed_small += 1
+
+        # Large rock deposits (20+) only on grey rock terrain patches.
+        rock_tiles = [
+            (x, y)
+            for y in range(self.rows)
+            for x in range(self.cols)
+            if self.cells[y][x].terrain == TerrainType.ROCK
+            and self.cells[y][x].feature == FeatureType.NONE
+        ]
+        rng.shuffle(rock_tiles)
+        for x, y in rock_tiles[: max(4, len(rock_tiles) // 3)]:
+            cell = self.cells[y][x]
+            cell.feature = FeatureType.ROCK
+            cell.deposit = rng.randint(ROCK_LARGE_MIN, ROCK_LARGE_MAX)
 
         # A few starter berry bushes on grass.
         placed_bushes = 0
@@ -235,13 +268,40 @@ class World:
         count: int,
         radius: int,
         apply,
+        density: float = 0.65,
     ) -> None:
         for _ in range(count):
-            cx = rng.randint(radius, self.cols - radius - 1)
-            cy = rng.randint(radius, self.rows - radius - 1)
+            cx = rng.randint(radius, max(radius, self.cols - radius - 1))
+            cy = rng.randint(radius, max(radius, self.rows - radius - 1))
             for ny, nx in self.neighbourhood(cx, cy, radius=radius):
-                if rng.random() < 0.65:
+                if rng.random() < density:
                     apply(self.cells[ny][nx])
+
+    def _expand_terrain_patches(
+        self,
+        rng: random.Random,
+        terrain: TerrainType,
+        passes: int = 1,
+        chance: float = 0.4,
+    ) -> None:
+        for _ in range(passes):
+            to_paint: list[tuple[int, int]] = []
+            for y in range(self.rows):
+                for x in range(self.cols):
+                    if self.cells[y][x].terrain == terrain:
+                        continue
+                    if terrain == TerrainType.ROCK and self.cells[y][x].terrain == TerrainType.WATER:
+                        continue
+                    neighbours = list(self.neighbourhood(x, y, radius=1))
+                    matching = sum(
+                        1
+                        for ny, nx in neighbours
+                        if self.cells[ny][nx].terrain == terrain
+                    )
+                    if matching >= 3 and rng.random() < chance:
+                        to_paint.append((x, y))
+            for x, y in to_paint:
+                self.cells[y][x].terrain = terrain
 
     def reset(self) -> None:
         self._sprout_timer = NATURAL_SPROUT_INTERVAL
@@ -567,6 +627,27 @@ class World:
             return
         cell.meat_deposit += amount
 
+    def harvest_fish(self, x: int, y: int, amount: int = 1) -> int:
+        cell = self.get_cell(x, y)
+        if cell is None or cell.fish_deposit <= 0:
+            return 0
+        taken = min(amount, cell.fish_deposit)
+        cell.fish_deposit -= taken
+        return taken
+
+    def add_fish_deposit(self, x: int, y: int, amount: int) -> None:
+        """Leave caught fish on a walkable shore cell near water."""
+        cell = self.get_cell(x, y)
+        if cell is None:
+            return
+        if cell.terrain == TerrainType.WATER:
+            # Prefer depositing on an adjacent shore tile.
+            for ny, nx in self.neighbourhood(x, y, radius=1):
+                if self.is_walkable(nx, ny):
+                    self.cells[ny][nx].fish_deposit += amount
+                    return
+        cell.fish_deposit += amount
+
     def tree_cells(self) -> list[tuple[int, int]]:
         return [
             (x, y)
@@ -575,12 +656,28 @@ class World:
             if self.cells[y][x].feature == FeatureType.TREE
         ]
 
+    def water_cells(self) -> list[tuple[int, int]]:
+        return [
+            (x, y)
+            for y in range(self.rows)
+            for x in range(self.cols)
+            if self.cells[y][x].terrain == TerrainType.WATER
+        ]
+
     def tree_patches(self) -> list[list[tuple[int, int]]]:
         """Connected components of tree cells (8-connected / Chebyshev)."""
-        trees = set(self.tree_cells())
+        return self._connected_patches(set(self.tree_cells()))
+
+    def water_patches(self) -> list[list[tuple[int, int]]]:
+        """Connected components of water cells."""
+        return self._connected_patches(set(self.water_cells()))
+
+    def _connected_patches(
+        self, cells: set[tuple[int, int]]
+    ) -> list[list[tuple[int, int]]]:
         patches: list[list[tuple[int, int]]] = []
         seen: set[tuple[int, int]] = set()
-        for start in trees:
+        for start in cells:
             if start in seen:
                 continue
             stack = [start]
@@ -591,7 +688,7 @@ class World:
                 patch.append((cx, cy))
                 for ny, nx in self.neighbourhood(cx, cy, radius=1):
                     pos = (nx, ny)
-                    if pos in trees and pos not in seen:
+                    if pos in cells and pos not in seen:
                         seen.add(pos)
                         stack.append(pos)
             patches.append(patch)

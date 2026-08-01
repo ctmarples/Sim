@@ -19,6 +19,9 @@ from settings import (
     ANIMAL_GROWTH_INTERVAL,
     ANIMAL_MOVE_INTERVAL,
     ANIMAL_TREES_PER_CAP,
+    FISH_GROWTH_INTERVAL,
+    FISH_MOVE_INTERVAL,
+    FISH_WATER_PER_CAP,
     RANDOM_SEED,
 )
 from world import World
@@ -186,4 +189,128 @@ class WildlifeManager:
             self.next_id += 1
             self.animals.append(animal)
             # Only one spawn per growth tick overall to keep growth slow.
+            break
+
+
+@dataclass
+class Fish:
+    id: int
+    x: int
+    y: int
+    move_cooldown: int = 0
+
+
+class FishManager:
+    """Spawn, cull, and roam fish on water patches."""
+
+    def __init__(self, seed: int = RANDOM_SEED) -> None:
+        self.rng = random.Random(seed + 17)
+        self.fish: list[Fish] = []
+        self.next_id = 1
+        self.growth_timer = FISH_GROWTH_INTERVAL
+
+    def reset(self) -> None:
+        self.fish.clear()
+        self.next_id = 1
+        self.growth_timer = FISH_GROWTH_INTERVAL
+        self.rng.seed(RANDOM_SEED + 17)
+
+    def total_capacity(self, world: World) -> int:
+        return sum(len(p) // FISH_WATER_PER_CAP for p in world.water_patches())
+
+    def fish_at(self, x: int, y: int) -> Fish | None:
+        for item in self.fish:
+            if item.x == x and item.y == y:
+                return item
+        return None
+
+    def fish_in_area(self, contains) -> list[Fish]:
+        return [f for f in self.fish if contains(f.x, f.y)]
+
+    def kill_fish(self, fish_id: int) -> tuple[int, int] | None:
+        for i, item in enumerate(self.fish):
+            if item.id == fish_id:
+                pos = (item.x, item.y)
+                self.fish.pop(i)
+                return pos
+        return None
+
+    def tick(self, world: World) -> None:
+        self._move_fish(world)
+        self.growth_timer -= 1
+        if self.growth_timer <= 0:
+            self.growth_timer = FISH_GROWTH_INTERVAL
+            self._update_population(world)
+
+    def _move_fish(self, world: World) -> None:
+        water = set(world.water_cells())
+        if not water:
+            for item in self.fish:
+                if item.move_cooldown > 0:
+                    item.move_cooldown -= 1
+            return
+
+        for item in self.fish:
+            if item.move_cooldown > 0:
+                item.move_cooldown -= 1
+                continue
+            neighbours = [
+                (nx, ny)
+                for ny, nx in world.neighbourhood(item.x, item.y, radius=1)
+                if (nx, ny) != (item.x, item.y) and (nx, ny) in water
+            ]
+            if neighbours:
+                item.x, item.y = self.rng.choice(neighbours)
+            elif (item.x, item.y) not in water:
+                item.x, item.y = self.rng.choice(list(water))
+            item.move_cooldown = FISH_MOVE_INTERVAL
+
+    def _fish_per_patch(self, world: World) -> list[list[Fish]]:
+        patches = world.water_patches()
+        buckets: list[list[Fish]] = [[] for _ in patches]
+        patch_lookup: dict[tuple[int, int], int] = {}
+        for i, patch in enumerate(patches):
+            for pos in patch:
+                patch_lookup[pos] = i
+        unassigned: list[Fish] = []
+        for item in self.fish:
+            idx = patch_lookup.get((item.x, item.y))
+            if idx is None:
+                unassigned.append(item)
+            else:
+                buckets[idx].append(item)
+        self._unassigned = unassigned
+        return buckets
+
+    def _update_population(self, world: World) -> None:
+        patches = world.water_patches()
+        if not patches:
+            self.fish.clear()
+            return
+        caps = [len(p) // FISH_WATER_PER_CAP for p in patches]
+        buckets = self._fish_per_patch(world)
+        unassigned = getattr(self, "_unassigned", [])
+
+        for item in list(unassigned):
+            if item in self.fish:
+                self.fish.remove(item)
+
+        for i, group in enumerate(buckets):
+            cap = caps[i] if i < len(caps) else 0
+            while len(group) > cap:
+                victim = group.pop()
+                if victim in self.fish:
+                    self.fish.remove(victim)
+
+        buckets = self._fish_per_patch(world)
+        for i, patch in enumerate(patches):
+            cap = caps[i]
+            group = buckets[i] if i < len(buckets) else []
+            if len(group) >= cap or not patch:
+                continue
+            sx, sy = self.rng.choice(patch)
+            self.fish.append(
+                Fish(id=self.next_id, x=sx, y=sy, move_cooldown=FISH_MOVE_INTERVAL)
+            )
+            self.next_id += 1
             break

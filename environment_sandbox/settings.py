@@ -13,25 +13,28 @@ GRID_COLS: int = 24
 GRID_ROWS: int = 18
 CELL_SIZE: int = 40
 PANEL_WIDTH: int = 300
+TOOLBAR_HEIGHT: int = 64
 WINDOW_WIDTH: int = GRID_COLS * CELL_SIZE + PANEL_WIDTH
-WINDOW_HEIGHT: int = GRID_ROWS * CELL_SIZE
+WINDOW_HEIGHT: int = TOOLBAR_HEIGHT + GRID_ROWS * CELL_SIZE
 FPS: int = 60
+SIM_SPEEDS: tuple[int, ...] = (1, 2, 4, 8, 16)
 
 
 def configure_for_display(screen_w: int, screen_h: int) -> None:
     """Pick grid and cell size so the map + sidebar fit inside the display.
 
-    Leaves room for OS chrome (menu bar, window title, dock/taskbar). Keeps
-    +4 map cells on each axis vs a large-cell baseline, then shrinks cells
-    so the final window never exceeds the usable area.
+    Leaves room for OS chrome (menu bar, window title, dock/taskbar) and the
+    top toolbar. Keeps +4 map cells on each axis vs a large-cell baseline,
+    then shrinks cells so the final window never exceeds the usable area.
     """
-    global GRID_COLS, GRID_ROWS, CELL_SIZE, WINDOW_WIDTH, WINDOW_HEIGHT, PANEL_WIDTH
+    global GRID_COLS, GRID_ROWS, CELL_SIZE, WINDOW_WIDTH, WINDOW_HEIGHT, PANEL_WIDTH, TOOLBAR_HEIGHT
 
     PANEL_WIDTH = 300
+    TOOLBAR_HEIGHT = 64
     # Client area from set_mode does not include title bar; dock/menu also
     # steal vertical space — keep a generous height margin on macOS/Windows.
     usable_w = max(800, screen_w - 24)
-    usable_h = max(560, screen_h - 110)
+    usable_h = max(560, screen_h - 110 - TOOLBAR_HEIGHT)
     map_w = max(400, usable_w - PANEL_WIDTH)
 
     base_cols = 20
@@ -52,15 +55,17 @@ def configure_for_display(screen_w: int, screen_h: int) -> None:
         cell = max(12, min(map_w // cols, usable_h // rows))
 
     # Shrink until the window fits (never force a min cell that overflows).
-    while cell > 12 and (cols * cell + PANEL_WIDTH > usable_w or rows * cell > usable_h):
+    while cell > 12 and (
+        cols * cell + PANEL_WIDTH > usable_w
+        or TOOLBAR_HEIGHT + rows * cell > usable_h + TOOLBAR_HEIGHT
+    ):
         cell -= 1
 
     GRID_COLS = cols
     GRID_ROWS = rows
     CELL_SIZE = cell
     WINDOW_WIDTH = cols * cell + PANEL_WIDTH
-    WINDOW_HEIGHT = rows * cell
-
+    WINDOW_HEIGHT = TOOLBAR_HEIGHT + rows * cell
 # ---------------------------------------------------------------------------
 # Simulation
 # ---------------------------------------------------------------------------
@@ -76,6 +81,8 @@ HUNTER_COST_WOOD: int = 2
 HUNTER_COST_ROCK: int = 2
 FORAGER_COST_WOOD: int = 2
 FORAGER_COST_ROCK: int = 2
+FISHER_COST_WOOD: int = 2
+FISHER_COST_ROCK: int = 2
 
 INDICATOR_RADIUS: int = 2
 
@@ -87,8 +94,13 @@ NATURAL_SPROUT_CHANCE: float = 1.0 / 8.0
 NATURAL_SPROUT_INTERVAL: int = 180
 
 TREE_WOOD_DEPOSIT: int = 2
-ROCK_DEPOSIT: int = 10
+ROCK_DEPOSIT: int = 10  # legacy default
+ROCK_SMALL_MIN: int = 2
+ROCK_SMALL_MAX: int = 5
+ROCK_LARGE_MIN: int = 20
+ROCK_LARGE_MAX: int = 28
 ANIMAL_MEAT_YIELD: int = 5
+FISH_YIELD: int = 3
 
 # Forage resources
 BERRY_BUSH_YIELD: int = 5
@@ -111,6 +123,10 @@ VILLAGER_WORK_INTERVAL: int = 72
 ANIMAL_MOVE_INTERVAL: int = 80
 ANIMAL_GROWTH_INTERVAL: int = 480
 ANIMAL_TREES_PER_CAP: int = 4
+
+FISH_MOVE_INTERVAL: int = 80
+FISH_GROWTH_INTERVAL: int = 480
+FISH_WATER_PER_CAP: int = 4
 
 DISTURBANCE_DECAY_PER_TICK: float = 0.002
 DISTURBANCE_INTERACTION_BOOST: float = 0.25
@@ -138,7 +154,9 @@ COLOUR_FORESTER: Colour = (40, 110, 55)
 COLOUR_MASON: Colour = (120, 115, 100)
 COLOUR_HUNTER: Colour = (140, 70, 50)
 COLOUR_FORAGER: Colour = (70, 130, 90)
+COLOUR_FISHER: Colour = (50, 100, 150)
 COLOUR_MEAT: Colour = (180, 60, 70)
+COLOUR_FISH: Colour = (80, 160, 200)
 COLOUR_MUSHROOM: Colour = (200, 170, 140)
 COLOUR_BERRY: Colour = (160, 40, 90)
 COLOUR_HERB: Colour = (90, 170, 70)
@@ -151,11 +169,20 @@ COLOUR_TASK_PLANT: Colour = (80, 180, 100)
 COLOUR_TASK_MANAGE: Colour = (120, 200, 160)
 COLOUR_TASK_HUNT: Colour = (200, 90, 70)
 COLOUR_TASK_FORAGE: Colour = (100, 160, 120)
+COLOUR_TASK_FISH: Colour = (60, 140, 190)
+
+COLOUR_TOOLBAR_BG: Colour = (36, 38, 44)
+COLOUR_TOOLBAR_BTN: Colour = (55, 58, 68)
+COLOUR_TOOLBAR_BTN_HOVER: Colour = (70, 74, 88)
+COLOUR_TOOLBAR_BTN_ACTIVE: Colour = (70, 110, 160)
+COLOUR_TOOLBAR_BORDER: Colour = (80, 84, 96)
+COLOUR_MENU_BG: Colour = (48, 50, 58)
 
 COLOUR_SOIL: Colour = (139, 105, 70)
 COLOUR_GRASS: Colour = (90, 150, 70)
 COLOUR_WATER: Colour = (60, 120, 190)
-COLOUR_ROCK_TERRAIN: Colour = (110, 110, 115)
+COLOUR_ROCK_TERRAIN: Colour = (118, 118, 124)
+COLOUR_ROCK_TERRAIN_DARK: Colour = (95, 95, 102)
 
 COLOUR_TREE_CANOPY: Colour = (34, 120, 45)
 COLOUR_TREE_TRUNK: Colour = (90, 55, 30)

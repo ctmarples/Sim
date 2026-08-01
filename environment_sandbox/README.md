@@ -48,21 +48,28 @@ pip install pygame-ce
 | Key / input | Action |
 |-------------|--------|
 | `W` `A` `S` `D` or arrows | Move |
-| `E` | Interact with the cell you stand on (hire, deposit, chop, plant, or place building) |
-| `B` | Cycle build mode: Forester → Mason → Hunter → Forager → off |
+| `E` or `Enter` | Interact with the cell you stand on (hire, deposit, chop, plant, or place building) |
+| Toolbar build buttons | Choose Forester / Mason / Hunter / Forager / Fisher / Off (`B` still cycles) |
+| Toolbar task buttons | Set draw task for the selected building (`T` still cycles) |
+| Toolbar speed | Simulation speed x1 / x2 / x4 / x8 / x16 |
+| File / Save / Load | In-game dialogs: type a save name, or pick a file from `saves/` |
 | Click | Select villager or building; with villager selected, click building/home to assign |
 | Drag (building selected) | Draw a task area for that building |
-| `T` | Cycle the selected building’s draw task (chop/plant, hunt, forage/plant, etc.) |
-| `C` | Clear task areas on the selected building |
-| `Esc` | Clear selection (hide areas); press again to quit |
+| `C` or toolbar Clear | Clear task areas on the selected building |
+| `Esc` | Close File menu / clear selection; press again to quit |
 | `1`–`4` | Environmental overlays |
 | `R` | Reset world |
 
 ## Current mechanics
 
-- **Hire**: Stand on the work station and press `E`.
-- **Build**: `B` cycles Forester / Mason / Hunter / Forager (2 wood + 2 rock each).
-- **Forager**: Collects mushrooms, berries, berry seeds, herbs, herb seeds; can plant berry/herb seeds. `T` cycles forage/plant modes.
+- **Hire**: Stand on the work station and press `Enter`/`E`.
+- **Build**: Toolbar (or `B`) selects Forester / Mason / Hunter / Forager / Fisher (2 wood + 2 rock each).
+- **Speed**: Toolbar speed buttons run the simulation at x1–x16.
+- **Save / load**: File dialogs — Save asks for a filename; Load lists JSON files in `saves/`.
+- **Resources**: Shown in groups (Food, Construction, Agriculture). Fish is a food resource.
+- **Rock**: Small deposits on soil/grass; large deposits (20+) only on grey rock terrain patches. Water appears as larger lake patches.
+- **Fisher**: Draw fish areas over water; workers catch fish within 1 tile (shore), leave fish on shore, then collect and deliver.
+- **Forager**: Collects mushrooms, berries, berry seeds, herbs, herb seeds; can plant berry/herb seeds. Task buttons / `T` cycle forage/plant modes.
 - **Mushrooms**: Appear on soil beside trees and spread to neighbouring soil.
 - **Berry bushes**: On grass, yield 5 berries then regenerate slowly; rare berry-seed drops; very slow natural spread.
 - **Herbs**: Spawn on grass; harvesting can drop herb seeds.
