@@ -66,3 +66,18 @@ def format_grouped_counts(amounts: dict[str, int], *, skip_zero: bool = False) -
 
 def amounts_from_obj(obj: object) -> dict[str, int]:
     return {key: int(getattr(obj, key, 0)) for key in RESOURCE_KEYS}
+
+
+def merge_amounts(*dicts: dict[str, int]) -> dict[str, int]:
+    totals = {key: 0 for key in RESOURCE_KEYS}
+    for data in dicts:
+        for key in RESOURCE_KEYS:
+            totals[key] += int(data.get(key, 0))
+    return totals
+
+
+def group_totals(amounts: dict[str, int]) -> dict[str, int]:
+    totals = {group: 0 for group in GROUP_ORDER}
+    for res in RESOURCES:
+        totals[res.group] = totals.get(res.group, 0) + int(amounts.get(res.key, 0))
+    return totals

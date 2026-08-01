@@ -21,17 +21,26 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Iterator
 
+from seasons import (
+    Season,
+    berry_despawn_rate,
+    berry_spawn_rate,
+    growth_halted,
+    herb_despawn_rate,
+    herb_spawn_rate,
+    mushroom_despawn_rate,
+    mushroom_spawn_rate,
+    trees_grow_factor,
+    trees_spread_factor,
+)
 from settings import (
     BERRY_BUSH_YIELD,
     BERRY_REGEN_TICKS,
-    BERRY_SPREAD_CHANCE,
     BERRY_SPREAD_INTERVAL,
     DISTURBANCE_INTERACTION_BOOST,
     DISTURBANCE_MAX,
     DISTURBANCE_NEIGHBOUR_SPREAD,
-    HERB_SPAWN_CHANCE,
     HERB_TICK_INTERVAL,
-    MUSHROOM_SPAWN_CHANCE,
     MUSHROOM_SPREAD_CHANCE,
     MUSHROOM_TICK_INTERVAL,
     NATURAL_SPROUT_CHANCE,
@@ -66,6 +75,7 @@ class FeatureType(Enum):
     HUNTER = auto()
     FORAGER = auto()
     FISHER = auto()
+    CONSTRUCTION_SITE = auto()
     MUSHROOM = auto()
     BERRY_BUSH = auto()
     HERB = auto()
@@ -121,45 +131,74 @@ class World:
             for _ in range(self.rows)
         ]
 
-        # Base terrain: only grass and soil (rock / water come in patches).
+        # Base terrain: mostly grass, with soil reserved for forests later.
         for y in range(self.rows):
             for x in range(self.cols):
                 self.cells[y][x].terrain = (
-                    TerrainType.GRASS if rng.random() < 0.58 else TerrainType.SOIL
+                    TerrainType.GRASS if rng.random() < 0.72 else TerrainType.SOIL
                 )
 
-        # Larger water patches (lakes / ponds).
+        # Compact water ponds (not map-spanning lakes).
         self._place_clusters(
             rng,
-            count=max(2, self.cols // 14),
-            radius=4,
-            density=0.78,
+            count=max(2, self.cols // 20),
+            radius=2,
+            density=0.55,
             apply=lambda c: setattr(c, "terrain", TerrainType.WATER),
         )
-        # Grow water once more from existing water to keep patches contiguous.
-        self._expand_terrain_patches(rng, TerrainType.WATER, passes=1, chance=0.45)
 
-        # Grey rock terrain only in patches.
+        # Compact grey rock outcrops.
         def _paint_rock(cell: Cell) -> None:
             if cell.terrain != TerrainType.WATER:
                 cell.terrain = TerrainType.ROCK
 
         self._place_clusters(
             rng,
-            count=max(2, self.cols // 16),
-            radius=3,
-            density=0.72,
+            count=max(2, self.cols // 22),
+            radius=2,
+            density=0.5,
             apply=_paint_rock,
         )
-        self._expand_terrain_patches(rng, TerrainType.ROCK, passes=1, chance=0.4)
 
-        # Tree clusters on grass/soil (not water).
-        for _ in range(6):
+        # Larger forest clearings: soil patches, then dense tree cover on them.
+        forest_centres: list[tuple[int, int]] = []
+        for _ in range(max(3, self.cols // 10)):
+            cx = rng.randint(2, self.cols - 3)
+            cy = rng.randint(2, self.rows - 3)
+            forest_centres.append((cx, cy))
+            for ny, nx in self.neighbourhood(cx, cy, radius=3):
+                cell = self.cells[ny][nx]
+                if cell.terrain == TerrainType.WATER:
+                    continue
+                # Soil under the canopy; keep rock outcrops if already placed.
+                if cell.terrain != TerrainType.ROCK and rng.random() < 0.85:
+                    cell.terrain = TerrainType.SOIL
+
+        for cx, cy in forest_centres:
+            for ny, nx in self.neighbourhood(cx, cy, radius=3):
+                cell = self.cells[ny][nx]
+                if cell.terrain != TerrainType.SOIL:
+                    continue
+                if cell.feature != FeatureType.NONE:
+                    continue
+                # Dense core, thinner fringe.
+                dist = max(abs(nx - cx), abs(ny - cy))
+                chance = 0.9 if dist <= 1 else 0.7 if dist <= 2 else 0.45
+                if rng.random() < chance:
+                    cell.feature = FeatureType.TREE
+                    cell.deposit = TREE_WOOD_DEPOSIT
+
+        # A few smaller mixed tree clumps on remaining soil/grass.
+        for _ in range(3):
             cx = rng.randint(1, self.cols - 2)
             cy = rng.randint(1, self.rows - 2)
-            for ny, nx in self.neighbourhood(cx, cy, radius=2):
+            for ny, nx in self.neighbourhood(cx, cy, radius=1):
                 cell = self.cells[ny][nx]
-                if cell.terrain in (TerrainType.GRASS, TerrainType.SOIL) and rng.random() < 0.55:
+                if (
+                    cell.feature == FeatureType.NONE
+                    and cell.terrain in (TerrainType.GRASS, TerrainType.SOIL)
+                    and rng.random() < 0.5
+                ):
                     cell.feature = FeatureType.TREE
                     cell.deposit = TREE_WOOD_DEPOSIT
 
@@ -188,7 +227,8 @@ class World:
             and self.cells[y][x].feature == FeatureType.NONE
         ]
         rng.shuffle(rock_tiles)
-        for x, y in rock_tiles[: max(4, len(rock_tiles) // 3)]:
+        large_count = min(len(rock_tiles), max(3, len(rock_tiles) // 2))
+        for x, y in rock_tiles[:large_count]:
             cell = self.cells[y][x]
             cell.feature = FeatureType.ROCK
             cell.deposit = rng.randint(ROCK_LARGE_MIN, ROCK_LARGE_MAX)
@@ -344,7 +384,8 @@ class World:
     def next_step_toward(self, start: tuple[int, int], goal: tuple[int, int]) -> tuple[int, int] | None:
         """Return the next cell on a shortest walkable path (BFS), or None if unreachable.
 
-        Avoids greedy pathfinding getting stuck against water / map edges.
+        Uses 4-directional (cardinal) steps so villagers walk in clean corridors
+        instead of diagonal staircases.
         """
         if start == goal:
             return goal
@@ -362,17 +403,22 @@ class World:
             if (cx, cy) == (gx, gy):
                 found = True
                 break
-            for dy in (-1, 0, 1):
-                for dx in (-1, 0, 1):
-                    if dx == 0 and dy == 0:
-                        continue
-                    nx, ny = cx + dx, cy + dy
-                    if (nx, ny) in came_from:
-                        continue
-                    if not self.is_walkable(nx, ny):
-                        continue
-                    came_from[(nx, ny)] = (cx, cy)
-                    queue.append((nx, ny))
+            # Prefer the dominant axis toward the goal so equal-length paths stay straight.
+            local: list[tuple[int, int]] = []
+            rest: list[tuple[int, int]] = []
+            for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+                if abs(gx - cx) >= abs(gy - cy):
+                    (local if dx != 0 else rest).append((dx, dy))
+                else:
+                    (local if dy != 0 else rest).append((dx, dy))
+            for dx, dy in local + rest:
+                nx, ny = cx + dx, cy + dy
+                if (nx, ny) in came_from:
+                    continue
+                if not self.is_walkable(nx, ny):
+                    continue
+                came_from[(nx, ny)] = (cx, cy)
+                queue.append((nx, ny))
 
         if not found:
             return None
@@ -386,43 +432,149 @@ class World:
     # ------------------------------------------------------------------
     # Simulation ticks (growth, optional disturbance decay)
     # ------------------------------------------------------------------
-    def tick(self, decay_per_tick: float = 0.0) -> None:
-        """Advance growth, forage ecology, sprouting, and disturbance decay."""
+    def tick(self, decay_per_tick: float = 0.0, day: float = 0.0) -> None:
+        """Advance growth and gradual seasonal ecology for the calendar day."""
+        grow = trees_grow_factor(day)
+        halt = growth_halted(day)
+
         for y in range(self.rows):
             for x in range(self.cols):
                 cell = self.cells[y][x]
-                if cell.feature == FeatureType.SAPLING:
-                    cell.growth_ticks -= 1
+                if grow > 0.05 and cell.feature == FeatureType.SAPLING:
+                    # Scale maturity speed by seasonal growth factor.
+                    cell.growth_ticks -= max(1, int(round(grow)))
                     if cell.growth_ticks <= 0:
                         cell.feature = FeatureType.TREE
                         cell.growth_ticks = 0
                         cell.deposit = TREE_WOOD_DEPOSIT
-                elif cell.feature == FeatureType.BERRY_BUSH and cell.growth_ticks > 0:
-                    cell.growth_ticks -= 1
+                elif grow > 0.05 and cell.feature == FeatureType.BERRY_BUSH and cell.growth_ticks > 0:
+                    cell.growth_ticks -= max(1, int(round(grow)))
                     if cell.growth_ticks <= 0 and cell.deposit <= 0:
                         cell.deposit = BERRY_BUSH_YIELD
                 if decay_per_tick > 0 and cell.disturbance > 0:
                     cell.disturbance = max(0.0, cell.disturbance - decay_per_tick)
 
-        self._sprout_timer -= 1
-        if self._sprout_timer <= 0:
-            self._sprout_timer = NATURAL_SPROUT_INTERVAL
-            self._try_natural_sprouts()
+        if halt:
+            # Still allow gradual winter despawns (mushrooms).
+            self._mushroom_timer -= 1
+            if self._mushroom_timer <= 0:
+                self._mushroom_timer = MUSHROOM_TICK_INTERVAL
+                self._tick_mushrooms_seasonal(day)
+            self._herb_timer -= 1
+            if self._herb_timer <= 0:
+                self._herb_timer = HERB_TICK_INTERVAL
+                self._tick_herbs_seasonal(day)
+            self._berry_spread_timer -= 1
+            if self._berry_spread_timer <= 0:
+                self._berry_spread_timer = BERRY_SPREAD_INTERVAL
+                self._tick_berries_seasonal(day)
+            return
+
+        spread = trees_spread_factor(day)
+        if spread > 0.05:
+            self._sprout_timer -= 1
+            if self._sprout_timer <= 0:
+                self._sprout_timer = max(30, int(NATURAL_SPROUT_INTERVAL / max(0.2, spread)))
+                if self._sprout_rng.random() < spread:
+                    self._try_natural_sprouts()
 
         self._mushroom_timer -= 1
         if self._mushroom_timer <= 0:
             self._mushroom_timer = MUSHROOM_TICK_INTERVAL
-            self._tick_mushrooms()
+            self._tick_mushrooms_seasonal(day)
 
         self._berry_spread_timer -= 1
         if self._berry_spread_timer <= 0:
             self._berry_spread_timer = BERRY_SPREAD_INTERVAL
-            self._tick_berry_spread()
+            self._tick_berries_seasonal(day)
 
         self._herb_timer -= 1
         if self._herb_timer <= 0:
             self._herb_timer = HERB_TICK_INTERVAL
-            self._tick_herbs()
+            self._tick_herbs_seasonal(day)
+
+    def _tick_herbs_seasonal(self, day: float) -> None:
+        for y in range(self.rows):
+            for x in range(self.cols):
+                cell = self.cells[y][x]
+                if cell.feature == FeatureType.HERB:
+                    if self._forage_rng.random() < herb_despawn_rate(day, x, y):
+                        cell.feature = FeatureType.NONE
+                        cell.deposit = 0
+                        cell.growth_ticks = 0
+                elif (
+                    cell.feature == FeatureType.NONE
+                    and cell.terrain == TerrainType.GRASS
+                    and self._forage_rng.random() < herb_spawn_rate(day, x, y)
+                ):
+                    cell.feature = FeatureType.HERB
+
+    def _tick_berries_seasonal(self, day: float) -> None:
+        # Despawn existing bushes gradually.
+        bushes = [
+            (x, y)
+            for y in range(self.rows)
+            for x in range(self.cols)
+            if self.cells[y][x].feature == FeatureType.BERRY_BUSH
+        ]
+        for bx, by in bushes:
+            if self._forage_rng.random() < berry_despawn_rate(day, bx, by):
+                cell = self.cells[by][bx]
+                cell.feature = FeatureType.NONE
+                cell.deposit = 0
+                cell.growth_ticks = 0
+
+        # Spread / appear onto empty grass.
+        for y in range(self.rows):
+            for x in range(self.cols):
+                cell = self.cells[y][x]
+                if (
+                    cell.feature == FeatureType.NONE
+                    and cell.terrain == TerrainType.GRASS
+                    and self._forage_rng.random() < berry_spawn_rate(day, x, y)
+                ):
+                    self.plant_berry_bush(x, y)
+
+    def _tick_mushrooms_seasonal(self, day: float) -> None:
+        existing = [
+            (x, y)
+            for y in range(self.rows)
+            for x in range(self.cols)
+            if self.cells[y][x].feature == FeatureType.MUSHROOM
+        ]
+        for mx, my in existing:
+            if self._forage_rng.random() < mushroom_despawn_rate(day, mx, my):
+                cell = self.cells[my][mx]
+                cell.feature = FeatureType.NONE
+                cell.deposit = 0
+                continue
+            # Seasonal spread while mushrooms are peaking.
+            for ny, nx in self.neighbourhood(mx, my, radius=1):
+                if (nx, ny) == (mx, my):
+                    continue
+                cell = self.cells[ny][nx]
+                if (
+                    cell.feature == FeatureType.NONE
+                    and cell.terrain == TerrainType.SOIL
+                    and self._forage_rng.random()
+                    < MUSHROOM_SPREAD_CHANCE * mushroom_spawn_rate(day, nx, ny) * 20.0
+                ):
+                    cell.feature = FeatureType.MUSHROOM
+
+        for y in range(self.rows):
+            for x in range(self.cols):
+                if self.cells[y][x].feature != FeatureType.TREE:
+                    continue
+                for ny, nx in self.neighbourhood(x, y, radius=1):
+                    if (nx, ny) == (x, y):
+                        continue
+                    cell = self.cells[ny][nx]
+                    if (
+                        cell.feature == FeatureType.NONE
+                        and cell.terrain == TerrainType.SOIL
+                        and self._forage_rng.random() < mushroom_spawn_rate(day, nx, ny)
+                    ):
+                        cell.feature = FeatureType.MUSHROOM
 
     def _try_natural_sprouts(self) -> None:
         """Patches of 4+ trees have a 1/8 chance to sprout a sapling on an adjacent empty cell."""
@@ -447,75 +599,6 @@ class World:
                 continue
             sx, sy = self._sprout_rng.choice(candidates)
             self.plant_sapling(sx, sy)
-
-    def _tick_mushrooms(self) -> None:
-        """Spawn mushrooms on soil beside trees; spread into neighbouring soil."""
-        # Spread existing mushrooms first (snapshot positions).
-        existing = [
-            (x, y)
-            for y in range(self.rows)
-            for x in range(self.cols)
-            if self.cells[y][x].feature == FeatureType.MUSHROOM
-        ]
-        for mx, my in existing:
-            for ny, nx in self.neighbourhood(mx, my, radius=1):
-                if (nx, ny) == (mx, my):
-                    continue
-                cell = self.cells[ny][nx]
-                if (
-                    cell.feature == FeatureType.NONE
-                    and cell.terrain == TerrainType.SOIL
-                    and self._forage_rng.random() < MUSHROOM_SPREAD_CHANCE
-                ):
-                    cell.feature = FeatureType.MUSHROOM
-
-        # Spawn near trees on soil.
-        for y in range(self.rows):
-            for x in range(self.cols):
-                if self.cells[y][x].feature != FeatureType.TREE:
-                    continue
-                for ny, nx in self.neighbourhood(x, y, radius=1):
-                    if (nx, ny) == (x, y):
-                        continue
-                    cell = self.cells[ny][nx]
-                    if (
-                        cell.feature == FeatureType.NONE
-                        and cell.terrain == TerrainType.SOIL
-                        and self._forage_rng.random() < MUSHROOM_SPAWN_CHANCE
-                    ):
-                        cell.feature = FeatureType.MUSHROOM
-
-    def _tick_berry_spread(self) -> None:
-        bushes = [
-            (x, y)
-            for y in range(self.rows)
-            for x in range(self.cols)
-            if self.cells[y][x].feature == FeatureType.BERRY_BUSH
-        ]
-        for bx, by in bushes:
-            if self._forage_rng.random() > BERRY_SPREAD_CHANCE:
-                continue
-            neighbours = [
-                (nx, ny)
-                for ny, nx in self.neighbourhood(bx, by, radius=1)
-                if (nx, ny) != (bx, by)
-                and self.cells[ny][nx].feature == FeatureType.NONE
-                and self.cells[ny][nx].terrain == TerrainType.GRASS
-            ]
-            if neighbours:
-                nx, ny = self._forage_rng.choice(neighbours)
-                self.plant_berry_bush(nx, ny)
-
-    def _tick_herbs(self) -> None:
-        for y in range(self.rows):
-            for x in range(self.cols):
-                cell = self.cells[y][x]
-                if (
-                    cell.feature == FeatureType.NONE
-                    and cell.terrain == TerrainType.GRASS
-                    and self._forage_rng.random() < HERB_SPAWN_CHANCE
-                ):
-                    cell.feature = FeatureType.HERB
 
     def plant_sapling(self, x: int, y: int) -> bool:
         cell = self.get_cell(x, y)

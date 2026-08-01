@@ -14,27 +14,32 @@ GRID_ROWS: int = 18
 CELL_SIZE: int = 40
 PANEL_WIDTH: int = 300
 TOOLBAR_HEIGHT: int = 64
+RESOURCE_BAR_HEIGHT: int = 36
+MAP_OFFSET_Y: int = TOOLBAR_HEIGHT + RESOURCE_BAR_HEIGHT
 WINDOW_WIDTH: int = GRID_COLS * CELL_SIZE + PANEL_WIDTH
-WINDOW_HEIGHT: int = TOOLBAR_HEIGHT + GRID_ROWS * CELL_SIZE
+WINDOW_HEIGHT: int = MAP_OFFSET_Y + GRID_ROWS * CELL_SIZE
 FPS: int = 60
-SIM_SPEEDS: tuple[int, ...] = (1, 2, 4, 8, 16)
+SIM_SPEEDS: tuple[int, ...] = (0, 1, 2, 4, 8, 16)
 
 
 def configure_for_display(screen_w: int, screen_h: int) -> None:
     """Pick grid and cell size so the map + sidebar fit inside the display.
 
-    Leaves room for OS chrome (menu bar, window title, dock/taskbar) and the
-    top toolbar. Keeps +4 map cells on each axis vs a large-cell baseline,
-    then shrinks cells so the final window never exceeds the usable area.
+    Leaves room for OS chrome (menu bar, window title, dock/taskbar), the
+    top toolbar, and the resource bar. Adds +8 map cells on each axis vs a
+    large-cell baseline, then shrinks cells so the window fits.
     """
-    global GRID_COLS, GRID_ROWS, CELL_SIZE, WINDOW_WIDTH, WINDOW_HEIGHT, PANEL_WIDTH, TOOLBAR_HEIGHT
+    global GRID_COLS, GRID_ROWS, CELL_SIZE, WINDOW_WIDTH, WINDOW_HEIGHT
+    global PANEL_WIDTH, TOOLBAR_HEIGHT, RESOURCE_BAR_HEIGHT, MAP_OFFSET_Y
 
     PANEL_WIDTH = 300
     TOOLBAR_HEIGHT = 64
+    RESOURCE_BAR_HEIGHT = 36
+    MAP_OFFSET_Y = TOOLBAR_HEIGHT + RESOURCE_BAR_HEIGHT
     # Client area from set_mode does not include title bar; dock/menu also
     # steal vertical space — keep a generous height margin on macOS/Windows.
     usable_w = max(800, screen_w - 24)
-    usable_h = max(560, screen_h - 110 - TOOLBAR_HEIGHT)
+    usable_h = max(560, screen_h - 110 - MAP_OFFSET_Y)
     map_w = max(400, usable_w - PANEL_WIDTH)
 
     base_cols = 20
@@ -47,17 +52,18 @@ def configure_for_display(screen_w: int, screen_h: int) -> None:
             base_rows = rows
             break
 
-    cols = base_cols + 4
-    rows = base_rows + 4
+    # +4 twice from the original fill baseline.
+    cols = base_cols + 8
+    rows = base_rows + 8
     cell = min(map_w // cols, usable_h // rows)
-    if cell < 16:
-        cols, rows = base_cols, base_rows
+    if cell < 14:
+        cols, rows = base_cols + 4, base_rows + 4
         cell = max(12, min(map_w // cols, usable_h // rows))
 
     # Shrink until the window fits (never force a min cell that overflows).
     while cell > 12 and (
         cols * cell + PANEL_WIDTH > usable_w
-        or TOOLBAR_HEIGHT + rows * cell > usable_h + TOOLBAR_HEIGHT
+        or MAP_OFFSET_Y + rows * cell > usable_h + MAP_OFFSET_Y
     ):
         cell -= 1
 
@@ -65,13 +71,13 @@ def configure_for_display(screen_w: int, screen_h: int) -> None:
     GRID_ROWS = rows
     CELL_SIZE = cell
     WINDOW_WIDTH = cols * cell + PANEL_WIDTH
-    WINDOW_HEIGHT = TOOLBAR_HEIGHT + rows * cell
+    WINDOW_HEIGHT = MAP_OFFSET_Y + rows * cell
 # ---------------------------------------------------------------------------
 # Simulation
 # ---------------------------------------------------------------------------
 RANDOM_SEED: int = 42
 INVENTORY_CAPACITY: int = 8
-MAX_VILLAGERS: int = 6
+MAX_VILLAGERS: int = 20
 BUILDING_STORAGE_CAPACITY: int = 20
 FORESTER_COST_WOOD: int = 2
 FORESTER_COST_ROCK: int = 2
@@ -83,6 +89,24 @@ FORAGER_COST_WOOD: int = 2
 FORAGER_COST_ROCK: int = 2
 FISHER_COST_WOOD: int = 2
 FISHER_COST_ROCK: int = 2
+
+STARTING_WOOD: int = 2
+STARTING_ROCK: int = 2
+STARTING_FOOD: int = 12  # berries at home so early hires can eat
+BUILD_SECONDS_PER_ITEM: float = 2.0
+# Ticks of construction work required per wood/rock unit (at simulation ×1).
+BUILD_TICKS_PER_ITEM: int = int(FPS * BUILD_SECONDS_PER_ITEM)
+
+# Each villager eats 1 food from storehouse this often (sim ×1).
+VILLAGER_FOOD_INTERVAL: int = FPS * 45
+# Prefer these HomeStorage / inventory food keys in order.
+VILLAGER_FOOD_KEYS: tuple[str, ...] = (
+    "berries",
+    "mushrooms",
+    "fish",
+    "meat",
+    "herbs",
+)
 
 INDICATOR_RADIUS: int = 2
 
@@ -109,9 +133,9 @@ BERRY_SEED_DROP_CHANCE: float = 0.08
 BERRY_SPREAD_CHANCE: float = 0.02  # per bush per forage tick
 BERRY_SPREAD_INTERVAL: int = 600
 
-MUSHROOM_SPAWN_CHANCE: float = 0.04  # soil next to tree, per forage tick
-MUSHROOM_SPREAD_CHANCE: float = 0.06  # into neighbouring soil
-MUSHROOM_TICK_INTERVAL: int = 120
+MUSHROOM_SPAWN_CHANCE: float = 0.012  # soil next to tree, per forage tick
+MUSHROOM_SPREAD_CHANCE: float = 0.02  # into neighbouring soil
+MUSHROOM_TICK_INTERVAL: int = 360
 
 HERB_SPAWN_CHANCE: float = 0.03  # empty grass per forage tick
 HERB_SEED_DROP_CHANCE: float = 0.12
@@ -181,6 +205,7 @@ COLOUR_MENU_BG: Colour = (48, 50, 58)
 COLOUR_SOIL: Colour = (139, 105, 70)
 COLOUR_GRASS: Colour = (90, 150, 70)
 COLOUR_WATER: Colour = (60, 120, 190)
+COLOUR_ICE: Colour = (170, 205, 230)
 COLOUR_ROCK_TERRAIN: Colour = (118, 118, 124)
 COLOUR_ROCK_TERRAIN_DARK: Colour = (95, 95, 102)
 

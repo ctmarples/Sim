@@ -15,6 +15,12 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
+from seasons import (
+    animals_multiply,
+    animals_slow,
+    freeze_amount,
+    water_frozen,
+)
 from settings import (
     ANIMAL_GROWTH_INTERVAL,
     ANIMAL_MOVE_INTERVAL,
@@ -108,14 +114,18 @@ class WildlifeManager:
                 return pos
         return None
 
-    def tick(self, world: World) -> None:
-        self._move_animals(world)
+    def tick(self, world: World, day: float = 0.0) -> None:
+        self._move_animals(world, day)
+        if not animals_multiply(day):
+            return
         self.growth_timer -= 1
         if self.growth_timer <= 0:
             self.growth_timer = ANIMAL_GROWTH_INTERVAL
             self._update_population(world)
 
-    def _move_animals(self, world: World) -> None:
+    def _move_animals(self, world: World, day: float = 0.0) -> None:
+        slow = 1 + int(2 * freeze_amount(day)) if animals_slow(day) else 1
+        move_interval = ANIMAL_MOVE_INTERVAL * slow
         habitat = set(world.habitat_cells_near_trees())
         if not habitat:
             # No tree habitat — animals stay put (population tick will cull).
@@ -138,7 +148,7 @@ class WildlifeManager:
                 animal.x, animal.y = self.rng.choice(neighbours)
             elif (animal.x, animal.y) not in habitat:
                 animal.x, animal.y = self.rng.choice(list(habitat))
-            animal.move_cooldown = ANIMAL_MOVE_INTERVAL
+            animal.move_cooldown = move_interval
 
     def _update_population(self, world: World) -> None:
         patches = world.tree_patches()
@@ -235,14 +245,22 @@ class FishManager:
                 return pos
         return None
 
-    def tick(self, world: World) -> None:
-        self._move_fish(world)
+    def tick(self, world: World, day: float = 0.0) -> None:
+        self._move_fish(world, day)
+        if water_frozen(day) or not animals_multiply(day):
+            return
         self.growth_timer -= 1
         if self.growth_timer <= 0:
             self.growth_timer = FISH_GROWTH_INTERVAL
             self._update_population(world)
 
-    def _move_fish(self, world: World) -> None:
+    def _move_fish(self, world: World, day: float = 0.0) -> None:
+        # Frozen water: fish stay put under the ice.
+        if water_frozen(day):
+            for item in self.fish:
+                if item.move_cooldown > 0:
+                    item.move_cooldown -= 1
+            return
         water = set(world.water_cells())
         if not water:
             for item in self.fish:
