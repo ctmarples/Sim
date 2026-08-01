@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from crops import CROPS
+
 
 @dataclass(frozen=True)
 class ResourceDef:
@@ -17,24 +19,33 @@ class ResourceDef:
 
 
 # Display order within each group follows this list order.
+_CROP_PRODUCE = tuple(
+    ResourceDef(c.produce_key, c.label, "wares", c.short) for c in CROPS
+)
+_CROP_SEEDS = tuple(
+    ResourceDef(c.seed_key, f"{c.label} seeds", "agriculture", f"{c.short}.s")
+    for c in CROPS
+)
+
 RESOURCES: tuple[ResourceDef, ...] = (
     ResourceDef("meat", "Meat", "food", "meat"),
     ResourceDef("fish", "Fish", "food", "fish"),
     ResourceDef("berries", "Berries", "food", "berr"),
     ResourceDef("mushrooms", "Mushrooms", "food", "mush"),
-    ResourceDef("herbs", "Herbs", "food", "herb"),
-    ResourceDef("wood", "Wood", "construction", "wood"),
-    ResourceDef("rock", "Rock", "construction", "rock"),
+    ResourceDef("wood", "Wood", "wares", "wood"),
+    ResourceDef("rock", "Rock", "wares", "rock"),
+    *_CROP_PRODUCE,
     ResourceDef("saplings", "Saplings", "agriculture", "sapl"),
     ResourceDef("berry_seeds", "Berry seeds", "agriculture", "b.sd"),
-    ResourceDef("herb_seeds", "Herb seeds", "agriculture", "h.sd"),
+    *_CROP_SEEDS,
 )
 
-GROUP_ORDER: tuple[str, ...] = ("food", "construction", "agriculture")
+GROUP_ORDER: tuple[str, ...] = ("food", "wares", "agriculture")
 GROUP_LABELS: dict[str, str] = {
     "food": "Food",
-    "construction": "Construction",
+    "wares": "Wares",
     "agriculture": "Agriculture",
+    "construction": "Wares",
 }
 
 RESOURCE_KEYS: tuple[str, ...] = tuple(r.key for r in RESOURCES)

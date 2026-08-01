@@ -21,8 +21,8 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Iterator
 
+from crops import CROP_BY_KEY, CROP_KEYS
 from seasons import (
-    Season,
     berry_despawn_rate,
     berry_spawn_rate,
     growth_halted,
@@ -75,10 +75,14 @@ class FeatureType(Enum):
     HUNTER = auto()
     FORAGER = auto()
     FISHER = auto()
+    FARM = auto()
+    FIELD = auto()
     CONSTRUCTION_SITE = auto()
     MUSHROOM = auto()
     BERRY_BUSH = auto()
-    HERB = auto()
+    HERB = auto()  # legacy; migrated to WILD_CROP on load
+    WILD_CROP = auto()  # wild wheat/flax/sage/hemp patches
+    CROP_HERB = auto()  # farmed crop (growth_ticks > 0 while growing)
 
 
 @dataclass
@@ -92,6 +96,7 @@ class Cell:
     deposit: int = 0  # wood, rock, or berries remaining
     meat_deposit: int = 0
     fish_deposit: int = 0
+    crop_kind: str | None = None  # wheat/flax/sage/hemp for wild & farm crops
 
     def habitat_category(self) -> str:
         if self.feature != FeatureType.NONE:
@@ -276,10 +281,12 @@ class World:
                         FeatureType.MUSHROOM,
                         FeatureType.BERRY_BUSH,
                         FeatureType.HERB,
+                        FeatureType.WILD_CROP,
                     ):
                         cell.feature = FeatureType.NONE
                         cell.deposit = 0
                         cell.growth_ticks = 0
+                        cell.crop_kind = None
                     if cell.terrain == TerrainType.WATER:
                         cell.terrain = TerrainType.GRASS
 
@@ -382,13 +389,18 @@ class World:
         return cell.terrain != TerrainType.WATER
 
     def next_step_toward(self, start: tuple[int, int], goal: tuple[int, int]) -> tuple[int, int] | None:
-        """Return the next cell on a shortest walkable path (BFS), or None if unreachable.
+        """Return the next cell on a shortest walkable path (BFS), or None if unreachable."""
+        path = self.find_path(start, goal)
+        if not path:
+            return None if start != goal else goal
+        return path[0]
 
-        Uses 4-directional (cardinal) steps so villagers walk in clean corridors
-        instead of diagonal staircases.
-        """
+    def find_path(
+        self, start: tuple[int, int], goal: tuple[int, int]
+    ) -> list[tuple[int, int]] | None:
+        """Shortest cardinal path from start→goal as cells after start (includes goal)."""
         if start == goal:
-            return goal
+            return []
         if not self.is_walkable(*goal):
             return None
 
@@ -403,7 +415,6 @@ class World:
             if (cx, cy) == (gx, gy):
                 found = True
                 break
-            # Prefer the dominant axis toward the goal so equal-length paths stay straight.
             local: list[tuple[int, int]] = []
             rest: list[tuple[int, int]] = []
             for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
@@ -423,91 +434,128 @@ class World:
         if not found:
             return None
 
-        # Walk backward from goal to the step after start.
-        cur = (gx, gy)
-        while came_from[cur] is not None and came_from[cur] != start:
+        path: list[tuple[int, int]] = []
+        cur: tuple[int, int] | None = (gx, gy)
+        while cur is not None and cur != start:
+            path.append(cur)
             cur = came_from[cur]
-        return cur
+        path.reverse()
+        return path
 
     # ------------------------------------------------------------------
     # Simulation ticks (growth, optional disturbance decay)
     # ------------------------------------------------------------------
     def tick(self, decay_per_tick: float = 0.0, day: float = 0.0) -> None:
         """Advance growth and gradual seasonal ecology for the calendar day."""
+        self.tick_bulk(1, decay_per_tick=decay_per_tick, day=day)
+
+    def tick_bulk(self, ticks: int, decay_per_tick: float = 0.0, day: float = 0.0) -> None:
+        """Apply `ticks` ecology steps at once (for headless fast-forward)."""
+        if ticks <= 0:
+            return
         grow = trees_grow_factor(day)
         halt = growth_halted(day)
+        grow_step = max(1, int(round(grow))) if grow > 0.05 else 0
 
         for y in range(self.rows):
             for x in range(self.cols):
                 cell = self.cells[y][x]
-                if grow > 0.05 and cell.feature == FeatureType.SAPLING:
-                    # Scale maturity speed by seasonal growth factor.
-                    cell.growth_ticks -= max(1, int(round(grow)))
+                if grow_step > 0 and cell.feature == FeatureType.SAPLING:
+                    cell.growth_ticks -= grow_step * ticks
                     if cell.growth_ticks <= 0:
                         cell.feature = FeatureType.TREE
                         cell.growth_ticks = 0
                         cell.deposit = TREE_WOOD_DEPOSIT
-                elif grow > 0.05 and cell.feature == FeatureType.BERRY_BUSH and cell.growth_ticks > 0:
-                    cell.growth_ticks -= max(1, int(round(grow)))
+                elif grow_step > 0 and cell.feature == FeatureType.BERRY_BUSH and cell.growth_ticks > 0:
+                    cell.growth_ticks -= grow_step * ticks
                     if cell.growth_ticks <= 0 and cell.deposit <= 0:
                         cell.deposit = BERRY_BUSH_YIELD
+                        cell.growth_ticks = 0
+                elif grow_step > 0 and cell.feature == FeatureType.CROP_HERB and cell.growth_ticks > 0:
+                    cell.growth_ticks -= grow_step * ticks
+                    if cell.growth_ticks < 0:
+                        cell.growth_ticks = 0
                 if decay_per_tick > 0 and cell.disturbance > 0:
-                    cell.disturbance = max(0.0, cell.disturbance - decay_per_tick)
+                    cell.disturbance = max(0.0, cell.disturbance - decay_per_tick * ticks)
+
+        # Seasonal spawn/despawn timers: fire the same number of times as real ticks.
+        def _drain_timer(attr: str, interval: int, callback) -> None:
+            remaining = ticks
+            interval = max(1, interval)
+            while remaining > 0:
+                left = max(0, int(getattr(self, attr)))
+                if left <= 0:
+                    setattr(self, attr, interval)
+                    callback(day)
+                    remaining -= 1
+                    continue
+                if left > remaining:
+                    setattr(self, attr, left - remaining)
+                    return
+                remaining -= left
+                setattr(self, attr, interval)
+                callback(day)
 
         if halt:
-            # Still allow gradual winter despawns (mushrooms).
-            self._mushroom_timer -= 1
-            if self._mushroom_timer <= 0:
-                self._mushroom_timer = MUSHROOM_TICK_INTERVAL
-                self._tick_mushrooms_seasonal(day)
-            self._herb_timer -= 1
-            if self._herb_timer <= 0:
-                self._herb_timer = HERB_TICK_INTERVAL
-                self._tick_herbs_seasonal(day)
-            self._berry_spread_timer -= 1
-            if self._berry_spread_timer <= 0:
-                self._berry_spread_timer = BERRY_SPREAD_INTERVAL
-                self._tick_berries_seasonal(day)
+            _drain_timer("_mushroom_timer", MUSHROOM_TICK_INTERVAL, self._tick_mushrooms_seasonal)
+            _drain_timer("_herb_timer", HERB_TICK_INTERVAL, self._tick_herbs_seasonal)
+            _drain_timer("_berry_spread_timer", BERRY_SPREAD_INTERVAL, self._tick_berries_seasonal)
             return
 
         spread = trees_spread_factor(day)
         if spread > 0.05:
-            self._sprout_timer -= 1
-            if self._sprout_timer <= 0:
-                self._sprout_timer = max(30, int(NATURAL_SPROUT_INTERVAL / max(0.2, spread)))
+            sprout_interval = max(30, int(NATURAL_SPROUT_INTERVAL / max(0.2, spread)))
+
+            def _sprout(_day: float) -> None:
                 if self._sprout_rng.random() < spread:
                     self._try_natural_sprouts()
 
-        self._mushroom_timer -= 1
-        if self._mushroom_timer <= 0:
-            self._mushroom_timer = MUSHROOM_TICK_INTERVAL
-            self._tick_mushrooms_seasonal(day)
+            _drain_timer("_sprout_timer", sprout_interval, _sprout)
+        else:
+            self._sprout_timer = max(0, self._sprout_timer - ticks)
 
-        self._berry_spread_timer -= 1
-        if self._berry_spread_timer <= 0:
-            self._berry_spread_timer = BERRY_SPREAD_INTERVAL
-            self._tick_berries_seasonal(day)
-
-        self._herb_timer -= 1
-        if self._herb_timer <= 0:
-            self._herb_timer = HERB_TICK_INTERVAL
-            self._tick_herbs_seasonal(day)
+        _drain_timer("_mushroom_timer", MUSHROOM_TICK_INTERVAL, self._tick_mushrooms_seasonal)
+        _drain_timer("_berry_spread_timer", BERRY_SPREAD_INTERVAL, self._tick_berries_seasonal)
+        _drain_timer("_herb_timer", HERB_TICK_INTERVAL, self._tick_herbs_seasonal)
 
     def _tick_herbs_seasonal(self, day: float) -> None:
+        """Wild crop patches on grass (replaces generic herbs)."""
         for y in range(self.rows):
             for x in range(self.cols):
                 cell = self.cells[y][x]
-                if cell.feature == FeatureType.HERB:
+                if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP):
                     if self._forage_rng.random() < herb_despawn_rate(day, x, y):
                         cell.feature = FeatureType.NONE
                         cell.deposit = 0
                         cell.growth_ticks = 0
+                        cell.crop_kind = None
                 elif (
                     cell.feature == FeatureType.NONE
                     and cell.terrain == TerrainType.GRASS
-                    and self._forage_rng.random() < herb_spawn_rate(day, x, y)
+                    and self._forage_rng.random() < herb_spawn_rate(day, x, y) * 0.55
                 ):
-                    cell.feature = FeatureType.HERB
+                    crop_key = self._forage_rng.choice(CROP_KEYS)
+                    self._plant_wild_crop_patch(x, y, crop_key)
+
+    def _plant_wild_crop_patch(self, x: int, y: int, crop_key: str) -> None:
+        """Place a small contiguous wild-crop patch centred near (x, y)."""
+        if not self.plant_wild_crop(x, y, crop_key):
+            return
+        extras = self._forage_rng.randint(1, 4)
+        placed = 0
+        candidates = [
+            (nx, ny)
+            for ny, nx in self.neighbourhood(x, y, radius=2)
+            if (nx, ny) != (x, y)
+        ]
+        self._forage_rng.shuffle(candidates)
+        for nx, ny in candidates:
+            if placed >= extras:
+                break
+            if self._forage_rng.random() > 0.55:
+                continue
+            if self.plant_wild_crop(nx, ny, crop_key):
+                placed += 1
 
     def _tick_berries_seasonal(self, day: float) -> None:
         # Despawn existing bushes gradually.
@@ -624,16 +672,95 @@ class World:
         cell.growth_ticks = 0
         return True
 
-    def plant_herb(self, x: int, y: int) -> bool:
+    def plant_herb(self, x: int, y: int, crop_key: str = "sage") -> bool:
+        """Legacy alias for planting a single wild crop plant."""
+        return self.plant_wild_crop(x, y, crop_key)
+
+    def plant_wild_crop(self, x: int, y: int, crop_key: str) -> bool:
         cell = self.get_cell(x, y)
         if cell is None or cell.feature != FeatureType.NONE:
             return False
         if cell.terrain != TerrainType.GRASS:
             return False
-        cell.feature = FeatureType.HERB
+        if crop_key not in CROP_BY_KEY:
+            crop_key = "sage"
+        cell.feature = FeatureType.WILD_CROP
+        cell.crop_kind = crop_key
         cell.deposit = 0
         cell.growth_ticks = 0
         return True
+
+    def plough_tile(self, x: int, y: int) -> bool:
+        """Turn a field tile into bare soil ready for sowing."""
+        cell = self.get_cell(x, y)
+        if cell is None:
+            return False
+        if cell.terrain == TerrainType.WATER or cell.terrain == TerrainType.ROCK:
+            return False
+        if cell.feature in (
+            FeatureType.HOME,
+            FeatureType.WORKSTATION,
+            FeatureType.FORESTER,
+            FeatureType.MASON,
+            FeatureType.HUNTER,
+            FeatureType.FORAGER,
+            FeatureType.FISHER,
+            FeatureType.FARM,
+            FeatureType.FIELD,
+            FeatureType.CONSTRUCTION_SITE,
+        ):
+            return False
+        if cell.terrain == TerrainType.SOIL and cell.feature == FeatureType.NONE:
+            return False
+        cell.terrain = TerrainType.SOIL
+        cell.feature = FeatureType.NONE
+        cell.growth_ticks = 0
+        cell.deposit = 0
+        cell.crop_kind = None
+        return True
+
+    def sow_crop(self, x: int, y: int, crop_key: str, growth_ticks: int) -> bool:
+        """Sow crop seeds on ploughed soil."""
+        cell = self.get_cell(x, y)
+        if cell is None or cell.feature != FeatureType.NONE:
+            return False
+        if cell.terrain != TerrainType.SOIL:
+            return False
+        if crop_key not in CROP_BY_KEY:
+            return False
+        cell.feature = FeatureType.CROP_HERB
+        cell.crop_kind = crop_key
+        cell.growth_ticks = max(1, growth_ticks)
+        cell.deposit = 0
+        return True
+
+    def sow_herb_crop(self, x: int, y: int) -> bool:
+        """Legacy: sow sage with default spring growth."""
+        from seasons import TICKS_PER_DAY
+
+        crop = CROP_BY_KEY["sage"]
+        return self.sow_crop(x, y, crop.key, crop.growth_days * TICKS_PER_DAY)
+
+    def crop_herb_ready(self, x: int, y: int) -> bool:
+        cell = self.get_cell(x, y)
+        return (
+            cell is not None
+            and cell.feature == FeatureType.CROP_HERB
+            and cell.growth_ticks <= 0
+        )
+
+    def harvest_crop_herb(self, x: int, y: int) -> str | None:
+        """Harvest a ready farm crop; returns crop_kind or None."""
+        cell = self.get_cell(x, y)
+        if cell is None or cell.feature != FeatureType.CROP_HERB:
+            return None
+        if cell.growth_ticks > 0:
+            return None
+        kind = cell.crop_kind or "sage"
+        cell.feature = FeatureType.NONE
+        cell.growth_ticks = 0
+        cell.crop_kind = None
+        return kind
 
     def harvest_mushroom(self, x: int, y: int) -> bool:
         cell = self.get_cell(x, y)
@@ -652,12 +779,21 @@ class World:
             cell.growth_ticks = BERRY_REGEN_TICKS
         return taken
 
-    def harvest_herb(self, x: int, y: int) -> bool:
+    def harvest_herb(self, x: int, y: int) -> str | None:
+        """Harvest wild crop/herb; returns crop_kind or None."""
         cell = self.get_cell(x, y)
-        if cell is None or cell.feature != FeatureType.HERB:
-            return False
+        if cell is None:
+            return None
+        if cell.feature == FeatureType.HERB:
+            cell.feature = FeatureType.NONE
+            cell.crop_kind = None
+            return "sage"
+        if cell.feature != FeatureType.WILD_CROP:
+            return None
+        kind = cell.crop_kind or "sage"
         cell.feature = FeatureType.NONE
-        return True
+        cell.crop_kind = None
+        return kind
 
     def remove_feature(self, x: int, y: int) -> FeatureType | None:
         cell = self.get_cell(x, y)
@@ -667,6 +803,7 @@ class World:
         cell.feature = FeatureType.NONE
         cell.growth_ticks = 0
         cell.deposit = 0
+        cell.crop_kind = None
         return removed
 
     def harvest_wood(self, x: int, y: int, amount: int = 1) -> int:

@@ -126,7 +126,14 @@ class WildlifeManager:
     def _move_animals(self, world: World, day: float = 0.0) -> None:
         slow = 1 + int(2 * freeze_amount(day)) if animals_slow(day) else 1
         move_interval = ANIMAL_MOVE_INTERVAL * slow
-        habitat = set(world.habitat_cells_near_trees())
+        # Habitat set is expensive; refresh every few seconds of sim time.
+        age = getattr(self, "_habitat_age", 0)
+        if age <= 0 or not hasattr(self, "_habitat_cache"):
+            self._habitat_cache = set(world.habitat_cells_near_trees())
+            self._habitat_age = 40
+        else:
+            self._habitat_age = age - 1
+        habitat = self._habitat_cache
         if not habitat:
             # No tree habitat — animals stay put (population tick will cull).
             for animal in self.animals:
@@ -261,7 +268,13 @@ class FishManager:
                 if item.move_cooldown > 0:
                     item.move_cooldown -= 1
             return
-        water = set(world.water_cells())
+        water_age = getattr(self, "_water_age", 0)
+        if water_age <= 0 or not hasattr(self, "_water_cache"):
+            self._water_cache = set(world.water_cells())
+            self._water_age = 80
+        else:
+            self._water_age = water_age - 1
+        water = self._water_cache
         if not water:
             for item in self.fish:
                 if item.move_cooldown > 0:

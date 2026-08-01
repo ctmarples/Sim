@@ -7,6 +7,7 @@ import pygame
 from entities import (
     BUILDING_LABELS,
     PRIORITY_LABELS,
+    RATION_LABELS,
     TASK_LABELS,
     WORK_MODE_LABELS,
     WORK_MODE_SHORT,
@@ -15,6 +16,7 @@ from entities import (
     ConstructionSite,
     HomeStorage,
     Player,
+    RationMode,
     Villager,
     WorkPriority,
 )
@@ -24,6 +26,9 @@ from settings import (
     CELL_SIZE,
     COLOUR_ANIMAL,
     COLOUR_BERRY,
+    COLOUR_CROP,
+    COLOUR_FARM,
+    COLOUR_FIELD,
     COLOUR_FISH,
     COLOUR_FISHER,
     COLOUR_FORAGER,
@@ -237,6 +242,104 @@ class UI:
         btns.append(("H", "assign_home", "Assign as home hauler", False))
         return btns
 
+    def _hunger_bar_colour(self, satiation: float) -> tuple[int, int, int]:
+        s = max(0.0, min(1.0, satiation))
+        if s >= 0.6:
+            return (80, 170, 90)
+        if s >= 0.3:
+            return (200, 160, 50)
+        return (190, 70, 60)
+
+    def _draw_hunger_bar(
+        self,
+        surface: pygame.Surface,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        satiation: float,
+    ) -> None:
+        pygame.draw.rect(surface, (40, 42, 48), pygame.Rect(x, y, w, h), border_radius=2)
+        fill_w = max(0, int(w * max(0.0, min(1.0, satiation))))
+        if fill_w > 0:
+            pygame.draw.rect(
+                surface,
+                self._hunger_bar_colour(satiation),
+                pygame.Rect(x, y, fill_w, h),
+                border_radius=2,
+            )
+        pygame.draw.rect(surface, (70, 72, 80), pygame.Rect(x, y, w, h), 1, border_radius=2)
+
+    def _draw_villager_row(
+        self,
+        surface: pygame.Surface,
+        villager: Villager,
+        label: str,
+        x: int,
+        y: int,
+        *,
+        selected: bool,
+        assign_workplace_mode: bool,
+        local_mouse: tuple[int, int] | None,
+    ) -> int:
+        row_h = 22
+        row = pygame.Rect(x - 4, y - 1, PANEL_WIDTH - 20, row_h)
+        if selected:
+            pygame.draw.rect(surface, (55, 70, 55), row, border_radius=3)
+            pygame.draw.rect(surface, COLOUR_SELECTED_ENTITY, row, 1, border_radius=3)
+
+        ration_label = RATION_LABELS[villager.ration_mode]
+        trailing: list[tuple[str, str, str, bool]] = [
+            (
+                ration_label,
+                f"ration:{villager.id}",
+                f"Rations {ration_label} (click: ½ / ×1 / ×2)",
+                False,
+            )
+        ]
+        if selected:
+            trailing = self._inline_priority_buttons(villager, assign_workplace_mode) + trailing
+
+        # Ration button is wider for "×1" / "½".
+        btn_space = 0
+        for glyph, _a, _t, _act in trailing:
+            btn_w = max(self._ICON_SIZE, 8 + self.font_small.size(glyph)[0])
+            btn_space += btn_w + 3
+        btn_space += 4
+        bar_w = 36
+        gap = 6
+        max_text_w = PANEL_WIDTH - 28 - btn_space - bar_w - gap
+        text = label
+        while self.font_small.size(text)[0] > max_text_w and len(text) > 4:
+            text = text[:-2] + "…"
+
+        colour = COLOUR_TEXT if selected else COLOUR_TEXT_DIM
+        surface.blit(self.font_small.render(text, True, colour), (x, y + 3))
+        self.list_hits.append((row, "villager", villager.id))
+
+        text_w = self.font_small.size(text)[0]
+        bar_x = x + text_w + 6
+        bar_y = y + (row_h - 7) // 2
+        self._draw_hunger_bar(surface, bar_x, bar_y, bar_w, 7, villager.satiation)
+        tip = f"Hunger {int(villager.satiation * 100)}%"
+        bar_rect = pygame.Rect(bar_x, bar_y, bar_w, 7)
+        if local_mouse is not None and bar_rect.collidepoint(local_mouse):
+            self._tooltip = (tip, (bar_rect.centerx, bar_rect.top))
+
+        bx = row.right - 4
+        for glyph, action, tip, active in reversed(trailing):
+            btn_w = max(self._ICON_SIZE, 8 + self.font_small.size(glyph)[0])
+            bx -= btn_w
+            rect = pygame.Rect(bx, y + (row_h - self._ICON_SIZE) // 2, btn_w, self._ICON_SIZE)
+            hovered = local_mouse is not None and rect.collidepoint(local_mouse)
+            self._draw_icon_button(surface, rect, glyph, active=active, hovered=hovered)
+            self.action_hits.append((rect, action, tip))
+            if hovered:
+                self._tooltip = (tip, (rect.centerx, rect.top))
+            bx -= 3
+
+        return y + row_h + 2
+
     def draw_panel(
         self,
         surface: pygame.Surface,
@@ -378,18 +481,15 @@ class UI:
             else:
                 job = "free"
             selected = selected_villager_id == v.id
-            trailing = None
-            if selected:
-                trailing = self._inline_priority_buttons(v, assign_workplace_mode)
-            y = self._draw_list_row(
+            state = "EAT" if v.seeking_food else v.state.name[:4]
+            y = self._draw_villager_row(
                 content,
-                f"#{v.id} {v.state.name[:4]} → {job}",
+                v,
+                f"#{v.id} {state} → {job}",
                 x,
                 y,
                 selected=selected,
-                hit_kind="villager",
-                hit_id=v.id,
-                trailing_btns=trailing,
+                assign_workplace_mode=assign_workplace_mode,
                 local_mouse=local_mouse,
             )
         y += 4
@@ -499,6 +599,8 @@ class UI:
             (COLOUR_HUNTER, "Hunter"),
             (COLOUR_FORAGER, "Forager"),
             (COLOUR_FISHER, "Fisher"),
+            (COLOUR_FARM, "Farm"),
+            (COLOUR_FIELD, "Field"),
             ((90, 90, 70), "Site"),
             (COLOUR_PLAYER, "Player"),
             (COLOUR_VILLAGER, "Villager"),
@@ -583,6 +685,31 @@ def draw_terrain(
         )
 
 
+def _draw_crop_plant(
+    surface: pygame.Surface,
+    cx: int,
+    cy: int,
+    stem_colour: tuple[int, int, int],
+    flower_colour: tuple[int, int, int] | None,
+    *,
+    dense: bool = False,
+) -> None:
+    """Herb/crop glyph: stems flipped 180° (base near top, tip toward bottom)."""
+    offsets = (-4, -1, 2, 5) if dense else (-3, 0, 3)
+    for ox in offsets:
+        tip_x = cx + ox // 2
+        tip_y = cy + 6
+        pygame.draw.line(
+            surface,
+            stem_colour,
+            (cx + ox, cy - 4),
+            (tip_x, tip_y),
+            2,
+        )
+        if flower_colour is not None:
+            pygame.draw.circle(surface, flower_colour, (tip_x, tip_y), 2)
+
+
 def draw_feature(
     surface: pygame.Surface,
     feature: FeatureType,
@@ -590,9 +717,12 @@ def draw_feature(
     cy: int,
     size: int,
     vibrancy: float = 1.0,
+    crop_kind: str | None = None,
 ) -> None:
     if feature == FeatureType.NONE:
         return
+    from crops import CROP_BY_KEY
+
     canopy = adjust_colour(COLOUR_TREE_CANOPY, vibrancy)
     sapling_c = adjust_colour(COLOUR_SAPLING, vibrancy)
     herb_c = adjust_colour(COLOUR_HERB, vibrancy)
@@ -690,6 +820,17 @@ def draw_feature(
             COLOUR_FISH,
             pygame.Rect(cx - 6, cy - 2, 10, 5),
         )
+    elif feature == FeatureType.FARM:
+        half = size // 3
+        body = pygame.Rect(cx - half, cy - half // 2, half * 2, half)
+        pygame.draw.rect(surface, COLOUR_FARM, body)
+        _draw_crop_plant(surface, cx, cy, COLOUR_CROP, None, dense=False)
+    elif feature == FeatureType.FIELD:
+        half = size // 3
+        body = pygame.Rect(cx - half, cy - half // 2, half * 2, half)
+        pygame.draw.rect(surface, COLOUR_FIELD, body)
+        pygame.draw.line(surface, (200, 180, 90), (cx - half + 2, cy), (cx + half - 2, cy), 1)
+        pygame.draw.line(surface, (200, 180, 90), (cx, cy - half // 2 + 2), (cx, cy + half // 2 - 2), 1)
     elif feature == FeatureType.MUSHROOM:
         pygame.draw.circle(surface, mush_c, (cx, cy - 2), max(4, size // 7))
         pygame.draw.rect(surface, (210, 200, 180), pygame.Rect(cx - 2, cy, 4, size // 8))
@@ -697,12 +838,13 @@ def draw_feature(
         pygame.draw.circle(surface, bush_c, (cx, cy), size // 5)
         for ox, oy in ((-4, -2), (3, -3), (0, 2), (4, 1), (-3, 3)):
             pygame.draw.circle(surface, berry_c, (cx + ox, cy + oy), 2)
-    elif feature == FeatureType.HERB:
-        for ox in (-3, 0, 3):
-            pygame.draw.line(
-                surface,
-                herb_c,
-                (cx + ox, cy + 4),
-                (cx + ox // 2, cy - 6),
-                2,
-            )
+    elif feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.CROP_HERB):
+        crop = CROP_BY_KEY.get(crop_kind or "sage") or CROP_BY_KEY["sage"]
+        stem = adjust_colour(crop.stem_colour, vibrancy)
+        flower = (
+            adjust_colour(crop.flower_colour, vibrancy)
+            if crop.flower_colour is not None
+            else None
+        )
+        dense = feature == FeatureType.CROP_HERB
+        _draw_crop_plant(surface, cx, cy, stem, flower, dense=dense)

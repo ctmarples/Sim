@@ -89,6 +89,10 @@ FORAGER_COST_WOOD: int = 2
 FORAGER_COST_ROCK: int = 2
 FISHER_COST_WOOD: int = 2
 FISHER_COST_ROCK: int = 2
+FARM_COST_WOOD: int = 2
+FARM_COST_ROCK: int = 2
+FIELD_COST_WOOD: int = 1
+FIELD_COST_ROCK: int = 0
 
 STARTING_WOOD: int = 2
 STARTING_ROCK: int = 2
@@ -97,15 +101,16 @@ BUILD_SECONDS_PER_ITEM: float = 2.0
 # Ticks of construction work required per wood/rock unit (at simulation ×1).
 BUILD_TICKS_PER_ITEM: int = int(FPS * BUILD_SECONDS_PER_ITEM)
 
-# Each villager eats 1 food from storehouse this often (sim ×1).
-VILLAGER_FOOD_INTERVAL: int = FPS * 45
-# Prefer these HomeStorage / inventory food keys in order.
+# Satiation 1.0 → 0.0 over this many seconds at ×1 (75%→50% ≈ 45s, matching old meal pace).
+VILLAGER_SATIATION_SECONDS: float = 180.0
+VILLAGER_SATIATION_DECAY_PER_TICK: float = 1.0 / (FPS * VILLAGER_SATIATION_SECONDS)
+
+# Prefer these HomeStorage / inventory food keys when eating at random.
 VILLAGER_FOOD_KEYS: tuple[str, ...] = (
     "berries",
     "mushrooms",
     "fish",
     "meat",
-    "herbs",
 )
 
 INDICATOR_RADIUS: int = 2
@@ -123,8 +128,8 @@ ROCK_SMALL_MIN: int = 2
 ROCK_SMALL_MAX: int = 5
 ROCK_LARGE_MIN: int = 20
 ROCK_LARGE_MAX: int = 28
-ANIMAL_MEAT_YIELD: int = 5
-FISH_YIELD: int = 3
+ANIMAL_MEAT_YIELD: int = 3
+FISH_YIELD: int = 2
 
 # Forage resources
 BERRY_BUSH_YIELD: int = 5
@@ -137,9 +142,12 @@ MUSHROOM_SPAWN_CHANCE: float = 0.012  # soil next to tree, per forage tick
 MUSHROOM_SPREAD_CHANCE: float = 0.02  # into neighbouring soil
 MUSHROOM_TICK_INTERVAL: int = 360
 
-HERB_SPAWN_CHANCE: float = 0.03  # empty grass per forage tick
-HERB_SEED_DROP_CHANCE: float = 0.12
+HERB_SPAWN_CHANCE: float = 0.03  # empty grass per forage tick (legacy name)
+HERB_SEED_DROP_CHANCE: float = 0.08  # fallback; prefer CropDef.wild_seed_chance
 HERB_TICK_INTERVAL: int = 150
+# Farm crop growth fallback (~32 in-game days at TICKS_PER_DAY = FPS*4).
+FARM_CROP_GROWTH_TICKS: int = FPS * 4 * 32
+FARM_HERB_SEED_DROP_CHANCE: float = 0.55  # fallback; prefer CropDef.farm_seed_chance
 
 VILLAGER_MOVE_INTERVAL: int = 48
 VILLAGER_WORK_INTERVAL: int = 72
@@ -194,6 +202,10 @@ COLOUR_TASK_MANAGE: Colour = (120, 200, 160)
 COLOUR_TASK_HUNT: Colour = (200, 90, 70)
 COLOUR_TASK_FORAGE: Colour = (100, 160, 120)
 COLOUR_TASK_FISH: Colour = (60, 140, 190)
+COLOUR_TASK_FARM: Colour = (150, 130, 60)
+COLOUR_FARM: Colour = (160, 130, 70)
+COLOUR_FIELD: Colour = (140, 120, 55)
+COLOUR_CROP: Colour = (110, 190, 80)
 
 COLOUR_TOOLBAR_BG: Colour = (36, 38, 44)
 COLOUR_TOOLBAR_BTN: Colour = (55, 58, 68)

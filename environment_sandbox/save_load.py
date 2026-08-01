@@ -6,11 +6,13 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from crops import LEGACY_HERB_PRODUCE, LEGACY_HERB_SEED, PRODUCE_KEYS, SEED_KEYS
 from entities import (
     Building,
     BuildingKind,
     ConstructionSite,
     Inventory,
+    RationMode,
     TaskArea,
     TaskType,
     Villager,
@@ -26,6 +28,19 @@ if TYPE_CHECKING:
 
 SAVE_VERSION = 1
 
+_BASE_STORAGE_KEYS = (
+    "wood",
+    "rock",
+    "meat",
+    "fish",
+    "saplings",
+    "mushrooms",
+    "berries",
+    "berry_seeds",
+)
+_CROP_STORAGE_KEYS = PRODUCE_KEYS + SEED_KEYS
+_STORAGE_KEYS = _BASE_STORAGE_KEYS + _CROP_STORAGE_KEYS
+
 
 def saves_dir() -> Path:
     path = Path(__file__).resolve().parent.parent / "saves"
@@ -39,103 +54,113 @@ def list_save_files() -> list[str]:
 
 
 def _inv_to_dict(inv: Inventory) -> dict[str, int]:
-    return {
-        "wood": inv.wood,
-        "rock": inv.rock,
-        "meat": inv.meat,
-        "fish": inv.fish,
-        "saplings": inv.saplings,
-        "mushrooms": inv.mushrooms,
-        "berries": inv.berries,
-        "berry_seeds": inv.berry_seeds,
-        "herbs": inv.herbs,
-        "herb_seeds": inv.herb_seeds,
-        "capacity": inv.capacity,
-    }
+    data = {key: int(getattr(inv, key, 0)) for key in _STORAGE_KEYS}
+    data["capacity"] = inv.capacity
+    return data
 
 
 def _inv_from_dict(data: dict[str, Any]) -> Inventory:
     inv = Inventory(capacity=int(data.get("capacity", Inventory().capacity)))
-    for key in (
-        "wood",
-        "rock",
-        "meat",
-        "fish",
-        "saplings",
-        "mushrooms",
-        "berries",
-        "berry_seeds",
-        "herbs",
-        "herb_seeds",
-    ):
+    for key in _STORAGE_KEYS:
         setattr(inv, key, int(data.get(key, 0)))
+    # Legacy: generic herbs → sage.
+    inv.sage += int(data.get("herbs", 0))
+    inv.sage_seeds += int(data.get("herb_seeds", 0))
     return inv
 
 
 def _storage_to_dict(obj: Any) -> dict[str, int]:
-    return {
-        "wood": obj.wood,
-        "rock": obj.rock,
-        "meat": obj.meat,
-        "fish": getattr(obj, "fish", 0),
-        "saplings": obj.saplings,
-        "mushrooms": obj.mushrooms,
-        "berries": obj.berries,
-        "berry_seeds": obj.berry_seeds,
-        "herbs": obj.herbs,
-        "herb_seeds": obj.herb_seeds,
-    }
+    return {key: int(getattr(obj, key, 0)) for key in _STORAGE_KEYS}
 
 
 def _apply_storage(obj: Any, data: dict[str, Any]) -> None:
-    for key, value in _storage_to_dict(obj).items():
+    for key in _STORAGE_KEYS:
         setattr(obj, key, int(data.get(key, 0)))
+    # Legacy migration.
+    setattr(obj, LEGACY_HERB_PRODUCE, getattr(obj, LEGACY_HERB_PRODUCE) + int(data.get("herbs", 0)))
+    setattr(
+        obj,
+        LEGACY_HERB_SEED,
+        getattr(obj, LEGACY_HERB_SEED) + int(data.get("herb_seeds", 0)),
+    )
+
+
+def _feature_from_save(name: str) -> FeatureType:
+    if name == "HERB" and "WILD_CROP" in FeatureType.__members__:
+        return FeatureType.WILD_CROP
+    if name == "FIELD" and "FIELD" in FeatureType.__members__:
+        return FeatureType.FIELD
+    try:
+        return FeatureType[name]
+    except KeyError:
+        return FeatureType.NONE
+
+
+def _cell_to_dict(cell: Cell) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "terrain": cell.terrain.name,
+        "feature": cell.feature.name,
+        "disturbance": cell.disturbance,
+        "growth_ticks": cell.growth_ticks,
+        "deposit": cell.deposit,
+        "meat_deposit": cell.meat_deposit,
+        "fish_deposit": cell.fish_deposit,
+    }
+    crop_kind = getattr(cell, "crop_kind", None)
+    if crop_kind is not None:
+        data["crop_kind"] = crop_kind
+    return data
+
+
+def _cell_from_save(c: dict[str, Any]) -> Cell:
+    cell = Cell(
+        terrain=TerrainType[c["terrain"]],
+        feature=_feature_from_save(c["feature"]),
+        disturbance=float(c.get("disturbance", 0.0)),
+        growth_ticks=int(c.get("growth_ticks", 0)),
+        deposit=int(c.get("deposit", 0)),
+        meat_deposit=int(c.get("meat_deposit", 0)),
+        fish_deposit=int(c.get("fish_deposit", 0)),
+    )
+    crop_kind = c.get("crop_kind")
+    if crop_kind is not None:
+        setattr(cell, "crop_kind", crop_kind)
+    elif cell.feature in (FeatureType.CROP_HERB, FeatureType.WILD_CROP):
+        setattr(cell, "crop_kind", "sage")
+    return cell
 
 
 def serialize_game(game: Game) -> dict[str, Any]:
     import settings as cfg
 
     world = game.world
-    cells = [
-        [
-            {
-                "terrain": cell.terrain.name,
-                "feature": cell.feature.name,
-                "disturbance": cell.disturbance,
-                "growth_ticks": cell.growth_ticks,
-                "deposit": cell.deposit,
-                "meat_deposit": cell.meat_deposit,
-                "fish_deposit": cell.fish_deposit,
-            }
-            for cell in row
-        ]
-        for row in world.cells
-    ]
+    cells = [[_cell_to_dict(cell) for cell in row] for row in world.cells]
     buildings = []
     for b in game.buildings.values():
-        buildings.append(
-            {
-                "id": b.id,
-                "kind": b.kind.name,
-                "x": b.x,
-                "y": b.y,
-                "storage": _storage_to_dict(b),
-                "capacity": b.capacity,
-                "draw_task_type": b.draw_task_type.name,
-                "work_mode": b.work_mode.name,
-                "areas": [
-                    {
-                        "x0": a.x0,
-                        "y0": a.y0,
-                        "x1": a.x1,
-                        "y1": a.y1,
-                        "task_type": a.task_type.name,
-                        "building_id": a.building_id,
-                    }
-                    for a in b.areas
-                ],
-            }
-        )
+        bdata: dict[str, Any] = {
+            "id": b.id,
+            "kind": b.kind.name,
+            "x": b.x,
+            "y": b.y,
+            "storage": _storage_to_dict(b),
+            "capacity": b.capacity,
+            "draw_task_type": b.draw_task_type.name,
+            "work_mode": b.work_mode.name,
+            "areas": [
+                {
+                    "x0": a.x0,
+                    "y0": a.y0,
+                    "x1": a.x1,
+                    "y1": a.y1,
+                    "task_type": a.task_type.name,
+                    "building_id": a.building_id,
+                }
+                for a in b.areas
+            ],
+        }
+        if hasattr(b, "crop_kind"):
+            bdata["crop_kind"] = b.crop_kind
+        buildings.append(bdata)
     villagers = []
     for v in game.villagers:
         villagers.append(
@@ -157,6 +182,9 @@ def serialize_game(game: Game) -> dict[str, Any]:
                 "fish_catch_pos": list(v.fish_catch_pos) if v.fish_catch_pos else None,
                 "construction_id": v.construction_id,
                 "priorities": [p.name for p in v.priorities],
+                "satiation": round(v.satiation, 4),
+                "ration_mode": v.ration_mode.name,
+                "seeking_food": v.seeking_food,
             }
         )
     sites = [
@@ -191,7 +219,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
         }
         for f in game.fish.fish
     ]
-    return {
+    payload: dict[str, Any] = {
         "version": SAVE_VERSION,
         "grid": {"cols": world.cols, "rows": world.rows, "seed": world.seed},
         "display": {
@@ -237,6 +265,11 @@ def serialize_game(game: Game) -> dict[str, Any]:
         "place_kind": game.place_kind.name if game.place_kind else None,
         "overlay_mode": game.overlay_mode.name,
     }
+    if hasattr(game, "field_plant_season"):
+        payload["field_plant_season"] = game.field_plant_season.name
+    if hasattr(game, "field_crop_kind"):
+        payload["field_crop_kind"] = game.field_crop_kind
+    return payload
 
 
 def apply_save(game: Game, data: dict[str, Any]) -> None:
@@ -287,20 +320,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     # World.__init__ calls generate(); replace with saved cells.
     cells: list[list[Cell]] = []
     for row in world_data["cells"]:
-        cells.append(
-            [
-                Cell(
-                    terrain=TerrainType[c["terrain"]],
-                    feature=FeatureType[c["feature"]],
-                    disturbance=float(c.get("disturbance", 0.0)),
-                    growth_ticks=int(c.get("growth_ticks", 0)),
-                    deposit=int(c.get("deposit", 0)),
-                    meat_deposit=int(c.get("meat_deposit", 0)),
-                    fish_deposit=int(c.get("fish_deposit", 0)),
-                )
-                for c in row
-            ]
-        )
+        cells.append([_cell_from_save(c) for c in row])
     world.cells = cells
     world.home_pos = tuple(world_data["home_pos"])  # type: ignore[assignment]
     world.workstation_pos = tuple(world_data["workstation_pos"])  # type: ignore[assignment]
@@ -328,6 +348,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             BuildingKind.HUNTER: TaskType.HUNT,
             BuildingKind.FISHER: TaskType.FISH,
             BuildingKind.FORAGER: TaskType.FULL_FORAGE,
+            BuildingKind.FARM: TaskType.FARM_FIELD,
+            BuildingKind.FIELD: TaskType.FARM_FIELD,
         }.get(kind, TaskType.FULL_MANAGE)
         raw_task = bdata.get("draw_task_type")
         if raw_task is None:
@@ -349,7 +371,11 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                 work_mode = Building.work_mode_from_task(kind, draw_task)
         else:
             work_mode = Building.work_mode_from_task(kind, draw_task)
-        if kind not in (BuildingKind.FORESTER, BuildingKind.FORAGER):
+        if kind == BuildingKind.FARM:
+            if raw_mode is None:
+                work_mode = WorkMode.BOTH
+            # else keep loaded Collect / Plant / Both
+        elif kind not in (BuildingKind.FORESTER, BuildingKind.FORAGER, BuildingKind.FIELD):
             work_mode = WorkMode.COLLECT
         building = Building(
             id=int(bdata["id"]),
@@ -360,6 +386,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             draw_task_type=draw_task,
             work_mode=work_mode,
         )
+        if kind == BuildingKind.FIELD:
+            building.crop_kind = str(bdata.get("crop_kind", "sage"))
         building.sync_draw_task_from_mode()
         _apply_storage(building, bdata.get("storage", {}))
         building.areas = [
@@ -406,6 +434,14 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             ]
         else:
             villager.set_default_priorities()
+        villager.satiation = float(vdata.get("satiation", 0.75))
+        villager.satiation = max(0.0, min(1.0, villager.satiation))
+        raw_ration = vdata.get("ration_mode", "NORMAL")
+        try:
+            villager.ration_mode = RationMode[str(raw_ration)]
+        except KeyError:
+            villager.ration_mode = RationMode.NORMAL
+        villager.seeking_food = bool(vdata.get("seeking_food", False))
         game.villagers.append(villager)
 
     game.construction_sites.clear()
@@ -507,6 +543,16 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     game.draw_start = None
     game.draw_current = None
     game._mouse_down_cell = None
+
+    if hasattr(game, "field_plant_season") and "field_plant_season" in data:
+        from seasons import Season
+
+        try:
+            game.field_plant_season = Season[str(data["field_plant_season"])]
+        except KeyError:
+            pass
+    if hasattr(game, "field_crop_kind") and "field_crop_kind" in data:
+        game.field_crop_kind = str(data["field_crop_kind"])
 
 
 def save_to_path(game: Game, path: Path | str) -> None:

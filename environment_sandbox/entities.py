@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
+from crops import PRODUCE_KEYS, SEED_KEYS
 from settings import BUILDING_STORAGE_CAPACITY, INVENTORY_CAPACITY
 
 
@@ -21,6 +22,7 @@ class TaskType(Enum):
     PLANT_BERRY_SEEDS = auto()
     PLANT_HERB_SEEDS = auto()
     FULL_FORAGE = auto()
+    FARM_FIELD = auto()
 
 
 TASK_LABELS: dict[TaskType, str] = {
@@ -32,10 +34,11 @@ TASK_LABELS: dict[TaskType, str] = {
     TaskType.FISH: "Fish area",
     TaskType.FORAGE_MUSHROOMS: "Forage mushrooms",
     TaskType.FORAGE_BERRIES: "Forage berries",
-    TaskType.FORAGE_HERBS: "Forage herbs",
+    TaskType.FORAGE_HERBS: "Forage plants",
     TaskType.PLANT_BERRY_SEEDS: "Plant berry seeds",
     TaskType.PLANT_HERB_SEEDS: "Plant herb seeds",
     TaskType.FULL_FORAGE: "Full forage",
+    TaskType.FARM_FIELD: "Farm field",
 }
 
 
@@ -73,11 +76,6 @@ FORESTER_TASK_CYCLE: tuple[TaskType, ...] = (
 )
 
 FORAGER_TASK_CYCLE: tuple[TaskType, ...] = (
-    TaskType.FORAGE_MUSHROOMS,
-    TaskType.FORAGE_BERRIES,
-    TaskType.FORAGE_HERBS,
-    TaskType.PLANT_BERRY_SEEDS,
-    TaskType.PLANT_HERB_SEEDS,
     TaskType.FULL_FORAGE,
 )
 
@@ -88,6 +86,8 @@ class BuildingKind(Enum):
     HUNTER = auto()
     FORAGER = auto()
     FISHER = auto()
+    FARM = auto()
+    FIELD = auto()
 
 
 BUILDING_LABELS: dict[BuildingKind, str] = {
@@ -96,6 +96,8 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
     BuildingKind.HUNTER: "Hunter",
     BuildingKind.FORAGER: "Forager",
     BuildingKind.FISHER: "Fisher",
+    BuildingKind.FARM: "Farm",
+    BuildingKind.FIELD: "Field",
 }
 
 
@@ -128,6 +130,47 @@ PRIORITY_CYCLE: tuple[WorkPriority, ...] = (
     WorkPriority.NONE,
 )
 
+
+class RationMode(Enum):
+    """How aggressively a villager tops up satiation."""
+
+    HALF = auto()
+    NORMAL = auto()
+    DOUBLE = auto()
+
+
+RATION_LABELS: dict[RationMode, str] = {
+    RationMode.HALF: "½",
+    RationMode.NORMAL: "×1",
+    RationMode.DOUBLE: "×2",
+}
+
+RATION_CYCLE: tuple[RationMode, ...] = (
+    RationMode.HALF,
+    RationMode.NORMAL,
+    RationMode.DOUBLE,
+)
+
+# Eat when satiation falls to this level.
+RATION_EAT_AT: dict[RationMode, float] = {
+    RationMode.HALF: 0.25,
+    RationMode.NORMAL: 0.50,
+    RationMode.DOUBLE: 0.50,
+}
+
+# Satiation after a successful meal.
+RATION_REFILL: dict[RationMode, float] = {
+    RationMode.HALF: 0.50,
+    RationMode.NORMAL: 0.75,
+    RationMode.DOUBLE: 1.00,
+}
+
+RATION_FOOD_AMOUNT: dict[RationMode, int] = {
+    RationMode.HALF: 1,
+    RationMode.NORMAL: 1,
+    RationMode.DOUBLE: 2,
+}
+
 DEFAULT_PRIORITIES_UNASSIGNED: tuple[WorkPriority, ...] = (
     WorkPriority.BUILD,
     WorkPriority.TRANSPORT,
@@ -157,8 +200,14 @@ class Inventory:
     mushrooms: int = 0
     berries: int = 0
     berry_seeds: int = 0
-    herbs: int = 0
-    herb_seeds: int = 0
+    wheat: int = 0
+    flax: int = 0
+    sage: int = 0
+    hemp: int = 0
+    wheat_seeds: int = 0
+    flax_seeds: int = 0
+    sage_seeds: int = 0
+    hemp_seeds: int = 0
     capacity: int = INVENTORY_CAPACITY
 
     @property
@@ -172,8 +221,14 @@ class Inventory:
             + self.mushrooms
             + self.berries
             + self.berry_seeds
-            + self.herbs
-            + self.herb_seeds
+            + self.wheat
+            + self.flax
+            + self.sage
+            + self.hemp
+            + self.wheat_seeds
+            + self.flax_seeds
+            + self.sage_seeds
+            + self.hemp_seeds
         )
 
     @property
@@ -187,83 +242,56 @@ class Inventory:
     def can_add(self, amount: int = 1) -> bool:
         return self.total + amount <= self.capacity
 
-    def add_wood(self, n: int = 1) -> bool:
-        if not self.can_add(n):
+    def add_item(self, key: str, n: int = 1) -> bool:
+        if not hasattr(self, key) or not self.can_add(n):
             return False
-        self.wood += n
+        setattr(self, key, getattr(self, key) + n)
         return True
+
+    def consume_item(self, key: str, n: int = 1) -> bool:
+        if getattr(self, key, 0) < n:
+            return False
+        setattr(self, key, getattr(self, key) - n)
+        return True
+
+    def add_wood(self, n: int = 1) -> bool:
+        return self.add_item("wood", n)
 
     def add_rock(self, n: int = 1) -> bool:
-        if not self.can_add(n):
-            return False
-        self.rock += n
-        return True
+        return self.add_item("rock", n)
 
     def add_meat(self, n: int = 1) -> bool:
-        if not self.can_add(n):
-            return False
-        self.meat += n
-        return True
+        return self.add_item("meat", n)
 
     def add_fish(self, n: int = 1) -> bool:
-        if not self.can_add(n):
-            return False
-        self.fish += n
-        return True
+        return self.add_item("fish", n)
 
     def add_saplings(self, n: int = 1) -> bool:
-        if not self.can_add(n):
-            return False
-        self.saplings += n
-        return True
+        return self.add_item("saplings", n)
 
     def add_mushrooms(self, n: int = 1) -> bool:
-        if not self.can_add(n):
-            return False
-        self.mushrooms += n
-        return True
+        return self.add_item("mushrooms", n)
 
     def add_berries(self, n: int = 1) -> bool:
-        if not self.can_add(n):
-            return False
-        self.berries += n
-        return True
+        return self.add_item("berries", n)
 
     def add_berry_seeds(self, n: int = 1) -> bool:
-        if not self.can_add(n):
-            return False
-        self.berry_seeds += n
-        return True
+        return self.add_item("berry_seeds", n)
 
     def add_herbs(self, n: int = 1) -> bool:
-        if not self.can_add(n):
-            return False
-        self.herbs += n
-        return True
+        return self.add_item("sage", n)
 
     def add_herb_seeds(self, n: int = 1) -> bool:
-        if not self.can_add(n):
-            return False
-        self.herb_seeds += n
-        return True
+        return self.add_item("sage_seeds", n)
 
     def consume_sapling(self) -> bool:
-        if self.saplings <= 0:
-            return False
-        self.saplings -= 1
-        return True
+        return self.consume_item("saplings", 1)
 
     def consume_berry_seed(self) -> bool:
-        if self.berry_seeds <= 0:
-            return False
-        self.berry_seeds -= 1
-        return True
+        return self.consume_item("berry_seeds", 1)
 
     def consume_herb_seed(self) -> bool:
-        if self.herb_seeds <= 0:
-            return False
-        self.herb_seeds -= 1
-        return True
+        return self.consume_item("sage_seeds", 1)
 
     def clear(self) -> dict[str, int]:
         deposited = {
@@ -275,8 +303,8 @@ class Inventory:
             "mushrooms": self.mushrooms,
             "berries": self.berries,
             "berry_seeds": self.berry_seeds,
-            "herbs": self.herbs,
-            "herb_seeds": self.herb_seeds,
+            **{key: getattr(self, key) for key in PRODUCE_KEYS},
+            **{key: getattr(self, key) for key in SEED_KEYS},
         }
         self.reset()
         return deposited
@@ -284,7 +312,8 @@ class Inventory:
     def reset(self) -> None:
         self.wood = self.rock = self.meat = self.fish = self.saplings = 0
         self.mushrooms = self.berries = self.berry_seeds = 0
-        self.herbs = self.herb_seeds = 0
+        for key in PRODUCE_KEYS + SEED_KEYS:
+            setattr(self, key, 0)
 
 
 @dataclass
@@ -297,8 +326,14 @@ class HomeStorage:
     mushrooms: int = 0
     berries: int = 0
     berry_seeds: int = 0
-    herbs: int = 0
-    herb_seeds: int = 0
+    wheat: int = 0
+    flax: int = 0
+    sage: int = 0
+    hemp: int = 0
+    wheat_seeds: int = 0
+    flax_seeds: int = 0
+    sage_seeds: int = 0
+    hemp_seeds: int = 0
 
     def deposit_dict(self, items: dict[str, int]) -> None:
         for key, value in items.items():
@@ -324,7 +359,8 @@ class HomeStorage:
     def reset(self) -> None:
         self.wood = self.rock = self.meat = self.fish = self.saplings = 0
         self.mushrooms = self.berries = self.berry_seeds = 0
-        self.herbs = self.herb_seeds = 0
+        for key in PRODUCE_KEYS + SEED_KEYS:
+            setattr(self, key, 0)
 
     def withdraw_keys_to(self, inventory: Inventory, keys: tuple[str, ...]) -> int:
         taken = 0
@@ -362,7 +398,7 @@ class TaskArea:
         return [(x, y) for y in range(top, bottom + 1) for x in range(left, right + 1)]
 
 
-_FORAGE_KEYS = ("mushrooms", "berries", "berry_seeds", "herbs", "herb_seeds")
+_FORAGE_KEYS = ("mushrooms", "berries", "berry_seeds") + PRODUCE_KEYS + SEED_KEYS
 
 
 @dataclass
@@ -379,12 +415,19 @@ class Building:
     mushrooms: int = 0
     berries: int = 0
     berry_seeds: int = 0
-    herbs: int = 0
-    herb_seeds: int = 0
+    wheat: int = 0
+    flax: int = 0
+    sage: int = 0
+    hemp: int = 0
+    wheat_seeds: int = 0
+    flax_seeds: int = 0
+    sage_seeds: int = 0
+    hemp_seeds: int = 0
     capacity: int = BUILDING_STORAGE_CAPACITY
     areas: list[TaskArea] = field(default_factory=list)
     draw_task_type: TaskType = TaskType.FULL_MANAGE
     work_mode: WorkMode = WorkMode.BOTH
+    crop_kind: str = "sage"  # used by FIELD buildings
 
     @property
     def stored_total(self) -> int:
@@ -397,8 +440,14 @@ class Building:
             + self.mushrooms
             + self.berries
             + self.berry_seeds
-            + self.herbs
-            + self.herb_seeds
+            + self.wheat
+            + self.flax
+            + self.sage
+            + self.hemp
+            + self.wheat_seeds
+            + self.flax_seeds
+            + self.sage_seeds
+            + self.hemp_seeds
         )
 
     @property
@@ -411,7 +460,9 @@ class Building:
         keys = self.depositable_keys()
         if keep_plantables:
             keys = tuple(
-                k for k in keys if k not in ("saplings", "berry_seeds", "herb_seeds")
+                k
+                for k in keys
+                if k not in ("saplings", "berry_seeds", *SEED_KEYS)
             )
         for key in keys:
             self._take(inventory, key)
@@ -427,6 +478,10 @@ class Building:
             return ("fish",)
         if self.kind == BuildingKind.FORAGER:
             return _FORAGE_KEYS
+        if self.kind == BuildingKind.FARM:
+            return PRODUCE_KEYS + SEED_KEYS
+        if self.kind == BuildingKind.FIELD:
+            return ()
         return ()
 
     def haul_keys(self) -> tuple[str, ...]:
@@ -436,16 +491,16 @@ class Building:
                 return ("wood", "saplings")
             return ("wood",)
         if self.kind == BuildingKind.FORAGER:
-            if self.work_mode == WorkMode.COLLECT:
-                return _FORAGE_KEYS
-            return ("mushrooms", "berries", "herbs")
+            return _FORAGE_KEYS
+        if self.kind == BuildingKind.FARM:
+            return PRODUCE_KEYS
         return self.depositable_keys()
 
     def plant_keys(self) -> tuple[str, ...]:
         if self.kind == BuildingKind.FORESTER:
             return ("saplings",)
-        if self.kind == BuildingKind.FORAGER:
-            return ("berry_seeds", "herb_seeds")
+        if self.kind == BuildingKind.FARM:
+            return SEED_KEYS
         return ()
 
     def haulable_total(self) -> int:
@@ -527,11 +582,13 @@ class Building:
         return not self.has_gather_cargo(inventory)
 
     def allows_planting(self) -> bool:
-        return self.kind in (BuildingKind.FORESTER, BuildingKind.FORAGER)
+        return self.kind in (BuildingKind.FORESTER, BuildingKind.FARM)
 
     def supported_work_modes(self) -> tuple[WorkMode, ...]:
-        if self.allows_planting():
+        if self.kind in (BuildingKind.FORESTER, BuildingKind.FARM):
             return WORK_MODE_CYCLE_PLANTABLE
+        if self.kind == BuildingKind.FIELD:
+            return (WorkMode.COLLECT,)
         return (WorkMode.COLLECT,)
 
     def work_mode_label(self) -> str:
@@ -546,11 +603,10 @@ class Building:
                 WorkMode.BOTH: TaskType.FULL_MANAGE,
             }[self.work_mode]
         elif self.kind == BuildingKind.FORAGER:
-            self.draw_task_type = {
-                WorkMode.COLLECT: TaskType.FULL_FORAGE,
-                WorkMode.PLANT: TaskType.PLANT_BERRY_SEEDS,
-                WorkMode.BOTH: TaskType.FULL_FORAGE,
-            }[self.work_mode]
+            self.draw_task_type = TaskType.FULL_FORAGE
+            self.work_mode = WorkMode.COLLECT
+        elif self.kind in (BuildingKind.FARM, BuildingKind.FIELD):
+            self.draw_task_type = TaskType.FARM_FIELD
         elif self.kind == BuildingKind.MASON:
             self.draw_task_type = TaskType.COLLECT_ROCKS
             self.work_mode = WorkMode.COLLECT
@@ -591,6 +647,8 @@ class Building:
             return TaskType.HUNT
         if self.kind == BuildingKind.FISHER:
             return TaskType.FISH
+        if self.kind in (BuildingKind.FARM, BuildingKind.FIELD):
+            return TaskType.FARM_FIELD
         return TaskType.FULL_FORAGE
 
     @staticmethod
@@ -601,20 +659,14 @@ class Building:
             if task == TaskType.PLANT_SAPLINGS:
                 return WorkMode.PLANT
             return WorkMode.BOTH
-        if kind == BuildingKind.FORAGER:
-            if task in (TaskType.PLANT_BERRY_SEEDS, TaskType.PLANT_HERB_SEEDS):
-                return WorkMode.PLANT
-            if task in (
-                TaskType.FORAGE_MUSHROOMS,
-                TaskType.FORAGE_BERRIES,
-                TaskType.FORAGE_HERBS,
-            ):
-                return WorkMode.COLLECT
+        if kind == BuildingKind.FARM:
             return WorkMode.BOTH
         return WorkMode.COLLECT
 
     def default_work_mode(self) -> WorkMode:
-        if self.allows_planting():
+        if self.kind == BuildingKind.FORESTER:
+            return WorkMode.BOTH
+        if self.kind == BuildingKind.FARM:
             return WorkMode.BOTH
         return WorkMode.COLLECT
 
@@ -678,6 +730,9 @@ class Villager:
     priorities: list[WorkPriority] = field(
         default_factory=lambda: list(DEFAULT_PRIORITIES_UNASSIGNED)
     )
+    satiation: float = 0.75
+    ration_mode: RationMode = RationMode.NORMAL
+    seeking_food: bool = False
 
     def clear_assignment(self) -> None:
         self.building_id = None
@@ -706,6 +761,23 @@ class Villager:
         idx = PRIORITY_CYCLE.index(current) if current in PRIORITY_CYCLE else 0
         self.priorities[index] = PRIORITY_CYCLE[(idx + 1) % len(PRIORITY_CYCLE)]
         return self.priorities[index]
+
+    def cycle_ration_mode(self) -> RationMode:
+        idx = RATION_CYCLE.index(self.ration_mode) if self.ration_mode in RATION_CYCLE else 0
+        self.ration_mode = RATION_CYCLE[(idx + 1) % len(RATION_CYCLE)]
+        return self.ration_mode
+
+    def eat_threshold(self) -> float:
+        return RATION_EAT_AT[self.ration_mode]
+
+    def ration_refill(self) -> float:
+        return RATION_REFILL[self.ration_mode]
+
+    def ration_food_amount(self) -> int:
+        return RATION_FOOD_AMOUNT[self.ration_mode]
+
+    def needs_food(self) -> bool:
+        return self.satiation <= self.eat_threshold()
 
 
 @dataclass
