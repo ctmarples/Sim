@@ -11,7 +11,19 @@ import random
 
 import pygame
 
-from crops import CROP_BY_KEY, PRODUCE_KEYS, SEED_KEYS, crop_for_season, growth_ticks_for
+from crops import (
+    CROP_BY_KEY,
+    FARM_SEED_AMOUNTS,
+    PHASE_COLOURS,
+    SEED_KEYS,
+    SeasonPhase,
+    calendar_label,
+    crop_for_season,
+    growth_ticks_for,
+    phase_allows_harvest,
+    phase_allows_plough_plant,
+    phase_for_crop,
+)
 from entities import (
     BUILDING_LABELS,
     DEFAULT_PRIORITIES_UNASSIGNED,
@@ -22,6 +34,7 @@ from entities import (
     Building,
     BuildingKind,
     ConstructionSite,
+    CropPlan,
     HomeStorage,
     Inventory,
     Player,
@@ -144,14 +157,14 @@ FEATURE_FOR_BUILDING = {
     BuildingKind.FIELD: FeatureType.FIELD,
 }
 
-# Buildings that draw rectangular work areas (Farm uses Field buildings instead).
+# Buildings that draw rectangular work areas via drag.
 AREA_DRAW_KINDS = {
     BuildingKind.FORESTER,
     BuildingKind.MASON,
     BuildingKind.HUNTER,
     BuildingKind.FORAGER,
     BuildingKind.FISHER,
-    BuildingKind.FIELD,
+    BuildingKind.FARM,
 }
 
 
@@ -188,6 +201,8 @@ class Game:
 
         # Selection / drawing
         self.selected_building_id: int | None = None
+        self.selected_field_id: int | None = None  # FarmField id within selected Farm
+        self.farm_draw_mode: str = "field"  # "field" | "plan"
         self.selected_villager_id: int | None = None
         self.assign_workplace_mode = False
         self.place_kind: BuildingKind | None = None  # B cycles build ghost
@@ -248,6 +263,7 @@ class Game:
         self.place_kind = None
         self.field_plant_season = Season.SPRING
         self.field_crop_kind = "sage"
+        self.farm_draw_mode = "field"
         self.calendar_day = 0
         self.day_tick = TICKS_PER_DAY
         self.file_dialog.close()
@@ -263,6 +279,8 @@ class Game:
 
     def _clear_selection(self) -> None:
         self.selected_building_id = None
+        self.selected_field_id = None
+        self.farm_draw_mode = "field"
         self.selected_villager_id = None
         self.assign_workplace_mode = False
         self.drawing = False
@@ -412,6 +430,8 @@ class Game:
                 place_kind=self.place_kind,
                 field_season=self.field_plant_season,
                 field_crop=self.field_crop_kind,
+                selected_field_id=self.selected_field_id,
+                farm_draw_mode=self.farm_draw_mode,
             )
             if action is not None:
                 self._handle_toolbar_action(action)
@@ -429,7 +449,7 @@ class Game:
         self._mouse_down_cell = cell
         if self.place_kind is not None:
             return
-        # Only start area drawing for workplaces that own task areas (not Farm).
+        # Only start area drawing for workplaces that own task areas / farm fields.
         if self.selected_building_id is not None and self.selected_building_id in self.buildings:
             building = self.buildings[self.selected_building_id]
             if building.kind in AREA_DRAW_KINDS:
@@ -460,10 +480,13 @@ class Game:
             self._handle_click(end)
             return
 
-        # Drag: create task area for selected building.
+        # Drag: farm fields/plans, or task areas for other workplaces.
         if was_drawing and self.selected_building_id is not None:
             building = self.buildings.get(self.selected_building_id)
             if building is None:
+                return
+            if building.kind == BuildingKind.FARM:
+                self._finish_farm_drag(building, start, end)
                 return
             area = TaskArea(
                 x0=start[0],
@@ -477,10 +500,48 @@ class Game:
             self._set_status(
                 f"{BUILDING_LABELS[building.kind]}: added {TASK_LABELS[area.task_type]}"
             )
-            if building.kind == BuildingKind.FIELD:
-                self._wake_all_farm_workers()
-            else:
-                self._wake_building_workers(building.id)
+            self._wake_building_workers(building.id)
+
+    def _finish_farm_drag(
+        self,
+        building: Building,
+        start: tuple[int, int],
+        end: tuple[int, int],
+    ) -> None:
+        """Create a FarmField, or a CropPlan inside the selected field."""
+        if self.farm_draw_mode == "plan":
+            if self.selected_field_id is None:
+                self._set_status("Select a field in the list (or click one), then draw a plan.")
+                return
+            plan = building.add_plan(
+                self.selected_field_id,
+                start[0],
+                start[1],
+                end[0],
+                end[1],
+                self.field_crop_kind,
+            )
+            if plan is None:
+                self._set_status("Plan must overlap the selected field.")
+                return
+            crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
+            left, top, right, bottom = plan.normalised()
+            self._set_status(
+                f"Plan: {crop.label} {right - left + 1}×{bottom - top + 1} "
+                f"({calendar_label(crop)})."
+            )
+            self._wake_building_workers(building.id)
+            return
+
+        field_obj = building.add_field(start[0], start[1], end[0], end[1])
+        self.selected_field_id = field_obj.id
+        self.farm_draw_mode = "plan"
+        crop = CROP_BY_KEY.get(self.field_crop_kind, CROP_BY_KEY["sage"])
+        self._set_status(
+            f"Created {field_obj.display_name()} ({field_obj.size_label()}). "
+            f"Plan mode on — drag {crop.label} areas inside the field."
+        )
+        self._wake_building_workers(building.id)
 
     def _handle_click(self, cell: tuple[int, int]) -> None:
         x, y = cell
@@ -501,6 +562,7 @@ class Game:
         if villager is not None:
             self.selected_villager_id = villager.id
             self.selected_building_id = None
+            self.selected_field_id = None
             self.assign_workplace_mode = False
             label = self._villager_assignment_label(villager)
             self._set_status(
@@ -516,21 +578,26 @@ class Game:
             self.assign_workplace_mode = False
             if building.draw_task_type not in TASK_LABELS:
                 building.draw_task_type = building.default_draw_task()
-            if building.kind == BuildingKind.FIELD:
-                self.field_crop_kind = building.crop_kind
-                crop = CROP_BY_KEY.get(building.crop_kind, CROP_BY_KEY["sage"])
-                self.field_plant_season = crop.plant_season
-                self._set_status(
-                    f"Selected Field ({crop.label}). Drag to mark areas. "
-                    f"Plant in {crop.plant_season.name.title()}; "
-                    f"harvest in {', '.join(s.name.title() for s in crop.harvest_seasons)}."
-                )
-            elif building.kind == BuildingKind.FARM:
-                self._set_status(
-                    "Selected Farm. Assign workers here — they work all Field areas. "
-                    f"{WORK_MODE_LABELS[building.work_mode]} mode."
-                )
+            if building.kind == BuildingKind.FARM:
+                # Clicking a cell inside a field selects that field.
+                field_hit = building.field_at_cell(x, y)
+                self.selected_field_id = field_hit.id if field_hit else None
+                if field_hit is not None:
+                    self.farm_draw_mode = "plan"
+                    self._set_status(
+                        f"Selected {field_hit.display_name()} ({field_hit.size_label()}). "
+                        f"Plan mode — choose crop and drag. "
+                        f"{WORK_MODE_LABELS[building.work_mode]}."
+                    )
+                else:
+                    self.selected_field_id = None
+                    self.farm_draw_mode = "field"
+                    self._set_status(
+                        "Selected Farm. Field mode — drag to create a field (e.g. 8×5). "
+                        f"Toolbar: Field / Plan / crops. {WORK_MODE_LABELS[building.work_mode]}."
+                    )
             else:
+                self.selected_field_id = None
                 self._set_status(
                     f"Selected {BUILDING_LABELS[building.kind]}. "
                     f"{WORK_MODE_LABELS[building.work_mode]}. Drag to draw. Esc to hide."
@@ -639,9 +706,39 @@ class Game:
             if building is None:
                 return True
             self.selected_building_id = building.id
+            self.selected_field_id = None
             self.selected_villager_id = None
             self.assign_workplace_mode = False
-            self._set_status(f"Selected {BUILDING_LABELS[building.kind]}.")
+            if building.kind == BuildingKind.FARM:
+                self.farm_draw_mode = "field"
+                self._set_status(
+                    "Selected Farm. Field mode — drag to create a field, or pick one in the list."
+                )
+            else:
+                self._set_status(f"Selected {BUILDING_LABELS[building.kind]}.")
+            return True
+        if kind == "farm_field":
+            # item_id packs farm_id * 100000 + field_id
+            farm_id = item_id // 100000
+            field_id = item_id % 100000
+            building = self.buildings.get(farm_id)
+            if building is None or building.kind != BuildingKind.FARM:
+                return True
+            field_obj = building.get_field(field_id)
+            if field_obj is None:
+                return True
+            self.selected_building_id = building.id
+            self.selected_field_id = field_obj.id
+            self.farm_draw_mode = "plan"
+            self.selected_villager_id = None
+            self.assign_workplace_mode = False
+            n_plans = len(field_obj.plans)
+            crop = CROP_BY_KEY.get(self.field_crop_kind, CROP_BY_KEY["sage"])
+            self._set_status(
+                f"Selected {field_obj.display_name()} ({field_obj.size_label()}, "
+                f"{n_plans} plan{'s' if n_plans != 1 else ''}). "
+                f"Plan mode — drag {crop.label} areas."
+            )
             return True
         if kind == "villager":
             villager = self._get_villager(item_id)
@@ -768,7 +865,6 @@ class Game:
             BuildingKind.FORAGER,
             BuildingKind.FISHER,
             BuildingKind.FARM,
-            BuildingKind.FIELD,
             None,
         ]
         if self.place_kind not in order:
@@ -790,17 +886,9 @@ class Game:
             BuildingKind.FORAGER: (FORAGER_COST_WOOD, FORAGER_COST_ROCK, "Forager"),
             BuildingKind.FISHER: (FISHER_COST_WOOD, FISHER_COST_ROCK, "Fisher"),
             BuildingKind.FARM: (FARM_COST_WOOD, FARM_COST_ROCK, "Farm"),
-            BuildingKind.FIELD: (FIELD_COST_WOOD, FIELD_COST_ROCK, "Field"),
         }
         if self.place_kind is None:
             self._set_status("Build mode off.")
-        elif self.place_kind == BuildingKind.FIELD:
-            crop = CROP_BY_KEY.get(self.field_crop_kind, CROP_BY_KEY["sage"])
-            w, r, name = costs[self.place_kind]
-            self._set_status(
-                f"Build: {name} ({w}w {r}r) — {crop.label} / {self.field_plant_season.name.title()}. "
-                f"Click empty soil/grass to place."
-            )
         else:
             w, r, name = costs[self.place_kind]
             self._set_status(
@@ -888,6 +976,24 @@ class Game:
             self._set_place_kind(BuildingKind[name])
         elif action == "task_clear":
             self._clear_selected_building_areas()
+        elif action == "task_clear_plans":
+            self._clear_selected_field_plans()
+        elif action == "task_delete_field":
+            self._delete_selected_field()
+        elif action == "farm_draw_field":
+            self.farm_draw_mode = "field"
+            self._set_status("Field mode: drag on the map to create a field area.")
+        elif action == "farm_draw_plan":
+            self.farm_draw_mode = "plan"
+            if self.selected_field_id is None:
+                self._set_status(
+                    "Plan mode: select a field in the list first, then drag a crop plan."
+                )
+            else:
+                crop = CROP_BY_KEY.get(self.field_crop_kind, CROP_BY_KEY["sage"])
+                self._set_status(
+                    f"Plan mode: drag {crop.label} areas inside the selected field."
+                )
         elif action.startswith("mode_"):
             self._set_building_work_mode(WorkMode[action[len("mode_") :]])
         elif action.startswith("field_season_"):
@@ -908,16 +1014,11 @@ class Game:
             return
         if self.field_crop_kind not in {c.key for c in options}:
             self.field_crop_kind = options[0].key
-        building = self._selected_building()
-        if building is not None and building.kind == BuildingKind.FIELD:
-            building.crop_kind = self.field_crop_kind
-            self._wake_all_farm_workers()
+        crop = CROP_BY_KEY[self.field_crop_kind]
         self._set_status(
-            f"Field plant season: {season.name.title()} "
-            f"({', '.join(c.label for c in options)})."
+            f"Plan crop season: {season.name.title()} — next drag uses {crop.label} "
+            f"({calendar_label(crop)})."
         )
-        if self.place_kind == BuildingKind.FIELD:
-            self._announce_place_kind()
 
     def _set_field_crop_kind(self, crop_key: str) -> None:
         crop = CROP_BY_KEY.get(crop_key)
@@ -925,18 +1026,45 @@ class Game:
             return
         self.field_crop_kind = crop.key
         self.field_plant_season = crop.plant_season
-        building = self._selected_building()
-        if building is not None and building.kind == BuildingKind.FIELD:
-            building.crop_kind = crop.key
-            self._wake_all_farm_workers()
-        self._set_status(f"Field crop: {crop.label} (plant {crop.plant_season.name.title()}).")
-        if self.place_kind == BuildingKind.FIELD:
-            self._announce_place_kind()
+        self._set_status(
+            f"Plan crop: {crop.label} — {calendar_label(crop)}. Drag inside the field."
+        )
 
     def _wake_all_farm_workers(self) -> None:
         for building in self.buildings.values():
             if building.kind == BuildingKind.FARM:
                 self._wake_building_workers(building.id)
+
+    def _clear_selected_field_plans(self) -> None:
+        building = self._selected_building()
+        if building is None or building.kind != BuildingKind.FARM:
+            self._set_status("Select a Farm field first.")
+            return
+        if self.selected_field_id is None:
+            self._set_status("Select a field in the list to clear its plans.")
+            return
+        field_obj = building.get_field(self.selected_field_id)
+        if field_obj is None:
+            return
+        field_obj.plans.clear()
+        self._wake_building_workers(building.id)
+        self._set_status(f"Cleared plans on {field_obj.display_name()}.")
+
+    def _delete_selected_field(self) -> None:
+        building = self._selected_building()
+        if building is None or building.kind != BuildingKind.FARM:
+            return
+        if self.selected_field_id is None:
+            self._set_status("Select a field to delete.")
+            return
+        before = len(building.fields)
+        building.fields = [f for f in building.fields if f.id != self.selected_field_id]
+        if len(building.fields) == before:
+            return
+        name = f"Field {self.selected_field_id}"
+        self.selected_field_id = None
+        self._wake_building_workers(building.id)
+        self._set_status(f"Deleted {name}. Drag to create a new field.")
 
     def _save_game(self) -> None:
         self._pending_file_action = "save"
@@ -966,12 +1094,15 @@ class Game:
         building = self.buildings.get(self.selected_building_id)
         if building is None:
             return
+        if building.kind == BuildingKind.FARM:
+            building.fields.clear()
+            self.selected_field_id = None
+            self._set_status("Cleared all fields on this Farm.")
+            self._wake_building_workers(building.id)
+            return
         building.areas.clear()
         self._set_status(f"Cleared areas for {BUILDING_LABELS[building.kind]}.")
-        if building.kind == BuildingKind.FIELD:
-            self._wake_all_farm_workers()
-        else:
-            self._wake_building_workers(building.id)
+        self._wake_building_workers(building.id)
 
     def _try_move(self, dx: int, dy: int) -> None:
         nx = self.player.x + dx
@@ -1057,12 +1188,9 @@ class Game:
                 self.selected_building_id = building.id
                 self.selected_villager_id = None
                 if building.kind == BuildingKind.FIELD:
-                    crop = CROP_BY_KEY.get(building.crop_kind, CROP_BY_KEY["sage"])
-                    self.field_crop_kind = building.crop_kind
-                    self.field_plant_season = crop.plant_season
-                    tip = f"Crop: {crop.label}. Drag to mark field areas."
+                    tip = "Legacy Field — load migrates into Farm fields."
                 elif building.kind == BuildingKind.FARM:
-                    tip = "Workers here farm all Field areas."
+                    tip = "Drag to create fields; select a field to add crop plans."
                 else:
                     tip = f"T: {TASK_LABELS[building.draw_task_type]}"
                 self._set_status(
@@ -1443,10 +1571,8 @@ class Game:
         crop = CROP_BY_KEY.get(crop_key, CROP_BY_KEY["sage"])
         inventory.add_item(crop.produce_key, 1)
         seed_msg = ""
-        if (
-            self._drop_rng.random() < self._seed_chance(crop.wild_seed_chance)
-            and inventory.can_add(1)
-        ):
+        # Forage: flat 1/3 chance of a single seed.
+        if self._drop_rng.random() < crop.wild_seed_chance and inventory.can_add(1):
             inventory.add_item(crop.seed_key, 1)
             seed_msg = f" +1 {crop.label.lower()} seed"
         self.world.apply_disturbance(x, y)
@@ -1470,12 +1596,17 @@ class Game:
         crop = CROP_BY_KEY.get(crop_key, CROP_BY_KEY["sage"])
         inventory.add_item(crop.produce_key, 1)
         seed_msg = ""
-        if (
-            self._drop_rng.random() < self._seed_chance(crop.farm_seed_chance)
-            and inventory.can_add(1)
-        ):
+        # Farm: always 1, 2, or 3 seeds (capped by inventory space).
+        amounts = crop.farm_seed_amounts or FARM_SEED_AMOUNTS
+        want = self._drop_rng.choice(amounts)
+        got = 0
+        for _ in range(want):
+            if not inventory.can_add(1):
+                break
             inventory.add_item(crop.seed_key, 1)
-            seed_msg = f" +1 {crop.label.lower()} seed"
+            got += 1
+        if got > 0:
+            seed_msg = f" +{got} {crop.label.lower()} seed{'s' if got != 1 else ''}"
         self.world.apply_disturbance(x, y)
         self._refresh_indicators()
         if status:
@@ -1775,7 +1906,7 @@ class Game:
                 or self._find_fish_in_fish_areas(building) is not None
             )
         if building.kind == BuildingKind.FARM:
-            if not building.areas:
+            if not building.fields:
                 return False
             return self._find_farm_work(villager, building) is not None
         target = self._find_work_in_building(villager, building)
@@ -2187,7 +2318,7 @@ class Game:
             self._step_villager_toward(villager, target)
 
     def _update_farmer(self, villager: Villager, building: Building) -> None:
-        """Plough, sow (spring), and harvest farm field areas."""
+        """Plough, sow, and harvest according to each field plan's seasonal calendar."""
         if (
             self._should_deliver_workplace(villager, building)
             and villager.state != VillagerState.DELIVERING
@@ -2197,7 +2328,7 @@ class Game:
         if self._update_workplace_delivery(villager, building):
             return
 
-        if not building.areas:
+        if not building.fields:
             if building.has_gather_cargo(villager.inventory):
                 self._begin_workplace_delivery(villager, building)
                 self._update_workplace_delivery(villager, building)
@@ -2239,45 +2370,46 @@ class Game:
     def _find_farm_work(
         self, villager: Villager, building: Building
     ) -> tuple[int, int] | None:
-        """Priority: harvest ready crops → plough → sow in the field's plant season."""
+        """Priority: harvest → plough → sow, driven by each CropPlan's season phase."""
         mode = building.work_mode
         allow_harvest = mode in (WorkMode.COLLECT, WorkMode.BOTH)
         allow_plant = mode in (WorkMode.PLANT, WorkMode.BOTH)
         harvest: list[tuple[int, int]] = []
         plough: list[tuple[int, int]] = []
         sow: list[tuple[int, int]] = []
-        for field_b in self._field_buildings():
-            crop = CROP_BY_KEY.get(field_b.crop_kind, CROP_BY_KEY["sage"])
-            seed_key = crop.seed_key
-            can_sow = (
-                allow_plant
-                and self.season == crop.plant_season
-                and (
-                    getattr(villager.inventory, seed_key, 0) > 0
-                    or self._plant_stock_at(building, seed_key) > 0
-                    or getattr(self.home_storage, seed_key, 0) > 0
+        season = self.season
+
+        for field_obj in building.fields:
+            for plan in field_obj.plans:
+                crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
+                phase = phase_for_crop(crop, season)
+                seed_key = crop.seed_key
+                can_sow = (
+                    allow_plant
+                    and phase_allows_plough_plant(phase)
+                    and (
+                        getattr(villager.inventory, seed_key, 0) > 0
+                        or self._plant_stock_at(building, seed_key) > 0
+                        or getattr(self.home_storage, seed_key, 0) > 0
+                    )
                 )
-            )
-            for area in field_b.areas:
-                for x, y in area.cells():
+                for x, y in plan.cells():
                     if not self.world.is_walkable(x, y):
                         continue
                     cell = self.world.get_cell(x, y)
                     if cell is None:
                         continue
                     if self.world.crop_herb_ready(x, y):
-                        ready_kind = cell.crop_kind or field_b.crop_kind
-                        ready_crop = CROP_BY_KEY.get(ready_kind, crop)
                         if (
                             allow_harvest
-                            and self.season in ready_crop.harvest_seasons
+                            and phase_allows_harvest(phase)
                             and not villager.inventory.is_full
                         ):
                             harvest.append((x, y))
                         continue
                     if cell.feature == FeatureType.CROP_HERB:
                         continue
-                    if not allow_plant:
+                    if not allow_plant or not phase_allows_plough_plant(phase):
                         continue
                     if cell.terrain == TerrainType.SOIL and cell.feature == FeatureType.NONE:
                         if can_sow and (
@@ -2300,6 +2432,7 @@ class Game:
                             FeatureType.CONSTRUCTION_SITE,
                         ):
                             plough.append((x, y))
+
         origin = (villager.x, villager.y)
         for bucket in (harvest, plough, sow):
             chosen = self._closest_of(origin, bucket)
@@ -2308,19 +2441,14 @@ class Game:
         return None
 
     def _field_buildings(self) -> list[Building]:
-        fields = [b for b in self.buildings.values() if b.kind == BuildingKind.FIELD]
-        # Legacy saves: Farm buildings may still own drawn field areas.
-        for b in self.buildings.values():
-            if b.kind == BuildingKind.FARM and b.areas:
-                fields.append(b)
-        return fields
+        """Legacy helper: Farms with field plots (and old Field buildings)."""
+        return [b for b in self.buildings.values() if b.kind == BuildingKind.FARM and b.fields]
 
-    def _field_at_cell(self, x: int, y: int) -> Building | None:
-        for field_b in self._field_buildings():
-            for area in field_b.areas:
-                if area.contains(x, y):
-                    return field_b
-        return None
+    def _plan_at_cell(
+        self, building: Building, x: int, y: int
+    ) -> CropPlan | None:
+        hit = building.plan_at_cell(x, y)
+        return hit[1] if hit else None
 
     def _villager_perform_farm(
         self, villager: Villager, building: Building, pos: tuple[int, int]
@@ -2333,25 +2461,30 @@ class Game:
         mode = building.work_mode
         allow_harvest = mode in (WorkMode.COLLECT, WorkMode.BOTH)
         allow_plant = mode in (WorkMode.PLANT, WorkMode.BOTH)
-        field_b = self._field_at_cell(x, y)
+        plan = self._plan_at_cell(building, x, y)
         crop_key = (
             (cell.crop_kind if cell.feature == FeatureType.CROP_HERB else None)
-            or (field_b.crop_kind if field_b is not None else None)
+            or (plan.crop_kind if plan is not None else None)
             or "sage"
         )
         crop = CROP_BY_KEY.get(crop_key, CROP_BY_KEY["sage"])
+        phase = phase_for_crop(crop, self.season)
+
         if self.world.crop_herb_ready(x, y):
-            if not allow_harvest or self.season not in crop.harvest_seasons:
+            if not allow_harvest or not phase_allows_harvest(phase):
                 return
             self._harvest_farm_herb(x, y, inv, status=False)
+            # Autumn wheat: harvest then immediately plough for re-sow.
+            if phase == SeasonPhase.HARVEST_PLOUGH_PLANT and allow_plant:
+                self.world.plough_tile(x, y)
+                self.world.apply_disturbance(x, y)
+                self._refresh_indicators()
             return
-        if not allow_plant:
+        if not allow_plant or not phase_allows_plough_plant(phase):
             return
         if cell.feature == FeatureType.CROP_HERB:
             return
         if cell.terrain == TerrainType.SOIL and cell.feature == FeatureType.NONE:
-            if self.season != crop.plant_season:
-                return
             seed_key = crop.seed_key
             if getattr(inv, seed_key, 0) <= 0:
                 if not building.give_item_to(inv, seed_key):
@@ -3283,6 +3416,7 @@ class Game:
             mouse_pos=mouse,
             season=self.season,
             calendar_day=self.calendar_day,
+            selected_field_id=self.selected_field_id,
         )
         self.resource_bar.draw(
             self.screen,
@@ -3301,6 +3435,8 @@ class Game:
             season_label=format_date(self.calendar_day),
             field_season=self.field_plant_season,
             field_crop=self.field_crop_kind,
+            selected_field_id=self.selected_field_id,
+            farm_draw_mode=self.farm_draw_mode,
         )
         self.file_dialog.draw(self.screen)
         pygame.display.flip()
@@ -3366,11 +3502,13 @@ class Game:
         self.screen.blit(overlay, (0, MAP_OFFSET_Y))
 
     def _draw_task_areas(self) -> None:
-        # Areas only visible while their building is selected.
+        # Areas / farm fields visible while their building (or field) is selected.
         building = self._selected_building()
 
         tint = pygame.Surface((GRID_COLS * CELL_SIZE, GRID_ROWS * CELL_SIZE), pygame.SRCALPHA)
-        if building is not None:
+        if building is not None and building.kind == BuildingKind.FARM:
+            self._draw_farm_fields(tint, building)
+        elif building is not None:
             for area in building.areas:
                 colour = TASK_COLOURS.get(area.task_type, COLOUR_TASK_AREA)
                 left, top, right, bottom = area.normalised()
@@ -3391,7 +3529,12 @@ class Game:
             x1, y1 = self.draw_current
             left, top = min(x0, x1), min(y0, y1)
             right, bottom = max(x0, x1), max(y0, y1)
-            preview = TASK_COLOURS.get(building.draw_task_type, COLOUR_TASK_PREVIEW)
+            if building.kind == BuildingKind.FARM and self.farm_draw_mode == "plan":
+                preview = CROP_BY_KEY.get(self.field_crop_kind, CROP_BY_KEY["sage"]).stem_colour
+            elif building.kind == BuildingKind.FARM:
+                preview = COLOUR_TASK_FARM
+            else:
+                preview = TASK_COLOURS.get(building.draw_task_type, COLOUR_TASK_PREVIEW)
             for y in range(top, bottom + 1):
                 for x in range(left, right + 1):
                     rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
@@ -3405,6 +3548,48 @@ class Game:
             pygame.draw.rect(self.screen, COLOUR_TASK_PREVIEW, border, 2)
 
         self.screen.blit(tint, (0, MAP_OFFSET_Y))
+
+    def _draw_farm_fields(self, tint: pygame.Surface, building: Building) -> None:
+        """Field boundaries + seasonal plan phase highlights."""
+        season = self.season
+        for field_obj in building.fields:
+            selected = field_obj.id == self.selected_field_id
+            left, top, right, bottom = field_obj.normalised()
+            # Dim field fill when unplanned / selected outline always.
+            base = COLOUR_TASK_FARM
+            alpha = 35 if not selected else 50
+            for y in range(top, bottom + 1):
+                for x in range(left, right + 1):
+                    rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+                    tint.fill((*base, alpha), rect)
+            border = pygame.Rect(
+                left * CELL_SIZE,
+                top * CELL_SIZE + MAP_OFFSET_Y,
+                (right - left + 1) * CELL_SIZE,
+                (bottom - top + 1) * CELL_SIZE,
+            )
+            pygame.draw.rect(
+                self.screen,
+                COLOUR_SELECTED_ENTITY if selected else base,
+                border,
+                3 if selected else 2,
+            )
+            for plan in field_obj.plans:
+                crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
+                phase = phase_for_crop(crop, season)
+                colour = PHASE_COLOURS.get(phase, base)
+                pl, pt, pr, pb = plan.normalised()
+                for y in range(pt, pb + 1):
+                    for x in range(pl, pr + 1):
+                        rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+                        tint.fill((*colour, 90 if selected else 70), rect)
+                plan_border = pygame.Rect(
+                    pl * CELL_SIZE,
+                    pt * CELL_SIZE + MAP_OFFSET_Y,
+                    (pr - pl + 1) * CELL_SIZE,
+                    (pb - pt + 1) * CELL_SIZE,
+                )
+                pygame.draw.rect(self.screen, colour, plan_border, 1)
 
     def _draw_animals(self) -> None:
         for animal in self.wildlife.animals:

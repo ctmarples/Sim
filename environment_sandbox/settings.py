@@ -143,11 +143,11 @@ MUSHROOM_SPREAD_CHANCE: float = 0.02  # into neighbouring soil
 MUSHROOM_TICK_INTERVAL: int = 360
 
 HERB_SPAWN_CHANCE: float = 0.03  # empty grass per forage tick (legacy name)
-HERB_SEED_DROP_CHANCE: float = 0.08  # fallback; prefer CropDef.wild_seed_chance
+HERB_SEED_DROP_CHANCE: float = 1.0 / 3.0  # forage fallback
 HERB_TICK_INTERVAL: int = 150
 # Farm crop growth fallback (~32 in-game days at TICKS_PER_DAY = FPS*4).
 FARM_CROP_GROWTH_TICKS: int = FPS * 4 * 32
-FARM_HERB_SEED_DROP_CHANCE: float = 0.55  # fallback; prefer CropDef.farm_seed_chance
+FARM_HERB_SEED_DROP_CHANCE: float = 1.0  # farm always yields 1–3 seeds (see crops.py)
 
 VILLAGER_MOVE_INTERVAL: int = 48
 VILLAGER_WORK_INTERVAL: int = 72

@@ -11,6 +11,8 @@ from entities import (
     Building,
     BuildingKind,
     ConstructionSite,
+    CropPlan,
+    FarmField,
     Inventory,
     RationMode,
     TaskArea,
@@ -157,6 +159,31 @@ def serialize_game(game: Game) -> dict[str, Any]:
                 }
                 for a in b.areas
             ],
+            "fields": [
+                {
+                    "id": f.id,
+                    "x0": f.x0,
+                    "y0": f.y0,
+                    "x1": f.x1,
+                    "y1": f.y1,
+                    "name": f.name,
+                    "plans": [
+                        {
+                            "id": p.id,
+                            "x0": p.x0,
+                            "y0": p.y0,
+                            "x1": p.x1,
+                            "y1": p.y1,
+                            "crop_kind": p.crop_kind,
+                            "field_id": p.field_id,
+                        }
+                        for p in f.plans
+                    ],
+                }
+                for f in getattr(b, "fields", [])
+            ],
+            "next_field_id": getattr(b, "next_field_id", 1),
+            "next_plan_id": getattr(b, "next_plan_id", 1),
         }
         if hasattr(b, "crop_kind"):
             bdata["crop_kind"] = b.crop_kind
@@ -270,6 +297,61 @@ def serialize_game(game: Game) -> dict[str, Any]:
     if hasattr(game, "field_crop_kind"):
         payload["field_crop_kind"] = game.field_crop_kind
     return payload
+
+
+def _migrate_legacy_fields(game: Game) -> None:
+    """Fold old Field buildings and Farm.areas into Farm.fields + CropPlans."""
+    from world import FeatureType
+
+    farms = [b for b in game.buildings.values() if b.kind == BuildingKind.FARM]
+    target = farms[0] if farms else None
+
+    # Farm.areas → one field per area (sage plan covering whole rectangle).
+    for farm in farms:
+        if not farm.areas:
+            continue
+        for area in farm.areas:
+            left, top, right, bottom = area.normalised()
+            field_obj = farm.add_field(left, top, right, bottom)
+            farm.add_plan(field_obj.id, left, top, right, bottom, "sage")
+        farm.areas.clear()
+
+    # Standalone FIELD buildings → absorb into nearest Farm (or first Farm).
+    legacy_fields = [b for b in list(game.buildings.values()) if b.kind == BuildingKind.FIELD]
+    if not legacy_fields:
+        return
+    if target is None:
+        # No farm to attach to — convert each Field into a Farm in place.
+        for legacy in legacy_fields:
+            legacy.kind = BuildingKind.FARM
+            legacy.sync_draw_task_from_mode()
+            for area in legacy.areas:
+                left, top, right, bottom = area.normalised()
+                field_obj = legacy.add_field(left, top, right, bottom)
+                legacy.add_plan(
+                    field_obj.id, left, top, right, bottom, legacy.crop_kind or "sage"
+                )
+            legacy.areas.clear()
+            cell = game.world.get_cell(legacy.x, legacy.y)
+            if cell is not None:
+                cell.feature = FeatureType.FARM
+        return
+
+    for legacy in legacy_fields:
+        crop = legacy.crop_kind or "sage"
+        if legacy.areas:
+            for area in legacy.areas:
+                left, top, right, bottom = area.normalised()
+                field_obj = target.add_field(left, top, right, bottom)
+                target.add_plan(field_obj.id, left, top, right, bottom, crop)
+        else:
+            # Building footprint as a tiny field.
+            field_obj = target.add_field(legacy.x, legacy.y, legacy.x, legacy.y)
+            target.add_plan(field_obj.id, legacy.x, legacy.y, legacy.x, legacy.y, crop)
+        cell = game.world.get_cell(legacy.x, legacy.y)
+        if cell is not None and cell.feature == FeatureType.FIELD:
+            cell.feature = FeatureType.NONE
+        del game.buildings[legacy.id]
 
 
 def apply_save(game: Game, data: dict[str, Any]) -> None:
@@ -401,7 +483,44 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             )
             for a in bdata.get("areas", [])
         ]
+        building.fields = []
+        for fdata in bdata.get("fields", []):
+            field_obj = FarmField(
+                id=int(fdata["id"]),
+                x0=int(fdata["x0"]),
+                y0=int(fdata["y0"]),
+                x1=int(fdata["x1"]),
+                y1=int(fdata["y1"]),
+                name=str(fdata.get("name", "")),
+            )
+            for pdata in fdata.get("plans", []):
+                field_obj.plans.append(
+                    CropPlan(
+                        id=int(pdata["id"]),
+                        x0=int(pdata["x0"]),
+                        y0=int(pdata["y0"]),
+                        x1=int(pdata["x1"]),
+                        y1=int(pdata["y1"]),
+                        crop_kind=str(pdata.get("crop_kind", "sage")),
+                        field_id=field_obj.id,
+                    )
+                )
+            building.fields.append(field_obj)
+        building.next_field_id = int(
+            bdata.get(
+                "next_field_id",
+                max((f.id for f in building.fields), default=0) + 1,
+            )
+        )
+        max_plan = max(
+            (p.id for f in building.fields for p in f.plans),
+            default=0,
+        )
+        building.next_plan_id = int(bdata.get("next_plan_id", max_plan + 1))
         game.buildings[building.id] = building
+
+    # Migrate legacy Field buildings / Farm.areas into Farm.fields.
+    _migrate_legacy_fields(game)
 
     game.villagers.clear()
     for vdata in data.get("villagers", []):

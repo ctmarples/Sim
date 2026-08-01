@@ -1,4 +1,4 @@
-"""Top toolbar: File menu, build buttons, behaviour modes, sim speed."""
+"""Top toolbar: File menu, build buttons, farm field/plan editors, sim speed."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import pygame
 
-from crops import crop_for_season
+from crops import CROP_BY_KEY, crop_for_season
 from entities import (
     BUILDING_LABELS,
     WORK_MODE_LABELS,
@@ -36,7 +36,6 @@ BUILD_ORDER: list[BuildingKind | None] = [
     BuildingKind.FORAGER,
     BuildingKind.FISHER,
     BuildingKind.FARM,
-    BuildingKind.FIELD,
     None,
 ]
 
@@ -83,7 +82,6 @@ class Toolbar:
             self._buttons.append(self._make_btn(action, label, x, y, w, h, "build"))
             x += w + 4
 
-        # Speed cluster on the right.
         speed_x = WINDOW_WIDTH - 8
         speed_btns: list[ToolbarButton] = []
         for speed in reversed(SIM_SPEEDS):
@@ -110,25 +108,41 @@ class Toolbar:
         place_kind: BuildingKind | None = None,
         field_season: Season = Season.SPRING,
         field_crop: str = "sage",
+        selected_field_id: int | None = None,
+        farm_draw_mode: str = "field",
     ) -> list[ToolbarButton]:
         buttons: list[ToolbarButton] = []
         x = 8
         y = 36
         h = 22
 
-        show_field_selectors = (
-            place_kind == BuildingKind.FIELD
-            or (building is not None and building.kind == BuildingKind.FIELD)
-        )
-        if show_field_selectors:
-            for season in _FIELD_SEASONS:
-                label = season.name.title()[:3]
-                w = max(40, 8 + self.font_small.size(label)[0])
+        if building is None:
+            return buttons
+
+        if building.kind == BuildingKind.FARM:
+            # Row: work modes | Field / Plan draw | season + crops | clear
+            for mode in building.supported_work_modes():
+                label = WORK_MODE_LABELS[mode]
+                w = max(48, 8 + self.font_small.size(label)[0])
                 buttons.append(
-                    self._make_btn(f"field_season_{season.name}", label, x, y, w, h, "field")
+                    self._make_btn(f"mode_{mode.name}", label, x, y, w, h, "mode")
                 )
                 x += w + 4
-            x += 6
+            x += 8
+            for label, action in (("Field", "farm_draw_field"), ("Plan", "farm_draw_plan")):
+                w = max(48, 10 + self.font_small.size(label)[0])
+                buttons.append(self._make_btn(action, label, x, y, w, h, "farm_draw"))
+                x += w + 4
+            x += 8
+            for season in _FIELD_SEASONS:
+                label = season.name.title()[:3]
+                w = max(36, 8 + self.font_small.size(label)[0])
+                buttons.append(
+                    self._make_btn(
+                        f"field_season_{season.name}", label, x, y, w, h, "field"
+                    )
+                )
+                x += w + 4
             for crop in crop_for_season(field_season):
                 label = crop.label[:4]
                 w = max(40, 8 + self.font_small.size(label)[0])
@@ -136,19 +150,25 @@ class Toolbar:
                     self._make_btn(f"field_crop_{crop.key}", label, x, y, w, h, "field")
                 )
                 x += w + 4
-            if building is not None and building.kind == BuildingKind.FIELD:
-                x += 8
-                clear_label = "Clear fields"
-                clear_w = max(48, 10 + self.font_small.size(clear_label)[0])
+            x += 8
+            if selected_field_id is not None:
+                clear_plan = "Clr plans"
+                cw = max(56, 8 + self.font_small.size(clear_plan)[0])
                 buttons.append(
-                    self._make_btn("task_clear", clear_label, x, y, clear_w, h, "task")
+                    self._make_btn("task_clear_plans", clear_plan, x, y, cw, h, "task")
                 )
+                x += cw + 4
+                del_f = "Del field"
+                dw = max(56, 8 + self.font_small.size(del_f)[0])
+                buttons.append(
+                    self._make_btn("task_delete_field", del_f, x, y, dw, h, "task")
+                )
+                x += dw + 4
+            clear_f = "Clr fields"
+            fw = max(56, 8 + self.font_small.size(clear_f)[0])
+            buttons.append(self._make_btn("task_clear", clear_f, x, y, fw, h, "task"))
             return buttons
 
-        if building is None:
-            return buttons
-        if building.kind == BuildingKind.FIELD:
-            return buttons
         for mode in building.supported_work_modes():
             label = WORK_MODE_LABELS[mode]
             w = max(52, 10 + self.font_small.size(label)[0])
@@ -156,14 +176,11 @@ class Toolbar:
                 self._make_btn(f"mode_{mode.name}", label, x, y, w, h, "mode")
             )
             x += w + 4
-        if building.kind != BuildingKind.FARM or building.areas:
-            clear_label = (
-                "Clear fields" if building.kind in (BuildingKind.FARM, BuildingKind.FIELD) else "Clear"
-            )
-            clear_w = max(48, 10 + self.font_small.size(clear_label)[0])
-            buttons.append(
-                self._make_btn("task_clear", clear_label, x, y, clear_w, h, "task")
-            )
+        clear_label = "Clear"
+        clear_w = max(48, 10 + self.font_small.size(clear_label)[0])
+        buttons.append(
+            self._make_btn("task_clear", clear_label, x, y, clear_w, h, "task")
+        )
         return buttons
 
     def hit_test(
@@ -174,6 +191,8 @@ class Toolbar:
         place_kind: BuildingKind | None = None,
         field_season: Season = Season.SPRING,
         field_crop: str = "sage",
+        selected_field_id: int | None = None,
+        farm_draw_mode: str = "field",
     ) -> str | None:
         mx, my = pos
         if self.file_menu_open:
@@ -199,6 +218,8 @@ class Toolbar:
             place_kind=place_kind,
             field_season=field_season,
             field_crop=field_crop,
+            selected_field_id=selected_field_id,
+            farm_draw_mode=farm_draw_mode,
         ):
             if btn.rect.collidepoint(mx, my):
                 return btn.action
@@ -224,6 +245,8 @@ class Toolbar:
         season_label: str | None = None,
         field_season: Season = Season.SPRING,
         field_crop: str = "sage",
+        selected_field_id: int | None = None,
+        farm_draw_mode: str = "field",
     ) -> None:
         bar = pygame.Rect(0, 0, WINDOW_WIDTH, TOOLBAR_HEIGHT)
         pygame.draw.rect(surface, COLOUR_TOOLBAR_BG, bar)
@@ -247,12 +270,17 @@ class Toolbar:
         active_speed = f"speed_{sim_speed}"
         active_field_season = f"field_season_{field_season.name}"
         active_field_crop = f"field_crop_{field_crop}"
+        active_farm_draw = (
+            "farm_draw_field" if farm_draw_mode == "field" else "farm_draw_plan"
+        )
 
         all_btns = list(self._buttons) + self.task_buttons_for(
             building,
             place_kind=place_kind,
             field_season=field_season,
             field_crop=field_crop,
+            selected_field_id=selected_field_id,
+            farm_draw_mode=farm_draw_mode,
         )
         for btn in all_btns:
             hovered = btn.rect.collidepoint(mouse_pos)
@@ -264,6 +292,7 @@ class Toolbar:
                 or btn.action == active_speed
                 or btn.action == active_field_season
                 or btn.action == active_field_crop
+                or btn.action == active_farm_draw
                 or (btn.action == "file_toggle" and self.file_menu_open)
             )
             self._draw_button(surface, btn, active=active, hovered=hovered)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pygame
 
+from crops import CROP_BY_KEY, PHASE_LABELS, phase_for_crop
 from entities import (
     BUILDING_LABELS,
     PRIORITY_LABELS,
@@ -361,6 +362,7 @@ class UI:
         mouse_pos: tuple[int, int] | None = None,
         season: Season = Season.SPRING,
         calendar_day: int = 0,
+        selected_field_id: int | None = None,
     ) -> None:
         panel_x = GRID_COLS * CELL_SIZE
         panel_h = _panel_height()
@@ -452,6 +454,44 @@ class UI:
                     trailing_btns=trailing,
                     local_mouse=local_mouse,
                 )
+                if b.kind == BuildingKind.FARM and b.fields:
+                    for field_obj in b.fields:
+                        field_selected = (
+                            selected and selected_field_id == field_obj.id
+                        )
+                        plans_txt = (
+                            f"{len(field_obj.plans)} plan"
+                            if len(field_obj.plans) == 1
+                            else f"{len(field_obj.plans)} plans"
+                        )
+                        # Packed id: farm_id * 100000 + field_id
+                        packed = b.id * 100000 + field_obj.id
+                        y = self._draw_list_row(
+                            content,
+                            f"  └ {field_obj.display_name()} "
+                            f"{field_obj.size_label()} · {plans_txt}",
+                            x,
+                            y,
+                            selected=field_selected,
+                            hit_kind="farm_field",
+                            hit_id=packed,
+                            local_mouse=local_mouse,
+                        )
+                        if field_selected and field_obj.plans:
+                            for plan in field_obj.plans:
+                                crop = CROP_BY_KEY.get(
+                                    plan.crop_kind, CROP_BY_KEY["sage"]
+                                )
+                                phase = phase_for_crop(crop, season)
+                                pl, pt, pr, pb = plan.normalised()
+                                y = _blit_text(
+                                    content,
+                                    self.font_small,
+                                    f"     {crop.label} {pr - pl + 1}×{pb - pt + 1}: "
+                                    f"{PHASE_LABELS[phase]}",
+                                    (x, y),
+                                    COLOUR_STATUS if field_selected else COLOUR_TEXT_DIM,
+                                )
         y = self._draw_list_row(
             content,
             "Home (haulers)",

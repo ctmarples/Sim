@@ -397,6 +397,96 @@ class TaskArea:
         left, top, right, bottom = self.normalised()
         return [(x, y) for y in range(top, bottom + 1) for x in range(left, right + 1)]
 
+    def size_label(self) -> str:
+        left, top, right, bottom = self.normalised()
+        return f"{right - left + 1}×{bottom - top + 1}"
+
+
+@dataclass
+class CropPlan:
+    """Sub-area inside a FarmField planted to one crop with a seasonal calendar."""
+
+    id: int
+    x0: int
+    y0: int
+    x1: int
+    y1: int
+    crop_kind: str
+    field_id: int
+
+    def normalised(self) -> tuple[int, int, int, int]:
+        return (
+            min(self.x0, self.x1),
+            min(self.y0, self.y1),
+            max(self.x0, self.x1),
+            max(self.y0, self.y1),
+        )
+
+    def contains(self, x: int, y: int) -> bool:
+        left, top, right, bottom = self.normalised()
+        return left <= x <= right and top <= y <= bottom
+
+    def cells(self) -> list[tuple[int, int]]:
+        left, top, right, bottom = self.normalised()
+        return [(x, y) for y in range(top, bottom + 1) for x in range(left, right + 1)]
+
+    def clip_to(self, bounds: tuple[int, int, int, int]) -> None:
+        bl, bt, br, bb = bounds
+        left, top, right, bottom = self.normalised()
+        left = max(left, bl)
+        top = max(top, bt)
+        right = min(right, br)
+        bottom = min(bottom, bb)
+        self.x0, self.y0, self.x1, self.y1 = left, top, right, bottom
+
+    def is_empty(self) -> bool:
+        left, top, right, bottom = self.normalised()
+        return left > right or top > bottom
+
+
+@dataclass
+class FarmField:
+    """Rectangular field plot owned by a Farm (created by drag in the Farm menu)."""
+
+    id: int
+    x0: int
+    y0: int
+    x1: int
+    y1: int
+    name: str = ""
+    plans: list[CropPlan] = field(default_factory=list)
+
+    def normalised(self) -> tuple[int, int, int, int]:
+        return (
+            min(self.x0, self.x1),
+            min(self.y0, self.y1),
+            max(self.x0, self.x1),
+            max(self.y0, self.y1),
+        )
+
+    def contains(self, x: int, y: int) -> bool:
+        left, top, right, bottom = self.normalised()
+        return left <= x <= right and top <= y <= bottom
+
+    def cells(self) -> list[tuple[int, int]]:
+        left, top, right, bottom = self.normalised()
+        return [(x, y) for y in range(top, bottom + 1) for x in range(left, right + 1)]
+
+    def size_label(self) -> str:
+        left, top, right, bottom = self.normalised()
+        return f"{right - left + 1}×{bottom - top + 1}"
+
+    def display_name(self) -> str:
+        return self.name or f"Field {self.id}"
+
+    def plan_at(self, x: int, y: int) -> CropPlan | None:
+        """Innermost / latest plan covering the cell."""
+        hit: CropPlan | None = None
+        for plan in self.plans:
+            if plan.contains(x, y):
+                hit = plan
+        return hit
+
 
 _FORAGE_KEYS = ("mushrooms", "berries", "berry_seeds") + PRODUCE_KEYS + SEED_KEYS
 
@@ -425,9 +515,72 @@ class Building:
     hemp_seeds: int = 0
     capacity: int = BUILDING_STORAGE_CAPACITY
     areas: list[TaskArea] = field(default_factory=list)
+    fields: list[FarmField] = field(default_factory=list)
     draw_task_type: TaskType = TaskType.FULL_MANAGE
     work_mode: WorkMode = WorkMode.BOTH
-    crop_kind: str = "sage"  # used by FIELD buildings
+    crop_kind: str = "sage"  # legacy FIELD buildings; unused for Farm plots
+    next_field_id: int = 1
+    next_plan_id: int = 1
+
+    def get_field(self, field_id: int) -> FarmField | None:
+        for f in self.fields:
+            if f.id == field_id:
+                return f
+        return None
+
+    def field_at_cell(self, x: int, y: int) -> FarmField | None:
+        for f in self.fields:
+            if f.contains(x, y):
+                return f
+        return None
+
+    def plan_at_cell(self, x: int, y: int) -> tuple[FarmField, CropPlan] | None:
+        for f in self.fields:
+            plan = f.plan_at(x, y)
+            if plan is not None:
+                return f, plan
+        return None
+
+    def add_field(self, x0: int, y0: int, x1: int, y1: int) -> FarmField:
+        field_obj = FarmField(
+            id=self.next_field_id,
+            x0=x0,
+            y0=y0,
+            x1=x1,
+            y1=y1,
+            name=f"Field {self.next_field_id}",
+        )
+        self.next_field_id += 1
+        self.fields.append(field_obj)
+        return field_obj
+
+    def add_plan(
+        self,
+        field_id: int,
+        x0: int,
+        y0: int,
+        x1: int,
+        y1: int,
+        crop_kind: str,
+    ) -> CropPlan | None:
+        field_obj = self.get_field(field_id)
+        if field_obj is None:
+            return None
+        plan = CropPlan(
+            id=self.next_plan_id,
+            x0=x0,
+            y0=y0,
+            x1=x1,
+            y1=y1,
+            crop_kind=crop_kind,
+            field_id=field_id,
+        )
+        plan.clip_to(field_obj.normalised())
+        if plan.is_empty():
+            return None
+        self.next_plan_id += 1
+        field_obj.plans.append(plan)
+        return plan
 
     @property
     def stored_total(self) -> int:
