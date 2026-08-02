@@ -112,9 +112,76 @@ def _shift(colour: tuple[int, int, int], amount: float) -> tuple[int, int, int]:
     )
 
 
+def _smoothstep(t: float) -> float:
+    t = 0.0 if t <= 0.0 else 1.0 if t >= 1.0 else t
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _lerp_colour(
+    a: tuple[int, int, int], b: tuple[int, int, int], t: float
+) -> tuple[int, int, int]:
+    t = 0.0 if t <= 0.0 else 1.0 if t >= 1.0 else t
+    return (
+        int(a[0] + (b[0] - a[0]) * t),
+        int(a[1] + (b[1] - a[1]) * t),
+        int(a[2] + (b[2] - a[2]) * t),
+    )
+
+
 def _opaque_fill(terrain: TerrainType, lx: int, ly: int) -> tuple[int, int, int]:
-    """Fully opaque flat terrain colour (no spatial noise — keeps shared edges exact)."""
-    return _COLOURS[terrain]
+    """Opaque terrain colour with variation across every pixel of the tile."""
+    base = _COLOURS[terrain]
+    # Low-frequency mottling + fine speckles (fully opaque).
+    n1 = (_hash01(lx, ly, 11 + terrain.value * 17) - 0.5) * 0.16
+    n2 = (_hash01(lx * 2, ly * 3, 40 + terrain.value) - 0.5) * 0.09
+    c = _shift(base, n1 + n2)
+    if terrain == TerrainType.GRASS:
+        if _hash01(lx, ly, 90) > 0.82:
+            c = _shift(c, 0.12)
+        elif _hash01(lx, ly, 91) > 0.88:
+            c = _shift(c, -0.1)
+    elif terrain == TerrainType.SOIL:
+        if _hash01(lx, ly, 92) > 0.8:
+            c = _shift(c, -0.12)
+        elif _hash01(lx, ly, 93) > 0.85:
+            c = _shift(c, 0.08)
+    elif terrain == TerrainType.ROCK:
+        if _hash01(lx, ly, 94) > 0.75:
+            c = _shift(c, -0.14)
+        elif _hash01(lx, ly, 95) > 0.9:
+            c = _shift(c, 0.1)
+    elif terrain == TerrainType.WATER:
+        if _hash01(lx, ly, 96) > 0.7:
+            c = _shift(c, 0.1)
+        ripple = (_hash01(lx + ly, ly, 97) - 0.5) * 0.06
+        c = _shift(c, ripple)
+    return c
+
+
+def _bilinear(tl: float, tr: float, br: float, bl: float, u: float, v: float) -> float:
+    top = tl + (tr - tl) * u
+    bot = bl + (br - bl) * u
+    return top + (bot - top) * v
+
+
+def _fg_field(
+    tl: TerrainType,
+    tr: TerrainType,
+    br: TerrainType,
+    bl: TerrainType,
+    fg: TerrainType,
+    u: float,
+    v: float,
+) -> float:
+    """Soft marching-squares coverage from shared corner bits (0..1)."""
+    return _bilinear(
+        1.0 if tl == fg else 0.0,
+        1.0 if tr == fg else 0.0,
+        1.0 if br == fg else 0.0,
+        1.0 if bl == fg else 0.0,
+        u,
+        v,
+    )
 
 
 def resolve_corner_type(
@@ -222,9 +289,10 @@ def build_tile_from_corners(
     br: TerrainType,
     bl: TerrainType,
 ) -> tuple[pygame.Surface, pygame.Surface, int, TerrainType, TerrainType]:
-    """Opaque MS composition from four shared corner types.
+    """MS composition from four shared corners.
 
-    Returns (rgb, water, primary_mask, fg, bg).
+    Land↔land transitions are gradual (soft bilinear coverage).
+    Water↔other stays sharp. All fills are textured, never flat.
     """
     corners = (tl, tr, br, bl)
     present: list[TerrainType] = []
@@ -239,6 +307,8 @@ def build_tile_from_corners(
     rgb = pygame.Surface((TILE, TILE))
     water = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
     water.fill((0, 0, 0, 0))
+    denom = max(1, TILE - 1)
+
     for ly in range(TILE):
         for lx in range(TILE):
             rgb.set_at((lx, ly), _opaque_fill(bg, lx, ly))
@@ -252,15 +322,31 @@ def build_tile_from_corners(
         mask = mask_for_corners(tl, tr, br, bl, fg)
         if mask == 0:
             continue
-        cov = _fg_coverage_mask(mask)
+        # Sharp only when water meets something else.
+        sharp = fg == TerrainType.WATER or bg == TerrainType.WATER
         for ly in range(TILE):
+            v = ly / denom
             for lx in range(TILE):
-                if cov.get_at((lx, ly))[3] > 128:
-                    rgb.set_at((lx, ly), _opaque_fill(fg, lx, ly))
-                    if fg == TerrainType.WATER:
-                        water.set_at((lx, ly), (255, 255, 255, 255))
-                    else:
-                        water.set_at((lx, ly), (0, 0, 0, 0))
+                u = lx / denom
+                field = _fg_field(tl, tr, br, bl, fg, u, v)
+                if sharp:
+                    if field < 0.5:
+                        continue
+                    t = 1.0
+                else:
+                    # Wide soft band across the MS contour.
+                    t = _smoothstep((field - 0.08) / 0.84)
+                    if t <= 0.001:
+                        continue
+                base = rgb.get_at((lx, ly))[:3]
+                fg_c = _opaque_fill(fg, lx, ly)
+                rgb.set_at((lx, ly), _lerp_colour(base, fg_c, t))
+                if fg == TerrainType.WATER:
+                    water.set_at((lx, ly), (255, 255, 255, int(255 * t)))
+                elif bg == TerrainType.WATER:
+                    # Covering water with land — clear ice mask by coverage.
+                    wa = water.get_at((lx, ly))[3]
+                    water.set_at((lx, ly), (255, 255, 255, int(wa * (1.0 - t))))
         primary_mask = mask
         primary_fg = fg
 
@@ -298,9 +384,12 @@ class TerrainAtlas:
             return hit
         native_rgb, native_w, mask, fg, bg = build_tile_from_corners(tl, tr, br, bl)
         size = self._cell_size
+        # Soft land blends benefit from smoothscale; water edges stay crisp with scale.
+        involves_water = TerrainType.WATER in (tl, tr, br, bl)
+        scaler = pygame.transform.scale if involves_water else pygame.transform.smoothscale
         out = (
-            pygame.transform.scale(native_rgb, (size, size)),
-            pygame.transform.scale(native_w, (size, size)),
+            scaler(native_rgb, (size, size)),
+            scaler(native_w, (size, size)),
             mask,
             fg,
             bg,
@@ -361,7 +450,9 @@ def describe_system() -> str:
         "bits: TL=1 TR=2 BR=4 BL=8\n"
         "dirs: N=(0,-1) E=(+1,0) S=(0,+1) W=(-1,0)\n"
         "corners: shared vertex grid; value = max-priority among 2x2 cells\n"
-        "  (WATER>ROCK>SOIL>GRASS). No colour averaging.\n"
+        "  (WATER>ROCK>SOIL>GRASS).\n"
+        "blends: land↔land gradual (soft bilinear coverage); water↔other sharp\n"
+        "fills: per-pixel colour variation on all solid terrain\n"
         "atlas: logical 4x4 of cases 0..15 (row=mask//4, col=mask%4)\n"
     )
 
