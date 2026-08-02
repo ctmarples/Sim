@@ -126,7 +126,14 @@ from seasons import (
     water_frozen,
 )
 from toolbar import Toolbar
-from ui import UI, draw_feature, draw_terrain, terrain_colour
+from ui import UI, draw_feature
+from terrain_tiles import (
+    CASE_NAMES,
+    atlas_row_col,
+    describe_system,
+    paint_cell,
+    verify_shared_edges,
+)
 from wildlife import FishManager, WildlifeManager
 from world import FeatureType, TerrainType, World
 
@@ -227,16 +234,19 @@ class Game:
         self._food_rng = random.Random(99)
         # Headless: no window present; AI still uses real cooldowns.
         self.fast_forward = bool(headless)
-        # Season-neutral baked map + water alpha mask; seasonal tint/ice applied at blit time.
+        # Season-neutral tiled map + water alpha mask; seasonal tint/ice at blit time.
         self._terrain_base: pygame.Surface | None = None
         self._terrain_base_key: tuple | None = None
         self._terrain_water_mask: pygame.Surface | None = None
-        self._farm_overlay: pygame.Surface | None = None
-        self._farm_overlay_key: tuple | None = None
+        self._farm_cells_cached: set[tuple[int, int]] = set()
         self._season_mute: pygame.Surface | None = None
         self._season_mute_key: float | None = None
         self._ice_overlay: pygame.Surface | None = None
         self._ice_overlay_key: float | None = None
+        # F6: deterministic autotile diagnostic scene + per-cell mask overlay.
+        self.autotile_diag = False
+        self._diag_cell_meta: dict[tuple[int, int], dict] = {}
+        self._diag_backup_cells: list[list] | None = None
 
     def _give_starting_resources(self) -> None:
         self.home_storage.wood = STARTING_WOOD
@@ -394,6 +404,8 @@ class Game:
             self._set_overlay(OverlayMode.TREE_DENSITY)
         elif key == pygame.K_4:
             self._set_overlay(OverlayMode.DISTURBANCE)
+        elif key == pygame.K_F6:
+            self._toggle_autotile_diagnostic()
         elif key in (pygame.K_w, pygame.K_UP):
             self._try_move(0, -1)
         elif key in (pygame.K_s, pygame.K_DOWN):
@@ -953,6 +965,213 @@ class Game:
         else:
             self._speed_before_pause = self.sim_speed
             self._set_sim_speed(0)
+
+    def _toggle_autotile_diagnostic(self) -> None:
+        if self.autotile_diag:
+            self.autotile_diag = False
+            self._diag_cell_meta.clear()
+            self.reset()
+            self._set_status("Autotile diagnostic off — world reset.")
+            return
+        self.autotile_diag = True
+        self._set_sim_speed(0)
+        self._layout_autotile_diagnostic()
+        print(describe_system(), flush=True)
+        self._set_status(
+            "Autotile diagnostic ON (F6 exit). Labels: xy · mask/case · atlas · tile_id"
+        )
+
+    def _layout_autotile_diagnostic(self) -> None:
+        """Deterministic soil-on-grass shapes for MS verification (no gen changes)."""
+        for y in range(self.world.rows):
+            for x in range(self.world.cols):
+                cell = self.world.cells[y][x]
+                cell.terrain = TerrainType.GRASS
+                cell.feature = FeatureType.NONE
+                cell.deposit = 0
+                cell.growth_ticks = 0
+                cell.crop_kind = None
+
+        def soil(x: int, y: int) -> None:
+            if self.world.in_bounds(x, y):
+                self.world.cells[y][x].terrain = TerrainType.SOIL
+
+        soil(2, 2)  # isolated
+        for dy in range(2):
+            for dx in range(2):
+                soil(5 + dx, 2 + dy)  # 2×2
+        for dx in range(4):
+            soil(9 + dx, 2)  # horizontal strip
+        for dy in range(4):
+            soil(2, 5 + dy)  # vertical strip
+        soil(5, 5)
+        soil(6, 5)
+        soil(5, 6)
+        soil(5, 7)  # L-shape
+        for dy in range(3):
+            for dx in range(3):
+                if dx == 2 and dy == 0:
+                    continue
+                soil(9 + dx, 5 + dy)  # concave (missing NE)
+
+        # All 16 MS cases: each mask shown on a GRASS cell whose shared corners
+        # are forced by diagonal soil seeds (cell itself stays grass).
+        for mask in range(16):
+            bx = 1 + (mask % 8) * 3
+            by = 11 + (mask // 8) * 3
+            for dy in range(-1, 3):
+                for dx in range(-1, 3):
+                    if self.world.in_bounds(bx + dx, by + dy):
+                        self.world.cells[by + dy][bx + dx].terrain = TerrainType.GRASS
+            # Seeds affecting only the intended vertices of cell (bx, by).
+            if mask & 1:  # TL
+                soil(bx - 1, by - 1)
+            if mask & 2:  # TR
+                soil(bx + 1, by - 1)
+            if mask & 4:  # BR
+                soil(bx + 1, by + 1)
+            if mask & 8:  # BL
+                soil(bx - 1, by + 1)
+
+        self.buildings.clear()
+        self.villagers.clear()
+        self.construction_sites.clear()
+        self._clear_selection()
+        self.world.bump_terrain()
+        self._diag_cell_meta.clear()
+        farm: set[tuple[int, int]] = set()
+        self._ensure_terrain_base(farm)
+        self._capture_diag_meta(farm)
+        ok_e = ok_s = bad = 0
+        total = (self.world.rows - 1) * (self.world.cols - 1)
+        for y in range(self.world.rows - 1):
+            for x in range(self.world.cols - 1):
+                e, s = verify_shared_edges(
+                    lambda tx, ty, f=farm: self._visual_terrain_at(tx, ty, f),
+                    x,
+                    y,
+                )
+                ok_e += int(e)
+                ok_s += int(s)
+                if not (e and s):
+                    bad += 1
+        print(
+            f"shared-edge check: east_ok={ok_e}/{total} south_ok={ok_s}/{total} bad={bad}",
+            flush=True,
+        )
+
+    def _capture_diag_meta(self, farm_cells: set[tuple[int, int]]) -> None:
+        from terrain_tiles import cell_corners, mask_for_corners
+
+        self._diag_cell_meta.clear()
+        terrain_at = lambda tx, ty: self._visual_terrain_at(tx, ty, farm_cells)
+        for y in range(self.world.rows):
+            for x in range(self.world.cols):
+                corners = cell_corners(terrain_at, x, y)
+                tl, tr, br, bl = corners
+                types = {tl, tr, br, bl}
+                if len(types) == 1:
+                    only = next(iter(types))
+                    # Solid cell: canonical mask 15. Soil-FG empty on pure grass is 0.
+                    mask = 0 if only == TerrainType.GRASS else 15
+                    fg, bg = (
+                        (TerrainType.SOIL, TerrainType.GRASS)
+                        if only == TerrainType.GRASS
+                        else (only, only)
+                    )
+                else:
+                    bg = (
+                        TerrainType.GRASS
+                        if TerrainType.GRASS in types
+                        else next(iter(types))
+                    )
+                    fg = (
+                        TerrainType.SOIL
+                        if TerrainType.SOIL in types
+                        else next(t for t in types if t != bg)
+                    )
+                    mask = mask_for_corners(tl, tr, br, bl, fg)
+                row, col = atlas_row_col(mask)
+                if x < self.world.cols - 1 and y < self.world.rows - 1:
+                    east_ok, south_ok = verify_shared_edges(terrain_at, x, y)
+                else:
+                    east_ok, south_ok = True, True
+                self._diag_cell_meta[(x, y)] = {
+                    "corners": corners,
+                    "mask": mask,
+                    "raw_mask": mask,
+                    "canonical_mask": mask,
+                    "fg": fg,
+                    "bg": bg,
+                    "case": CASE_NAMES.get(mask, "?"),
+                    "atlas": (row, col),
+                    "tile_id": f"ms{mask:02d}",
+                    "east_ok": east_ok,
+                    "south_ok": south_ok,
+                    "centre": self.world.cells[y][x].terrain,
+                }
+
+    def _draw_autotile_diag_overlay(self) -> None:
+        if not self.autotile_diag:
+            return
+        font = pygame.font.SysFont("menlo", 9)
+        legend = font.render(
+            "N=y-1 E=x+1 S=y+1 W=x-1 | bits TL=1 TR=2 BR=4 BL=8 | F6 exit",
+            True,
+            (240, 240, 240),
+        )
+        self.screen.blit(legend, (8, MAP_OFFSET_Y + 4))
+        ox, oy = self._cell_center(0, 0)
+        pygame.draw.line(self.screen, (255, 220, 80), (ox, oy), (ox, oy - 18), 2)
+        self.screen.blit(font.render("N", True, (255, 220, 80)), (ox - 4, oy - 28))
+        pygame.draw.line(self.screen, (255, 220, 80), (ox, oy), (ox + 18, oy), 2)
+        self.screen.blit(font.render("E", True, (255, 220, 80)), (ox + 20, oy - 5))
+
+        interesting = {
+            (2, 2),
+            (5, 2), (6, 2), (5, 3), (6, 3),
+            (9, 2), (10, 2), (11, 2), (12, 2),
+            (2, 5), (2, 6), (2, 7), (2, 8),
+            (5, 5), (6, 5), (5, 6), (5, 7),
+            (9, 5), (10, 5), (11, 5),
+            (9, 6), (10, 6), (11, 6),
+            (9, 7), (10, 7), (11, 7),
+        }
+        for mask in range(16):
+            bx = 1 + (mask % 8) * 3
+            by = 11 + (mask // 8) * 3
+            interesting.add((bx, by))
+
+        for (x, y), meta in self._diag_cell_meta.items():
+            if (
+                (x, y) not in interesting
+                and meta["centre"] == TerrainType.GRASS
+                and meta["mask"] in (0, 15)
+            ):
+                continue
+            rect = self._cell_rect(x, y)
+            colour = (
+                (255, 80, 80)
+                if not (meta["east_ok"] and meta["south_ok"])
+                else (255, 255, 255)
+            )
+            yy = rect.y + 1
+            for line in (
+                f"{x},{y}",
+                f"m{meta['mask']:02d}/{meta['case']}",
+                f"a{meta['atlas'][0]},{meta['atlas'][1]} {meta['tile_id']}",
+            ):
+                self.screen.blit(font.render(line, True, colour), (rect.x + 1, yy))
+                yy += 10
+            dots = (
+                (rect.x + 3, rect.y + 3, meta["corners"][0]),
+                (rect.right - 4, rect.y + 3, meta["corners"][1]),
+                (rect.right - 4, rect.bottom - 4, meta["corners"][2]),
+                (rect.x + 3, rect.bottom - 4, meta["corners"][3]),
+            )
+            for dx, dy, corner in dots:
+                c = (80, 200, 255) if corner == TerrainType.SOIL else (50, 50, 50)
+                pygame.draw.circle(self.screen, c, (dx, dy), 2)
 
     def _advance_day(self) -> None:
         prev = self.season
@@ -3435,6 +3654,7 @@ class Game:
         self._draw_villagers()
         self._draw_player()
         self._draw_selection_highlights()
+        self._draw_autotile_diag_overlay()
         mouse = pygame.mouse.get_pos()
         self.ui.draw_panel(
             self.screen,
@@ -3502,75 +3722,92 @@ class Game:
         self._terrain_base = None
         self._terrain_base_key = None
         self._terrain_water_mask = None
-        self._farm_overlay = None
-        self._farm_overlay_key = None
+        self._farm_cells_cached = set()
         self._season_mute = None
         self._season_mute_key = None
         self._ice_overlay = None
         self._ice_overlay_key = None
 
-    def _ensure_terrain_base(self) -> tuple[pygame.Surface, pygame.Surface]:
-        """Bake season-neutral terrain + water mask once per terrain revision."""
+    def _visual_terrain_at(
+        self, x: int, y: int, farm_cells: set[tuple[int, int]]
+    ) -> TerrainType:
+        """Terrain used for tiling; farm plots render as soil."""
+        if not (0 <= x < self.world.cols and 0 <= y < self.world.rows):
+            # Out of bounds matches nearest edge cell so borders stay solid.
+            cx = min(max(0, x), self.world.cols - 1)
+            cy = min(max(0, y), self.world.rows - 1)
+            if (cx, cy) in farm_cells:
+                return TerrainType.SOIL
+            return self.world.cells[cy][cx].terrain
+        if (x, y) in farm_cells:
+            return TerrainType.SOIL
+        return self.world.cells[y][x].terrain
+
+    def _paint_terrain_cell(
+        self,
+        x: int,
+        y: int,
+        farm_cells: set[tuple[int, int]],
+    ) -> None:
+        assert self._terrain_base is not None and self._terrain_water_mask is not None
+        paint_cell(
+            self._terrain_base,
+            self._terrain_water_mask,
+            x,
+            y,
+            terrain_at=lambda tx, ty: self._visual_terrain_at(tx, ty, farm_cells),
+        )
+
+    def _sync_farm_terrain_dirty(
+        self, farm_cells: set[tuple[int, int]]
+    ) -> None:
+        """When field layout changes, re-tile only affected cells + neighbours."""
+        if farm_cells == self._farm_cells_cached:
+            return
+        changed = farm_cells.symmetric_difference(self._farm_cells_cached)
+        self._farm_cells_cached = set(farm_cells)
+        for x, y in changed:
+            self.world.mark_terrain_dirty(x, y)
+
+    def _ensure_terrain_base(
+        self, farm_cells: set[tuple[int, int]]
+    ) -> tuple[pygame.Surface, pygame.Surface]:
+        """Stitch pre-rendered tiles; full rebuild on revision, else patch dirty."""
         key = self._terrain_base_cache_key()
-        if (
-            self._terrain_base is not None
-            and self._terrain_water_mask is not None
-            and self._terrain_base_key == key
-        ):
+        full_rebuild = (
+            self._terrain_base is None
+            or self._terrain_water_mask is None
+            or self._terrain_base_key != key
+        )
+        self._sync_farm_terrain_dirty(farm_cells)
+
+        if full_rebuild:
+            size = (GRID_COLS * CELL_SIZE, GRID_ROWS * CELL_SIZE)
+            self._terrain_base = pygame.Surface(size)
+            self._terrain_water_mask = pygame.Surface(size, pygame.SRCALPHA)
+            self._terrain_water_mask.fill((0, 0, 0, 0))
+            self._terrain_base_key = key
+            self._farm_cells_cached = set(farm_cells)
+            for y in range(self.world.rows):
+                for x in range(self.world.cols):
+                    self._paint_terrain_cell(x, y, farm_cells)
+            self.world.terrain_dirty.clear()
+            self._ice_overlay = None
+            self._ice_overlay_key = None
             return self._terrain_base, self._terrain_water_mask
 
-        size = (GRID_COLS * CELL_SIZE, GRID_ROWS * CELL_SIZE)
-        layer = pygame.Surface(size)
-        water_mask = pygame.Surface(size, pygame.SRCALPHA)
-        water_mask.fill((0, 0, 0, 0))
-        for y in range(self.world.rows):
-            for x in range(self.world.cols):
-                cell = self.world.cells[y][x]
-                rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-                draw_terrain(
-                    layer,
-                    cell.terrain,
-                    rect,
-                    freeze=0.0,
-                    vibrancy=1.0,
-                    world=self.world,
-                    gx=x,
-                    gy=y,
-                    farm_cells=None,
-                    water_mask=water_mask,
-                )
-        self._terrain_base = layer
-        self._terrain_water_mask = water_mask
-        self._terrain_base_key = key
-        # Ice overlay depends on water mask.
-        self._ice_overlay = None
-        self._ice_overlay_key = None
-        return layer, water_mask
+        dirty = self.world.terrain_dirty
+        if dirty:
+            # Copy before clear — paint may mark nothing new.
+            cells = list(dirty)
+            dirty.clear()
+            for x, y in cells:
+                self._paint_terrain_cell(x, y, farm_cells)
+            # Ice mask geometry may have changed on patched water edges.
+            self._ice_overlay = None
+            self._ice_overlay_key = None
 
-    def _ensure_farm_overlay(
-        self, farm_cells: set[tuple[int, int]]
-    ) -> pygame.Surface | None:
-        """Cheap sharp soil overlay; rebuild only when field layout changes."""
-        if not farm_cells:
-            self._farm_overlay = None
-            self._farm_overlay_key = None
-            return None
-        farm_sig = tuple(sorted(farm_cells))
-        if self._farm_overlay is not None and self._farm_overlay_key == farm_sig:
-            return self._farm_overlay
-        overlay = pygame.Surface(
-            (GRID_COLS * CELL_SIZE, GRID_ROWS * CELL_SIZE), pygame.SRCALPHA
-        )
-        soil = terrain_colour(TerrainType.SOIL, freeze=0.0, vibrancy=1.0)
-        for x, y in farm_cells:
-            pygame.draw.rect(
-                overlay,
-                (*soil, 255),
-                pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE),
-            )
-        self._farm_overlay = overlay
-        self._farm_overlay_key = farm_sig
-        return overlay
+        return self._terrain_base, self._terrain_water_mask
 
     def _ensure_season_mute(self, vibrancy: float) -> pygame.Surface | None:
         """RGB multiply tint; lower vibrancy → cooler / duller map."""
@@ -3612,12 +3849,9 @@ class Game:
         freeze = freeze_amount(day)
         vibrancy = terrain_vibrancy(day)
         farm_cells = self._farm_field_cells()
-        base, water_mask = self._ensure_terrain_base()
+        base, water_mask = self._ensure_terrain_base(farm_cells)
         origin = (0, MAP_OFFSET_Y)
         self.screen.blit(base, origin)
-        farm_overlay = self._ensure_farm_overlay(farm_cells)
-        if farm_overlay is not None:
-            self.screen.blit(farm_overlay, origin)
         mute = self._ensure_season_mute(vibrancy)
         if mute is not None:
             self.screen.blit(mute, origin, special_flags=pygame.BLEND_RGB_MULT)

@@ -125,10 +125,21 @@ class World:
         self._herb_timer = HERB_TICK_INTERVAL
         self._forage_rng = random.Random(seed + 123)
         self.terrain_revision = 0
+        self.terrain_dirty: set[tuple[int, int]] = set()
         self.generate()
 
     def bump_terrain(self) -> None:
+        """Force a full terrain layer rebuild (generation / load)."""
         self.terrain_revision += 1
+        self.terrain_dirty.clear()
+
+    def mark_terrain_dirty(self, x: int, y: int, radius: int = 1) -> None:
+        """Mark a cell and neighbours for incremental tile re-stitch."""
+        for dy in range(-radius, radius + 1):
+            for dx in range(-radius, radius + 1):
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < self.cols and 0 <= ny < self.rows:
+                    self.terrain_dirty.add((nx, ny))
 
     # ------------------------------------------------------------------
     # Generation
@@ -140,21 +151,19 @@ class World:
             for _ in range(self.rows)
         ]
 
-        # Base terrain: mostly grass, with soil reserved for forests later.
-        for y in range(self.rows):
-            for x in range(self.cols):
-                self.cells[y][x].terrain = (
-                    TerrainType.GRASS if rng.random() < 0.72 else TerrainType.SOIL
-                )
+        # Base terrain: coherent grass with soil pockets (value-noise blobs).
+        self._paint_base_grass_soil(rng)
 
         # Compact water ponds (not map-spanning lakes).
         self._place_clusters(
             rng,
             count=max(2, self.cols // 20),
-            radius=2,
-            density=0.55,
+            radius=3,
+            density=0.72,
             apply=lambda c: setattr(c, "terrain", TerrainType.WATER),
         )
+        self._expand_terrain_patches(rng, TerrainType.WATER, passes=2, chance=0.55)
+        self._cull_isolated_terrain(TerrainType.WATER, min_neighbours=1)
 
         # Compact grey rock outcrops.
         def _paint_rock(cell: Cell) -> None:
@@ -164,10 +173,12 @@ class World:
         self._place_clusters(
             rng,
             count=max(2, self.cols // 22),
-            radius=2,
-            density=0.5,
+            radius=3,
+            density=0.65,
             apply=_paint_rock,
         )
+        self._expand_terrain_patches(rng, TerrainType.ROCK, passes=2, chance=0.5)
+        self._cull_isolated_terrain(TerrainType.ROCK, min_neighbours=1)
 
         # Larger forest clearings: soil patches, then dense tree cover on them.
         forest_centres: list[tuple[int, int]] = []
@@ -182,6 +193,12 @@ class World:
                 # Soil under the canopy; keep rock outcrops if already placed.
                 if cell.terrain != TerrainType.ROCK and rng.random() < 0.85:
                     cell.terrain = TerrainType.SOIL
+
+        # Grow soil under forests into coherent clearings; smooth grass/soil noise.
+        self._expand_terrain_patches(rng, TerrainType.SOIL, passes=2, chance=0.5)
+        self._expand_terrain_patches(rng, TerrainType.GRASS, passes=1, chance=0.45)
+        self._cull_isolated_terrain(TerrainType.SOIL, min_neighbours=1)
+        self._cull_isolated_terrain(TerrainType.GRASS, min_neighbours=1)
 
         for cx, cy in forest_centres:
             for ny, nx in self.neighbourhood(cx, cy, radius=3):
@@ -314,6 +331,36 @@ class World:
                 self.cells[sy][sx].terrain = TerrainType.GRASS
         self.bump_terrain()
 
+    def _paint_base_grass_soil(self, rng: random.Random) -> None:
+        """Fill the map with large grass/soil regions via coarse value noise."""
+        # A few random influence points → smooth-ish regions without per-cell coin flips.
+        blobs: list[tuple[float, float, float, TerrainType]] = []
+        n_blobs = max(6, (self.cols * self.rows) // 40)
+        for _ in range(n_blobs):
+            bx = rng.uniform(0, self.cols)
+            by = rng.uniform(0, self.rows)
+            br = rng.uniform(2.5, 6.5)
+            kind = TerrainType.SOIL if rng.random() < 0.38 else TerrainType.GRASS
+            blobs.append((bx, by, br, kind))
+
+        for y in range(self.rows):
+            for x in range(self.cols):
+                # Default grass; soil wins when inside a soil blob more than grass.
+                soil_w = 0.0
+                grass_w = 0.15  # slight grass bias
+                for bx, by, br, kind in blobs:
+                    d = ((x + 0.5 - bx) ** 2 + (y + 0.5 - by) ** 2) ** 0.5
+                    if d >= br:
+                        continue
+                    w = (1.0 - d / br) ** 2
+                    if kind == TerrainType.SOIL:
+                        soil_w += w
+                    else:
+                        grass_w += w
+                self.cells[y][x].terrain = (
+                    TerrainType.SOIL if soil_w > grass_w else TerrainType.GRASS
+                )
+
     def _place_clusters(
         self,
         rng: random.Random,
@@ -344,6 +391,10 @@ class World:
                         continue
                     if terrain == TerrainType.ROCK and self.cells[y][x].terrain == TerrainType.WATER:
                         continue
+                    if terrain == TerrainType.WATER:
+                        pass
+                    elif self.cells[y][x].terrain == TerrainType.WATER:
+                        continue
                     neighbours = list(self.neighbourhood(x, y, radius=1))
                     matching = sum(
                         1
@@ -354,6 +405,31 @@ class World:
                         to_paint.append((x, y))
             for x, y in to_paint:
                 self.cells[y][x].terrain = terrain
+
+    def _cull_isolated_terrain(
+        self, terrain: TerrainType, *, min_neighbours: int = 1
+    ) -> None:
+        """Remove 1-cell speckles of `terrain` that lack enough same-type neighbours."""
+        fallback = {
+            TerrainType.WATER: TerrainType.GRASS,
+            TerrainType.ROCK: TerrainType.GRASS,
+            TerrainType.SOIL: TerrainType.GRASS,
+            TerrainType.GRASS: TerrainType.SOIL,
+        }[terrain]
+        to_clear: list[tuple[int, int]] = []
+        for y in range(self.rows):
+            for x in range(self.cols):
+                if self.cells[y][x].terrain != terrain:
+                    continue
+                matching = 0
+                for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    nx, ny = x + dx, y + dy
+                    if self.in_bounds(nx, ny) and self.cells[ny][nx].terrain == terrain:
+                        matching += 1
+                if matching < min_neighbours:
+                    to_clear.append((x, y))
+        for x, y in to_clear:
+            self.cells[y][x].terrain = fallback
 
     def reset(self) -> None:
         self._sprout_timer = NATURAL_SPROUT_INTERVAL
@@ -722,7 +798,7 @@ class World:
         cell.growth_ticks = 0
         cell.deposit = 0
         cell.crop_kind = None
-        self.bump_terrain()
+        self.mark_terrain_dirty(x, y)
         return True
 
     def sow_crop(self, x: int, y: int, crop_key: str, growth_ticks: int) -> bool:
