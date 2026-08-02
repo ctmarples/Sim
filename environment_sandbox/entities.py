@@ -207,10 +207,18 @@ class Inventory:
     flax: int = 0
     sage: int = 0
     hemp: int = 0
+    rye: int = 0
+    onion: int = 0
+    cabbage: int = 0
+    carrot: int = 0
     wheat_seeds: int = 0
     flax_seeds: int = 0
     sage_seeds: int = 0
     hemp_seeds: int = 0
+    rye_seeds: int = 0
+    onion_seeds: int = 0
+    cabbage_seeds: int = 0
+    carrot_seeds: int = 0
     capacity: int = INVENTORY_CAPACITY
     seed_capacity: int = SEED_CARRY_CAPACITY
 
@@ -233,10 +241,7 @@ class Inventory:
             + self.saplings
             + self.mushrooms
             + self.berries
-            + self.wheat
-            + self.flax
-            + self.sage
-            + self.hemp
+            + sum(getattr(self, key) for key in PRODUCE_KEYS)
         )
 
     @property
@@ -349,10 +354,18 @@ class HomeStorage:
     flax: int = 0
     sage: int = 0
     hemp: int = 0
+    rye: int = 0
+    onion: int = 0
+    cabbage: int = 0
+    carrot: int = 0
     wheat_seeds: int = 0
     flax_seeds: int = 0
     sage_seeds: int = 0
     hemp_seeds: int = 0
+    rye_seeds: int = 0
+    onion_seeds: int = 0
+    cabbage_seeds: int = 0
+    carrot_seeds: int = 0
 
     def deposit_dict(self, items: dict[str, int]) -> None:
         for key, value in items.items():
@@ -528,10 +541,18 @@ class Building:
     flax: int = 0
     sage: int = 0
     hemp: int = 0
+    rye: int = 0
+    onion: int = 0
+    cabbage: int = 0
+    carrot: int = 0
     wheat_seeds: int = 0
     flax_seeds: int = 0
     sage_seeds: int = 0
     hemp_seeds: int = 0
+    rye_seeds: int = 0
+    onion_seeds: int = 0
+    cabbage_seeds: int = 0
+    carrot_seeds: int = 0
     capacity: int = BUILDING_STORAGE_CAPACITY
     areas: list[TaskArea] = field(default_factory=list)
     fields: list[FarmField] = field(default_factory=list)
@@ -612,14 +633,8 @@ class Building:
             + self.mushrooms
             + self.berries
             + self.berry_seeds
-            + self.wheat
-            + self.flax
-            + self.sage
-            + self.hemp
-            + self.wheat_seeds
-            + self.flax_seeds
-            + self.sage_seeds
-            + self.hemp_seeds
+            + sum(getattr(self, key) for key in PRODUCE_KEYS)
+            + sum(getattr(self, key) for key in SEED_KEYS)
         )
 
     @property

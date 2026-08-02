@@ -1181,21 +1181,27 @@ class Game:
             self._set_status(f"{format_date(self.calendar_day)} begins.")
 
     def _expire_unharvested_crops(self, ended_season: Season) -> None:
-        """Ripe field crops miss their harvest window → clear at season change."""
+        """Crops not taken in their harvest season clear when that season ends."""
         for y in range(self.world.rows):
             for x in range(self.world.cols):
                 cell = self.world.cells[y][x]
-                if cell.feature != FeatureType.CROP_HERB:
+                if cell.feature not in (
+                    FeatureType.CROP_HERB,
+                    FeatureType.WILD_CROP,
+                    FeatureType.HERB,
+                ):
                     continue
-                if cell.growth_ticks > 0:
-                    continue  # still growing / newly sown
-                crop = CROP_BY_KEY.get(cell.crop_kind or "")
+                # Still growing (newly sown) — keep until ripe harvest window passes.
+                if cell.feature == FeatureType.CROP_HERB and cell.growth_ticks > 0:
+                    continue
+                crop = CROP_BY_KEY.get(cell.crop_kind or "sage")
                 if crop is None:
                     continue
                 if ended_season in crop.harvest_seasons:
                     cell.feature = FeatureType.NONE
                     cell.growth_ticks = 0
                     cell.crop_kind = None
+                    cell.deposit = 0
 
     def _seed_chance(self, base: float) -> float:
         return min(1.0, base * seed_chance_multiplier(self.calendar_day))

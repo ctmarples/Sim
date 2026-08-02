@@ -81,7 +81,7 @@ class FeatureType(Enum):
     MUSHROOM = auto()
     BERRY_BUSH = auto()
     HERB = auto()  # legacy; migrated to WILD_CROP on load
-    WILD_CROP = auto()  # wild wheat/flax/sage/hemp patches
+    WILD_CROP = auto()  # wild crop patches (any CropDef key)
     CROP_HERB = auto()  # farmed crop (growth_ticks > 0 while growing)
 
 
@@ -96,7 +96,7 @@ class Cell:
     deposit: int = 0  # wood, rock, or berries remaining
     meat_deposit: int = 0
     fish_deposit: int = 0
-    crop_kind: str | None = None  # wheat/flax/sage/hemp for wild & farm crops
+    crop_kind: str | None = None  # CropDef key for wild & farm crops
 
     def habitat_category(self) -> str:
         if self.feature != FeatureType.NONE:
