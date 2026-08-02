@@ -476,9 +476,76 @@ class CropPlan:
         return left > right or top > bottom
 
 
+def _rect_subtract(
+    outer: tuple[int, int, int, int],
+    cut: tuple[int, int, int, int],
+) -> list[tuple[int, int, int, int]]:
+    """Return axis-aligned rects covering outer − cut (both normalised)."""
+    ol, ot, or_, ob = outer
+    cl, ct, cr, cb = cut
+    # No overlap
+    if cr < ol or cl > or_ or cb < ot or ct > ob:
+        return [outer]
+    # Clip cut to outer
+    cl = max(cl, ol)
+    ct = max(ct, ot)
+    cr = min(cr, or_)
+    cb = min(cb, ob)
+    parts: list[tuple[int, int, int, int]] = []
+    # Top strip
+    if ct > ot:
+        parts.append((ol, ot, or_, ct - 1))
+    # Bottom strip
+    if cb < ob:
+        parts.append((ol, cb + 1, or_, ob))
+    # Middle left
+    if cl > ol:
+        parts.append((ol, ct, cl - 1, cb))
+    # Middle right
+    if cr < or_:
+        parts.append((cr + 1, ct, or_, cb))
+    return parts
+
+
+def _cells_to_rects(cells: set[tuple[int, int]]) -> list[tuple[int, int, int, int]]:
+    """Pack cells into a short list of inclusive bounding rectangles (row runs)."""
+    if not cells:
+        return []
+    by_row: dict[int, list[int]] = {}
+    for x, y in cells:
+        by_row.setdefault(y, []).append(x)
+    rects: list[tuple[int, int, int, int]] = []
+    for y, xs in sorted(by_row.items()):
+        xs.sort()
+        run_start = xs[0]
+        prev = xs[0]
+        for x in xs[1:]:
+            if x == prev + 1:
+                prev = x
+                continue
+            rects.append((run_start, y, prev, y))
+            run_start = x
+            prev = x
+        rects.append((run_start, y, prev, y))
+    # Merge vertically adjacent identical x-ranges.
+    merged: list[tuple[int, int, int, int]] = []
+    for rect in rects:
+        if (
+            merged
+            and merged[-1][0] == rect[0]
+            and merged[-1][2] == rect[2]
+            and merged[-1][3] + 1 == rect[1]
+        ):
+            pl, pt, pr, _pb = merged[-1]
+            merged[-1] = (pl, pt, pr, rect[3])
+        else:
+            merged.append(rect)
+    return merged
+
+
 @dataclass
 class FarmField:
-    """Rectangular field plot owned by a Farm (created by drag in the Farm menu)."""
+    """Legacy nested field plot (migrated to standalone Field buildings on load)."""
 
     id: int
     x0: int
@@ -555,12 +622,134 @@ class Building:
     carrot_seeds: int = 0
     capacity: int = BUILDING_STORAGE_CAPACITY
     areas: list[TaskArea] = field(default_factory=list)
-    fields: list[FarmField] = field(default_factory=list)
+    fields: list[FarmField] = field(default_factory=list)  # legacy; migrated away
+    # Standalone Field plot size (origin at x,y) and crop plans.
+    plot_w: int = 1
+    plot_h: int = 1
+    plans: list[CropPlan] = field(default_factory=list)
     draw_task_type: TaskType = TaskType.FULL_MANAGE
     work_mode: WorkMode = WorkMode.BOTH
-    crop_kind: str = "sage"  # legacy FIELD buildings; unused for Farm plots
+    crop_kind: str = "sage"  # legacy
     next_field_id: int = 1
     next_plan_id: int = 1
+
+    def plot_bounds(self) -> tuple[int, int, int, int]:
+        w = max(1, self.plot_w)
+        h = max(1, self.plot_h)
+        return self.x, self.y, self.x + w - 1, self.y + h - 1
+
+    def contains_plot(self, x: int, y: int) -> bool:
+        if self.kind != BuildingKind.FIELD:
+            return self.x == x and self.y == y
+        left, top, right, bottom = self.plot_bounds()
+        return left <= x <= right and top <= y <= bottom
+
+    def plot_cells(self) -> list[tuple[int, int]]:
+        left, top, right, bottom = self.plot_bounds()
+        return [(x, y) for y in range(top, bottom + 1) for x in range(left, right + 1)]
+
+    def plot_size_label(self) -> str:
+        return f"{max(1, self.plot_w)}×{max(1, self.plot_h)}"
+
+    def plan_covering(self, x: int, y: int) -> CropPlan | None:
+        """Latest plan covering the cell (Field buildings)."""
+        hit: CropPlan | None = None
+        for plan in self.plans:
+            if plan.contains(x, y):
+                hit = plan
+        return hit
+
+    def plans_covering(self, x: int, y: int) -> list[CropPlan]:
+        return [plan for plan in self.plans if plan.contains(x, y)]
+
+    def add_field_plan(
+        self,
+        x0: int,
+        y0: int,
+        x1: int,
+        y1: int,
+        crop_kind: str,
+        *,
+        cell_planted: object | None = None,
+    ) -> CropPlan | None:
+        """Paint a crop plan. Compatible rotation plans stack on the same cells.
+
+        Existing coverage is only carved away when schedules conflict (same plant
+        season, same harvest season, or grow clash). Harvest+plant in one season
+        is allowed so sage→cabbage→rye rotations can share an area.
+        ``cell_planted`` is accepted for callers but no longer drives removal.
+        """
+        del cell_planted  # kept for call-site compatibility
+        if self.kind != BuildingKind.FIELD:
+            return None
+        from crops import CROP_BY_KEY, schedules_conflict
+
+        new_crop = CROP_BY_KEY.get(crop_kind, CROP_BY_KEY["sage"])
+        draft = CropPlan(
+            id=0,
+            x0=x0,
+            y0=y0,
+            x1=x1,
+            y1=y1,
+            crop_kind=crop_kind,
+            field_id=self.id,
+        )
+        draft.clip_to(self.plot_bounds())
+        if draft.is_empty():
+            return None
+
+        paint_cells = set(draft.cells())
+        # Only remove cells from plans that cannot coexist with the new crop.
+        replace_by_plan: dict[int, set[tuple[int, int]]] = {}
+        for plan in self.plans:
+            old_crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
+            if not schedules_conflict(old_crop, new_crop):
+                continue
+            overlap = {cell for cell in plan.cells() if cell in paint_cells}
+            if overlap:
+                replace_by_plan[plan.id] = overlap
+
+        if replace_by_plan:
+            replace_cells = set().union(*replace_by_plan.values())
+            rebuilt: list[CropPlan] = []
+            for plan in self.plans:
+                cut = replace_by_plan.get(plan.id)
+                if not cut:
+                    rebuilt.append(plan)
+                    continue
+                remaining = {cell for cell in plan.cells() if cell not in cut}
+                if not remaining:
+                    continue
+                for rect in _cells_to_rects(remaining):
+                    rebuilt.append(
+                        CropPlan(
+                            id=self.next_plan_id,
+                            x0=rect[0],
+                            y0=rect[1],
+                            x1=rect[2],
+                            y1=rect[3],
+                            crop_kind=plan.crop_kind,
+                            field_id=self.id,
+                        )
+                    )
+                    self.next_plan_id += 1
+            self.plans = rebuilt
+
+        created: CropPlan | None = None
+        for rect in _cells_to_rects(paint_cells):
+            plan = CropPlan(
+                id=self.next_plan_id,
+                x0=rect[0],
+                y0=rect[1],
+                x1=rect[2],
+                y1=rect[3],
+                crop_kind=crop_kind,
+                field_id=self.id,
+            )
+            self.next_plan_id += 1
+            self.plans.append(plan)
+            created = plan
+        return created
 
     def get_field(self, field_id: int) -> FarmField | None:
         for f in self.fields:
@@ -778,7 +967,7 @@ class Building:
         if self.kind in (BuildingKind.FORESTER, BuildingKind.FARM):
             return WORK_MODE_CYCLE_PLANTABLE
         if self.kind == BuildingKind.FIELD:
-            return (WorkMode.COLLECT,)
+            return (WorkMode.COLLECT,)  # unused; Farm workers manage Fields
         return (WorkMode.COLLECT,)
 
     def work_mode_label(self) -> str:
@@ -872,6 +1061,8 @@ class ConstructionSite:
     have_wood: int = 0
     have_rock: int = 0
     build_progress: int = 0
+    plot_w: int = 1
+    plot_h: int = 1
 
     @property
     def wood_needed(self) -> int:

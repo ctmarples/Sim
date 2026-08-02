@@ -787,11 +787,20 @@ class World:
             FeatureType.FORAGER,
             FeatureType.FISHER,
             FeatureType.FARM,
-            FeatureType.FIELD,
             FeatureType.CONSTRUCTION_SITE,
         ):
             return False
-        if cell.terrain == TerrainType.SOIL and cell.feature == FeatureType.NONE:
+        # Legacy Field marker on origin: clear it when ploughing that tile.
+        if cell.terrain == TerrainType.SOIL and cell.feature in (
+            FeatureType.NONE,
+            FeatureType.FIELD,
+        ):
+            if cell.feature == FeatureType.FIELD:
+                cell.feature = FeatureType.NONE
+                cell.deposit = 0
+                cell.growth_ticks = 0
+                cell.crop_kind = None
+                return True
             return False
         cell.terrain = TerrainType.SOIL
         cell.feature = FeatureType.NONE

@@ -30,11 +30,16 @@ PHASE_LABELS: dict[SeasonPhase, str] = {
 # Map overlay tints for seasonal plan indicators (RGB).
 PHASE_COLOURS: dict[SeasonPhase, Colour] = {
     SeasonPhase.FALLOW: (90, 90, 90),
-    SeasonPhase.GROW: (70, 130, 200),
+    SeasonPhase.GROW: (70, 140, 80),
     SeasonPhase.HARVEST: (210, 170, 50),
     SeasonPhase.PLOUGH_PLANT: (140, 100, 50),
     SeasonPhase.HARVEST_PLOUGH_PLANT: (180, 120, 40),
 }
+
+# Plan-mode cell backgrounds (plant / grow / harvest).
+PLAN_COLOUR_PLANT: Colour = (140, 100, 50)  # brown — sowing
+PLAN_COLOUR_GROW: Colour = (70, 140, 80)  # green — growing
+PLAN_COLOUR_HARVEST: Colour = (210, 170, 50)  # golden — harvest
 
 
 @dataclass(frozen=True)
@@ -267,6 +272,53 @@ def phase_allows_harvest(phase: SeasonPhase) -> bool:
 
 def phase_allows_plough_plant(phase: SeasonPhase) -> bool:
     return phase in (SeasonPhase.PLOUGH_PLANT, SeasonPhase.HARVEST_PLOUGH_PLANT)
+
+
+def grow_seasons(crop: CropDef) -> frozenset[Season]:
+    """Seasons when the crop is actively growing (not plant/harvest/fallow)."""
+    return frozenset(
+        season
+        for season, phase in zip(SEASON_ORDER, crop.year_phases)
+        if phase == SeasonPhase.GROW
+    )
+
+
+def grow_periods_overlap(a: CropDef, b: CropDef) -> bool:
+    return bool(grow_seasons(a) & grow_seasons(b))
+
+
+def _phase_wants_plant(phase: SeasonPhase) -> bool:
+    return phase in (SeasonPhase.PLOUGH_PLANT, SeasonPhase.HARVEST_PLOUGH_PLANT)
+
+
+def _phase_wants_harvest(phase: SeasonPhase) -> bool:
+    return phase in (SeasonPhase.HARVEST, SeasonPhase.HARVEST_PLOUGH_PLANT)
+
+
+def _phase_wants_grow(phase: SeasonPhase) -> bool:
+    return phase == SeasonPhase.GROW
+
+
+def schedules_conflict(a: CropDef, b: CropDef) -> bool:
+    """True if two crops cannot share the same field cells in a year.
+
+    Harvest + plant in the same season is allowed (rotation). Conflicting plant,
+    harvest, or grow claims in the same season are not.
+    """
+    if a.key == b.key:
+        return True  # same crop: treat as redraw/replace
+    for season in SEASON_ORDER:
+        pa = phase_for_crop(a, season)
+        pb = phase_for_crop(b, season)
+        if _phase_wants_grow(pa) and pb != SeasonPhase.FALLOW:
+            return True
+        if _phase_wants_grow(pb) and pa != SeasonPhase.FALLOW:
+            return True
+        if _phase_wants_plant(pa) and _phase_wants_plant(pb):
+            return True
+        if _phase_wants_harvest(pa) and _phase_wants_harvest(pb):
+            return True
+    return False
 
 
 def calendar_label(crop: CropDef) -> str:

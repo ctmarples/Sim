@@ -96,6 +96,8 @@ FARM_COST_WOOD: int = 2
 FARM_COST_ROCK: int = 2
 FIELD_COST_WOOD: int = 1
 FIELD_COST_ROCK: int = 0
+# Chebyshev distance from Farm to a Field plot for workers to manage it.
+FARM_FIELD_RADIUS: int = 12
 
 STARTING_WOOD: int = 2
 STARTING_ROCK: int = 2

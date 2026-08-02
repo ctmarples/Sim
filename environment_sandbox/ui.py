@@ -413,7 +413,7 @@ class UI:
                 workers = sum(1 for v in villagers if v.building_id == b.id)
                 selected = selected_building_id == b.id
                 trailing = None
-                if selected:
+                if selected and b.kind != BuildingKind.FIELD:
                     mode = b.work_mode
                     mode_tip = (
                         f"Behaviour: {WORK_MODE_LABELS[mode]}"
@@ -443,10 +443,31 @@ class UI:
                             False,
                         ),
                     ]
+                elif selected and b.kind == BuildingKind.FIELD:
+                    trailing = [
+                        (
+                            "Plan",
+                            "open_field_plan",
+                            "Open crop plan editor",
+                            False,
+                        ),
+                    ]
+                if b.kind == BuildingKind.FIELD:
+                    plans_n = len(b.plans)
+                    plans_txt = f"{plans_n} plan" if plans_n == 1 else f"{plans_n} plans"
+                    label = (
+                        f"{BUILDING_LABELS[b.kind]} #{b.id}  "
+                        f"{b.plot_size_label()} · {plans_txt}"
+                    )
+                else:
+                    label = (
+                        f"{BUILDING_LABELS[b.kind]} #{b.id}  "
+                        f"{b.stored_total}/{b.capacity} · {workers}w · "
+                        f"{WORK_MODE_SHORT[b.work_mode]}"
+                    )
                 y = self._draw_list_row(
                     content,
-                    f"{BUILDING_LABELS[b.kind]} #{b.id}  "
-                    f"{b.stored_total}/{b.capacity} · {workers}w · {WORK_MODE_SHORT[b.work_mode]}",
+                    label,
                     x,
                     y,
                     selected=selected,
@@ -455,44 +476,19 @@ class UI:
                     trailing_btns=trailing,
                     local_mouse=local_mouse,
                 )
-                if b.kind == BuildingKind.FARM and b.fields:
-                    for field_obj in b.fields:
-                        field_selected = (
-                            selected and selected_field_id == field_obj.id
-                        )
-                        plans_txt = (
-                            f"{len(field_obj.plans)} plan"
-                            if len(field_obj.plans) == 1
-                            else f"{len(field_obj.plans)} plans"
-                        )
-                        # Packed id: farm_id * 100000 + field_id
-                        packed = b.id * 100000 + field_obj.id
-                        y = self._draw_list_row(
+                if selected and b.kind == BuildingKind.FIELD and b.plans:
+                    for plan in b.plans:
+                        crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
+                        phase = phase_for_crop(crop, season)
+                        pl, pt, pr, pb = plan.normalised()
+                        y = _blit_text(
                             content,
-                            f"  └ {field_obj.display_name()} "
-                            f"{field_obj.size_label()} · {plans_txt}",
-                            x,
-                            y,
-                            selected=field_selected,
-                            hit_kind="farm_field",
-                            hit_id=packed,
-                            local_mouse=local_mouse,
+                            self.font_small,
+                            f"  {crop.label} {pr - pl + 1}×{pb - pt + 1}: "
+                            f"{PHASE_LABELS[phase]}",
+                            (x, y),
+                            COLOUR_STATUS if selected else COLOUR_TEXT_DIM,
                         )
-                        if field_selected and field_obj.plans:
-                            for plan in field_obj.plans:
-                                crop = CROP_BY_KEY.get(
-                                    plan.crop_kind, CROP_BY_KEY["sage"]
-                                )
-                                phase = phase_for_crop(crop, season)
-                                pl, pt, pr, pb = plan.normalised()
-                                y = _blit_text(
-                                    content,
-                                    self.font_small,
-                                    f"     {crop.label} {pr - pl + 1}×{pb - pt + 1}: "
-                                    f"{PHASE_LABELS[phase]}",
-                                    (x, y),
-                                    COLOUR_STATUS if field_selected else COLOUR_TEXT_DIM,
-                                )
         y = self._draw_list_row(
             content,
             "Home (haulers)",
