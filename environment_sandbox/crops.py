@@ -86,7 +86,7 @@ CROPS: tuple[CropDef, ...] = (
         flower_colour=None,
         plant_season=Season.AUTUMN,
         harvest_seasons=(Season.AUTUMN,),
-        growth_days=84,  # autumn plant → autumn harvest (W+Sp+Su grow)
+        growth_days=112,  # autumn plant → next autumn harvest (full year)
         wild_seed_chance=WILD_SEED_CHANCE,
         farm_seed_amounts=FARM_SEED_AMOUNTS,
         # S_S_A_W: Grow · Grow · Harvest/Plough/Plant · Grow

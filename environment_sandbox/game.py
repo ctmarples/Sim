@@ -17,7 +17,6 @@ from crops import (
     SEED_KEYS,
     SeasonPhase,
     growth_ticks_for,
-    phase_allows_harvest,
     phase_allows_plough_plant,
     phase_for_crop,
 )
@@ -1166,7 +1165,13 @@ class Game:
             self._set_status(f"{format_date(self.calendar_day)} begins.")
 
     def _expire_unharvested_crops(self, ended_season: Season) -> None:
-        """Crops not taken in their harvest season clear when that season ends."""
+        """Clear crops that missed their harvest window so the tile can be replanted.
+
+        Ripe leftovers clear when their harvest season ends. Crops still immature at
+        the end of their harvest season also clear (except newly sown plantings in a
+        harvest/plant season, e.g. autumn wheat re-sow).
+        """
+        cleared = False
         for y in range(self.world.rows):
             for x in range(self.world.cols):
                 cell = self.world.cells[y][x]
@@ -1176,17 +1181,33 @@ class Game:
                     FeatureType.HERB,
                 ):
                     continue
-                # Still growing (newly sown) — keep until ripe harvest window passes.
-                if cell.feature == FeatureType.CROP_HERB and cell.growth_ticks > 0:
-                    continue
                 crop = CROP_BY_KEY.get(cell.crop_kind or "sage")
                 if crop is None:
                     continue
-                if ended_season in crop.harvest_seasons:
-                    cell.feature = FeatureType.NONE
-                    cell.growth_ticks = 0
-                    cell.crop_kind = None
-                    cell.deposit = 0
+
+                newly_sown_in_ended = (
+                    cell.feature == FeatureType.CROP_HERB
+                    and cell.growth_ticks > 0
+                    and crop.plant_season == ended_season
+                )
+                # Clear only when a harvest window ends without collection.
+                # Ripe crops outside the calendar window stay until workers pick
+                # them (or the next harvest season ends).
+                missed_harvest = (
+                    ended_season in crop.harvest_seasons and not newly_sown_in_ended
+                )
+                if not missed_harvest:
+                    continue
+
+                cell.feature = FeatureType.NONE
+                cell.growth_ticks = 0
+                cell.crop_kind = None
+                cell.deposit = 0
+                cleared = True
+
+        if cleared:
+            self._wake_all_farm_workers()
+            self._refresh_indicators()
 
     def _seed_chance(self, base: float) -> float:
         return min(1.0, base * seed_chance_multiplier(self.calendar_day))
@@ -2049,14 +2070,23 @@ class Game:
                     continue
 
             if villager.needs_food() or villager.seeking_food:
-                can_eat = (
-                    self._food_count(villager.inventory) > 0
-                    or self._find_nearest_food_store(villager) is not None
-                )
-                if can_eat:
-                    self._update_seek_food(villager)
-                    continue
-                villager.seeking_food = False
+                # Don't abandon deliveries / hauling / building to snack — cargo
+                # would sit on the home tile and look like a stuck worker.
+                if villager.state in (
+                    VillagerState.DELIVERING,
+                    VillagerState.HAULING,
+                    VillagerState.BUILDING,
+                ):
+                    villager.seeking_food = True
+                else:
+                    can_eat = (
+                        self._food_count(villager.inventory) > 0
+                        or self._find_nearest_food_store(villager) is not None
+                    )
+                    if can_eat:
+                        self._update_seek_food(villager)
+                        continue
+                    villager.seeking_food = False
 
             acted = False
             for priority in villager.priorities:
@@ -2335,14 +2365,20 @@ class Game:
         return True
 
     def _begin_workplace_delivery(self, villager: Villager, building: Building) -> None:
+        if villager.inventory.is_empty:
+            return
         if building.kind == BuildingKind.FARM:
-            if not (
+            has_farm_cargo = (
                 building.has_gather_cargo(villager.inventory)
                 or any(getattr(villager.inventory, k, 0) > 0 for k in SEED_KEYS)
-            ):
+            )
+            if not has_farm_cargo and building.can_accept_from(villager.inventory):
                 return
+            # has farm cargo, or wrong-type cargo that must go home
         elif building.work_mode in (WorkMode.PLANT, WorkMode.BOTH):
-            if not building.has_gather_cargo(villager.inventory):
+            if not building.has_gather_cargo(villager.inventory) and building.can_accept_from(
+                villager.inventory
+            ):
                 return
         villager.state = VillagerState.DELIVERING
         villager.target = self._delivery_destination(villager, building)
@@ -2351,16 +2387,20 @@ class Game:
         self, villager: Villager, building: Building
     ) -> bool:
         """True when carrying gather goods that should go to storage."""
+        if villager.inventory.is_empty:
+            return False
         if building.kind == BuildingKind.FARM:
-            if not villager.inventory.is_full:
-                return False
-            return (
+            has_farm_cargo = (
                 building.has_gather_cargo(villager.inventory)
                 or any(getattr(villager.inventory, k, 0) > 0 for k in SEED_KEYS)
             )
+            if not has_farm_cargo:
+                # Wood/rock/etc. — clear via home; do not idle with a full wrong pack.
+                return True
+            return villager.inventory.is_full
         if building.work_mode in (WorkMode.PLANT, WorkMode.BOTH):
             if not building.has_gather_cargo(villager.inventory):
-                return False
+                return not building.can_accept_from(villager.inventory)
             # Deliver when pack is full, or when gather goods present and no work left.
             return villager.inventory.is_full
         return villager.inventory.is_full
@@ -2660,7 +2700,17 @@ class Game:
                 villager.target = None
             return
 
-        if self._update_plant_stock_withdraw(villager, building):
+        # Harvest / plough before seed runs — never park at home for seeds while
+        # field work is available (sowing can pull seeds from home remotely).
+        harvest_first = self._find_farm_harvest(villager, building)
+        plough_or_sow = None if harvest_first is not None else self._find_farm_plant_work(
+            villager, building
+        )
+        if (
+            harvest_first is None
+            and plough_or_sow is None
+            and self._update_plant_stock_withdraw(villager, building)
+        ):
             return
 
         if building.has_gather_cargo(villager.inventory):
@@ -2669,9 +2719,15 @@ class Game:
                 self._update_workplace_delivery(villager, building)
                 return
 
-        target = self._find_farm_work(villager, building)
+        target = harvest_first or plough_or_sow or self._find_farm_work(villager, building)
         if target is None:
-            if building.has_gather_cargo(villager.inventory):
+            if (
+                building.has_gather_cargo(villager.inventory)
+                or (
+                    not villager.inventory.is_empty
+                    and not building.can_accept_from(villager.inventory)
+                )
+            ):
                 self._begin_workplace_delivery(villager, building)
                 self._update_workplace_delivery(villager, building)
             else:
@@ -2680,7 +2736,10 @@ class Game:
             return
 
         villager.state = VillagerState.WORKING
+        villager.target = None
         if villager.inventory.is_full and building.has_gather_cargo(villager.inventory):
+            self._begin_workplace_delivery(villager, building)
+            self._update_workplace_delivery(villager, building)
             return
 
         if (villager.x, villager.y) == target:
@@ -2690,38 +2749,39 @@ class Game:
         else:
             self._step_villager_toward(villager, target)
 
-    def _find_farm_work(
+    def _find_farm_harvest(
         self, villager: Villager, building: Building
     ) -> tuple[int, int] | None:
-        """Priority: harvest → plough → sow on nearby Field buildings' plans."""
+        """Closest ripe crop on a nearby field (ignores calendar phase)."""
         mode = building.work_mode
-        allow_harvest = mode in (WorkMode.COLLECT, WorkMode.BOTH)
-        allow_plant = mode in (WorkMode.PLANT, WorkMode.BOTH)
+        if mode not in (WorkMode.COLLECT, WorkMode.BOTH):
+            return None
+        if villager.inventory.is_full:
+            return None
         harvest: list[tuple[int, int]] = []
+        for field_b in self._fields_near_farm(building):
+            for x, y in field_b.plot_cells():
+                if not self.world.is_walkable(x, y):
+                    continue
+                if self.world.crop_herb_ready(x, y):
+                    harvest.append((x, y))
+        return self._closest_of((villager.x, villager.y), harvest)
+
+    def _find_farm_plant_work(
+        self, villager: Villager, building: Building
+    ) -> tuple[int, int] | None:
+        """Closest plough or sow tile (no harvest)."""
+        mode = building.work_mode
+        if mode not in (WorkMode.PLANT, WorkMode.BOTH):
+            return None
         plough: list[tuple[int, int]] = []
         sow: list[tuple[int, int]] = []
         season = self.season
-
         for field_b in self._fields_near_farm(building):
-            # Harvest from what's actually growing in the plot.
-            if allow_harvest:
-                for x, y in field_b.plot_cells():
-                    if not self.world.is_walkable(x, y):
-                        continue
-                    if not self.world.crop_herb_ready(x, y):
-                        continue
-                    cell = self.world.get_cell(x, y)
-                    if cell is None:
-                        continue
-                    crop = CROP_BY_KEY.get(cell.crop_kind or "sage", CROP_BY_KEY["sage"])
-                    phase = phase_for_crop(crop, season)
-                    if phase_allows_harvest(phase) and not villager.inventory.is_full:
-                        harvest.append((x, y))
-
             for plan in field_b.plans:
                 crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
                 phase = phase_for_crop(crop, season)
-                if not allow_plant or not phase_allows_plough_plant(phase):
+                if not phase_allows_plough_plant(phase):
                     continue
                 seed_key = crop.seed_key
                 can_sow = (
@@ -2733,9 +2793,7 @@ class Game:
                     if not self.world.is_walkable(x, y):
                         continue
                     cell = self.world.get_cell(x, y)
-                    if cell is None:
-                        continue
-                    if cell.feature == FeatureType.CROP_HERB:
+                    if cell is None or cell.feature == FeatureType.CROP_HERB:
                         continue
                     if cell.terrain == TerrainType.SOIL and cell.feature == FeatureType.NONE:
                         if can_sow and (
@@ -2757,13 +2815,17 @@ class Game:
                             FeatureType.CONSTRUCTION_SITE,
                         ):
                             plough.append((x, y))
-
         origin = (villager.x, villager.y)
-        for bucket in (harvest, plough, sow):
-            chosen = self._closest_of(origin, bucket)
-            if chosen is not None:
-                return chosen
-        return None
+        return self._closest_of(origin, plough) or self._closest_of(origin, sow)
+
+    def _find_farm_work(
+        self, villager: Villager, building: Building
+    ) -> tuple[int, int] | None:
+        """Priority: harvest → plough → sow on nearby Field buildings' plans."""
+        found = self._find_farm_harvest(villager, building)
+        if found is not None:
+            return found
+        return self._find_farm_plant_work(villager, building)
 
     def _fields_near_farm(self, farm: Building) -> list[Building]:
         """Field buildings whose plot is within Chebyshev radius of the farm."""
@@ -2825,12 +2887,12 @@ class Game:
         allow_harvest = mode in (WorkMode.COLLECT, WorkMode.BOTH)
         allow_plant = mode in (WorkMode.PLANT, WorkMode.BOTH)
 
-        # Harvest uses the crop actually on the tile.
+        # Harvest uses the crop actually on the tile (ripe = harvestable any season).
         if self.world.crop_herb_ready(x, y):
+            if not allow_harvest:
+                return
             crop = CROP_BY_KEY.get(cell.crop_kind or "sage", CROP_BY_KEY["sage"])
             phase = phase_for_crop(crop, self.season)
-            if not allow_harvest or not phase_allows_harvest(phase):
-                return
             self._harvest_farm_herb(x, y, inv, status=False)
             if phase == SeasonPhase.HARVEST_PLOUGH_PLANT and allow_plant:
                 self.world.plough_tile(x, y)
@@ -3196,9 +3258,15 @@ class Game:
     def _plant_withdraw_destination(
         self, building: Building
     ) -> tuple[int, int] | None:
-        """Prefer workplace stock; fall back to home storehouse."""
+        """Prefer workplace stock; foresters may fall back to home storehouse.
+
+        Farm workers do not walk home for seeds — sowing pulls from home remotely
+        so they keep working fields instead of parking on the house tile.
+        """
         if any(getattr(building, key, 0) > 0 for key in building.plant_keys()):
             return building.x, building.y
+        if building.kind == BuildingKind.FARM:
+            return None
         if any(getattr(self.home_storage, key, 0) > 0 for key in building.plant_keys()):
             return self.world.home_pos
         return None

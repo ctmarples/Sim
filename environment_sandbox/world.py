@@ -552,10 +552,10 @@ class World:
                     if cell.growth_ticks <= 0 and cell.deposit <= 0:
                         cell.deposit = BERRY_BUSH_YIELD
                         cell.growth_ticks = 0
-                elif grow_step > 0 and cell.feature == FeatureType.CROP_HERB and cell.growth_ticks > 0:
-                    cell.growth_ticks -= grow_step * ticks
-                    if cell.growth_ticks < 0:
-                        cell.growth_ticks = 0
+                elif cell.feature == FeatureType.CROP_HERB and cell.growth_ticks > 0:
+                    # Farm crops follow the calendar (growth_days), not ecology
+                    # grow/freeze envelopes — otherwise they mature outside harvest.
+                    cell.growth_ticks = max(0, cell.growth_ticks - ticks)
                 if decay_per_tick > 0 and cell.disturbance > 0:
                     cell.disturbance = max(0.0, cell.disturbance - decay_per_tick * ticks)
 
