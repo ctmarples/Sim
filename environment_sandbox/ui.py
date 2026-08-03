@@ -75,7 +75,7 @@ from settings import (
     WINDOW_WIDTH,
     map_view_width,
 )
-from wildlife import FishManager, WildlifeManager
+from wildlife import AnimalKind, FishManager, WildlifeManager
 from world import FeatureType, TerrainType, World
 
 
@@ -369,6 +369,8 @@ class UI:
         season: Season = Season.SPRING,
         calendar_day: int = 0,
         selected_field_id: int | None = None,
+        selected_habitat_kind: AnimalKind | None = None,
+        selected_habitat_id: int | None = None,
     ) -> None:
         panel_x = map_view_width()
         panel_h = _panel_height()
@@ -562,14 +564,60 @@ class UI:
         y += 4
 
         y = _blit_text(content, self.font_title, "World", (x, y))
-        cap = wildlife.total_capacity(world)
         wild_line = (
-            f"Deer {len(wildlife.deer())}  Boar {len(wildlife.boars())}  "
-            f"(cap {cap})"
+            f"Deer {len(wildlife.deer())}  Boar {len(wildlife.boars())}"
         )
         if fish_manager is not None:
-            wild_line += f" · Fish {len(fish_manager.fish)}/{fish_manager.total_capacity(world)}"
+            wild_line += (
+                f" · Fish {len(fish_manager.fish)}/"
+                f"{fish_manager.total_capacity(world)}"
+            )
         y = _blit_text(content, self.font_small, wild_line, (x, y), COLOUR_TEXT_DIM)
+
+        y = _blit_text(content, self.font_small, "Deer grounds", (x, y), COLOUR_TEXT_DIM)
+        deer_grounds = wildlife.breeding_grounds(AnimalKind.DEER)
+        if not deer_grounds:
+            y = _blit_text(content, self.font_small, "  none", (x, y), COLOUR_TEXT_DIM)
+        else:
+            for hab in deer_grounds:
+                pop = wildlife.count_in_patch(AnimalKind.DEER, hab.id)
+                selected = (
+                    selected_habitat_kind == AnimalKind.DEER
+                    and selected_habitat_id == hab.id
+                )
+                y = self._draw_list_row(
+                    content,
+                    f"  #{hab.id}  {pop}/{hab.deer_cap}  "
+                    f"({len(hab.deer_breeding)} tiles)",
+                    x,
+                    y,
+                    selected=selected,
+                    hit_kind="deer_ground",
+                    hit_id=hab.id,
+                )
+
+        y = _blit_text(content, self.font_small, "Boar grounds", (x, y), COLOUR_TEXT_DIM)
+        boar_grounds = wildlife.breeding_grounds(AnimalKind.BOAR)
+        if not boar_grounds:
+            y = _blit_text(content, self.font_small, "  none", (x, y), COLOUR_TEXT_DIM)
+        else:
+            for hab in boar_grounds:
+                pop = wildlife.count_in_patch(AnimalKind.BOAR, hab.id)
+                selected = (
+                    selected_habitat_kind == AnimalKind.BOAR
+                    and selected_habitat_id == hab.id
+                )
+                y = self._draw_list_row(
+                    content,
+                    f"  #{hab.id}  {pop}/{hab.boar_cap}  "
+                    f"({len(hab.boar_breeding)} tiles)",
+                    x,
+                    y,
+                    selected=selected,
+                    hit_kind="boar_ground",
+                    hit_id=hab.id,
+                )
+
         y = _blit_text(
             content,
             self.font_small,
@@ -611,6 +659,8 @@ class UI:
                 mouse_pos=mouse_pos,
                 season=season,
                 calendar_day=calendar_day,
+                selected_habitat_kind=selected_habitat_kind,
+                selected_habitat_id=selected_habitat_id,
             )
 
         self.content_height = max(panel_h, y)

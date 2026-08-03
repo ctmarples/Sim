@@ -229,6 +229,8 @@ class Game:
         # Selection / drawing
         self.selected_building_id: int | None = None
         self.selected_villager_id: int | None = None
+        self.selected_habitat_kind: AnimalKind | None = None
+        self.selected_habitat_id: int | None = None
         self.assign_workplace_mode = False
         self.place_kind: BuildingKind | None = None  # B cycles build ghost
         self.field_crop_kind: str = "sage"
@@ -248,6 +250,8 @@ class Game:
 
         self._give_starting_resources()
         self._ensure_core_buildings()
+        self.wildlife.refresh_habitats(self.world)
+        self.wildlife.seed_breeding_grounds(self.world)
         self._sample_biodiversity()
         self.status_message = (
             "Hire from Hiring hall popup. Toolbar builds place construction sites. "
@@ -370,6 +374,8 @@ class Game:
         self._give_starting_resources()
         self._ensure_core_buildings()
         self._food_rng.seed(99)
+        self.wildlife.refresh_habitats(self.world)
+        self.wildlife.seed_breeding_grounds(self.world)
         self._sample_biodiversity()
         self._refresh_indicators()
         self._set_status("World reset.")
@@ -377,6 +383,8 @@ class Game:
     def _clear_selection(self) -> None:
         self.selected_building_id = None
         self.selected_villager_id = None
+        self.selected_habitat_kind = None
+        self.selected_habitat_id = None
         self.assign_workplace_mode = False
         self.drawing = False
         self.draw_start = None
@@ -913,7 +921,37 @@ class Game:
         if kind == "home":
             self._set_status("Home storehouse. Select a villager, then Assign to home.")
             return True
+        if kind == "deer_ground":
+            self._select_habitat(AnimalKind.DEER, item_id)
+            return True
+        if kind == "boar_ground":
+            self._select_habitat(AnimalKind.BOAR, item_id)
+            return True
         return False
+
+    def _select_habitat(self, kind: AnimalKind, patch_id: int) -> None:
+        hab = self.wildlife.habitat(patch_id)
+        if hab is None:
+            return
+        breed = (
+            hab.deer_breeding if kind == AnimalKind.DEER else hab.boar_breeding
+        )
+        if not breed:
+            return
+        self.selected_building_id = None
+        self.selected_villager_id = None
+        self.selected_habitat_kind = kind
+        self.selected_habitat_id = patch_id
+        self.building_inspect.close()
+        self.villager_inspect.close()
+        self.resource_inspect.close()
+        cx = sum(p[0] for p in breed) // len(breed)
+        cy = sum(p[1] for p in breed) // len(breed)
+        self.camera.center_on(cx, cy, self.world.cols, self.world.rows)
+        label = "Deer" if kind == AnimalKind.DEER else "Boar"
+        pop = self.wildlife.count_in_patch(kind, patch_id)
+        cap = hab.deer_cap if kind == AnimalKind.DEER else hab.boar_cap
+        self._set_status(f"{label} ground #{patch_id}: {pop}/{cap}")
 
     def _assign_unassigned_to_selected_building(self) -> None:
         if self.selected_building_id is None:
@@ -1364,10 +1402,12 @@ class Game:
             self._expire_unharvested_crops(prev)
             if self.season == Season.WINTER:
                 self.world.clear_mushrooms()
+            self.wildlife.on_season_change(self.world, self.season)
             self._set_status(f"{format_date(self.calendar_day)} begins.")
         # Biodiversity: sample at season start (day 0) and midpoint.
         if self._is_biodiversity_sample_day(self.calendar_day):
             self._sample_biodiversity()
+            self._sync_habitat_selection()
 
     @staticmethod
     def _is_biodiversity_sample_day(calendar_day: int) -> bool:
@@ -1375,7 +1415,11 @@ class Game:
         return d == 0 or d == DAYS_PER_SEASON // 2
 
     def _sample_biodiversity(self) -> None:
-        """Record a spatial biodiversity snapshot; keep last year of samples."""
+        """Record a spatial biodiversity snapshot; keep last year of samples.
+
+        Also refreshes wildlife forest-patch habitats on the same cadence.
+        """
+        self.wildlife.refresh_habitats(self.world)
         snap = biodiversity_snapshot(
             self.world,
             deer_positions=((a.x, a.y) for a in self.wildlife.deer()),
@@ -1390,6 +1434,29 @@ class Game:
         )
         if self.overlay_mode == OverlayMode.BIODIVERSITY:
             self._refresh_indicators()
+
+    def _sync_habitat_selection(self) -> None:
+        """Drop habitat highlight if that breeding ground vanished on refresh."""
+        if self.selected_habitat_id is None or self.selected_habitat_kind is None:
+            return
+        hab = self.wildlife.habitat(self.selected_habitat_id)
+        if hab is None:
+            self.selected_habitat_kind = None
+            self.selected_habitat_id = None
+            return
+        breed = (
+            hab.deer_breeding
+            if self.selected_habitat_kind == AnimalKind.DEER
+            else hab.boar_breeding
+        )
+        cap = (
+            hab.deer_cap
+            if self.selected_habitat_kind == AnimalKind.DEER
+            else hab.boar_cap
+        )
+        if not breed or cap <= 0:
+            self.selected_habitat_kind = None
+            self.selected_habitat_id = None
 
     def _expire_unharvested_crops(self, ended_season: Season) -> None:
         """Clear crops that missed their harvest window so the tile can be replanted.
@@ -1473,6 +1540,8 @@ class Game:
         """Select a building and open its inspection popup (closes any previous)."""
         self.selected_building_id = building.id
         self.selected_villager_id = None
+        self.selected_habitat_kind = None
+        self.selected_habitat_id = None
         self.assign_workplace_mode = False
         if building.draw_task_type not in TASK_LABELS:
             building.draw_task_type = building.default_draw_task()
@@ -1568,6 +1637,8 @@ class Game:
     def _open_villager_inspect(self, villager: Villager) -> None:
         self.selected_villager_id = villager.id
         self.selected_building_id = None
+        self.selected_habitat_kind = None
+        self.selected_habitat_id = None
         self.assign_workplace_mode = False
         self.field_plan_dialog.close()
         self.building_inspect.close()
@@ -4425,6 +4496,8 @@ class Game:
             mouse_pos=mouse,
             season=self.season,
             calendar_day=self.calendar_day,
+            selected_habitat_kind=self.selected_habitat_kind,
+            selected_habitat_id=self.selected_habitat_id,
         )
         self.resource_bar.draw(
             self.screen,
@@ -4920,6 +4993,30 @@ class Game:
             if building is not None:
                 rect = self._cell_rect(building.x, building.y)
                 pygame.draw.rect(self.screen, COLOUR_SELECTED_ENTITY, rect, 3)
+        if (
+            self.selected_habitat_id is not None
+            and self.selected_habitat_kind is not None
+        ):
+            hab = self.wildlife.habitat(self.selected_habitat_id)
+            if hab is not None:
+                tiles = set(
+                    hab.deer_breeding
+                    if self.selected_habitat_kind == AnimalKind.DEER
+                    else hab.boar_breeding
+                )
+                roam = (
+                    hab.deer_roam_cold
+                    if self.selected_habitat_kind == AnimalKind.DEER
+                    else hab.boar_roam_cold
+                )
+                for x, y in roam:
+                    if (x, y) in tiles:
+                        continue
+                    rect = self._cell_rect(x, y)
+                    pygame.draw.rect(self.screen, (120, 140, 80), rect, 1)
+                for x, y in tiles:
+                    rect = self._cell_rect(x, y)
+                    pygame.draw.rect(self.screen, COLOUR_SELECTED_ENTITY, rect, 2)
 
     def _draw_minimap(self) -> None:
         """Draw minimap showing terrain, buildings, and camera viewport."""

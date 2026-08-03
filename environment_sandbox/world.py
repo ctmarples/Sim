@@ -79,8 +79,6 @@ WILD_CROPS_BY_TERRAIN: dict[TerrainType, tuple[str, ...]] = {
     TerrainType.SOIL: ("onion", "cabbage", "carrot"),
 }
 
-BOAR_TERRAINS: tuple[TerrainType, ...] = (TerrainType.SOIL, TerrainType.RIPARIAN)
-
 # Terrains that accept planted saplings / natural sprouts.
 PLANTABLE_LAND: tuple[TerrainType, ...] = (
     TerrainType.SOIL,
@@ -1259,6 +1257,15 @@ class World:
             if self.cells[y][x].feature == FeatureType.TREE
         ]
 
+    def forest_cells(self) -> list[tuple[int, int]]:
+        """Tiles with a mature tree or sapling (wildlife forest patches)."""
+        return [
+            (x, y)
+            for y in range(self.rows)
+            for x in range(self.cols)
+            if self.cells[y][x].feature in (FeatureType.TREE, FeatureType.SAPLING)
+        ]
+
     def water_cells(self) -> list[tuple[int, int]]:
         return [
             (x, y)
@@ -1268,8 +1275,12 @@ class World:
         ]
 
     def tree_patches(self) -> list[list[tuple[int, int]]]:
-        """Connected components of tree cells (8-connected / Chebyshev)."""
+        """Connected components of mature trees (8-connected / Chebyshev)."""
         return self._connected_patches(set(self.tree_cells()))
+
+    def forest_patches(self) -> list[list[tuple[int, int]]]:
+        """Connected forest: tree or sapling tiles (8-connected)."""
+        return self._connected_patches(set(self.forest_cells()))
 
     def water_patches(self) -> list[list[tuple[int, int]]]:
         """Connected components of water cells."""
@@ -1304,33 +1315,6 @@ class World:
             for ny, nx in self.neighbourhood(tx, ty, radius=1):
                 if self.is_walkable(nx, ny):
                     habitat.add((nx, ny))
-        return list(habitat)
-
-    def soil_riparian_patches(self) -> list[list[tuple[int, int]]]:
-        """Connected patches of soil / riparian cells (for boar density)."""
-        cells = {
-            (x, y)
-            for y in range(self.rows)
-            for x in range(self.cols)
-            if self.cells[y][x].terrain in BOAR_TERRAINS
-        }
-        return self._connected_patches(cells)
-
-    def boar_habitat_for_patch(
-        self, patch: list[tuple[int, int]]
-    ) -> list[tuple[int, int]]:
-        """Walkable cells within 1 of a soil/riparian patch."""
-        habitat: set[tuple[int, int]] = set()
-        for px, py in patch:
-            for ny, nx in self.neighbourhood(px, py, radius=1):
-                if self.is_walkable(nx, ny):
-                    habitat.add((nx, ny))
-        return list(habitat)
-
-    def boar_habitat_cells(self) -> list[tuple[int, int]]:
-        habitat: set[tuple[int, int]] = set()
-        for patch in self.soil_riparian_patches():
-            habitat.update(self.boar_habitat_for_patch(patch))
         return list(habitat)
 
     def apply_disturbance(self, x: int, y: int) -> None:

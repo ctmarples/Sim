@@ -264,6 +264,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "x": a.x,
             "y": a.y,
             "kind": a.kind.name,
+            "patch_id": a.patch_id,
             "move_cooldown": a.move_cooldown,
         }
         for a in game.wildlife.animals
@@ -685,11 +686,13 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                 x=int(a["x"]),
                 y=int(a["y"]),
                 kind=kind,
+                patch_id=int(a["patch_id"]) if a.get("patch_id") is not None else None,
                 move_cooldown=int(a.get("move_cooldown", 0)),
             )
         )
     game.wildlife.next_id = int(wild.get("next_id", 1))
     game.wildlife.growth_timer = int(wild.get("growth_timer", game.wildlife.growth_timer))
+    game.wildlife._seeded = True
 
     fish_data = data.get("fish", {})
     game.fish.fish = [

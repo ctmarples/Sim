@@ -187,10 +187,16 @@ VILLAGER_WORK_INTERVAL: int = 72
 
 ANIMAL_MOVE_INTERVAL: int = 80
 ANIMAL_GROWTH_INTERVAL: int = 480
-ANIMAL_TREES_PER_CAP: int = 4  # deer: 1 per N trees in patch
-BOAR_CELLS_PER_CAP: int = 16  # boar: 1 per N soil/riparian cells in patch
+# Patch capacity from breeding-ground size (deer) / forest-tile count (boar).
+ANIMAL_TREES_PER_CAP: int = 4  # deer: 1 per N deer-breeding tiles
+BOAR_CELLS_PER_CAP: int = 16  # boar: 1 per N forest tiles in patch
 DEER_CROP_EAT_CHANCE: float = 0.50
 BOAR_CROP_EAT_CHANCE: float = 0.25
+# Chance per growth tick that an animal migrates to another forest patch.
+ANIMAL_MIGRATION_CHANCE: float = 0.18
+# Initial seed: number of deer / boar breeding grounds to seed, and animals each.
+WILDLIFE_SEED_GROUNDS: int = 1
+WILDLIFE_SEED_COUNT: int = 2
 
 FISH_MOVE_INTERVAL: int = 80
 FISH_GROWTH_INTERVAL: int = 480
