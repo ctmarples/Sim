@@ -4937,10 +4937,18 @@ class Game:
         )
 
     def _draw_animals(self) -> None:
+        from wildlife import AnimalSex
+
         for animal in self.wildlife.animals:
             cx, cy = self._cell_center(animal.x, animal.y)
             cy += 2
             colour = COLOUR_BOAR if animal.kind == AnimalKind.BOAR else COLOUR_DEER
+            if animal.sex == AnimalSex.FEMALE:
+                colour = (
+                    min(255, colour[0] + 28),
+                    min(255, colour[1] + 18),
+                    min(255, colour[2] + 22),
+                )
             pygame.draw.ellipse(
                 self.screen,
                 colour,
@@ -4951,9 +4959,10 @@ class Game:
                     max(4, CELL_SIZE // 4),
                 ),
             )
-            # Head
+            # Head — males face right, females left.
+            hx = cx + (CELL_SIZE // 6 if animal.sex == AnimalSex.MALE else -(CELL_SIZE // 6))
             pygame.draw.circle(
-                self.screen, colour, (cx + CELL_SIZE // 6, cy - 2), max(2, CELL_SIZE // 10)
+                self.screen, colour, (hx, cy - 2), max(2, CELL_SIZE // 10)
             )
 
     def _draw_fish(self) -> None:

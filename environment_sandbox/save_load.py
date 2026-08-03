@@ -264,8 +264,12 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "x": a.x,
             "y": a.y,
             "kind": a.kind.name,
+            "sex": a.sex.name,
             "patch_id": a.patch_id,
+            "mate_id": a.mate_id,
             "move_cooldown": a.move_cooldown,
+            "migrate_target": list(a.migrate_target) if a.migrate_target else None,
+            "migrate_patch_id": a.migrate_patch_id,
         }
         for a in game.wildlife.animals
     ]
@@ -670,7 +674,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         )
         game.construction_sites[site.id] = site
 
-    from wildlife import Animal, AnimalKind, Fish
+    from wildlife import Animal, AnimalKind, AnimalSex, Fish
 
     wild = data.get("wildlife", {})
     game.wildlife.animals = []
@@ -680,19 +684,36 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             kind = AnimalKind[kind_name]
         except KeyError:
             kind = AnimalKind.DEER
+        sex_name = a.get("sex", "MALE")
+        try:
+            sex = AnimalSex[sex_name]
+        except KeyError:
+            sex = AnimalSex.MALE
+        mt = a.get("migrate_target")
+        migrate_target = (int(mt[0]), int(mt[1])) if mt else None
         game.wildlife.animals.append(
             Animal(
                 id=int(a["id"]),
                 x=int(a["x"]),
                 y=int(a["y"]),
                 kind=kind,
+                sex=sex,
                 patch_id=int(a["patch_id"]) if a.get("patch_id") is not None else None,
+                mate_id=int(a["mate_id"]) if a.get("mate_id") is not None else None,
                 move_cooldown=int(a.get("move_cooldown", 0)),
+                migrate_target=migrate_target,
+                migrate_patch_id=(
+                    int(a["migrate_patch_id"])
+                    if a.get("migrate_patch_id") is not None
+                    else None
+                ),
             )
         )
     game.wildlife.next_id = int(wild.get("next_id", 1))
     game.wildlife.growth_timer = int(wild.get("growth_timer", game.wildlife.growth_timer))
     game.wildlife._seeded = True
+    game.wildlife._index_animals()
+    game.wildlife._form_mating_pairs()
 
     fish_data = data.get("fish", {})
     game.fish.fish = [
