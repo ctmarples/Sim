@@ -75,7 +75,7 @@ from settings import (
     WINDOW_WIDTH,
     map_view_width,
 )
-from wildlife import AnimalKind, AnimalSex, FishManager, WildlifeManager
+from wildlife import AnimalKind, FishManager, WildlifeManager
 from world import FeatureType, TerrainType, World
 
 
@@ -580,25 +580,24 @@ class UI:
             y = _blit_text(content, self.font_small, "  none", (x, y), COLOUR_TEXT_DIM)
         else:
             for hab in deer_grounds:
-                group = [
-                    a
-                    for a in wildlife.deer()
-                    if a.patch_id == hab.id
-                ]
-                pop = len(group)
-                males = sum(1 for a in group if a.sex == AnimalSex.MALE)
-                females = pop - males
-                pairs = sum(1 for a in group if a.mate_id is not None) // 2
-                migrating = wildlife.count_migrating_to(AnimalKind.DEER, hab.id)
+                _present, migrating, total, pairs = wildlife.patch_occupancy(
+                    AnimalKind.DEER, hab.id
+                )
                 selected = (
                     selected_habitat_kind == AnimalKind.DEER
                     and selected_habitat_id == hab.id
                 )
-                mig_txt = f"  +{migrating}mig" if migrating else ""
+                pair_txt = f"{pairs} pair" if pairs == 1 else f"{pairs} pairs"
+                if migrating:
+                    label = (
+                        f"  #{hab.id}  {total}/{hab.deer_cap}  "
+                        f"{pair_txt}  {migrating} migrating"
+                    )
+                else:
+                    label = f"  #{hab.id}  {total}/{hab.deer_cap}  {pair_txt}"
                 y = self._draw_list_row(
                     content,
-                    f"  #{hab.id}  {pop}/{hab.deer_cap}  "
-                    f"{males}M/{females}F  {pairs}p{mig_txt}",
+                    label,
                     x,
                     y,
                     selected=selected,
@@ -612,25 +611,24 @@ class UI:
             y = _blit_text(content, self.font_small, "  none", (x, y), COLOUR_TEXT_DIM)
         else:
             for hab in boar_grounds:
-                group = [
-                    a
-                    for a in wildlife.boars()
-                    if a.patch_id == hab.id
-                ]
-                pop = len(group)
-                males = sum(1 for a in group if a.sex == AnimalSex.MALE)
-                females = pop - males
-                pairs = sum(1 for a in group if a.mate_id is not None) // 2
-                migrating = wildlife.count_migrating_to(AnimalKind.BOAR, hab.id)
+                _present, migrating, total, pairs = wildlife.patch_occupancy(
+                    AnimalKind.BOAR, hab.id
+                )
                 selected = (
                     selected_habitat_kind == AnimalKind.BOAR
                     and selected_habitat_id == hab.id
                 )
-                mig_txt = f"  +{migrating}mig" if migrating else ""
+                pair_txt = f"{pairs} pair" if pairs == 1 else f"{pairs} pairs"
+                if migrating:
+                    label = (
+                        f"  #{hab.id}  {total}/{hab.boar_cap}  "
+                        f"{pair_txt}  {migrating} migrating"
+                    )
+                else:
+                    label = f"  #{hab.id}  {total}/{hab.boar_cap}  {pair_txt}"
                 y = self._draw_list_row(
                     content,
-                    f"  #{hab.id}  {pop}/{hab.boar_cap}  "
-                    f"{males}M/{females}F  {pairs}p{mig_txt}",
+                    label,
                     x,
                     y,
                     selected=selected,

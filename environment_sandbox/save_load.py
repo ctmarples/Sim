@@ -268,8 +268,9 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "patch_id": a.patch_id,
             "mate_id": a.mate_id,
             "move_cooldown": a.move_cooldown,
+            "migrate_home_id": a.migrate_home_id,
             "migrate_target": list(a.migrate_target) if a.migrate_target else None,
-            "migrate_patch_id": a.migrate_patch_id,
+            "migrated_this_year": a.migrated_this_year,
         }
         for a in game.wildlife.animals
     ]
@@ -691,6 +692,11 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             sex = AnimalSex.MALE
         mt = a.get("migrate_target")
         migrate_target = (int(mt[0]), int(mt[1])) if mt else None
+        # New field migrate_home_id; older saves used migrate_patch_id as dest — drop.
+        home_raw = a.get("migrate_home_id")
+        if home_raw is None and a.get("patch_id") is None and a.get("migrate_patch_id") is not None:
+            # Legacy mid-migration: treat as dispersing without a tracked home.
+            home_raw = None
         game.wildlife.animals.append(
             Animal(
                 id=int(a["id"]),
@@ -701,12 +707,9 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                 patch_id=int(a["patch_id"]) if a.get("patch_id") is not None else None,
                 mate_id=int(a["mate_id"]) if a.get("mate_id") is not None else None,
                 move_cooldown=int(a.get("move_cooldown", 0)),
+                migrate_home_id=int(home_raw) if home_raw is not None else None,
                 migrate_target=migrate_target,
-                migrate_patch_id=(
-                    int(a["migrate_patch_id"])
-                    if a.get("migrate_patch_id") is not None
-                    else None
-                ),
+                migrated_this_year=bool(a.get("migrated_this_year", False)),
             )
         )
     game.wildlife.next_id = int(wild.get("next_id", 1))

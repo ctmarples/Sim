@@ -585,6 +585,7 @@ class Game:
             if (
                 self.selected_building_id is not None
                 or self.selected_villager_id is not None
+                or self.selected_habitat_id is not None
                 or self.place_kind is not None
                 or self.assign_workplace_mode
             ):
@@ -949,9 +950,20 @@ class Game:
         cy = sum(p[1] for p in breed) // len(breed)
         self.camera.center_on(cx, cy, self.world.cols, self.world.rows)
         label = "Deer" if kind == AnimalKind.DEER else "Boar"
-        pop = self.wildlife.count_in_patch(kind, patch_id)
+        _present, migrating, total, pairs = self.wildlife.patch_occupancy(
+            kind, patch_id
+        )
         cap = hab.deer_cap if kind == AnimalKind.DEER else hab.boar_cap
-        self._set_status(f"{label} ground #{patch_id}: {pop}/{cap}")
+        pair_txt = f"{pairs} pair" if pairs == 1 else f"{pairs} pairs"
+        if migrating:
+            self._set_status(
+                f"{label} ground #{patch_id}: {total}/{cap} · "
+                f"{pair_txt} · {migrating} migrating"
+            )
+        else:
+            self._set_status(
+                f"{label} ground #{patch_id}: {total}/{cap} · {pair_txt}"
+            )
 
     def _assign_unassigned_to_selected_building(self) -> None:
         if self.selected_building_id is None:

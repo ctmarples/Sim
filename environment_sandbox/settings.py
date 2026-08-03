@@ -190,9 +190,11 @@ ANIMAL_GROWTH_INTERVAL: int = 480
 # Patch capacity from breeding-ground size.
 ANIMAL_TREES_PER_CAP: int = 3  # deer: 1 per 3 deer-breeding tiles
 BOAR_CELLS_PER_CAP: int = 6  # boar: 1 per 6 forest/breeding tiles in patch
+# Usable breeding habitats must hold at least a mating pair.
+MIN_BREEDING_CAPACITY: int = 2
 DEER_CROP_EAT_CHANCE: float = 0.50
 BOAR_CROP_EAT_CHANCE: float = 0.25
-# Chance per growth tick that an animal migrates to another forest patch.
+# Chance per growth tick that a pair starts its once-per-year migration.
 ANIMAL_MIGRATION_CHANCE: float = 0.18
 # Chance a mating pair produces one offspring per growth tick (if under cap).
 ANIMAL_BREED_CHANCE: float = 0.55
