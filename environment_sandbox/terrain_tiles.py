@@ -34,6 +34,8 @@ import pygame
 from settings import (
     CELL_SIZE,
     COLOUR_GRASS,
+    COLOUR_MEADOW,
+    COLOUR_RIPARIAN,
     COLOUR_ROCK_TERRAIN,
     COLOUR_SOIL,
     COLOUR_WATER,
@@ -49,6 +51,8 @@ TL, TR, BR, BL = 1, 2, 4, 8
 # Layer order: earlier = background.
 _PRIORITY: tuple[TerrainType, ...] = (
     TerrainType.GRASS,
+    TerrainType.MEADOW,
+    TerrainType.RIPARIAN,
     TerrainType.SOIL,
     TerrainType.ROCK,
     TerrainType.WATER,
@@ -57,6 +61,8 @@ _PRIORITY: tuple[TerrainType, ...] = (
 _COLOURS: dict[TerrainType, tuple[int, int, int]] = {
     TerrainType.SOIL: COLOUR_SOIL,
     TerrainType.GRASS: COLOUR_GRASS,
+    TerrainType.MEADOW: COLOUR_MEADOW,
+    TerrainType.RIPARIAN: COLOUR_RIPARIAN,
     TerrainType.WATER: COLOUR_WATER,
     TerrainType.ROCK: COLOUR_ROCK_TERRAIN,
 }
@@ -140,6 +146,16 @@ def _opaque_fill(terrain: TerrainType, lx: int, ly: int) -> tuple[int, int, int]
             c = _shift(c, 0.12)
         elif _hash01(lx, ly, 91) > 0.88:
             c = _shift(c, -0.1)
+    elif terrain == TerrainType.MEADOW:
+        if _hash01(lx, ly, 88) > 0.8:
+            c = _shift(c, 0.14)
+        elif _hash01(lx, ly, 89) > 0.86:
+            c = _shift(c, -0.08)
+    elif terrain == TerrainType.RIPARIAN:
+        if _hash01(lx, ly, 86) > 0.78:
+            c = _shift(c, 0.1)
+        elif _hash01(lx, ly, 87) > 0.85:
+            c = _shift(c, -0.1)
     elif terrain == TerrainType.SOIL:
         if _hash01(lx, ly, 92) > 0.8:
             c = _shift(c, -0.12)
@@ -208,7 +224,7 @@ def corner_type_at(
 ) -> TerrainType:
     """Shared vertex (vx, vy): highest-priority terrain among the 2×2 cells.
 
-    Priority WATER > ROCK > SOIL > GRASS (no colour averaging). Adjacent cells
+    Priority WATER > ROCK > SOIL > RIPARIAN > MEADOW > GRASS (no colour averaging). Adjacent cells
     read the same vertex, so shared edges cannot disagree.
     """
     types = (

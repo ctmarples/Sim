@@ -7,6 +7,7 @@ from enum import Enum, auto
 
 from crops import PRODUCE_KEYS, SEED_KEYS
 from settings import BUILDING_STORAGE_CAPACITY, INVENTORY_CAPACITY, SEED_CARRY_CAPACITY
+from trees import SAPLING_ITEM_KEYS, sapling_item_key
 
 # Seeds share a dedicated carry pool (separate from wood/food/etc.).
 SEED_ITEM_KEYS: tuple[str, ...] = ("berry_seeds", *SEED_KEYS)
@@ -84,6 +85,8 @@ FORAGER_TASK_CYCLE: tuple[TaskType, ...] = (
 
 
 class BuildingKind(Enum):
+    HOME = auto()
+    WORKSTATION = auto()
     FORESTER = auto()
     MASON = auto()
     HUNTER = auto()
@@ -94,6 +97,8 @@ class BuildingKind(Enum):
 
 
 BUILDING_LABELS: dict[BuildingKind, str] = {
+    BuildingKind.HOME: "Storehouse",
+    BuildingKind.WORKSTATION: "Hiring hall",
     BuildingKind.FORESTER: "Forester",
     BuildingKind.MASON: "Mason",
     BuildingKind.HUNTER: "Hunter",
@@ -196,13 +201,18 @@ DEFAULT_PRIORITIES_HOME: tuple[WorkPriority, ...] = (
 @dataclass
 class Inventory:
     wood: int = 0
+    hardwood: int = 0
     rock: int = 0
     meat: int = 0
     fish: int = 0
-    saplings: int = 0
+    oak_saplings: int = 0
+    maple_saplings: int = 0
+    pine_saplings: int = 0
+    cedar_saplings: int = 0
     mushrooms: int = 0
     berries: int = 0
     berry_seeds: int = 0
+    reeds: int = 0
     wheat: int = 0
     flax: int = 0
     sage: int = 0
@@ -226,6 +236,21 @@ class Inventory:
     def is_seed_key(key: str) -> bool:
         return key in SEED_ITEM_KEYS
 
+    @staticmethod
+    def is_sapling_key(key: str) -> bool:
+        return key in SAPLING_ITEM_KEYS
+
+    @property
+    def saplings(self) -> int:
+        """Total saplings across all tree species."""
+        return sum(getattr(self, key, 0) for key in SAPLING_ITEM_KEYS)
+
+    def first_sapling_key(self) -> str | None:
+        for key in SAPLING_ITEM_KEYS:
+            if getattr(self, key, 0) > 0:
+                return key
+        return None
+
     @property
     def seed_total(self) -> int:
         return sum(getattr(self, key) for key in SEED_ITEM_KEYS)
@@ -235,12 +260,14 @@ class Inventory:
         """Non-seed items (wood, food, saplings, produce, …)."""
         return (
             self.wood
+            + self.hardwood
             + self.rock
             + self.meat
             + self.fish
             + self.saplings
             + self.mushrooms
             + self.berries
+            + self.reeds
             + sum(getattr(self, key) for key in PRODUCE_KEYS)
         )
 
@@ -281,6 +308,9 @@ class Inventory:
     def add_wood(self, n: int = 1) -> bool:
         return self.add_item("wood", n)
 
+    def add_hardwood(self, n: int = 1) -> bool:
+        return self.add_item("hardwood", n)
+
     def add_rock(self, n: int = 1) -> bool:
         return self.add_item("rock", n)
 
@@ -290,8 +320,8 @@ class Inventory:
     def add_fish(self, n: int = 1) -> bool:
         return self.add_item("fish", n)
 
-    def add_saplings(self, n: int = 1) -> bool:
-        return self.add_item("saplings", n)
+    def add_saplings(self, n: int = 1, species: str | None = None) -> bool:
+        return self.add_item(sapling_item_key(species), n)
 
     def add_mushrooms(self, n: int = 1) -> bool:
         return self.add_item("mushrooms", n)
@@ -308,8 +338,13 @@ class Inventory:
     def add_herb_seeds(self, n: int = 1) -> bool:
         return self.add_item("sage_seeds", n)
 
-    def consume_sapling(self) -> bool:
-        return self.consume_item("saplings", 1)
+    def consume_sapling(self, species: str | None = None) -> bool:
+        if species is not None:
+            return self.consume_item(sapling_item_key(species), 1)
+        key = self.first_sapling_key()
+        if key is None:
+            return False
+        return self.consume_item(key, 1)
 
     def consume_berry_seed(self) -> bool:
         return self.consume_item("berry_seeds", 1)
@@ -320,13 +355,15 @@ class Inventory:
     def clear(self) -> dict[str, int]:
         deposited = {
             "wood": self.wood,
+            "hardwood": self.hardwood,
             "rock": self.rock,
             "meat": self.meat,
             "fish": self.fish,
-            "saplings": self.saplings,
             "mushrooms": self.mushrooms,
             "berries": self.berries,
             "berry_seeds": self.berry_seeds,
+            "reeds": self.reeds,
+            **{key: getattr(self, key) for key in SAPLING_ITEM_KEYS},
             **{key: getattr(self, key) for key in PRODUCE_KEYS},
             **{key: getattr(self, key) for key in SEED_KEYS},
         }
@@ -334,22 +371,27 @@ class Inventory:
         return deposited
 
     def reset(self) -> None:
-        self.wood = self.rock = self.meat = self.fish = self.saplings = 0
-        self.mushrooms = self.berries = self.berry_seeds = 0
-        for key in PRODUCE_KEYS + SEED_KEYS:
+        self.wood = self.hardwood = self.rock = self.meat = self.fish = 0
+        self.mushrooms = self.berries = self.berry_seeds = self.reeds = 0
+        for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS:
             setattr(self, key, 0)
 
 
 @dataclass
 class HomeStorage:
     wood: int = 0
+    hardwood: int = 0
     rock: int = 0
     meat: int = 0
     fish: int = 0
-    saplings: int = 0
+    oak_saplings: int = 0
+    maple_saplings: int = 0
+    pine_saplings: int = 0
+    cedar_saplings: int = 0
     mushrooms: int = 0
     berries: int = 0
     berry_seeds: int = 0
+    reeds: int = 0
     wheat: int = 0
     flax: int = 0
     sage: int = 0
@@ -367,8 +409,16 @@ class HomeStorage:
     cabbage_seeds: int = 0
     carrot_seeds: int = 0
 
+    @property
+    def saplings(self) -> int:
+        return sum(getattr(self, key, 0) for key in SAPLING_ITEM_KEYS)
+
     def deposit_dict(self, items: dict[str, int]) -> None:
         for key, value in items.items():
+            if key == "saplings":
+                # Legacy generic saplings → oak.
+                self.oak_saplings += int(value)
+                continue
             if hasattr(self, key):
                 setattr(self, key, getattr(self, key) + value)
 
@@ -376,9 +426,12 @@ class HomeStorage:
         self.wood += wood
         self.rock += rock
         self.meat += meat
-        self.saplings += saplings
+        if saplings:
+            self.oak_saplings += saplings
         for key, value in extra.items():
-            if hasattr(self, key):
+            if key == "saplings":
+                self.oak_saplings += int(value)
+            elif hasattr(self, key):
                 setattr(self, key, getattr(self, key) + value)
 
     def try_spend(self, wood: int, rock: int) -> bool:
@@ -389,9 +442,9 @@ class HomeStorage:
         return True
 
     def reset(self) -> None:
-        self.wood = self.rock = self.meat = self.fish = self.saplings = 0
-        self.mushrooms = self.berries = self.berry_seeds = 0
-        for key in PRODUCE_KEYS + SEED_KEYS:
+        self.wood = self.hardwood = self.rock = self.meat = self.fish = 0
+        self.mushrooms = self.berries = self.berry_seeds = self.reeds = 0
+        for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS:
             setattr(self, key, 0)
 
     def withdraw_keys_to(self, inventory: Inventory, keys: tuple[str, ...]) -> int:
@@ -587,7 +640,7 @@ class FarmField:
         return hit
 
 
-_FORAGE_KEYS = ("mushrooms", "berries", "berry_seeds") + PRODUCE_KEYS + SEED_KEYS
+_FORAGE_KEYS = ("mushrooms", "berries", "berry_seeds", "reeds") + PRODUCE_KEYS + SEED_KEYS
 
 
 @dataclass
@@ -597,13 +650,18 @@ class Building:
     x: int
     y: int
     wood: int = 0
+    hardwood: int = 0
     rock: int = 0
     meat: int = 0
     fish: int = 0
-    saplings: int = 0
+    oak_saplings: int = 0
+    maple_saplings: int = 0
+    pine_saplings: int = 0
+    cedar_saplings: int = 0
     mushrooms: int = 0
     berries: int = 0
     berry_seeds: int = 0
+    reeds: int = 0
     wheat: int = 0
     flax: int = 0
     sage: int = 0
@@ -632,6 +690,10 @@ class Building:
     crop_kind: str = "sage"  # legacy
     next_field_id: int = 1
     next_plan_id: int = 1
+
+    @property
+    def saplings(self) -> int:
+        return sum(getattr(self, key, 0) for key in SAPLING_ITEM_KEYS)
 
     def plot_bounds(self) -> tuple[int, int, int, int]:
         w = max(1, self.plot_w)
@@ -815,6 +877,7 @@ class Building:
     def stored_total(self) -> int:
         return (
             self.wood
+            + self.hardwood
             + self.rock
             + self.meat
             + self.fish
@@ -822,6 +885,7 @@ class Building:
             + self.mushrooms
             + self.berries
             + self.berry_seeds
+            + self.reeds
             + sum(getattr(self, key) for key in PRODUCE_KEYS)
             + sum(getattr(self, key) for key in SEED_KEYS)
         )
@@ -838,14 +902,30 @@ class Building:
             keys = tuple(
                 k
                 for k in keys
-                if k not in ("saplings", "berry_seeds", *SEED_KEYS)
+                if k not in (*SAPLING_ITEM_KEYS, "berry_seeds", *SEED_KEYS)
             )
         for key in keys:
             self._take(inventory, key)
 
     def depositable_keys(self) -> tuple[str, ...]:
+        if self.kind == BuildingKind.HOME:
+            # Display-only; actual stock lives on Game.home_storage.
+            return (
+                "wood",
+                "hardwood",
+                "rock",
+                "meat",
+                "fish",
+                *SAPLING_ITEM_KEYS,
+                "mushrooms",
+                "berries",
+                "berry_seeds",
+                "reeds",
+            ) + PRODUCE_KEYS + SEED_KEYS
+        if self.kind == BuildingKind.WORKSTATION:
+            return ()
         if self.kind == BuildingKind.FORESTER:
-            return ("wood", "saplings")
+            return ("wood", "hardwood", *SAPLING_ITEM_KEYS)
         if self.kind == BuildingKind.MASON:
             return ("rock",)
         if self.kind == BuildingKind.HUNTER:
@@ -864,8 +944,8 @@ class Building:
         """Items home haulers may remove. Plant stock is reserved while planting."""
         if self.kind == BuildingKind.FORESTER:
             if self.work_mode == WorkMode.COLLECT:
-                return ("wood", "saplings")
-            return ("wood",)
+                return ("wood", "hardwood", *SAPLING_ITEM_KEYS)
+            return ("wood", "hardwood")
         if self.kind == BuildingKind.FORAGER:
             return _FORAGE_KEYS
         if self.kind == BuildingKind.FARM:
@@ -874,7 +954,7 @@ class Building:
 
     def plant_keys(self) -> tuple[str, ...]:
         if self.kind == BuildingKind.FORESTER:
-            return ("saplings",)
+            return SAPLING_ITEM_KEYS
         if self.kind == BuildingKind.FARM:
             return SEED_KEYS
         return ()
@@ -914,7 +994,10 @@ class Building:
         return True
 
     def give_sapling_to(self, inventory: Inventory) -> bool:
-        return self.give_item_to(inventory, "saplings")
+        for key in SAPLING_ITEM_KEYS:
+            if self.give_item_to(inventory, key):
+                return True
+        return False
 
     def withdraw_plantables_to(
         self, inventory: Inventory, *, max_items: int = 3
@@ -964,6 +1047,8 @@ class Building:
         return self.kind in (BuildingKind.FORESTER, BuildingKind.FARM)
 
     def supported_work_modes(self) -> tuple[WorkMode, ...]:
+        if self.kind in (BuildingKind.HOME, BuildingKind.WORKSTATION):
+            return ()
         if self.kind in (BuildingKind.FORESTER, BuildingKind.FARM):
             return WORK_MODE_CYCLE_PLANTABLE
         if self.kind == BuildingKind.FIELD:
@@ -997,14 +1082,19 @@ class Building:
             self.work_mode = WorkMode.COLLECT
 
     def set_work_mode(self, mode: WorkMode) -> WorkMode:
-        if mode not in self.supported_work_modes():
-            mode = self.supported_work_modes()[0]
+        modes = self.supported_work_modes()
+        if not modes:
+            return self.work_mode
+        if mode not in modes:
+            mode = modes[0]
         self.work_mode = mode
         self.sync_draw_task_from_mode()
         return self.work_mode
 
     def cycle_work_mode(self) -> WorkMode:
         modes = self.supported_work_modes()
+        if not modes:
+            return self.work_mode
         if len(modes) == 1:
             self.work_mode = modes[0]
             self.sync_draw_task_from_mode()
@@ -1114,6 +1204,7 @@ class Villager:
     satiation: float = 0.75
     ration_mode: RationMode = RationMode.NORMAL
     seeking_food: bool = False
+    last_food: str | None = None
 
     def clear_assignment(self) -> None:
         self.building_id = None

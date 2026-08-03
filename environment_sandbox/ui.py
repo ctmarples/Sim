@@ -27,7 +27,9 @@ from settings import (
     CELL_SIZE,
     COLOUR_ANIMAL,
     COLOUR_BERRY,
+    COLOUR_BOAR,
     COLOUR_CROP,
+    COLOUR_DEER,
     COLOUR_FARM,
     COLOUR_FIELD,
     COLOUR_FISH,
@@ -40,12 +42,15 @@ from settings import (
     COLOUR_HUNTER,
     COLOUR_ICE,
     COLOUR_MASON,
+    COLOUR_MEADOW,
     COLOUR_MEAT,
     COLOUR_MENU_BG,
     COLOUR_MUSHROOM,
     COLOUR_PANEL_BG,
     COLOUR_PANEL_BORDER,
     COLOUR_PLAYER,
+    COLOUR_REED,
+    COLOUR_RIPARIAN,
     COLOUR_ROCK_FEATURE,
     COLOUR_ROCK_TERRAIN,
     COLOUR_ROCK_TERRAIN_DARK,
@@ -62,13 +67,13 @@ from settings import (
     COLOUR_VILLAGER,
     COLOUR_WATER,
     COLOUR_WORKSTATION,
-    GRID_COLS,
     MAP_OFFSET_Y,
     MAX_VILLAGERS,
     PANEL_WIDTH,
     TERRAIN_SUBDIV,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
+    map_view_width,
 )
 from wildlife import FishManager, WildlifeManager
 from world import FeatureType, TerrainType, World
@@ -109,7 +114,7 @@ class UI:
         self._tooltip: tuple[str, tuple[int, int]] | None = None
 
     def _local_pos(self, pos: tuple[int, int]) -> tuple[int, int]:
-        panel_x = GRID_COLS * CELL_SIZE
+        panel_x = map_view_width()
         return pos[0] - panel_x, pos[1] - MAP_OFFSET_Y + self.scroll_y
 
     def hit_priority(self, pos: tuple[int, int]) -> tuple[int, int] | None:
@@ -365,7 +370,7 @@ class UI:
         calendar_day: int = 0,
         selected_field_id: int | None = None,
     ) -> None:
-        panel_x = GRID_COLS * CELL_SIZE
+        panel_x = map_view_width()
         panel_h = _panel_height()
         self.priority_hits = []
         self.list_hits = []
@@ -410,61 +415,96 @@ class UI:
                         COLOUR_TEXT_DIM,
                     )
             for b in buildings.values():
-                workers = sum(1 for v in villagers if v.building_id == b.id)
                 selected = selected_building_id == b.id
                 trailing = None
-                if selected and b.kind != BuildingKind.FIELD:
-                    mode = b.work_mode
-                    mode_tip = (
-                        f"Behaviour: {WORK_MODE_LABELS[mode]}"
-                        + (
-                            " (click to cycle Collect / Plant / Both)"
-                            if b.allows_planting()
-                            else " (collect only)"
-                        )
-                    )
-                    trailing = [
-                        (
-                            WORK_MODE_SHORT[mode],
-                            "cycle_work_mode",
-                            mode_tip,
-                            False,
-                        ),
-                        (
-                            "+",
-                            "assign_villager",
-                            "Assign an unassigned villager here",
-                            False,
-                        ),
-                        (
-                            "-",
-                            "unassign_villager",
-                            "Unassign a worker from this building",
-                            False,
-                        ),
-                    ]
-                elif selected and b.kind == BuildingKind.FIELD:
-                    trailing = [
-                        (
-                            "Plan",
-                            "open_field_plan",
-                            "Open crop plan editor",
-                            False,
-                        ),
-                    ]
-                if b.kind == BuildingKind.FIELD:
+                
+                # Special handling for HOME
+                if b.kind == BuildingKind.HOME:
+                    haulers = sum(1 for v in villagers if v.assigned_to_home)
+                    label = f"{BUILDING_LABELS[b.kind]} #{b.id}  {haulers} hauler(s)"
+                    if selected:
+                        trailing = [
+                            (
+                                "+",
+                                "assign_villager",
+                                "Assign an unassigned villager as hauler",
+                                False,
+                            ),
+                            (
+                                "-",
+                                "unassign_villager",
+                                "Unassign a hauler",
+                                False,
+                            ),
+                        ]
+                # Special handling for WORKSTATION
+                elif b.kind == BuildingKind.WORKSTATION:
+                    hired_count = len(villagers)
+                    label = f"{BUILDING_LABELS[b.kind]} #{b.id}  {hired_count}/{MAX_VILLAGERS} hired"
+                    if selected:
+                        trailing = [
+                            (
+                                "Hire",
+                                "hire_villager",
+                                "Hire a new villager",
+                                False,
+                            ),
+                        ]
+                # Regular buildings
+                elif b.kind == BuildingKind.FIELD:
                     plans_n = len(b.plans)
                     plans_txt = f"{plans_n} plan" if plans_n == 1 else f"{plans_n} plans"
                     label = (
                         f"{BUILDING_LABELS[b.kind]} #{b.id}  "
                         f"{b.plot_size_label()} · {plans_txt}"
                     )
+                    if selected:
+                        trailing = [
+                            (
+                                "Plan",
+                                "open_field_plan",
+                                "Open crop plan editor",
+                                False,
+                            ),
+                        ]
                 else:
+                    workers = sum(1 for v in villagers if v.building_id == b.id)
                     label = (
                         f"{BUILDING_LABELS[b.kind]} #{b.id}  "
                         f"{b.stored_total}/{b.capacity} · {workers}w · "
                         f"{WORK_MODE_SHORT[b.work_mode]}"
                     )
+                    if selected:
+                        mode = b.work_mode
+                        mode_tip = (
+                            f"Behaviour: {WORK_MODE_LABELS[mode]}"
+                            + (
+                                " (click to cycle Collect / Plant / Both)"
+                                if b.allows_planting()
+                                else " (collect only)"
+                            )
+                        )
+                        trailing = [
+                            (
+                                WORK_MODE_SHORT[mode],
+                                "cycle_work_mode",
+                                mode_tip,
+                                False,
+                            ),
+                            (
+                                "+",
+                                "assign_villager",
+                                "Assign an unassigned villager here",
+                                False,
+                            ),
+                            (
+                                "-",
+                                "unassign_villager",
+                                "Unassign a worker from this building",
+                                False,
+                            ),
+                        ]
+                
                 y = self._draw_list_row(
                     content,
                     label,
@@ -489,16 +529,6 @@ class UI:
                             (x, y),
                             COLOUR_STATUS if selected else COLOUR_TEXT_DIM,
                         )
-        y = self._draw_list_row(
-            content,
-            "Home (haulers)",
-            x,
-            y,
-            selected=False,
-            hit_kind="home",
-            hit_id=0,
-            local_mouse=local_mouse,
-        )
         y += 4
 
         # Villagers
@@ -533,7 +563,10 @@ class UI:
 
         y = _blit_text(content, self.font_title, "World", (x, y))
         cap = wildlife.total_capacity(world)
-        wild_line = f"Animals {len(wildlife.animals)}/{cap}"
+        wild_line = (
+            f"Deer {len(wildlife.deer())}  Boar {len(wildlife.boars())}  "
+            f"(cap {cap})"
+        )
         if fish_manager is not None:
             wild_line += f" · Fish {len(fish_manager.fish)}/{fish_manager.total_capacity(world)}"
         y = _blit_text(content, self.font_small, wild_line, (x, y), COLOUR_TEXT_DIM)
@@ -641,7 +674,8 @@ class UI:
             ((90, 90, 70), "Site"),
             (COLOUR_PLAYER, "Player"),
             (COLOUR_VILLAGER, "Villager"),
-            (COLOUR_ANIMAL, "Animal"),
+            (COLOUR_ANIMAL, "Deer"),
+            (COLOUR_BOAR, "Boar"),
             (COLOUR_FISH, "Fish"),
         ]
         for colour, label in entries:
@@ -675,6 +709,8 @@ def terrain_colour(
     base = {
         TerrainType.SOIL: COLOUR_SOIL,
         TerrainType.GRASS: COLOUR_GRASS,
+        TerrainType.MEADOW: COLOUR_MEADOW,
+        TerrainType.RIPARIAN: COLOUR_RIPARIAN,
         TerrainType.WATER: COLOUR_WATER,
         TerrainType.ROCK: COLOUR_ROCK_TERRAIN,
     }[terrain]
@@ -734,7 +770,13 @@ def _paint_texture(
     gy: int,
 ) -> None:
     """Deterministic speckles / strokes so tiles aren't flat colour."""
-    density = 14 if terrain == TerrainType.GRASS else 10 if terrain == TerrainType.SOIL else 8
+    density = (
+        14
+        if terrain in (TerrainType.GRASS, TerrainType.MEADOW, TerrainType.RIPARIAN)
+        else 10
+        if terrain == TerrainType.SOIL
+        else 8
+    )
     if terrain == TerrainType.WATER:
         density = 6
     if terrain == TerrainType.ROCK:
@@ -746,7 +788,7 @@ def _paint_texture(
         py = rect.top + int(v * max(1, rect.h - 1))
         shade = (_hash01(gx, gy, 200 + i) - 0.5) * 0.22
         colour = _shift_colour(base, shade)
-        if terrain == TerrainType.GRASS:
+        if terrain in (TerrainType.GRASS, TerrainType.MEADOW, TerrainType.RIPARIAN):
             length = 2 + int(_hash01(gx, gy, 40 + i) * 4)
             pygame.draw.line(
                 surface,
@@ -959,18 +1001,20 @@ def draw_feature(
     size: int,
     vibrancy: float = 1.0,
     crop_kind: str | None = None,
+    tree_species: str | None = None,
 ) -> None:
     if feature == FeatureType.NONE:
         return
     from crops import CROP_BY_KEY
+    from trees import resolve_tree
 
-    canopy = adjust_colour(COLOUR_TREE_CANOPY, vibrancy)
-    sapling_c = adjust_colour(COLOUR_SAPLING, vibrancy)
     herb_c = adjust_colour(COLOUR_HERB, vibrancy)
     berry_c = adjust_colour(COLOUR_BERRY, vibrancy)
     mush_c = adjust_colour(COLOUR_MUSHROOM, vibrancy)
     bush_c = adjust_colour((50, 110, 50), vibrancy)
     if feature == FeatureType.TREE:
+        tree = resolve_tree(tree_species)
+        colour = adjust_colour(tree.canopy, vibrancy)
         trunk_w = max(2, size // 10)
         trunk_h = size // 4
         pygame.draw.rect(
@@ -978,9 +1022,19 @@ def draw_feature(
             adjust_colour((90, 55, 30), vibrancy),
             pygame.Rect(cx - trunk_w // 2, cy, trunk_w, trunk_h),
         )
-        pygame.draw.circle(surface, canopy, (cx, cy - size // 10), size // 4)
+        if tree.shape == "cone":
+            scale = tree.cone_scale
+            half_w = int((size // 5) * scale)
+            height = int((size // 3) * scale)
+            tip = (cx, cy - height)
+            left = (cx - half_w, cy + size // 16)
+            right = (cx + half_w, cy + size // 16)
+            pygame.draw.polygon(surface, colour, [tip, left, right])
+        else:
+            pygame.draw.circle(surface, colour, (cx, cy - size // 10), size // 4)
     elif feature == FeatureType.SAPLING:
-        pygame.draw.circle(surface, sapling_c, (cx, cy), max(3, size // 8))
+        tree = resolve_tree(tree_species)
+        colour = adjust_colour(tree.sapling_colour, vibrancy)
         pygame.draw.line(
             surface,
             adjust_colour((90, 55, 30), vibrancy),
@@ -988,6 +1042,16 @@ def draw_feature(
             (cx, cy + size // 8),
             2,
         )
+        if tree.shape == "cone":
+            scale = 0.55 * tree.cone_scale
+            half_w = max(3, int((size // 8) * scale))
+            height = max(5, int((size // 6) * scale))
+            tip = (cx, cy - height // 2)
+            left = (cx - half_w, cy + 2)
+            right = (cx + half_w, cy + 2)
+            pygame.draw.polygon(surface, colour, [tip, left, right])
+        else:
+            pygame.draw.circle(surface, colour, (cx, cy), max(3, size // 8))
     elif feature == FeatureType.ROCK:
         points = [
             (cx - size // 5, cy + size // 8),
@@ -1079,6 +1143,17 @@ def draw_feature(
         pygame.draw.circle(surface, bush_c, (cx, cy), size // 5)
         for ox, oy in ((-4, -2), (3, -3), (0, 2), (4, 1), (-3, 3)):
             pygame.draw.circle(surface, berry_c, (cx + ox, cy + oy), 2)
+    elif feature == FeatureType.REED:
+        reed_c = adjust_colour(COLOUR_REED, vibrancy)
+        for ox in (-3, 0, 3):
+            tip_x = cx + ox // 2
+            pygame.draw.line(
+                surface,
+                reed_c,
+                (cx + ox, cy + 4),
+                (tip_x, cy - 8),
+                2,
+            )
     elif feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.CROP_HERB):
         crop = CROP_BY_KEY.get(crop_kind or "sage") or CROP_BY_KEY["sage"]
         stem = adjust_colour(crop.stem_colour, vibrancy)

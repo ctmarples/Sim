@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from crops import CROPS
+from trees import TREES
 
 
 @dataclass(frozen=True)
@@ -19,12 +20,25 @@ class ResourceDef:
 
 
 # Display order within each group follows this list order.
-_CROP_PRODUCE = tuple(
-    ResourceDef(c.produce_key, c.label, "wares", c.short) for c in CROPS
+# Onion / cabbage / carrot are edible produce (food); other crops stay wares.
+_FOOD_CROP_KEYS = frozenset({"onion", "cabbage", "carrot"})
+_CROP_PRODUCE_FOOD = tuple(
+    ResourceDef(c.produce_key, c.label, "food", c.short)
+    for c in CROPS
+    if c.key in _FOOD_CROP_KEYS
+)
+_CROP_PRODUCE_WARES = tuple(
+    ResourceDef(c.produce_key, c.label, "wares", c.short)
+    for c in CROPS
+    if c.key not in _FOOD_CROP_KEYS
 )
 _CROP_SEEDS = tuple(
     ResourceDef(c.seed_key, f"{c.label} seeds", "agriculture", f"{c.short}.s")
     for c in CROPS
+)
+_TREE_SAPLINGS = tuple(
+    ResourceDef(f"{t.key}_saplings", f"{t.label} saplings", "agriculture", f"{t.short}.p")
+    for t in TREES
 )
 
 RESOURCES: tuple[ResourceDef, ...] = (
@@ -32,10 +46,13 @@ RESOURCES: tuple[ResourceDef, ...] = (
     ResourceDef("fish", "Fish", "food", "fish"),
     ResourceDef("berries", "Berries", "food", "berr"),
     ResourceDef("mushrooms", "Mushrooms", "food", "mush"),
+    *_CROP_PRODUCE_FOOD,
     ResourceDef("wood", "Wood", "wares", "wood"),
+    ResourceDef("hardwood", "Hardwood", "wares", "hwood"),
     ResourceDef("rock", "Rock", "wares", "rock"),
-    *_CROP_PRODUCE,
-    ResourceDef("saplings", "Saplings", "agriculture", "sapl"),
+    ResourceDef("reeds", "Reeds", "wares", "reed"),
+    *_CROP_PRODUCE_WARES,
+    *_TREE_SAPLINGS,
     ResourceDef("berry_seeds", "Berry seeds", "agriculture", "b.sd"),
     *_CROP_SEEDS,
 )
@@ -73,6 +90,13 @@ def format_grouped_counts(amounts: dict[str, int], *, skip_zero: bool = False) -
         elif not skip_zero:
             lines.append(f"{GROUP_LABELS.get(group, group)}: —")
     return lines
+
+
+def resource_label(key: str) -> str:
+    for res in RESOURCES:
+        if res.key == key:
+            return res.label
+    return key
 
 
 def amounts_from_obj(obj: object) -> dict[str, int]:

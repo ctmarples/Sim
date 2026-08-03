@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from crops import LEGACY_HERB_PRODUCE, LEGACY_HERB_SEED, PRODUCE_KEYS, SEED_KEYS
+from trees import SAPLING_ITEM_KEYS
 from entities import (
     Building,
     BuildingKind,
@@ -22,7 +23,6 @@ from entities import (
     WorkMode,
     WorkPriority,
 )
-from wildlife import Animal
 from world import Cell, FeatureType, TerrainType, World
 
 if TYPE_CHECKING:
@@ -32,13 +32,15 @@ SAVE_VERSION = 1
 
 _BASE_STORAGE_KEYS = (
     "wood",
+    "hardwood",
     "rock",
     "meat",
     "fish",
-    "saplings",
+    *SAPLING_ITEM_KEYS,
     "mushrooms",
     "berries",
     "berry_seeds",
+    "reeds",
 )
 _CROP_STORAGE_KEYS = PRODUCE_KEYS + SEED_KEYS
 _STORAGE_KEYS = _BASE_STORAGE_KEYS + _CROP_STORAGE_KEYS
@@ -65,9 +67,10 @@ def _inv_from_dict(data: dict[str, Any]) -> Inventory:
     inv = Inventory(capacity=int(data.get("capacity", Inventory().capacity)))
     for key in _STORAGE_KEYS:
         setattr(inv, key, int(data.get(key, 0)))
-    # Legacy: generic herbs → sage.
+    # Legacy: generic herbs → sage; generic saplings → oak.
     inv.sage += int(data.get("herbs", 0))
     inv.sage_seeds += int(data.get("herb_seeds", 0))
+    inv.oak_saplings += int(data.get("saplings", 0))
     return inv
 
 
@@ -85,6 +88,8 @@ def _apply_storage(obj: Any, data: dict[str, Any]) -> None:
         LEGACY_HERB_SEED,
         getattr(obj, LEGACY_HERB_SEED) + int(data.get("herb_seeds", 0)),
     )
+    if hasattr(obj, "oak_saplings"):
+        setattr(obj, "oak_saplings", getattr(obj, "oak_saplings") + int(data.get("saplings", 0)))
 
 
 def _feature_from_save(name: str) -> FeatureType:
@@ -111,6 +116,9 @@ def _cell_to_dict(cell: Cell) -> dict[str, Any]:
     crop_kind = getattr(cell, "crop_kind", None)
     if crop_kind is not None:
         data["crop_kind"] = crop_kind
+    tree_species = getattr(cell, "tree_species", None)
+    if tree_species is not None:
+        data["tree_species"] = tree_species
     return data
 
 
@@ -129,6 +137,11 @@ def _cell_from_save(c: dict[str, Any]) -> Cell:
         setattr(cell, "crop_kind", crop_kind)
     elif cell.feature in (FeatureType.CROP_HERB, FeatureType.WILD_CROP):
         setattr(cell, "crop_kind", "sage")
+    tree_species = c.get("tree_species")
+    if tree_species is not None:
+        setattr(cell, "tree_species", str(tree_species))
+    elif cell.feature in (FeatureType.TREE, FeatureType.SAPLING):
+        setattr(cell, "tree_species", "oak")
     return cell
 
 
@@ -226,6 +239,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
                 "satiation": round(v.satiation, 4),
                 "ration_mode": v.ration_mode.name,
                 "seeking_food": v.seeking_food,
+                "last_food": v.last_food,
             }
         )
     sites = [
@@ -249,6 +263,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "id": a.id,
             "x": a.x,
             "y": a.y,
+            "kind": a.kind.name,
             "move_cooldown": a.move_cooldown,
         }
         for a in game.wildlife.animals
@@ -419,8 +434,6 @@ def _spawn_field_building(
 
 
 def apply_save(game: Game, data: dict[str, Any]) -> None:
-    import settings as cfg
-
     from indicators import OverlayMode, build_overlay_grid
     from settings import BUILDING_STORAGE_CAPACITY, RANDOM_SEED
 
@@ -429,28 +442,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
 
     grid = data["grid"]
     cols, rows = int(grid["cols"]), int(grid["rows"])
-    display = data.get("display") or {}
-    # Prefer the display size the save was created with when present.
-    want_cols = int(display.get("grid_cols", cols))
-    want_rows = int(display.get("grid_rows", rows))
-    if want_cols != cols or want_rows != rows:
-        # Fall back to raw cell grid size.
-        want_cols, want_rows = cols, rows
-
-    if want_cols != cfg.GRID_COLS or want_rows != cfg.GRID_ROWS:
-        # Rebuild window metrics so coordinates in the save stay valid.
-        cell = cfg.CELL_SIZE
-        cfg.GRID_COLS = want_cols
-        cfg.GRID_ROWS = want_rows
-        cfg.WINDOW_WIDTH = want_cols * cell + cfg.PANEL_WIDTH
-        cfg.WINDOW_HEIGHT = cfg.MAP_OFFSET_Y + want_rows * cell
-        game.screen = __import__("pygame").display.set_mode(
-            (cfg.WINDOW_WIDTH, cfg.WINDOW_HEIGHT)
-        )
-        # Toolbar button layout depends on window width.
-        game.toolbar._rebuild_static()
-
-    cols, rows = want_cols, want_rows
+    # World size comes from the save; keep the current window / viewport
+    # (configure_for_display). Camera pans/zooms over maps of any size.
     if len(data["world"]["cells"]) != rows or len(data["world"]["cells"][0]) != cols:
         raise ValueError(
             f"Save cell grid {len(data['world']['cells'][0])}x{len(data['world']['cells'])} "
@@ -655,6 +648,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         except KeyError:
             villager.ration_mode = RationMode.NORMAL
         villager.seeking_food = bool(vdata.get("seeking_food", False))
+        raw_last = vdata.get("last_food")
+        villager.last_food = str(raw_last) if raw_last else None
         game.villagers.append(villager)
 
     game.construction_sites.clear()
@@ -674,18 +669,25 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         )
         game.construction_sites[site.id] = site
 
-    from wildlife import Fish
+    from wildlife import Animal, AnimalKind, Fish
 
     wild = data.get("wildlife", {})
-    game.wildlife.animals = [
-        Animal(
-            id=int(a["id"]),
-            x=int(a["x"]),
-            y=int(a["y"]),
-            move_cooldown=int(a.get("move_cooldown", 0)),
+    game.wildlife.animals = []
+    for a in wild.get("animals", []):
+        kind_name = a.get("kind", "DEER")
+        try:
+            kind = AnimalKind[kind_name]
+        except KeyError:
+            kind = AnimalKind.DEER
+        game.wildlife.animals.append(
+            Animal(
+                id=int(a["id"]),
+                x=int(a["x"]),
+                y=int(a["y"]),
+                kind=kind,
+                move_cooldown=int(a.get("move_cooldown", 0)),
+            )
         )
-        for a in wild.get("animals", [])
-    ]
     game.wildlife.next_id = int(wild.get("next_id", 1))
     game.wildlife.growth_timer = int(wild.get("growth_timer", game.wildlife.growth_timer))
 
@@ -757,7 +759,6 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         game.overlay_mode = OverlayMode[overlay_name]
     except KeyError:
         game.overlay_mode = OverlayMode.NONE
-    game.overlay_values = build_overlay_grid(game.world, game.overlay_mode)
     game._clear_selection()
     game.drawing = False
     game.draw_start = None
@@ -766,6 +767,27 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
 
     if hasattr(game, "field_crop_kind") and "field_crop_kind" in data:
         game.field_crop_kind = str(data["field_crop_kind"])
+    
+    # Ensure core buildings exist (HOME, WORKSTATION)
+    if hasattr(game, "_ensure_core_buildings"):
+        game._ensure_core_buildings()
+
+    # Biodiversity average is not saved; start a fresh rolling year window.
+    if hasattr(game, "_biodiversity_samples"):
+        game._biodiversity_samples.clear()
+    if hasattr(game, "_sample_biodiversity"):
+        game._sample_biodiversity()
+    elif hasattr(game, "_refresh_indicators"):
+        game._refresh_indicators()
+    else:
+        game.overlay_values = build_overlay_grid(game.world, game.overlay_mode)
+
+    if hasattr(game, "_invalidate_terrain_layer"):
+        game._invalidate_terrain_layer()
+    if hasattr(game, "camera"):
+        game.camera.center_on(
+            game.player.x, game.player.y, game.world.cols, game.world.rows
+        )
 
 
 def save_to_path(game: Game, path: Path | str) -> None:

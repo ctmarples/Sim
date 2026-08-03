@@ -1,13 +1,21 @@
 """Game configuration: dimensions, colours, capacities, and seed.
 
-Window / grid size is finalised at runtime via configure_for_display()
-so the map fills the screen beside the sidebar.
+Window / cell size is finalised at runtime via configure_for_display().
+The world grid (WORLD_COLS × WORLD_ROWS) is much larger than the viewport;
+the camera pans/zooms over it.
 """
 
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------
-# Grid & window (defaults; overwritten by configure_for_display)
+# World grid (logical map — larger than the on-screen viewport)
+# ---------------------------------------------------------------------------
+WORLD_COLS: int = 96
+WORLD_ROWS: int = 72
+
+# ---------------------------------------------------------------------------
+# Viewport & window (defaults; overwritten by configure_for_display)
+# GRID_COLS/ROWS ≈ visible cells at zoom 1 (layout / legacy references).
 # ---------------------------------------------------------------------------
 GRID_COLS: int = 24
 GRID_ROWS: int = 18
@@ -23,13 +31,27 @@ SIM_SPEEDS: tuple[int, ...] = (0, 1, 2, 4, 8, 16)
 # Native terrain tile size (pre-rendered, then scaled to CELL_SIZE and stitched).
 TERRAIN_SUBDIV: int = 25
 
+# Camera
+ZOOM_MIN: float = 0.35
+ZOOM_MAX: float = 2.5
+ZOOM_STEP: float = 0.12
+CAMERA_PAN_CELLS: float = 0.55
+MINIMAP_WIDTH: int = 168
+MINIMAP_HEIGHT: int = 126
+
+
+def map_view_width() -> int:
+    return max(1, WINDOW_WIDTH - PANEL_WIDTH)
+
+
+def map_view_height() -> int:
+    return max(1, WINDOW_HEIGHT - MAP_OFFSET_Y)
+
 
 def configure_for_display(screen_w: int, screen_h: int) -> None:
-    """Pick grid and cell size so the map + sidebar fit inside the display.
+    """Pick cell size and window so the map viewport + sidebar fit the display.
 
-    Leaves room for OS chrome (menu bar, window title, dock/taskbar), the
-    top toolbar, and the resource bar. Adds +8 map cells on each axis vs a
-    large-cell baseline, then shrinks cells so the window fits.
+    World size stays at WORLD_COLS × WORLD_ROWS; only the viewport scales.
     """
     global GRID_COLS, GRID_ROWS, CELL_SIZE, WINDOW_WIDTH, WINDOW_HEIGHT
     global PANEL_WIDTH, TOOLBAR_HEIGHT, RESOURCE_BAR_HEIGHT, MAP_OFFSET_Y
@@ -38,8 +60,6 @@ def configure_for_display(screen_w: int, screen_h: int) -> None:
     TOOLBAR_HEIGHT = 64
     RESOURCE_BAR_HEIGHT = 36
     MAP_OFFSET_Y = TOOLBAR_HEIGHT + RESOURCE_BAR_HEIGHT
-    # Client area from set_mode does not include title bar; dock/menu also
-    # steal vertical space — keep a generous height margin on macOS/Windows.
     usable_w = max(800, screen_w - 24)
     usable_h = max(560, screen_h - 110 - MAP_OFFSET_Y)
     map_w = max(400, usable_w - PANEL_WIDTH)
@@ -54,7 +74,6 @@ def configure_for_display(screen_w: int, screen_h: int) -> None:
             base_rows = rows
             break
 
-    # +4 twice from the original fill baseline.
     cols = base_cols + 8
     rows = base_rows + 8
     cell = min(map_w // cols, usable_h // rows)
@@ -62,7 +81,6 @@ def configure_for_display(screen_w: int, screen_h: int) -> None:
         cols, rows = base_cols + 4, base_rows + 4
         cell = max(12, min(map_w // cols, usable_h // rows))
 
-    # Shrink until the window fits (never force a min cell that overflows).
     while cell > 12 and (
         cols * cell + PANEL_WIDTH > usable_w
         or MAP_OFFSET_Y + rows * cell > usable_h + MAP_OFFSET_Y
@@ -74,6 +92,8 @@ def configure_for_display(screen_w: int, screen_h: int) -> None:
     CELL_SIZE = cell
     WINDOW_WIDTH = cols * cell + PANEL_WIDTH
     WINDOW_HEIGHT = MAP_OFFSET_Y + rows * cell
+
+
 # ---------------------------------------------------------------------------
 # Simulation
 # ---------------------------------------------------------------------------
@@ -97,7 +117,7 @@ FARM_COST_ROCK: int = 2
 FIELD_COST_WOOD: int = 1
 FIELD_COST_ROCK: int = 0
 # Chebyshev distance from Farm to a Field plot for workers to manage it.
-FARM_FIELD_RADIUS: int = 12
+FARM_FIELD_RADIUS: int = 20
 
 STARTING_WOOD: int = 2
 STARTING_ROCK: int = 2
@@ -116,6 +136,9 @@ VILLAGER_FOOD_KEYS: tuple[str, ...] = (
     "mushrooms",
     "fish",
     "meat",
+    "onion",
+    "cabbage",
+    "carrot",
 )
 
 INDICATOR_RADIUS: int = 2
@@ -127,13 +150,15 @@ NATURAL_SPROUT_MIN_PATCH: int = 4
 NATURAL_SPROUT_CHANCE: float = 1.0 / 8.0
 NATURAL_SPROUT_INTERVAL: int = 180
 
-TREE_WOOD_DEPOSIT: int = 2
+TREE_WOOD_DEPOSIT: int = 2  # legacy default; species yields override
 ROCK_DEPOSIT: int = 10  # legacy default
 ROCK_SMALL_MIN: int = 2
 ROCK_SMALL_MAX: int = 5
 ROCK_LARGE_MIN: int = 20
 ROCK_LARGE_MAX: int = 28
-ANIMAL_MEAT_YIELD: int = 3
+ANIMAL_MEAT_YIELD: int = 3  # deer (legacy alias)
+DEER_MEAT_YIELD: int = 3
+BOAR_MEAT_YIELD: int = 5
 FISH_YIELD: int = 2
 
 # Forage resources
@@ -147,6 +172,9 @@ MUSHROOM_SPAWN_CHANCE: float = 0.012  # soil next to tree, per forage tick
 MUSHROOM_SPREAD_CHANCE: float = 0.02  # into neighbouring soil
 MUSHROOM_TICK_INTERVAL: int = 360
 
+# Wild crops / berry bushes may cover at most this fraction of each terrain type.
+WILD_PLANT_MAX_FRACTION: float = 0.30
+
 HERB_SPAWN_CHANCE: float = 0.03  # empty grass per forage tick (legacy name)
 HERB_SEED_DROP_CHANCE: float = 1.0 / 3.0  # forage fallback
 HERB_TICK_INTERVAL: int = 150
@@ -159,7 +187,10 @@ VILLAGER_WORK_INTERVAL: int = 72
 
 ANIMAL_MOVE_INTERVAL: int = 80
 ANIMAL_GROWTH_INTERVAL: int = 480
-ANIMAL_TREES_PER_CAP: int = 4
+ANIMAL_TREES_PER_CAP: int = 4  # deer: 1 per N trees in patch
+BOAR_CELLS_PER_CAP: int = 16  # boar: 1 per N soil/riparian cells in patch
+DEER_CROP_EAT_CHANCE: float = 0.50
+BOAR_CROP_EAT_CHANCE: float = 0.25
 
 FISH_MOVE_INTERVAL: int = 80
 FISH_GROWTH_INTERVAL: int = 480
@@ -185,7 +216,10 @@ COLOUR_TEXT_DIM: Colour = (160, 164, 176)
 COLOUR_STATUS: Colour = (255, 220, 120)
 COLOUR_PLAYER: Colour = (50, 120, 255)
 COLOUR_VILLAGER: Colour = (220, 140, 50)
-COLOUR_ANIMAL: Colour = (160, 100, 60)
+COLOUR_ANIMAL: Colour = (160, 100, 60)  # deer (legacy)
+COLOUR_DEER: Colour = (160, 100, 60)
+COLOUR_BOAR: Colour = (90, 70, 55)
+COLOUR_REED: Colour = (70, 120, 80)
 COLOUR_WORKSTATION: Colour = (90, 90, 140)
 COLOUR_FORESTER: Colour = (40, 110, 55)
 COLOUR_MASON: Colour = (120, 115, 100)
@@ -221,6 +255,8 @@ COLOUR_MENU_BG: Colour = (48, 50, 58)
 
 COLOUR_SOIL: Colour = (139, 105, 70)
 COLOUR_GRASS: Colour = (90, 150, 70)
+COLOUR_MEADOW: Colour = (100, 175, 85)  # slightly greener than grass
+COLOUR_RIPARIAN: Colour = (148, 142, 158)  # light grey–purple–green shoreline
 COLOUR_WATER: Colour = (60, 120, 190)
 COLOUR_ICE: Colour = (170, 205, 230)
 COLOUR_ROCK_TERRAIN: Colour = (118, 118, 124)
@@ -238,5 +274,13 @@ COLOUR_DIVERSITY_LOW: Colour = (40, 40, 80)
 COLOUR_DIVERSITY_HIGH: Colour = (80, 220, 255)
 COLOUR_TREE_DENSITY_LOW: Colour = (20, 40, 20)
 COLOUR_TREE_DENSITY_HIGH: Colour = (40, 220, 60)
+COLOUR_SPECIES_DIVERSITY_LOW: Colour = (30, 40, 30)
+COLOUR_SPECIES_DIVERSITY_HIGH: Colour = (180, 255, 90)
+COLOUR_BIODIVERSITY_1: Colour = (220, 40, 40)    # ~1 species — red
+COLOUR_BIODIVERSITY_5: Colour = (240, 220, 50)   # ~5 species — yellow
+COLOUR_BIODIVERSITY_10: Colour = (40, 190, 70)   # ~10 species — green
+# Legacy aliases (unused by biodiversity colour ramp).
+COLOUR_BIODIVERSITY_LOW: Colour = COLOUR_BIODIVERSITY_1
+COLOUR_BIODIVERSITY_HIGH: Colour = COLOUR_BIODIVERSITY_10
 COLOUR_DISTURBANCE_LOW: Colour = (40, 20, 20)
 COLOUR_DISTURBANCE_HIGH: Colour = (255, 70, 40)

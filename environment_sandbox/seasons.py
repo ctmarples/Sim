@@ -146,17 +146,19 @@ def berry_despawn_rate(day: float, x: int, y: int) -> float:
 
 
 def mushroom_spawn_rate(day: float, x: int, y: int) -> float:
+    """Autumn only — stop before winter (day 84)."""
     d = local_day(day, x, y)
-    rise = _smoothstep(54.0, 64.0, d) * (1.0 - _smoothstep(78.0, 88.0, d))
+    rise = _smoothstep(56.0, 64.0, d) * (1.0 - _smoothstep(78.0, 84.0, d))
     return 0.03 * rise
 
 
 def mushroom_despawn_rate(day: float, x: int, y: int) -> float:
+    """Clear as winter begins; no lingering mushrooms in winter."""
     d = local_day(day, x, y)
-    # Fade across late autumn into winter.
-    fade = _smoothstep(80.0, 90.0, d) * (1.0 - _smoothstep(102.0, 110.0, d))
-    leftover = _smoothstep(100.0, 108.0, d)
-    return min(1.0, 0.1 * fade + 0.2 * leftover)
+    if d >= float(DAYS_PER_SEASON * 3):  # winter start (day 84)
+        return 1.0
+    # Ramp hard in the last days of autumn so they vanish at the season change.
+    return _smoothstep(80.0, 84.0, d)
 
 
 def trees_grow_factor(day: float) -> float:

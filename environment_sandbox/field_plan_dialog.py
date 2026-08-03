@@ -28,6 +28,7 @@ from settings import (
     MAP_OFFSET_Y,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
+    map_view_width,
 )
 
 TITLE_BAR_H = 28
@@ -107,9 +108,9 @@ class FieldPlanDialog:
         self._moving = False
         self._layout_for(building)
         # Place near the field on the map when possible.
-        from settings import CELL_SIZE, GRID_COLS
-
-        map_w = GRID_COLS * CELL_SIZE
+        from settings import CELL_SIZE
+        
+        map_w = map_view_width()
         prefer_x = building.x * CELL_SIZE + building.plot_w * CELL_SIZE + 16
         prefer_y = MAP_OFFSET_Y + building.y * CELL_SIZE
         if prefer_x + self._panel_w > map_w - 8:
@@ -149,9 +150,9 @@ class FieldPlanDialog:
         self._cell_px = cell
         grid_w = pw * cell
         grid_h = ph * cell
-        # Title + seasons + crops (up to 2 wrap rows) + grid + tip + padding.
+        # Title + seasons + crops (up to 2 wrap rows) + grid + tip + crop counts + padding.
         crop_rows = self._crop_row_count(max(420, grid_w + PAD * 2))
-        chrome = TITLE_BAR_H + PAD + BTN_H + 6 + crop_rows * (BTN_H + 4) + 8 + 22 + PAD
+        chrome = TITLE_BAR_H + PAD + BTN_H + 6 + crop_rows * (BTN_H + 4) + 8 + 22 + 18 + PAD
         self._panel_w = max(420, grid_w + PAD * 2)
         self._panel_h = chrome + grid_h
 
@@ -290,7 +291,13 @@ class FieldPlanDialog:
             return lx, ly
         return None
 
-    def draw(self, surface: pygame.Surface, building: Building | None) -> None:
+    def draw(
+        self,
+        surface: pygame.Surface,
+        building: Building | None,
+        *,
+        crop_counts: dict[str, int] | None = None,
+    ) -> None:
         if not self.open or building is None or building.kind != BuildingKind.FIELD:
             return
         self._layout_for(building)
@@ -459,6 +466,20 @@ class FieldPlanDialog:
         surface.blit(
             self.font_small.render(tip, True, COLOUR_TEXT_DIM),
             (panel.x + PAD, gy + grid_h + 6),
+        )
+        counts = crop_counts or {}
+        if counts:
+            parts = []
+            for key, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
+                crop = CROP_BY_KEY.get(key)
+                label = crop.label if crop else key
+                parts.append(f"{n} {label}")
+            count_line = "On field: " + ", ".join(parts)
+        else:
+            count_line = "On field: none"
+        surface.blit(
+            self.font_small.render(count_line, True, COLOUR_TEXT),
+            (panel.x + PAD, gy + grid_h + 22),
         )
 
     def _paint_split_cell(

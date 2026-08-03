@@ -43,16 +43,21 @@ from entities import (
     WorkPriority,
 )
 from indicators import (
+    BIODIVERSITY_SAMPLES_PER_YEAR,
     OVERLAY_LABELS,
     OverlayMode,
+    average_grids,
+    biodiversity_snapshot,
     build_overlay_grid,
     overlay_colour,
 )
 from settings import (
-    ANIMAL_MEAT_YIELD,
+    BOAR_MEAT_YIELD,
+    DEER_MEAT_YIELD,
     BUILDING_STORAGE_CAPACITY,
     CELL_SIZE,
-    COLOUR_ANIMAL,
+    COLOUR_BOAR,
+    COLOUR_DEER,
     COLOUR_BG,
     COLOUR_FISH,
     COLOUR_MEAT,
@@ -91,6 +96,8 @@ from settings import (
     MASON_COST_ROCK,
     MASON_COST_WOOD,
     MAX_VILLAGERS,
+    MINIMAP_HEIGHT,
+    MINIMAP_WIDTH,
     OVERLAY_ALPHA,
     SAPLING_DROP_CHANCE,
     SIM_SPEEDS,
@@ -104,17 +111,27 @@ from settings import (
     VILLAGER_WORK_INTERVAL,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
+    WORLD_COLS,
+    ZOOM_STEP,
     MAP_OFFSET_Y,
+    map_view_height,
+    map_view_width,
 )
+from camera import Camera
 from dialogs import FileDialog
+from building_inspect_dialog import BuildingInspectDialog
 from field_plan_dialog import FieldPlanDialog
+from resource_inspect_dialog import ResourceInspectDialog
+from villager_inspect_dialog import VillagerInspectDialog
 from resource_bar import VIEW_LABELS, ResourceBar
 from save_load import load_from_path, save_to_path
 from seasons import (
+    DAYS_PER_SEASON,
     TICKS_PER_DAY,
     YEAR_DAYS,
     Season,
     blend_colour,
+    day_in_season,
     fishing_allowed,
     format_date,
     freeze_amount,
@@ -132,8 +149,8 @@ from terrain_tiles import (
     paint_cell,
     verify_shared_edges,
 )
-from wildlife import FishManager, WildlifeManager
-from world import FeatureType, TerrainType, World
+from wildlife import AnimalKind, FishManager, WildlifeManager
+from world import FeatureType, PLANTABLE_LAND, TerrainType, World
 
 
 TASK_COLOURS = {
@@ -186,9 +203,14 @@ class Game:
         self.resource_bar = ResourceBar()
         self.file_dialog = FileDialog()
         self.field_plan_dialog = FieldPlanDialog()
+        self.building_inspect = BuildingInspectDialog()
+        self.villager_inspect = VillagerInspectDialog()
+        self.resource_inspect = ResourceInspectDialog()
 
         self.world = World()
+        self.camera = Camera()
         self.player = Player(x=self.world.start_pos[0], y=self.world.start_pos[1])
+        self.camera.center_on(self.player.x, self.player.y, self.world.cols, self.world.rows)
         self.home_storage = HomeStorage()
         self.villagers: list[Villager] = []
         self.buildings: dict[int, Building] = {}
@@ -218,10 +240,17 @@ class Game:
 
         self.overlay_mode = OverlayMode.NONE
         self.overlay_values: list[list[float]] = build_overlay_grid(self.world, self.overlay_mode)
+        # Biodiversity: season start/mid samples, averaged over past year (≤8).
+        self._biodiversity_samples: list[list[list[float]]] = []
+        self._biodiversity_average: list[list[float]] = [
+            [0.0] * self.world.cols for _ in range(self.world.rows)
+        ]
 
         self._give_starting_resources()
+        self._ensure_core_buildings()
+        self._sample_biodiversity()
         self.status_message = (
-            "Hire at station. Toolbar builds place construction sites. "
+            "Hire from Hiring hall popup. Toolbar builds place construction sites. "
             "Unassigned villagers build & transport by priority."
         )
         self.status_timer = STATUS_MESSAGE_FRAMES
@@ -249,10 +278,55 @@ class Game:
         self.home_storage.rock = STARTING_ROCK
         self.home_storage.berries = STARTING_FOOD
 
+    def _ensure_core_buildings(self) -> None:
+        """Ensure HOME and WORKSTATION buildings exist at their world positions."""
+        # Find or create HOME building
+        home_building = None
+        for b in self.buildings.values():
+            if b.kind == BuildingKind.HOME:
+                home_building = b
+                break
+        if home_building is None:
+            home_building = Building(
+                id=self.next_building_id,
+                kind=BuildingKind.HOME,
+                x=self.world.home_pos[0],
+                y=self.world.home_pos[1],
+                capacity=BUILDING_STORAGE_CAPACITY * 50,
+            )
+            self.buildings[home_building.id] = home_building
+            self.next_building_id += 1
+        else:
+            # Sync position
+            home_building.x = self.world.home_pos[0]
+            home_building.y = self.world.home_pos[1]
+
+        # Find or create WORKSTATION building
+        workstation_building = None
+        for b in self.buildings.values():
+            if b.kind == BuildingKind.WORKSTATION:
+                workstation_building = b
+                break
+        if workstation_building is None:
+            workstation_building = Building(
+                id=self.next_building_id,
+                kind=BuildingKind.WORKSTATION,
+                x=self.world.workstation_pos[0],
+                y=self.world.workstation_pos[1],
+                capacity=BUILDING_STORAGE_CAPACITY * 50,
+            )
+            self.buildings[workstation_building.id] = workstation_building
+            self.next_building_id += 1
+        else:
+            # Sync position
+            workstation_building.x = self.world.workstation_pos[0]
+            workstation_building.y = self.world.workstation_pos[1]
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
     def run(self) -> None:
+        pygame.key.set_repeat(180, 40)
         while self.running:
             self._handle_events()
             if self.sim_speed > 0:
@@ -266,6 +340,7 @@ class Game:
     def reset(self) -> None:
         self.world.reset()
         self.player.reset(self.world.start_pos[0], self.world.start_pos[1])
+        self.camera.center_on(self.player.x, self.player.y, self.world.cols, self.world.rows)
         self.home_storage.reset()
         self.villagers.clear()
         self.buildings.clear()
@@ -282,14 +357,20 @@ class Game:
         self.day_tick = TICKS_PER_DAY
         self.file_dialog.close()
         self.field_plan_dialog.close()
+        self.building_inspect.close()
+        self.villager_inspect.close()
+        self.resource_inspect.close()
         self.drawing = False
         self.draw_start = None
         self.draw_current = None
         self._mouse_down_cell = None
         self._placing_field = False
         self.overlay_mode = OverlayMode.NONE
+        self._biodiversity_samples.clear()
         self._give_starting_resources()
+        self._ensure_core_buildings()
         self._food_rng.seed(99)
+        self._sample_biodiversity()
         self._refresh_indicators()
         self._set_status("World reset.")
 
@@ -301,6 +382,10 @@ class Game:
         self.draw_start = None
         self.draw_current = None
         self._placing_field = False
+        self.field_plan_dialog.close()
+        self.building_inspect.close()
+        self.villager_inspect.close()
+        self.resource_inspect.close()
 
     # ------------------------------------------------------------------
     # Input
@@ -319,6 +404,18 @@ class Game:
                 ):
                     self._finish_field_plan_dialog()
                     continue
+                if self.building_inspect.open and self.building_inspect.handle_keydown(
+                    event
+                ):
+                    continue
+                if self.villager_inspect.open and self.villager_inspect.handle_keydown(
+                    event
+                ):
+                    continue
+                if self.resource_inspect.open and self.resource_inspect.handle_keydown(
+                    event
+                ):
+                    continue
                 self._on_keydown(event.key)
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if self.file_dialog.open:
@@ -334,8 +431,25 @@ class Game:
                     self._apply_pending_field_plan()
                     self._finish_field_plan_dialog()
                     continue
+                if self.building_inspect.open and self.building_inspect.contains(
+                    event.pos
+                ):
+                    self.building_inspect.handle_mousedown(event.pos)
+                    self._apply_building_inspect_action()
+                    continue
+                if self.villager_inspect.open and self.villager_inspect.contains(
+                    event.pos
+                ):
+                    self.villager_inspect.handle_mousedown(event.pos)
+                    self._apply_villager_inspect_action()
+                    continue
+                if self.resource_inspect.open and self.resource_inspect.contains(
+                    event.pos
+                ):
+                    self.resource_inspect.handle_mousedown(event.pos)
+                    continue
                 mx, my = event.pos
-                if mx >= GRID_COLS * CELL_SIZE and my >= MAP_OFFSET_Y:
+                if mx >= map_view_width() and my >= MAP_OFFSET_Y:
                     if self._handle_panel_click(event.pos):
                         continue
                 self._on_mouse_down(event.pos)
@@ -352,6 +466,15 @@ class Game:
                     self._apply_pending_field_plan()
                     self._finish_field_plan_dialog()
                     continue
+                if self.building_inspect.open and self.building_inspect._moving:
+                    self.building_inspect.handle_mouseup(event.pos)
+                    continue
+                if self.villager_inspect.open and self.villager_inspect._moving:
+                    self.villager_inspect.handle_mouseup(event.pos)
+                    continue
+                if self.resource_inspect.open and self.resource_inspect._moving:
+                    self.resource_inspect.handle_mouseup(event.pos)
+                    continue
                 self._on_mouse_up(event.pos)
             elif event.type == pygame.MOUSEMOTION:
                 if self.file_dialog.open:
@@ -364,6 +487,21 @@ class Game:
                         event.pos, self._field_plan_building()
                     )
                     continue
+                if self.building_inspect.open and self.building_inspect._moving:
+                    self.building_inspect.handle_mousemotion(event.pos)
+                    continue
+                if self.villager_inspect.open and self.villager_inspect._moving:
+                    self.villager_inspect.handle_mousemotion(event.pos)
+                    continue
+                if self.resource_inspect.open and self.resource_inspect._moving:
+                    self.resource_inspect.handle_mousemotion(event.pos)
+                    continue
+                if self.building_inspect.open:
+                    self.building_inspect.handle_mousemotion(event.pos)
+                if self.villager_inspect.open:
+                    self.villager_inspect.handle_mousemotion(event.pos)
+                if self.resource_inspect.open:
+                    self.resource_inspect.handle_mousemotion(event.pos)
                 if self.drawing:
                     self._on_mouse_drag(event.pos)
             elif event.type == pygame.MOUSEWHEEL:
@@ -373,9 +511,26 @@ class Game:
                     pygame.mouse.get_pos()
                 ):
                     continue
+                if self.building_inspect.open and self.building_inspect.contains(
+                    pygame.mouse.get_pos()
+                ):
+                    continue
+                if self.villager_inspect.open and self.villager_inspect.contains(
+                    pygame.mouse.get_pos()
+                ):
+                    continue
+                if self.resource_inspect.open and self.resource_inspect.contains(
+                    pygame.mouse.get_pos()
+                ):
+                    continue
                 mx, my = pygame.mouse.get_pos()
-                if mx >= GRID_COLS * CELL_SIZE and my >= MAP_OFFSET_Y:
+                if mx >= map_view_width() and my >= MAP_OFFSET_Y:
                     self.ui.scroll(event.y * 28)
+                else:
+                    # Zoom camera over map (not over minimap, not over dialogs)
+                    if my >= MAP_OFFSET_Y and not self._minimap_rect().collidepoint((mx, my)):
+                        factor = (1 + ZOOM_STEP) if event.y > 0 else (1 - ZOOM_STEP)
+                        self.camera.zoom_at(factor, (mx, my), self.world.cols, self.world.rows)
 
     def _finish_file_dialog_if_needed(self) -> None:
         if self.file_dialog.open:
@@ -410,6 +565,15 @@ class Game:
             if self.field_plan_dialog.open:
                 self.field_plan_dialog.close()
                 return
+            if self.building_inspect.open:
+                self.building_inspect.close()
+                return
+            if self.villager_inspect.open:
+                self.villager_inspect.close()
+                return
+            if self.resource_inspect.open:
+                self.resource_inspect.close()
+                return
             if (
                 self.selected_building_id is not None
                 or self.selected_villager_id is not None
@@ -439,16 +603,28 @@ class Game:
         elif key == pygame.K_3:
             self._set_overlay(OverlayMode.TREE_DENSITY)
         elif key == pygame.K_4:
+            self._set_overlay(OverlayMode.SPECIES_DIVERSITY)
+        elif key == pygame.K_5:
             self._set_overlay(OverlayMode.DISTURBANCE)
+        elif key == pygame.K_6:
+            self._set_overlay(OverlayMode.BIODIVERSITY)
         elif key == pygame.K_F6:
             self._toggle_autotile_diagnostic()
-        elif key in (pygame.K_w, pygame.K_UP):
+        elif key == pygame.K_w:
+            self.camera.pan(0, -1, self.world.cols, self.world.rows)
+        elif key == pygame.K_s:
+            self.camera.pan(0, 1, self.world.cols, self.world.rows)
+        elif key == pygame.K_a:
+            self.camera.pan(-1, 0, self.world.cols, self.world.rows)
+        elif key == pygame.K_d:
+            self.camera.pan(1, 0, self.world.cols, self.world.rows)
+        elif key == pygame.K_UP:
             self._try_move(0, -1)
-        elif key in (pygame.K_s, pygame.K_DOWN):
+        elif key == pygame.K_DOWN:
             self._try_move(0, 1)
-        elif key in (pygame.K_a, pygame.K_LEFT):
+        elif key == pygame.K_LEFT:
             self._try_move(-1, 0)
-        elif key in (pygame.K_d, pygame.K_RIGHT):
+        elif key == pygame.K_RIGHT:
             self._try_move(1, 0)
 
     def _selected_building(self) -> Building | None:
@@ -456,28 +632,30 @@ class Game:
             return None
         return self.buildings.get(self.selected_building_id)
 
+    def _minimap_rect(self) -> pygame.Rect:
+        """Return the minimap rectangle in screen coordinates."""
+        margin = 8
+        x = map_view_width() - MINIMAP_WIDTH - margin
+        y = MAP_OFFSET_Y + map_view_height() - MINIMAP_HEIGHT - margin
+        return pygame.Rect(x, y, MINIMAP_WIDTH, MINIMAP_HEIGHT)
+
     def _map_cell_from_pos(self, pos: tuple[int, int]) -> tuple[int, int] | None:
+        """Convert screen position to world cell coordinates (None if over minimap or outside)."""
         mx, my = pos
-        my -= MAP_OFFSET_Y
-        map_width = GRID_COLS * CELL_SIZE
-        if mx < 0 or my < 0 or mx >= map_width or my >= GRID_ROWS * CELL_SIZE:
+        # Check if over minimap
+        if self._minimap_rect().collidepoint(pos):
             return None
-        gx = mx // CELL_SIZE
-        gy = my // CELL_SIZE
-        if not self.world.in_bounds(gx, gy):
-            return None
-        return gx, gy
+        # Use camera to convert screen to world
+        return self.camera.screen_to_world(mx, my)
 
     def _cell_rect(self, x: int, y: int) -> pygame.Rect:
-        return pygame.Rect(
-            x * CELL_SIZE, y * CELL_SIZE + MAP_OFFSET_Y, CELL_SIZE, CELL_SIZE
-        )
+        """Return screen rect for given world cell coordinates."""
+        return self.camera.cell_rect(x, y)
 
     def _cell_center(self, x: int, y: int) -> tuple[int, int]:
-        return (
-            x * CELL_SIZE + CELL_SIZE // 2,
-            y * CELL_SIZE + CELL_SIZE // 2 + MAP_OFFSET_Y,
-        )
+        """Return screen center point for given world cell coordinates."""
+        rect = self.camera.cell_rect(x, y)
+        return rect.centerx, rect.centery
 
     def _on_mouse_down(self, pos: tuple[int, int]) -> None:
         building = self._selected_building()
@@ -496,6 +674,18 @@ class Game:
         if self.resource_bar.contains(pos):
             if self.resource_bar.handle_click(pos):
                 self._set_status(f"Resources: {VIEW_LABELS[self.resource_bar.view_mode]}")
+            return
+
+        # Minimap click: center camera on clicked world position
+        minimap_rect = self._minimap_rect()
+        if minimap_rect.collidepoint(pos):
+            mx, my = pos
+            # Convert minimap click to world coordinates
+            rel_x = (mx - minimap_rect.x) / minimap_rect.width
+            rel_y = (my - minimap_rect.y) / minimap_rect.height
+            world_x = rel_x * self.world.cols
+            world_y = rel_y * self.world.rows
+            self.camera.center_on(world_x, world_y, self.world.cols, self.world.rows)
             return
 
         cell = self._map_cell_from_pos(pos)
@@ -587,44 +777,27 @@ class Game:
 
         villager = self._villager_at(x, y)
         if villager is not None:
-            self.selected_villager_id = villager.id
-            self.selected_building_id = None
-            self.assign_workplace_mode = False
-            label = self._villager_assignment_label(villager)
-            self._set_status(
-                f"Selected villager {villager.id} ({label}). "
-                f"Use Assign to workplace, or cycle priorities."
-            )
+            self._open_villager_inspect(villager)
             return
 
         building = self._building_at(x, y)
         if building is not None:
-            self.selected_building_id = building.id
-            self.selected_villager_id = None
-            self.assign_workplace_mode = False
-            if building.draw_task_type not in TASK_LABELS:
-                building.draw_task_type = building.default_draw_task()
-            if building.kind == BuildingKind.FIELD:
-                self._open_field_plan(building)
-                return
-            if building.kind == BuildingKind.FARM:
-                self._set_status(
-                    f"Selected Farm. Workers manage nearby Fields "
-                    f"(within {FARM_FIELD_RADIUS}). "
-                    f"{WORK_MODE_LABELS[building.work_mode]}."
-                )
-            else:
-                self._set_status(
-                    f"Selected {BUILDING_LABELS[building.kind]}. "
-                    f"{WORK_MODE_LABELS[building.work_mode]}. Drag to draw. Esc to hide."
-                )
+            self._select_building(building)
             return
 
-        if (x, y) == self.world.home_pos:
-            self.selected_building_id = None
-            self.selected_villager_id = None
-            self.assign_workplace_mode = False
-            self._set_status("Home storehouse.")
+        resource = self._map_resource_at(x, y)
+        if resource is not None:
+            self.villager_inspect.close()
+            title, quantity, unit, detail = resource
+            self.resource_inspect.open_for(
+                title=title,
+                quantity=quantity,
+                unit=unit,
+                detail=detail,
+                cell=(x, y),
+                screen_xy=self.camera.world_to_screen(x, y),
+            )
+            self._set_status(f"{title}: {quantity} {unit}".strip())
             return
 
         # Single-cell task area when a building is already selected.
@@ -684,6 +857,9 @@ class Game:
         if action == "cycle_work_mode":
             self._cycle_selected_building_work_mode()
             return True
+        if action == "hire_villager":
+            self._hire_villager()
+            return True
         if action == "assign_workplace":
             if self.selected_villager_id is None:
                 return True
@@ -726,27 +902,13 @@ class Game:
             building = self.buildings.get(item_id)
             if building is None:
                 return True
-            self.selected_building_id = building.id
-            self.selected_villager_id = None
-            self.assign_workplace_mode = False
-            if building.kind == BuildingKind.FIELD:
-                self._open_field_plan(building)
-            elif building.kind == BuildingKind.FARM:
-                self._set_status(
-                    f"Selected Farm. Workers manage nearby Fields "
-                    f"(within {FARM_FIELD_RADIUS})."
-                )
-            else:
-                self._set_status(f"Selected {BUILDING_LABELS[building.kind]}.")
+            self._select_building(building)
             return True
         if kind == "villager":
             villager = self._get_villager(item_id)
             if villager is None:
                 return True
-            self.selected_villager_id = villager.id
-            self.selected_building_id = None
-            self.assign_workplace_mode = False
-            self._set_status(f"Selected villager {villager.id}.")
+            self._open_villager_inspect(villager)
             return True
         if kind == "home":
             self._set_status("Home storehouse. Select a villager, then Assign to home.")
@@ -758,6 +920,21 @@ class Game:
             return
         building = self.buildings.get(self.selected_building_id)
         if building is None:
+            return
+        # Special handling for HOME: assign as home hauler
+        if building.kind == BuildingKind.HOME:
+            free = next(
+                (
+                    v
+                    for v in self.villagers
+                    if v.building_id is None and not v.assigned_to_home
+                ),
+                None,
+            )
+            if free is None:
+                self._set_status("No unassigned villagers available.")
+                return
+            self._assign_villager_to_home(free.id)
             return
         free = next(
             (
@@ -776,6 +953,23 @@ class Game:
         building = self._selected_building()
         if building is None:
             self._set_status("Select a building first.")
+            return
+        # Special handling for HOME: unassign a home hauler
+        if building.kind == BuildingKind.HOME:
+            haulers = [v for v in self.villagers if v.assigned_to_home]
+            if not haulers:
+                self._set_status("No haulers assigned to home.")
+                return
+            hauler = None
+            if self.selected_villager_id is not None:
+                hauler = next(
+                    (v for v in haulers if v.id == self.selected_villager_id), None
+                )
+            if hauler is None:
+                hauler = max(haulers, key=lambda v: v.id)
+            hauler.assigned_to_home = False
+            hauler.set_default_priorities()
+            self._set_status(f"Unassigned villager {hauler.id} from home haulers.")
             return
         workers = [v for v in self.villagers if v.building_id == building.id]
         if not workers:
@@ -827,9 +1021,14 @@ class Game:
         if building.kind == BuildingKind.FIELD:
             self._set_status("Assign workers to a Farm — Fields only define crop areas.")
             return
+        if building.kind == BuildingKind.HOME:
+            self._assign_villager_to_home(villager_id)
+            return
+        if building.kind == BuildingKind.WORKSTATION:
+            self._set_status("Hiring hall does not take workers — hire there, then assign elsewhere.")
+            return
         villager = self._get_villager(villager_id)
-        building = self.buildings.get(building_id)
-        if villager is None or building is None:
+        if villager is None:
             return
         villager.clear_assignment()
         villager.building_id = building_id
@@ -838,6 +1037,7 @@ class Game:
         self.assign_workplace_mode = False
         self.selected_villager_id = None
         self.selected_building_id = building_id
+        self._open_building_inspect(building)
         self._set_status(
             f"Villager {villager.id} → {BUILDING_LABELS[building.kind]}"
         )
@@ -1162,7 +1362,34 @@ class Game:
         self.calendar_day = (self.calendar_day + 1) % YEAR_DAYS
         if self.season != prev:
             self._expire_unharvested_crops(prev)
+            if self.season == Season.WINTER:
+                self.world.clear_mushrooms()
             self._set_status(f"{format_date(self.calendar_day)} begins.")
+        # Biodiversity: sample at season start (day 0) and midpoint.
+        if self._is_biodiversity_sample_day(self.calendar_day):
+            self._sample_biodiversity()
+
+    @staticmethod
+    def _is_biodiversity_sample_day(calendar_day: int) -> bool:
+        d = day_in_season(calendar_day)
+        return d == 0 or d == DAYS_PER_SEASON // 2
+
+    def _sample_biodiversity(self) -> None:
+        """Record a spatial biodiversity snapshot; keep last year of samples."""
+        snap = biodiversity_snapshot(
+            self.world,
+            deer_positions=((a.x, a.y) for a in self.wildlife.deer()),
+            boar_positions=((a.x, a.y) for a in self.wildlife.boars()),
+            fish_positions=((f.x, f.y) for f in self.fish.fish),
+        )
+        self._biodiversity_samples.append(snap)
+        while len(self._biodiversity_samples) > BIODIVERSITY_SAMPLES_PER_YEAR:
+            self._biodiversity_samples.pop(0)
+        self._biodiversity_average = average_grids(
+            self._biodiversity_samples, self.world.rows, self.world.cols
+        )
+        if self.overlay_mode == OverlayMode.BIODIVERSITY:
+            self._refresh_indicators()
 
     def _expire_unharvested_crops(self, ended_season: Season) -> None:
         """Clear crops that missed their harvest window so the tile can be replanted.
@@ -1242,6 +1469,18 @@ class Game:
         elif action.startswith("speed_"):
             self._set_sim_speed(int(action[len("speed_") :]))
 
+    def _select_building(self, building: Building) -> None:
+        """Select a building and open its inspection popup (closes any previous)."""
+        self.selected_building_id = building.id
+        self.selected_villager_id = None
+        self.assign_workplace_mode = False
+        if building.draw_task_type not in TASK_LABELS:
+            building.draw_task_type = building.default_draw_task()
+        if building.kind == BuildingKind.FIELD:
+            self._open_field_plan(building)
+            return
+        self._open_building_inspect(building)
+
     def _field_plan_building(self) -> Building | None:
         bid = self.field_plan_dialog.building_id
         if bid is None:
@@ -1251,13 +1490,205 @@ class Game:
             return None
         return building
 
+    def _inspect_building(self) -> Building | None:
+        bid = self.building_inspect.building_id
+        if bid is None:
+            return None
+        building = self.buildings.get(bid)
+        if building is None or building.kind == BuildingKind.FIELD:
+            return None
+        return building
+
     def _open_field_plan(self, building: Building) -> None:
+        self.building_inspect.close()
+        self.villager_inspect.close()
+        self.resource_inspect.close()
         self.selected_building_id = building.id
         self.field_plan_dialog.open_for(building, season=self.season)
         self._set_status(
             f"Plan Field #{building.id} ({building.plot_size_label()}). "
             f"Select season & crop, drag to plant."
         )
+
+    def _open_building_inspect(self, building: Building) -> None:
+        self.field_plan_dialog.close()
+        self.villager_inspect.close()
+        self.resource_inspect.close()
+        self.selected_building_id = building.id
+        screen_xy = self.camera.world_to_screen(building.x, building.y)
+        self.building_inspect.open_for(building, screen_xy=screen_xy)
+        if building.kind == BuildingKind.HOME:
+            haulers = sum(1 for v in self.villagers if v.assigned_to_home)
+            self._set_status(
+                f"Selected Storehouse. {haulers} hauler(s). Assign villagers to haul resources."
+            )
+        elif building.kind == BuildingKind.WORKSTATION:
+            hired_count = len(self.villagers)
+            self._set_status(
+                f"Selected Hiring hall. {hired_count}/{MAX_VILLAGERS} hired. Click Hire button."
+            )
+        elif building.kind == BuildingKind.FARM:
+            self._set_status(
+                f"Selected Farm. Workers manage nearby Fields "
+                f"(within {FARM_FIELD_RADIUS}). "
+                f"{WORK_MODE_LABELS[building.work_mode]}."
+            )
+        else:
+            self._set_status(
+                f"Selected {BUILDING_LABELS[building.kind]}. "
+                f"{WORK_MODE_LABELS[building.work_mode]}. Drag to draw. Esc to hide."
+            )
+
+    def _apply_building_inspect_action(self) -> None:
+        action = self.building_inspect.take_action()
+        if action is None:
+            return
+        if action.startswith("select_worker:"):
+            vid = int(action.split(":")[1])
+            villager = self._get_villager(vid)
+            if villager is not None:
+                self._open_villager_inspect(villager)
+            return
+        if action.startswith("mode_"):
+            self._set_building_work_mode(WorkMode[action[len("mode_") :]])
+            return
+        if action == "task_clear":
+            self._clear_selected_building_areas()
+            return
+        if action == "assign_villager":
+            self._assign_unassigned_to_selected_building()
+            return
+        if action == "unassign_villager":
+            self._unassign_worker_from_selected_building()
+            return
+        if action == "hire_villager":
+            self._hire_villager()
+            return
+
+    def _open_villager_inspect(self, villager: Villager) -> None:
+        self.selected_villager_id = villager.id
+        self.selected_building_id = None
+        self.assign_workplace_mode = False
+        self.field_plan_dialog.close()
+        self.building_inspect.close()
+        self.resource_inspect.close()
+        screen_xy = self.camera.world_to_screen(villager.x, villager.y)
+        self.villager_inspect.open_for(villager, screen_xy=screen_xy)
+        label = self._villager_assignment_label(villager)
+        self._set_status(
+            f"Selected villager {villager.id} ({label}). "
+            f"Set priorities & ration in the popup."
+        )
+
+    def _apply_villager_inspect_action(self) -> None:
+        action = self.villager_inspect.take_action()
+        if action is None:
+            return
+        villager = self._get_villager(self.villager_inspect.villager_id or -1)
+        if villager is None:
+            return
+        if action.startswith("ration_"):
+            from entities import RationMode
+
+            try:
+                villager.ration_mode = RationMode[action[len("ration_") :]]
+            except KeyError:
+                return
+            self._set_status(
+                f"Villager {villager.id} ration: {RATION_LABELS[villager.ration_mode]}"
+            )
+            return
+        if action.startswith("prio:"):
+            parts = action.split(":")
+            if len(parts) == 3:
+                slot = int(parts[1])
+                try:
+                    prio = WorkPriority[parts[2]]
+                except KeyError:
+                    return
+                while len(villager.priorities) < 3:
+                    villager.priorities.append(WorkPriority.NONE)
+                villager.priorities[slot] = prio
+                self._set_status(
+                    f"Villager {villager.id} priority {slot + 1}: {PRIORITY_LABELS[prio]}"
+                )
+            return
+        if action == "assign_workplace":
+            self.assign_workplace_mode = True
+            self._set_status(
+                f"Assign villager {villager.id}: click a building or storehouse."
+            )
+            return
+        if action == "unassign":
+            self._unassign_villager(villager)
+            return
+
+    def _unassign_villager(self, villager: Villager) -> None:
+        villager.clear_assignment()
+        villager.set_default_priorities()
+        self._set_status(f"Unassigned villager {villager.id}.")
+
+    def _field_crop_counts(self, building: Building) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        left, top, right, bottom = building.plot_bounds()
+        for y in range(top, bottom + 1):
+            for x in range(left, right + 1):
+                cell = self.world.get_cell(x, y)
+                if cell is None or cell.feature != FeatureType.CROP_HERB:
+                    continue
+                kind = cell.crop_kind or "sage"
+                counts[kind] = counts.get(kind, 0) + 1
+        return counts
+
+    def _map_resource_at(
+        self, x: int, y: int
+    ) -> tuple[str, int, str, str] | None:
+        """Return (title, quantity, unit, detail) for a harvestable map resource."""
+        cell = self.world.get_cell(x, y)
+        if cell is None:
+            return None
+        if cell.meat_deposit > 0:
+            return ("Meat", cell.meat_deposit, "meat", "Ground deposit")
+        if cell.fish_deposit > 0:
+            return ("Fish", cell.fish_deposit, "fish", "Shore catch")
+        if cell.feature == FeatureType.TREE:
+            from trees import resolve_tree
+
+            tree = resolve_tree(cell.tree_species)
+            return (
+                tree.label,
+                max(1, cell.deposit),
+                tree.yield_key,
+                f"{tree.yield_amount} {tree.yield_key}",
+            )
+        if cell.feature == FeatureType.ROCK:
+            return ("Rock", max(1, cell.deposit), "rock", "")
+        if cell.feature == FeatureType.BERRY_BUSH:
+            qty = cell.deposit
+            detail = "Regrowing" if qty <= 0 else ""
+            return ("Berry bush", max(0, qty), "berries", detail)
+        if cell.feature == FeatureType.MUSHROOM:
+            return ("Mushroom", 1, "mushrooms", "")
+        if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP):
+            kind = cell.crop_kind or "sage"
+            crop = CROP_BY_KEY.get(kind)
+            label = crop.label if crop else kind
+            return (f"Wild {label}", 1, crop.produce_key if crop else kind, "")
+        if cell.feature == FeatureType.REED:
+            return ("Reeds", 1, "reeds", "")
+        if cell.feature == FeatureType.CROP_HERB:
+            kind = cell.crop_kind or "sage"
+            crop = CROP_BY_KEY.get(kind)
+            label = crop.label if crop else kind
+            if cell.growth_ticks > 0:
+                return (label, 1, crop.produce_key if crop else kind, "Growing")
+            return (label, 1, crop.produce_key if crop else kind, "Ready to harvest")
+        if cell.feature == FeatureType.SAPLING:
+            from trees import resolve_tree
+
+            tree = resolve_tree(cell.tree_species)
+            return (f"{tree.label} sapling", 1, f"{tree.key}_saplings", "Growing")
+        return None
 
     def _apply_pending_field_plan(self) -> None:
         pending = self.field_plan_dialog.take_pending_plan()
@@ -1325,6 +1756,10 @@ class Game:
         del self.buildings[building_id]
         if self.selected_building_id == building_id:
             self.selected_building_id = None
+        if self.field_plan_dialog.building_id == building_id:
+            self.field_plan_dialog.close()
+        if self.building_inspect.building_id == building_id:
+            self.building_inspect.close()
         self._set_status(f"Deleted Field #{building_id}.")
         self._wake_all_farm_workers()
         self._refresh_indicators()
@@ -1436,10 +1871,13 @@ class Game:
             return
 
         if cell.feature == FeatureType.WORKSTATION:
-            self._hire_villager()
+            building = self._building_at(x, y)
+            if building is not None:
+                self._select_building(building)
             return
 
         if cell.feature == FeatureType.HOME:
+            # Allow deposit but also could select building
             self._deposit_home(self.player.inventory)
             return
 
@@ -1454,19 +1892,7 @@ class Game:
         ):
             building = self._building_at(x, y)
             if building is not None:
-                self.selected_building_id = building.id
-                self.selected_villager_id = None
-                if building.kind == BuildingKind.FIELD:
-                    tip = "Click to open crop plan editor."
-                elif building.kind == BuildingKind.FARM:
-                    tip = f"Workers manage Fields within {FARM_FIELD_RADIUS}."
-                else:
-                    tip = f"T: {TASK_LABELS[building.draw_task_type]}"
-                self._set_status(
-                    f"{BUILDING_LABELS[building.kind]} "
-                    f"store {building.stored_total}/{building.capacity}. "
-                    f"{tip}"
-                )
+                self._select_building(building)
             return
 
         # Collect meat / fish on this cell first if present.
@@ -1530,7 +1956,7 @@ class Game:
             self._collect_berries(x, y, self.player.inventory, status=True)
             return
 
-        if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP):
+        if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.REED):
             self._collect_herb(x, y, self.player.inventory, status=True)
             return
 
@@ -1549,10 +1975,7 @@ class Game:
             self._collect_rock(x, y, self.player.inventory, status=True)
             return
 
-        if cell.feature == FeatureType.NONE and cell.terrain in (
-            TerrainType.SOIL,
-            TerrainType.GRASS,
-        ):
+        if cell.feature == FeatureType.NONE and cell.terrain in PLANTABLE_LAND:
             if self.place_kind is not None:
                 self._try_build(self.place_kind, x, y)
             else:
@@ -1632,8 +2055,8 @@ class Game:
         for y in range(y0, y1 + 1):
             for x in range(x0, x1 + 1):
                 cell = self.world.get_cell(x, y)
-                if cell is None or cell.terrain not in (TerrainType.SOIL, TerrainType.GRASS):
-                    self._set_status("Field must be entirely on soil or grass.")
+                if cell is None or cell.terrain not in PLANTABLE_LAND:
+                    self._set_status("Field must be entirely on soil, grass, or meadow.")
                     return False
                 if cell.feature in blocked:
                     self._set_status("Field overlaps a building or construction site.")
@@ -1678,8 +2101,8 @@ class Game:
         if cell is None or cell.feature != FeatureType.NONE:
             self._set_status("Cannot place construction site here.")
             return False
-        if cell.terrain not in (TerrainType.SOIL, TerrainType.GRASS):
-            self._set_status("Build on soil or grass.")
+        if cell.terrain not in PLANTABLE_LAND:
+            self._set_status("Build on soil, grass, or meadow.")
             return False
         cost_w, cost_r, _ = self._building_cost(kind)
         site = ConstructionSite(
@@ -1775,22 +2198,33 @@ class Game:
             if status:
                 self._set_status("No tree here.")
             return False
+        from trees import resolve_tree
+
+        tree = resolve_tree(cell.tree_species)
+        yield_key = tree.yield_key
         taken = self.world.harvest_wood(x, y, amount=1)
         if taken <= 0:
             if status:
                 self._set_status("No wood left.")
             return False
-        inventory.add_wood(taken)
+        inventory.add_item(yield_key, taken)
         sapling_msg = ""
-        if self._drop_rng.random() < self._seed_chance(SAPLING_DROP_CHANCE) and inventory.can_add(1, key="saplings"):
-            inventory.add_saplings(1)
-            sapling_msg = " +1 sapling"
+        if self._drop_rng.random() < self._seed_chance(SAPLING_DROP_CHANCE):
+            from trees import sapling_item_key
+
+            skey = sapling_item_key(tree.key)
+            if inventory.can_add(1, key=skey):
+                inventory.add_saplings(1, species=tree.key)
+                sapling_msg = f" +1 {tree.label.lower()} sapling"
         self.world.apply_disturbance(x, y)
         self._refresh_indicators()
         if status:
             left = self.world.get_cell(x, y)
             remaining = left.deposit if left and left.feature == FeatureType.TREE else 0
-            self._set_status(f"Collected {taken} wood ({remaining} left){sapling_msg}.")
+            label = tree.label
+            self._set_status(
+                f"Collected {taken} {yield_key} from {label} ({remaining} left){sapling_msg}."
+            )
         return True
 
     def _collect_rock(self, x: int, y: int, inventory: Inventory, status: bool = False) -> bool:
@@ -1818,20 +2252,37 @@ class Game:
         return True
 
     def _plant(self, x: int, y: int, inventory: Inventory, status: bool = False) -> bool:
-        if inventory.saplings <= 0:
+        from trees import resolve_tree, species_from_sapling_key
+
+        key = inventory.first_sapling_key()
+        if key is None:
             if status:
                 self._set_status("Need a sapling item to plant.")
             return False
-        if not self.world.plant_sapling(x, y):
+        species = species_from_sapling_key(key)
+        if not self.world.plant_sapling(x, y, species=species):
             if status:
                 self._set_status("Cannot plant here.")
             return False
-        inventory.consume_sapling()
+        inventory.consume_item(key, 1)
         self.world.apply_disturbance(x, y)
         self._refresh_indicators()
         if status:
-            self._set_status(f"Planted a sapling ({inventory.saplings} left).")
+            label = resolve_tree(species).label
+            self._set_status(f"Planted {label} sapling ({inventory.saplings} left).")
         return True
+
+    def _local_tree_species(self, x: int, y: int) -> str | None:
+        """Prefer a nearby tree species when planting; else weighted random."""
+        from trees import pick_tree_species
+
+        for ny, nx in self.world.neighbourhood(x, y, radius=3):
+            cell = self.world.get_cell(nx, ny)
+            if cell is None:
+                continue
+            if cell.feature in (FeatureType.TREE, FeatureType.SAPLING) and cell.tree_species:
+                return cell.tree_species
+        return pick_tree_species(self._drop_rng)
 
     def _plant_here(self, x: int, y: int, inventory: Inventory, status: bool = False) -> bool:
         """Plant berry seed or sapling depending on inventory and terrain."""
@@ -1907,6 +2358,13 @@ class Game:
             if status:
                 self._set_status("No wild plants here.")
             return False
+        if crop_key == "reeds":
+            inventory.add_item("reeds", 1)
+            self.world.apply_disturbance(x, y)
+            self._refresh_indicators()
+            if status:
+                self._set_status("Collected 1 reed.")
+            return True
         crop = CROP_BY_KEY.get(crop_key, CROP_BY_KEY["sage"])
         inventory.add_item(crop.produce_key, 1)
         seed_msg = ""
@@ -2004,14 +2462,17 @@ class Game:
         return best
 
     def _player_hunt(self, animal) -> None:
-        pos = self.wildlife.kill_animal(animal.id)
-        if pos is None:
+        result = self.wildlife.kill_animal(animal.id)
+        if result is None:
             self._set_status("Animal got away.")
             return
-        self.world.add_meat_deposit(pos[0], pos[1], ANIMAL_MEAT_YIELD)
-        self.world.apply_disturbance(pos[0], pos[1])
+        x, y, kind = result
+        meat = BOAR_MEAT_YIELD if kind == AnimalKind.BOAR else DEER_MEAT_YIELD
+        label = "boar" if kind == AnimalKind.BOAR else "deer"
+        self.world.add_meat_deposit(x, y, meat)
+        self.world.apply_disturbance(x, y)
         self._refresh_indicators()
-        self._set_status(f"Hunted animal. {ANIMAL_MEAT_YIELD} meat on ({pos[0]}, {pos[1]}).")
+        self._set_status(f"Hunted {label}. {meat} meat on ({x}, {y}).")
 
     def _collect_fish(self, x: int, y: int, inventory: Inventory, status: bool = False) -> bool:
         if inventory.is_full:
@@ -2139,6 +2600,7 @@ class Game:
                 BuildingKind.FORAGER,
                 BuildingKind.HUNTER,
                 BuildingKind.FISHER,
+                BuildingKind.FARM,
             ):
                 return building
         return None
@@ -2152,6 +2614,7 @@ class Game:
                 BuildingKind.FORAGER,
                 BuildingKind.HUNTER,
                 BuildingKind.FISHER,
+                BuildingKind.FARM,
             ):
                 continue
             if self._food_count(building) > 0:
@@ -2163,7 +2626,9 @@ class Game:
             key=lambda p: abs(p[0] - villager.x) + abs(p[1] - villager.y),
         )
 
-    def _eat_random_from(self, storage, amount: int) -> int:
+    def _eat_random_from(
+        self, storage, amount: int, villager: Villager | None = None
+    ) -> int:
         """Consume up to `amount` random food units. Returns how many eaten."""
         eaten = 0
         for _ in range(amount):
@@ -2174,6 +2639,8 @@ class Game:
                 break
             key = self._food_rng.choice(choices)
             setattr(storage, key, getattr(storage, key) - 1)
+            if villager is not None:
+                villager.last_food = key
             eaten += 1
         return eaten
 
@@ -2184,7 +2651,7 @@ class Game:
 
         # Eat from carried food first.
         if self._food_count(villager.inventory) > 0:
-            eaten = self._eat_random_from(villager.inventory, amount)
+            eaten = self._eat_random_from(villager.inventory, amount, villager)
             if eaten > 0:
                 villager.satiation = villager.ration_refill()
                 villager.seeking_food = False
@@ -2212,7 +2679,7 @@ class Game:
             if storage is None:
                 villager.seeking_food = villager.needs_food()
                 return
-            eaten = self._eat_random_from(storage, amount)
+            eaten = self._eat_random_from(storage, amount, villager)
             if eaten > 0:
                 villager.satiation = villager.ration_refill()
                 villager.seeking_food = False
@@ -2234,7 +2701,9 @@ class Game:
         if villager.hunt_animal_id is not None or villager.hunt_meat_pos is not None:
             return True
         if villager.fish_target_id is not None or villager.fish_catch_pos is not None:
-            return True
+            # Off-season: keep the catch sticky for later, but don't block other work.
+            if fishing_allowed(self.calendar_day):
+                return True
         # Only treat cargo as workplace work if this building can store it.
         if building.can_accept_from(villager.inventory):
             return True
@@ -2412,12 +2881,34 @@ class Game:
 
     def _construction_has_work(self, villager: Villager) -> bool:
         if not self.construction_sites:
+            if villager.construction_id is not None:
+                villager.construction_id = None
             return False
-        # Already carrying build materials or assigned to a site.
+
+        # Carrying wood/rock only counts if some site still needs it.
+        # Otherwise release the claim so transport can clear leftover cargo
+        # (e.g. extra wood after a site's wood quota is already full).
         if villager.inventory.wood > 0 or villager.inventory.rock > 0:
-            return True
-        if villager.construction_id is not None and villager.construction_id in self.construction_sites:
-            return True
+            if self._find_site_needing_materials(villager) is not None:
+                return True
+            if villager.construction_id is not None:
+                villager.construction_id = None
+            return False
+
+        if villager.construction_id is not None:
+            site = self.construction_sites.get(villager.construction_id)
+            if site is None or site.is_complete:
+                villager.construction_id = None
+            elif site.materials_ready:
+                return True
+            elif (site.wood_needed > 0 and self._material_available("wood")) or (
+                site.rock_needed > 0 and self._material_available("rock")
+            ):
+                return True
+            else:
+                # Assigned to a half-built site with nothing left to fetch.
+                villager.construction_id = None
+
         for site in self.construction_sites.values():
             if not site.materials_ready:
                 if site.wood_needed > 0 and self._material_available("wood"):
@@ -2440,33 +2931,63 @@ class Game:
         site = None
         if villager.construction_id is not None:
             site = self.construction_sites.get(villager.construction_id)
-            if site is None:
+            if site is None or site.is_complete:
                 villager.construction_id = None
+                site = None
+
+        carrying = villager.inventory.wood > 0 or villager.inventory.rock > 0
 
         # Deliver carried wood/rock to a needing site.
-        if villager.inventory.wood > 0 or villager.inventory.rock > 0:
-            if site is None or site.materials_ready:
-                site = self._find_site_needing_materials(villager)
-                if site is not None:
-                    villager.construction_id = site.id
-            if site is None:
-                # Nowhere to deliver — haul extras home via transport later.
+        if carrying:
+            useful = self._find_site_needing_materials(villager)
+            if useful is None:
+                # Leftover mats no site needs — release claim so transport can haul home.
+                villager.construction_id = None
+                villager.state = VillagerState.IDLE
                 return
+            # Prefer current site only if it can still take what we carry.
+            if site is None or not (
+                (site.wood_needed > 0 and villager.inventory.wood > 0)
+                or (site.rock_needed > 0 and villager.inventory.rock > 0)
+            ):
+                site = useful
+                villager.construction_id = site.id
             if (villager.x, villager.y) == (site.x, site.y):
                 if villager.work_cooldown == 0:
                     self._deposit_materials_at_site(villager, site)
                     villager.work_cooldown = self._villager_work_interval(villager)
                     if site.is_complete:
                         self._complete_construction(site)
+                        villager.construction_id = None
+                        villager.state = VillagerState.IDLE
+                        return
+                # After a partial drop, keep going (fetch remainder / other site)
+                # instead of parking on the scaffold with useless leftover cargo.
+                if villager.inventory.wood > 0 or villager.inventory.rock > 0:
+                    if (site.wood_needed > 0 and villager.inventory.wood > 0) or (
+                        site.rock_needed > 0 and villager.inventory.rock > 0
+                    ):
+                        return  # still depositing next tick (cooldown)
+                    other = self._find_site_needing_materials(villager)
+                    if other is not None:
+                        villager.construction_id = other.id
+                        self._step_villager_toward(villager, (other.x, other.y))
+                        villager.state = VillagerState.DELIVERING
+                        return
+                    villager.construction_id = None
+                    villager.state = VillagerState.IDLE
+                    return
+                # Empty hands — fall through to build or fetch more.
+            else:
+                self._step_villager_toward(villager, (site.x, site.y))
+                villager.state = VillagerState.DELIVERING
                 return
-            self._step_villager_toward(villager, (site.x, site.y))
-            villager.state = VillagerState.DELIVERING
-            return
 
         # Pick / keep a site.
         if site is None:
             site = self._find_best_construction_site(villager)
             if site is None:
+                villager.construction_id = None
                 villager.state = VillagerState.IDLE
                 return
             villager.construction_id = site.id
@@ -2490,6 +3011,7 @@ class Game:
         need_rock = site.rock_needed
         source = self._find_material_source(villager, need_wood > 0, need_rock > 0)
         if source is None:
+            villager.construction_id = None
             villager.state = VillagerState.IDLE
             return
         sx, sy, _kind = source
@@ -2501,6 +3023,10 @@ class Game:
             self._withdraw_build_materials(villager, site, source)
             villager.work_cooldown = self._villager_work_interval(villager)
             villager.state = VillagerState.HAULING
+            # Nothing withdrawn (empty stock race) — drop claim next tick via has_work.
+            if villager.inventory.wood <= 0 and villager.inventory.rock <= 0:
+                villager.construction_id = None
+                villager.state = VillagerState.IDLE
 
     def _find_site_needing_materials(self, villager: Villager) -> ConstructionSite | None:
         candidates = [
@@ -2957,10 +3483,14 @@ class Game:
                     if cell is None or cell.meat_deposit <= 0:
                         villager.hunt_meat_pos = None
                 return
-            if self.world.is_walkable(*meat_pos):
-                self._step_villager_toward(villager, meat_pos)
-            else:
+            if not self.world.is_walkable(*meat_pos):
                 villager.hunt_meat_pos = None
+                self._clear_villager_path(villager)
+                return
+            if not self._step_villager_toward(villager, meat_pos):
+                # Unreachable pile — drop sticky target so hunting can continue.
+                villager.hunt_meat_pos = None
+                self._clear_villager_path(villager)
             return
 
         if villager.inventory.is_full:
@@ -2979,13 +3509,15 @@ class Game:
         dist = max(abs(animal.x - villager.x), abs(animal.y - villager.y))
         if dist <= 1:
             if villager.work_cooldown == 0:
-                pos = self.wildlife.kill_animal(animal.id)
+                result = self.wildlife.kill_animal(animal.id)
                 villager.hunt_animal_id = None
-                if pos is not None:
-                    self.world.add_meat_deposit(pos[0], pos[1], ANIMAL_MEAT_YIELD)
-                    self.world.apply_disturbance(pos[0], pos[1])
+                if result is not None:
+                    x, y, kind = result
+                    meat = BOAR_MEAT_YIELD if kind == AnimalKind.BOAR else DEER_MEAT_YIELD
+                    self.world.add_meat_deposit(x, y, meat)
+                    self.world.apply_disturbance(x, y)
                     self._refresh_indicators()
-                    villager.hunt_meat_pos = pos
+                    villager.hunt_meat_pos = (x, y)
                 villager.work_cooldown = self._villager_work_interval(villager)
             return
 
@@ -3085,10 +3617,13 @@ class Game:
                     if cell is None or cell.fish_deposit <= 0:
                         villager.fish_catch_pos = None
                 return
-            if self.world.is_walkable(*catch_pos):
-                self._step_villager_toward(villager, catch_pos)
-            else:
-                villager.fish_catch_pos = None
+            if not self.world.is_walkable(*catch_pos):
+                recovered = self._recover_fish_catch(villager, catch_pos)
+                villager.fish_catch_pos = recovered
+                return
+            if not self._step_villager_toward(villager, catch_pos):
+                recovered = self._recover_fish_catch(villager, catch_pos)
+                villager.fish_catch_pos = recovered
             return
 
         if villager.inventory.is_full:
@@ -3122,9 +3657,11 @@ class Game:
                 pos = self.fish.kill_fish(target.id)
                 villager.fish_target_id = None
                 if pos is not None:
-                    self.world.add_fish_deposit(pos[0], pos[1], FISH_YIELD)
+                    deposit_at = self.world.add_fish_deposit(pos[0], pos[1], FISH_YIELD)
                     shore = self._find_fish_in_fish_areas(building)
-                    villager.fish_catch_pos = shore if shore is not None else pos
+                    villager.fish_catch_pos = (
+                        shore if shore is not None else deposit_at if deposit_at is not None else pos
+                    )
                 villager.work_cooldown = self._villager_work_interval(villager)
             return
 
@@ -3240,11 +3777,13 @@ class Game:
 
     def _can_plant_from(self, villager: Villager, building: Building) -> tuple[bool, bool, bool]:
         """Whether sapling / berry / crop-seed planting is currently possible."""
+        from trees import SAPLING_ITEM_KEYS
+
         inv = villager.inventory
         can_sapling = inv.saplings > 0 or (
             building.kind == BuildingKind.FORESTER
-            and self._plant_stock_at(building, "saplings") > 0
-            and inv.can_add(1, key="saplings")
+            and any(self._plant_stock_at(building, k) > 0 for k in SAPLING_ITEM_KEYS)
+            and any(inv.can_add(1, key=k) for k in SAPLING_ITEM_KEYS)
         )
         can_berry = False
         can_herb = False
@@ -3344,7 +3883,7 @@ class Game:
         return (
             can_plant_sapling
             and cell.feature == FeatureType.NONE
-            and cell.terrain in (TerrainType.SOIL, TerrainType.GRASS)
+            and cell.terrain in PLANTABLE_LAND
         )
 
     def _closest_of(
@@ -3572,7 +4111,7 @@ class Game:
             return (
                 can_plant_sapling
                 and cell.feature == FeatureType.NONE
-                and cell.terrain in (TerrainType.SOIL, TerrainType.GRASS)
+                and cell.terrain in PLANTABLE_LAND
             )
         if task_type == TaskType.FULL_MANAGE:
             if cell.feature == FeatureType.TREE and cell.deposit > 0:
@@ -3580,14 +4119,14 @@ class Game:
             return (
                 can_plant_sapling
                 and cell.feature == FeatureType.NONE
-                and cell.terrain in (TerrainType.SOIL, TerrainType.GRASS)
+                and cell.terrain in PLANTABLE_LAND
             )
         if task_type == TaskType.FORAGE_MUSHROOMS:
             return cell.feature == FeatureType.MUSHROOM
         if task_type == TaskType.FORAGE_BERRIES:
             return cell.feature == FeatureType.BERRY_BUSH and cell.deposit > 0
         if task_type == TaskType.FORAGE_HERBS:
-            return cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP)
+            return cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.REED)
         if task_type == TaskType.PLANT_BERRY_SEEDS:
             return (
                 can_plant_berry
@@ -3605,7 +4144,7 @@ class Game:
                 return True
             if cell.feature == FeatureType.BERRY_BUSH and cell.deposit > 0:
                 return True
-            if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP):
+            if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.REED):
                 return True
             return False
         return False
@@ -3650,7 +4189,7 @@ class Game:
             self._collect_berries(x, y, inv, status=False)
         elif (
             allow_collect
-            and cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP)
+            and cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.REED)
             and (TaskType.FORAGE_HERBS in tasks or TaskType.FULL_FORAGE in tasks)
         ):
             self._collect_herb(x, y, inv, status=False)
@@ -3661,12 +4200,17 @@ class Game:
             ):
                 if inv.saplings <= 0:
                     if not building.give_sapling_to(inv):
-                        self.home_storage.withdraw_keys_to(inv, ("saplings",))
+                        from trees import SAPLING_ITEM_KEYS
+
+                        self.home_storage.withdraw_keys_to(inv, SAPLING_ITEM_KEYS)
                 self._plant(x, y, inv, status=False)
 
-    def _step_villager_toward(self, villager: Villager, goal: tuple[int, int]) -> None:
+    def _step_villager_toward(self, villager: Villager, goal: tuple[int, int]) -> bool:
+        """Step along a path toward goal. Returns False if the goal is unreachable."""
         if villager.move_cooldown > 0:
-            return
+            return True
+        if (villager.x, villager.y) == goal:
+            return True
         cache_goal = getattr(villager, "_path_goal", None)
         cache: list[tuple[int, int]] | None = getattr(villager, "_path_cache", None)
         if cache_goal != goal or cache is None:
@@ -3675,15 +4219,34 @@ class Game:
             villager._path_goal = goal  # type: ignore[attr-defined]
             cache = villager._path_cache  # type: ignore[attr-defined]
         if not cache:
-            if (villager.x, villager.y) == goal:
-                return
-            # Unreachable or exhausted — clear and retry next time.
+            # Unreachable or exhausted — clear and signal failure.
             villager._path_cache = None  # type: ignore[attr-defined]
             villager._path_goal = None  # type: ignore[attr-defined]
-            return
+            return False
         step = cache.pop(0)
         villager.x, villager.y = step
         villager.move_cooldown = self._villager_move_interval(villager)
+        return True
+
+    def _clear_villager_path(self, villager: Villager) -> None:
+        villager._path_cache = None  # type: ignore[attr-defined]
+        villager._path_goal = None  # type: ignore[attr-defined]
+
+    def _recover_fish_catch(
+        self, villager: Villager, catch_pos: tuple[int, int]
+    ) -> tuple[int, int] | None:
+        """If a catch tile is unreachable, move the pile onto reachable shore."""
+        relocated = self.world.relocate_fish_deposit(
+            catch_pos[0],
+            catch_pos[1],
+            reachable_from=(villager.x, villager.y),
+        )
+        self._clear_villager_path(villager)
+        if relocated is None:
+            return None
+        if self.world.find_path((villager.x, villager.y), relocated) is None:
+            return None
+        return relocated
 
     # ------------------------------------------------------------------
     # Update / indicators
@@ -3693,6 +4256,11 @@ class Game:
         self.status_timer = STATUS_MESSAGE_FRAMES
 
     def _refresh_indicators(self) -> None:
+        if self.overlay_mode == OverlayMode.BIODIVERSITY:
+            # Year-average of season start/mid samples — not live.
+            avg = self._biodiversity_average
+            self.overlay_values = [row[:] for row in avg]
+            return
         self.overlay_values = build_overlay_grid(self.world, self.overlay_mode)
 
     def _update_status_timer(self) -> None:
@@ -3711,7 +4279,8 @@ class Game:
         self._update_villagers()
         self.wildlife.tick(self.world, day)
         self.fish.tick(self.world, day)
-        if self.overlay_mode != OverlayMode.NONE:
+        # Biodiversity is sample-based; skip live refresh for that mode.
+        if self.overlay_mode not in (OverlayMode.NONE, OverlayMode.BIODIVERSITY):
             self._refresh_indicators()
 
     def _advance_sim_ticks(self, ticks: int) -> None:
@@ -3833,6 +4402,7 @@ class Game:
         self._draw_villagers()
         self._draw_player()
         self._draw_selection_highlights()
+        self._draw_minimap()
         self._draw_autotile_diag_overlay()
         mouse = pygame.mouse.get_pos()
         self.ui.draw_panel(
@@ -3874,7 +4444,50 @@ class Game:
             field_crop=self.field_crop_kind,
         )
         self.file_dialog.draw(self.screen)
-        self.field_plan_dialog.draw(self.screen, self._field_plan_building())
+        field_b = self._field_plan_building()
+        self.field_plan_dialog.draw(
+            self.screen,
+            field_b,
+            crop_counts=self._field_crop_counts(field_b) if field_b else None,
+        )
+        inspect_b = self._inspect_building()
+        if inspect_b is None:
+            inspect_workers: list = []
+            storage_amounts = None
+            hired_count = 0
+        elif inspect_b.kind == BuildingKind.HOME:
+            inspect_workers = [v for v in self.villagers if v.assigned_to_home]
+            from resources import amounts_from_obj
+
+            storage_amounts = amounts_from_obj(self.home_storage)
+            hired_count = 0
+        elif inspect_b.kind == BuildingKind.WORKSTATION:
+            inspect_workers = []
+            storage_amounts = None
+            hired_count = len(self.villagers)
+        else:
+            inspect_workers = [v for v in self.villagers if v.building_id == inspect_b.id]
+            storage_amounts = None
+            hired_count = 0
+        self.building_inspect.draw(
+            self.screen,
+            inspect_b,
+            inspect_workers,
+            selected_villager_id=self.selected_villager_id,
+            mouse_pos=mouse,
+            storage_amounts=storage_amounts,
+            hired_count=hired_count,
+        )
+        inspect_v = self._get_villager(self.villager_inspect.villager_id or -1)
+        self.villager_inspect.draw(
+            self.screen,
+            inspect_v,
+            assignment_label=(
+                self._villager_assignment_label(inspect_v) if inspect_v else "—"
+            ),
+            mouse_pos=mouse,
+        )
+        self.resource_inspect.draw(self.screen, mouse_pos=mouse)
         pygame.display.flip()
 
     def _farm_field_cells(self) -> set[tuple[int, int]]:
@@ -3896,14 +4509,15 @@ class Game:
         if fill_alpha > 0 and tint is not None:
             for y in range(top, bottom + 1):
                 for x in range(left, right + 1):
-                    rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-                    tint.fill((*colour, fill_alpha), rect)
-        border = pygame.Rect(
-            left * CELL_SIZE,
-            top * CELL_SIZE + MAP_OFFSET_Y,
-            (right - left + 1) * CELL_SIZE,
-            (bottom - top + 1) * CELL_SIZE,
-        )
+                    rect = self._cell_rect(x, y)
+                    # tint surface is map-local (0,0 = map top-left)
+                    local = pygame.Rect(
+                        rect.x, rect.y - MAP_OFFSET_Y, rect.w, rect.h
+                    )
+                    tint.fill((*colour, fill_alpha), local)
+        tl = self.camera.world_to_screen(left, top)
+        br = self.camera.world_to_screen(right + 1, bottom + 1)
+        border = pygame.Rect(tl[0], tl[1], br[0] - tl[0], br[1] - tl[1])
         pygame.draw.rect(self.screen, colour, border, width)
 
     def _terrain_base_cache_key(self) -> tuple:
@@ -3978,7 +4592,7 @@ class Game:
         self._sync_farm_terrain_dirty(farm_cells)
 
         if full_rebuild:
-            size = (GRID_COLS * CELL_SIZE, GRID_ROWS * CELL_SIZE)
+            size = (self.world.cols * CELL_SIZE, self.world.rows * CELL_SIZE)
             self._terrain_base = pygame.Surface(size)
             self._terrain_water_mask = pygame.Surface(size, pygame.SRCALPHA)
             self._terrain_water_mask.fill((0, 0, 0, 0))
@@ -3990,6 +4604,8 @@ class Game:
             self.world.terrain_dirty.clear()
             self._ice_overlay = None
             self._ice_overlay_key = None
+            self._season_mute = None
+            self._season_mute_key = None
             return self._terrain_base, self._terrain_water_mask
 
         dirty = self.world.terrain_dirty
@@ -4013,7 +4629,9 @@ class Game:
         if self._season_mute is not None and self._season_mute_key == bucket:
             return self._season_mute
         t = bucket
-        mute = pygame.Surface((GRID_COLS * CELL_SIZE, GRID_ROWS * CELL_SIZE))
+        mute = pygame.Surface(
+            (self.world.cols * CELL_SIZE, self.world.rows * CELL_SIZE)
+        )
         mute.fill(
             (
                 int(140 + 115 * t),
@@ -4040,22 +4658,63 @@ class Game:
         self._ice_overlay_key = bucket
         return ice
 
+    def _blit_camera_world_surface(
+        self,
+        surf: pygame.Surface,
+        dest: tuple[int, int],
+        *,
+        special_flags: int = 0,
+    ) -> None:
+        """Blit the camera viewport of a CELL_SIZE-based world surface onto the map."""
+        mw = map_view_width()
+        mh = map_view_height()
+        zoom = self.camera.view_cell() / CELL_SIZE
+        sx = self.camera.x * CELL_SIZE
+        sy = self.camera.y * CELL_SIZE
+        sw = mw / max(1e-6, zoom)
+        sh = mh / max(1e-6, zoom)
+        ix = max(0, int(sx))
+        iy = max(0, int(sy))
+        src = pygame.Rect(ix, iy, int(sw) + 2, int(sh) + 2).clip(surf.get_rect())
+        if src.w < 1 or src.h < 1:
+            return
+        piece = surf.subsurface(src)
+        scaled = pygame.transform.scale(
+            piece,
+            (max(1, int(round(src.w * zoom))), max(1, int(round(src.h * zoom)))),
+        )
+        ox = dest[0] - int(round((sx - src.x) * zoom))
+        oy = dest[1] - int(round((sy - src.y) * zoom))
+        self.screen.blit(scaled, (ox, oy), special_flags=special_flags)
+
     def _draw_world(self) -> None:
+        """Draw tiled terrain under camera, then features for visible cells."""
         day = float(self.calendar_day) + (1.0 - self.day_tick / TICKS_PER_DAY)
         freeze = freeze_amount(day)
         vibrancy = terrain_vibrancy(day)
         farm_cells = self._farm_field_cells()
         base, water_mask = self._ensure_terrain_base(farm_cells)
+
+        map_clip = pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())
+        self.screen.set_clip(map_clip)
+
         origin = (0, MAP_OFFSET_Y)
-        self.screen.blit(base, origin)
+        self._blit_camera_world_surface(base, origin)
         mute = self._ensure_season_mute(vibrancy)
         if mute is not None:
-            self.screen.blit(mute, origin, special_flags=pygame.BLEND_RGB_MULT)
+            self._blit_camera_world_surface(
+                mute, origin, special_flags=pygame.BLEND_RGB_MULT
+            )
         ice = self._ensure_ice_overlay(freeze, water_mask)
         if ice is not None:
-            self.screen.blit(ice, origin)
-        for y in range(self.world.rows):
-            for x in range(self.world.cols):
+            self._blit_camera_world_surface(ice, origin)
+
+        x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
+        vc = self.camera.view_cell()
+        for y in range(y0, y1 + 1):
+            for x in range(x0, x1 + 1):
+                if not self.world.in_bounds(x, y):
+                    continue
                 cell = self.world.cells[y][x]
                 rect = self._cell_rect(x, y)
                 cx, cy = self._cell_center(x, y)
@@ -4064,9 +4723,10 @@ class Game:
                     cell.feature,
                     cx,
                     cy,
-                    CELL_SIZE,
+                    vc,
                     vibrancy=vibrancy,
                     crop_kind=cell.crop_kind,
+                    tree_species=cell.tree_species,
                 )
                 if cell.feature == FeatureType.CONSTRUCTION_SITE:
                     site = self._construction_at(x, y)
@@ -4078,6 +4738,8 @@ class Game:
                 if cell.fish_deposit > 0:
                     pygame.draw.circle(self.screen, COLOUR_FISH, (cx - 8, cy + 8), 5)
                     pygame.draw.circle(self.screen, (20, 60, 90), (cx - 8, cy + 8), 5, 1)
+
+        self.screen.set_clip(None)
 
     def _draw_construction_progress(self, site: ConstructionSite, rect: pygame.Rect) -> None:
         bar = pygame.Rect(rect.x + 4, rect.bottom - 8, rect.w - 8, 4)
@@ -4093,24 +4755,36 @@ class Game:
         pygame.draw.rect(self.screen, colour, fill)
 
     def _draw_overlay(self) -> None:
-        overlay = pygame.Surface((GRID_COLS * CELL_SIZE, GRID_ROWS * CELL_SIZE), pygame.SRCALPHA)
-        for y in range(self.world.rows):
-            for x in range(self.world.cols):
+        """Draw indicator overlay for the camera viewport (world-sized values)."""
+        if self.overlay_mode == OverlayMode.NONE:
+            return
+        if not self.overlay_values or len(self.overlay_values) != self.world.rows:
+            self._refresh_indicators()
+        map_clip = pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())
+        self.screen.set_clip(map_clip)
+        x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
+        for y in range(y0, y1 + 1):
+            for x in range(x0, x1 + 1):
+                if not self.world.in_bounds(x, y):
+                    continue
                 value = self.overlay_values[y][x]
                 colour = overlay_colour(self.overlay_mode, value)
-                rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-                overlay.fill((*colour, OVERLAY_ALPHA), rect)
-        self.screen.blit(overlay, (0, MAP_OFFSET_Y))
+                rect = self._cell_rect(x, y)
+                tint = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+                tint.fill((*colour, OVERLAY_ALPHA))
+                self.screen.blit(tint, rect.topleft)
+        self.screen.set_clip(None)
 
     def _draw_task_areas(self) -> None:
         building = self._selected_building()
+        map_clip = pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())
+        self.screen.set_clip(map_clip)
 
-        tint = pygame.Surface((GRID_COLS * CELL_SIZE, GRID_ROWS * CELL_SIZE), pygame.SRCALPHA)
         # Field plots: outline only (crop status lives in the plan popup).
         for field_b in self.buildings.values():
             if field_b.kind != BuildingKind.FIELD:
                 continue
-            self._draw_field_building(tint, field_b)
+            self._draw_field_building(field_b)
         # Pending Field construction: full plot outline (no scaffold glyph).
         for site in self.construction_sites.values():
             if site.kind != BuildingKind.FIELD:
@@ -4126,7 +4800,6 @@ class Game:
                 colour=COLOUR_TASK_PREVIEW,
                 width=2,
                 fill_alpha=0,
-                tint=tint,
             )
 
         if building is not None and building.kind not in (
@@ -4138,15 +4811,13 @@ class Game:
                 left, top, right, bottom = area.normalised()
                 for y in range(top, bottom + 1):
                     for x in range(left, right + 1):
-                        rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-                        tint.fill((*colour, 55), rect)
-                border = pygame.Rect(
-                    left * CELL_SIZE,
-                    top * CELL_SIZE + MAP_OFFSET_Y,
-                    (right - left + 1) * CELL_SIZE,
-                    (bottom - top + 1) * CELL_SIZE,
+                        rect = self._cell_rect(x, y)
+                        tint = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+                        tint.fill((*colour, 55))
+                        self.screen.blit(tint, rect.topleft)
+                self._draw_field_plot_outline(
+                    left, top, right, bottom, colour=colour, width=2, fill_alpha=0
                 )
-                pygame.draw.rect(self.screen, colour, border, 2)
 
         if self.drawing and self.draw_start and self.draw_current:
             x0, y0 = self.draw_start
@@ -4161,24 +4832,27 @@ class Game:
                 preview = COLOUR_TASK_PREVIEW
             for y in range(top, bottom + 1):
                 for x in range(left, right + 1):
-                    rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-                    tint.fill((*preview, 70), rect)
-            border = pygame.Rect(
-                left * CELL_SIZE,
-                top * CELL_SIZE + MAP_OFFSET_Y,
-                (right - left + 1) * CELL_SIZE,
-                (bottom - top + 1) * CELL_SIZE,
+                    rect = self._cell_rect(x, y)
+                    tint = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+                    tint.fill((*preview, 70))
+                    self.screen.blit(tint, rect.topleft)
+            self._draw_field_plot_outline(
+                left,
+                top,
+                right,
+                bottom,
+                colour=COLOUR_TASK_PREVIEW,
+                width=2,
+                fill_alpha=0,
             )
-            pygame.draw.rect(self.screen, COLOUR_TASK_PREVIEW, border, 2)
 
-        self.screen.blit(tint, (0, MAP_OFFSET_Y))
+        self.screen.set_clip(None)
 
-    def _draw_field_building(self, tint: pygame.Surface, building: Building) -> None:
+    def _draw_field_building(self, building: Building) -> None:
         """Outline only when selected — otherwise soil/crops alone show the field."""
         if building.id != self.selected_building_id:
             return
         left, top, right, bottom = building.plot_bounds()
-        # Outline only (no fill overlay).
         self._draw_field_plot_outline(
             left,
             top,
@@ -4187,16 +4861,16 @@ class Game:
             colour=COLOUR_SELECTED_ENTITY,
             width=3,
             fill_alpha=0,
-            tint=tint,
         )
 
     def _draw_animals(self) -> None:
         for animal in self.wildlife.animals:
             cx, cy = self._cell_center(animal.x, animal.y)
             cy += 2
+            colour = COLOUR_BOAR if animal.kind == AnimalKind.BOAR else COLOUR_DEER
             pygame.draw.ellipse(
                 self.screen,
-                COLOUR_ANIMAL,
+                colour,
                 pygame.Rect(
                     cx - CELL_SIZE // 5,
                     cy - CELL_SIZE // 8,
@@ -4205,7 +4879,9 @@ class Game:
                 ),
             )
             # Head
-            pygame.draw.circle(self.screen, COLOUR_ANIMAL, (cx + CELL_SIZE // 6, cy - 2), max(2, CELL_SIZE // 10))
+            pygame.draw.circle(
+                self.screen, colour, (cx + CELL_SIZE // 6, cy - 2), max(2, CELL_SIZE // 10)
+            )
 
     def _draw_fish(self) -> None:
         freeze = freeze_amount(
@@ -4244,3 +4920,70 @@ class Game:
             if building is not None:
                 rect = self._cell_rect(building.x, building.y)
                 pygame.draw.rect(self.screen, COLOUR_SELECTED_ENTITY, rect, 3)
+
+    def _draw_minimap(self) -> None:
+        """Draw minimap showing terrain, buildings, and camera viewport."""
+        minimap_rect = self._minimap_rect()
+        
+        # Dark background
+        pygame.draw.rect(self.screen, (20, 20, 25), minimap_rect)
+        
+        # Sample terrain colors (every N cells to fit in minimap)
+        sample_step = max(1, max(self.world.cols // MINIMAP_WIDTH, self.world.rows // MINIMAP_HEIGHT))
+        
+        for wy in range(0, self.world.rows, sample_step):
+            for wx in range(0, self.world.cols, sample_step):
+                cell = self.world.get_cell(wx, wy)
+                if cell is None:
+                    continue
+                
+                # Map world coordinates to minimap pixel
+                mini_x = minimap_rect.x + int(wx * MINIMAP_WIDTH / self.world.cols)
+                mini_y = minimap_rect.y + int(wy * MINIMAP_HEIGHT / self.world.rows)
+                pixel_w = max(1, int(sample_step * MINIMAP_WIDTH / self.world.cols))
+                pixel_h = max(1, int(sample_step * MINIMAP_HEIGHT / self.world.rows))
+                
+                # Simple terrain colors
+                from ui import terrain_colour
+                colour = terrain_colour(cell.terrain)
+                # Darken for minimap
+                colour = (colour[0] // 3, colour[1] // 3, colour[2] // 3)
+                pygame.draw.rect(self.screen, colour, pygame.Rect(mini_x, mini_y, pixel_w, pixel_h))
+        
+        # Draw buildings as dots
+        for building in self.buildings.values():
+            mini_x = minimap_rect.x + int(building.x * MINIMAP_WIDTH / self.world.cols)
+            mini_y = minimap_rect.y + int(building.y * MINIMAP_HEIGHT / self.world.rows)
+            
+            # Color by building kind
+            from settings import COLOUR_HOME, COLOUR_WORKSTATION, COLOUR_FORESTER, COLOUR_MASON, COLOUR_HUNTER, COLOUR_FORAGER, COLOUR_FISHER, COLOUR_FARM, COLOUR_FIELD
+            colour_map = {
+                BuildingKind.HOME: COLOUR_HOME,
+                BuildingKind.WORKSTATION: COLOUR_WORKSTATION,
+                BuildingKind.FORESTER: COLOUR_FORESTER,
+                BuildingKind.MASON: COLOUR_MASON,
+                BuildingKind.HUNTER: COLOUR_HUNTER,
+                BuildingKind.FORAGER: COLOUR_FORAGER,
+                BuildingKind.FISHER: COLOUR_FISHER,
+                BuildingKind.FARM: COLOUR_FARM,
+                BuildingKind.FIELD: COLOUR_FIELD,
+            }
+            colour = colour_map.get(building.kind, (200, 200, 200))
+            pygame.draw.circle(self.screen, colour, (mini_x, mini_y), 2)
+        
+        # Draw player as a dot
+        player_x = minimap_rect.x + int(self.player.x * MINIMAP_WIDTH / self.world.cols)
+        player_y = minimap_rect.y + int(self.player.y * MINIMAP_HEIGHT / self.world.rows)
+        pygame.draw.circle(self.screen, COLOUR_PLAYER, (player_x, player_y), 2)
+        
+        # Draw camera viewport rectangle
+        x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
+        viewport_x = minimap_rect.x + int(x0 * MINIMAP_WIDTH / self.world.cols)
+        viewport_y = minimap_rect.y + int(y0 * MINIMAP_HEIGHT / self.world.rows)
+        viewport_w = int((x1 - x0) * MINIMAP_WIDTH / self.world.cols)
+        viewport_h = int((y1 - y0) * MINIMAP_HEIGHT / self.world.rows)
+        pygame.draw.rect(self.screen, (255, 255, 255), pygame.Rect(viewport_x, viewport_y, viewport_w, viewport_h), 1)
+        
+        # Border
+        pygame.draw.rect(self.screen, (100, 100, 110), minimap_rect, 2)
+

@@ -127,8 +127,12 @@ class Toolbar:
         if building is None:
             return buttons
 
-        # Field: planned via popup — no toolbar task row.
-        if building.kind == BuildingKind.FIELD:
+        # Field / home / hiring hall: options live in their popups.
+        if building.kind in (
+            BuildingKind.FIELD,
+            BuildingKind.HOME,
+            BuildingKind.WORKSTATION,
+        ):
             return buttons
 
         modes = building.supported_work_modes()

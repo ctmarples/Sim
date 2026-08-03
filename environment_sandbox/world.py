@@ -21,7 +21,13 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Iterator
 
-from crops import CROP_BY_KEY, CROP_KEYS
+from crops import CROP_BY_KEY
+from trees import (
+    DEFAULT_TREE_KEY,
+    growth_ticks_for,
+    pick_tree_species,
+    resolve_tree,
+)
 from seasons import (
     berry_despawn_rate,
     berry_spawn_rate,
@@ -30,6 +36,8 @@ from seasons import (
     herb_spawn_rate,
     mushroom_despawn_rate,
     mushroom_spawn_rate,
+    Season,
+    season_for_day,
     trees_grow_factor,
     trees_spread_factor,
 )
@@ -51,16 +59,34 @@ from settings import (
     ROCK_LARGE_MIN,
     ROCK_SMALL_MAX,
     ROCK_SMALL_MIN,
-    SAPLING_GROWTH_TICKS,
-    TREE_WOOD_DEPOSIT,
+    WILD_PLANT_MAX_FRACTION,
 )
 
 
 class TerrainType(Enum):
     SOIL = auto()
     GRASS = auto()
+    MEADOW = auto()  # open meadow — slightly greener than grass
+    RIPARIAN = auto()  # shoreline strip beside water
     WATER = auto()
     ROCK = auto()  # bare rocky ground (distinct from rock resource feature)
+
+
+# Wild forage plants by preferred terrain (farm crops may still grow on fields).
+WILD_CROPS_BY_TERRAIN: dict[TerrainType, tuple[str, ...]] = {
+    TerrainType.MEADOW: ("flax", "hemp", "sage"),
+    TerrainType.GRASS: ("wheat", "rye"),
+    TerrainType.SOIL: ("onion", "cabbage", "carrot"),
+}
+
+BOAR_TERRAINS: tuple[TerrainType, ...] = (TerrainType.SOIL, TerrainType.RIPARIAN)
+
+# Terrains that accept planted saplings / natural sprouts.
+PLANTABLE_LAND: tuple[TerrainType, ...] = (
+    TerrainType.SOIL,
+    TerrainType.GRASS,
+    TerrainType.MEADOW,
+)
 
 
 class FeatureType(Enum):
@@ -83,6 +109,7 @@ class FeatureType(Enum):
     HERB = auto()  # legacy; migrated to WILD_CROP on load
     WILD_CROP = auto()  # wild crop patches (any CropDef key)
     CROP_HERB = auto()  # farmed crop (growth_ticks > 0 while growing)
+    REED = auto()  # riparian reeds (forage, no seeds)
 
 
 @dataclass
@@ -97,8 +124,13 @@ class Cell:
     meat_deposit: int = 0
     fish_deposit: int = 0
     crop_kind: str | None = None  # CropDef key for wild & farm crops
+    tree_species: str | None = None  # TreeDef key for TREE / SAPLING
 
     def habitat_category(self) -> str:
+        if self.feature == FeatureType.TREE:
+            return f"tree_{self.tree_species or 'oak'}"
+        if self.feature == FeatureType.SAPLING:
+            return f"sapling_{self.tree_species or 'oak'}"
         if self.feature != FeatureType.NONE:
             return self.feature.name.lower()
         return self.terrain.name.lower()
@@ -111,8 +143,8 @@ class World:
         # Resolve at construction time so configure_for_display() can resize the grid.
         import settings as cfg
 
-        self.cols = cfg.GRID_COLS if cols is None else cols
-        self.rows = cfg.GRID_ROWS if rows is None else rows
+        self.cols = cfg.WORLD_COLS if cols is None else cols
+        self.rows = cfg.WORLD_ROWS if rows is None else rows
         self.seed = seed
         self.cells: list[list[Cell]] = []
         self.home_pos: tuple[int, int] = (0, 0)
@@ -194,11 +226,16 @@ class World:
                 if cell.terrain != TerrainType.ROCK and rng.random() < 0.85:
                     cell.terrain = TerrainType.SOIL
 
-        # Grow soil under forests into coherent clearings; smooth grass/soil noise.
+        # Grow soil under forests into coherent clearings; smooth grass/meadow/soil.
         self._expand_terrain_patches(rng, TerrainType.SOIL, passes=2, chance=0.5)
+        self._expand_terrain_patches(rng, TerrainType.MEADOW, passes=1, chance=0.4)
         self._expand_terrain_patches(rng, TerrainType.GRASS, passes=1, chance=0.45)
         self._cull_isolated_terrain(TerrainType.SOIL, min_neighbours=1)
+        self._cull_isolated_terrain(TerrainType.MEADOW, min_neighbours=1)
         self._cull_isolated_terrain(TerrainType.GRASS, min_neighbours=1)
+
+        # Thin riparian strips on ~50% of land cells touching water.
+        self._paint_riparian_strips(rng)
 
         for cx, cy in forest_centres:
             for ny, nx in self.neighbourhood(cx, cy, radius=3):
@@ -211,10 +248,13 @@ class World:
                 dist = max(abs(nx - cx), abs(ny - cy))
                 chance = 0.9 if dist <= 1 else 0.7 if dist <= 2 else 0.45
                 if rng.random() < chance:
+                    species = pick_tree_species(rng)
+                    tree = resolve_tree(species)
                     cell.feature = FeatureType.TREE
-                    cell.deposit = TREE_WOOD_DEPOSIT
+                    cell.tree_species = species
+                    cell.deposit = tree.yield_amount
 
-        # A few smaller mixed tree clumps on remaining soil/grass.
+        # A few smaller mixed tree clumps on remaining plantable land.
         for _ in range(3):
             cx = rng.randint(1, self.cols - 2)
             cy = rng.randint(1, self.rows - 2)
@@ -222,13 +262,16 @@ class World:
                 cell = self.cells[ny][nx]
                 if (
                     cell.feature == FeatureType.NONE
-                    and cell.terrain in (TerrainType.GRASS, TerrainType.SOIL)
+                    and cell.terrain in PLANTABLE_LAND
                     and rng.random() < 0.5
                 ):
+                    species = pick_tree_species(rng)
+                    tree = resolve_tree(species)
                     cell.feature = FeatureType.TREE
-                    cell.deposit = TREE_WOOD_DEPOSIT
+                    cell.tree_species = species
+                    cell.deposit = tree.yield_amount
 
-        # Small rock deposits on soil/grass.
+        # Small rock deposits on soil/grass/meadow.
         placed_small = 0
         attempts = 0
         while placed_small < 14 and attempts < 300:
@@ -238,7 +281,7 @@ class World:
             cell = self.cells[y][x]
             if (
                 cell.feature == FeatureType.NONE
-                and cell.terrain in (TerrainType.GRASS, TerrainType.SOIL)
+                and cell.terrain in PLANTABLE_LAND
             ):
                 cell.feature = FeatureType.ROCK
                 cell.deposit = rng.randint(ROCK_SMALL_MIN, ROCK_SMALL_MAX)
@@ -279,7 +322,7 @@ class World:
         self.cells[home_y][home_x].feature = FeatureType.HOME
         self.home_pos = (home_x, home_y)
 
-        # Work station beside home — stand here and press E to hire villagers.
+        # Work station beside home — hire villagers from its inspection popup.
         station_x = home_x + 1
         station_y = home_y
         if not self.in_bounds(station_x, station_y):
@@ -303,12 +346,15 @@ class World:
                         FeatureType.BERRY_BUSH,
                         FeatureType.HERB,
                         FeatureType.WILD_CROP,
+                        FeatureType.REED,
                     ):
                         cell.feature = FeatureType.NONE
                         cell.deposit = 0
                         cell.growth_ticks = 0
                         cell.crop_kind = None
                     if cell.terrain == TerrainType.WATER:
+                        cell.terrain = TerrainType.GRASS
+                    elif cell.terrain == TerrainType.RIPARIAN:
                         cell.terrain = TerrainType.GRASS
 
         start_candidates = [
@@ -332,7 +378,7 @@ class World:
         self.bump_terrain()
 
     def _paint_base_grass_soil(self, rng: random.Random) -> None:
-        """Fill the map with large grass/soil regions via coarse value noise."""
+        """Fill the map with large grass / meadow / soil regions via coarse value noise."""
         # A few random influence points → smooth-ish regions without per-cell coin flips.
         blobs: list[tuple[float, float, float, TerrainType]] = []
         n_blobs = max(6, (self.cols * self.rows) // 40)
@@ -340,14 +386,20 @@ class World:
             bx = rng.uniform(0, self.cols)
             by = rng.uniform(0, self.rows)
             br = rng.uniform(2.5, 6.5)
-            kind = TerrainType.SOIL if rng.random() < 0.38 else TerrainType.GRASS
+            roll = rng.random()
+            if roll < 0.30:
+                kind = TerrainType.SOIL
+            elif roll < 0.62:
+                kind = TerrainType.MEADOW
+            else:
+                kind = TerrainType.GRASS
             blobs.append((bx, by, br, kind))
 
         for y in range(self.rows):
             for x in range(self.cols):
-                # Default grass; soil wins when inside a soil blob more than grass.
                 soil_w = 0.0
-                grass_w = 0.15  # slight grass bias
+                grass_w = 0.10
+                meadow_w = 0.10
                 for bx, by, br, kind in blobs:
                     d = ((x + 0.5 - bx) ** 2 + (y + 0.5 - by) ** 2) ** 0.5
                     if d >= br:
@@ -355,11 +407,37 @@ class World:
                     w = (1.0 - d / br) ** 2
                     if kind == TerrainType.SOIL:
                         soil_w += w
+                    elif kind == TerrainType.MEADOW:
+                        meadow_w += w
                     else:
                         grass_w += w
-                self.cells[y][x].terrain = (
-                    TerrainType.SOIL if soil_w > grass_w else TerrainType.GRASS
-                )
+                if soil_w >= grass_w and soil_w >= meadow_w:
+                    self.cells[y][x].terrain = TerrainType.SOIL
+                elif meadow_w >= grass_w:
+                    self.cells[y][x].terrain = TerrainType.MEADOW
+                else:
+                    self.cells[y][x].terrain = TerrainType.GRASS
+
+    def _paint_riparian_strips(self, rng: random.Random) -> None:
+        """Convert ~50% of land cells that touch water into riparian strips."""
+        shore_ok = (TerrainType.GRASS, TerrainType.MEADOW, TerrainType.SOIL)
+        to_paint: list[tuple[int, int]] = []
+        for y in range(self.rows):
+            for x in range(self.cols):
+                cell = self.cells[y][x]
+                if cell.terrain not in shore_ok:
+                    continue
+                touches_water = False
+                for ny, nx in self.neighbourhood(x, y, radius=1):
+                    if (nx, ny) == (x, y):
+                        continue
+                    if self.cells[ny][nx].terrain == TerrainType.WATER:
+                        touches_water = True
+                        break
+                if touches_water and rng.random() < 0.5:
+                    to_paint.append((x, y))
+        for x, y in to_paint:
+            self.cells[y][x].terrain = TerrainType.RIPARIAN
 
     def _place_clusters(
         self,
@@ -414,7 +492,9 @@ class World:
             TerrainType.WATER: TerrainType.GRASS,
             TerrainType.ROCK: TerrainType.GRASS,
             TerrainType.SOIL: TerrainType.GRASS,
-            TerrainType.GRASS: TerrainType.SOIL,
+            TerrainType.MEADOW: TerrainType.GRASS,
+            TerrainType.RIPARIAN: TerrainType.GRASS,
+            TerrainType.GRASS: TerrainType.MEADOW,
         }[terrain]
         to_clear: list[tuple[int, int]] = []
         for y in range(self.rows):
@@ -468,6 +548,82 @@ class World:
         if cell is None:
             return False
         return cell.terrain != TerrainType.WATER
+
+    def land_component_size(self, x: int, y: int, *, limit: int = 24) -> int:
+        """How many walkable tiles are cardinally connected (capped). Isolates score 1."""
+        if not self.is_walkable(x, y):
+            return 0
+        seen: set[tuple[int, int]] = {(x, y)}
+        queue: deque[tuple[int, int]] = deque([(x, y)])
+        while queue and len(seen) < limit:
+            cx, cy = queue.popleft()
+            for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+                nx, ny = cx + dx, cy + dy
+                if (nx, ny) in seen or not self.is_walkable(nx, ny):
+                    continue
+                seen.add((nx, ny))
+                queue.append((nx, ny))
+        return len(seen)
+
+    def best_fish_shore(
+        self, x: int, y: int, *, max_radius: int = 10
+    ) -> tuple[int, int] | None:
+        """Prefer mainland shore over tiny mid-water islets when leaving a catch."""
+        best: tuple[int, int] | None = None
+        best_key: tuple[int, int, int] | None = None  # (-size, radius, manhattan)
+        for radius in range(0, max_radius + 1):
+            for dy in range(-radius, radius + 1):
+                for dx in range(-radius, radius + 1):
+                    if max(abs(dx), abs(dy)) != radius:
+                        continue
+                    nx, ny = x + dx, y + dy
+                    if not self.is_walkable(nx, ny):
+                        continue
+                    size = self.land_component_size(nx, ny)
+                    key = (-size, radius, abs(dx) + abs(dy))
+                    if best_key is None or key < best_key:
+                        best_key = key
+                        best = (nx, ny)
+            # Early out once we found a large connected shore at this radius.
+            if best is not None and best_key is not None and best_key[0] <= -24:
+                return best
+        return best
+
+    def relocate_fish_deposit(
+        self, x: int, y: int, *, reachable_from: tuple[int, int] | None = None
+    ) -> tuple[int, int] | None:
+        """Move a fish pile onto a better shore; prefer tiles reachable from `reachable_from`."""
+        cell = self.get_cell(x, y)
+        if cell is None or cell.fish_deposit <= 0:
+            return None
+        amount = cell.fish_deposit
+        origin = reachable_from
+        best: tuple[int, int] | None = None
+        best_key: tuple[int, int, int] | None = None
+        for radius in range(0, 12):
+            for dy in range(-radius, radius + 1):
+                for dx in range(-radius, radius + 1):
+                    if max(abs(dx), abs(dy)) != radius:
+                        continue
+                    nx, ny = x + dx, y + dy
+                    if not self.is_walkable(nx, ny):
+                        continue
+                    if origin is not None and self.find_path(origin, (nx, ny)) is None:
+                        continue
+                    size = self.land_component_size(nx, ny)
+                    key = (-size, radius, abs(dx) + abs(dy))
+                    if best_key is None or key < best_key:
+                        best_key = key
+                        best = (nx, ny)
+            if best is not None and best_key is not None and best_key[0] <= -24:
+                break
+        if best is None:
+            return None
+        if best == (x, y):
+            return best
+        cell.fish_deposit = 0
+        self.cells[best[1]][best[0]].fish_deposit += amount
+        return best
 
     def next_step_toward(self, start: tuple[int, int], goal: tuple[int, int]) -> tuple[int, int] | None:
         """Return the next cell on a shortest walkable path (BFS), or None if unreachable."""
@@ -544,9 +700,11 @@ class World:
                 if grow_step > 0 and cell.feature == FeatureType.SAPLING:
                     cell.growth_ticks -= grow_step * ticks
                     if cell.growth_ticks <= 0:
+                        tree = resolve_tree(cell.tree_species)
                         cell.feature = FeatureType.TREE
+                        cell.tree_species = tree.key
                         cell.growth_ticks = 0
-                        cell.deposit = TREE_WOOD_DEPOSIT
+                        cell.deposit = tree.yield_amount
                 elif grow_step > 0 and cell.feature == FeatureType.BERRY_BUSH and cell.growth_ticks > 0:
                     cell.growth_ticks -= grow_step * ticks
                     if cell.growth_ticks <= 0 and cell.deposit <= 0:
@@ -600,27 +758,64 @@ class World:
         _drain_timer("_herb_timer", HERB_TICK_INTERVAL, self._tick_herbs_seasonal)
 
     def _tick_herbs_seasonal(self, day: float) -> None:
-        """Wild crop patches on grass (replaces generic herbs)."""
+        """Wild crop patches on meadow / grass / soil by crop preference."""
+        wild_n: dict[TerrainType, int] = {}
+        total_n: dict[TerrainType, int] = {}
+        terrains = tuple(WILD_CROPS_BY_TERRAIN.keys()) + (TerrainType.RIPARIAN,)
+        for terrain in terrains:
+            w, t = self._wild_plant_counts(terrain)
+            wild_n[terrain] = w
+            total_n[terrain] = t
+
+        def room(terrain: TerrainType) -> bool:
+            tot = total_n.get(terrain, 0)
+            if tot <= 0:
+                return False
+            return wild_n[terrain] < int(tot * WILD_PLANT_MAX_FRACTION)
+
         for y in range(self.rows):
             for x in range(self.cols):
                 cell = self.cells[y][x]
-                if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP):
+                if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.REED):
                     if self._forage_rng.random() < herb_despawn_rate(day, x, y):
+                        terrain = cell.terrain
                         cell.feature = FeatureType.NONE
                         cell.deposit = 0
                         cell.growth_ticks = 0
                         cell.crop_kind = None
+                        if terrain in wild_n:
+                            wild_n[terrain] = max(0, wild_n[terrain] - 1)
                 elif (
                     cell.feature == FeatureType.NONE
-                    and cell.terrain == TerrainType.GRASS
+                    and cell.terrain == TerrainType.RIPARIAN
+                    and room(TerrainType.RIPARIAN)
                     and self._forage_rng.random() < herb_spawn_rate(day, x, y) * 0.55
                 ):
-                    crop_key = self._forage_rng.choice(CROP_KEYS)
-                    self._plant_wild_crop_patch(x, y, crop_key)
+                    cell.feature = FeatureType.REED
+                    wild_n[TerrainType.RIPARIAN] = wild_n.get(TerrainType.RIPARIAN, 0) + 1
+                elif (
+                    cell.feature == FeatureType.NONE
+                    and cell.terrain in WILD_CROPS_BY_TERRAIN
+                    and room(cell.terrain)
+                    and self._forage_rng.random() < herb_spawn_rate(day, x, y) * 0.55
+                ):
+                    crops = WILD_CROPS_BY_TERRAIN[cell.terrain]
+                    crop_key = self._forage_rng.choice(crops)
+                    self._plant_wild_crop_patch(
+                        x, y, crop_key, wild_n=wild_n, total_n=total_n
+                    )
 
-    def _plant_wild_crop_patch(self, x: int, y: int, crop_key: str) -> None:
+    def _plant_wild_crop_patch(
+        self,
+        x: int,
+        y: int,
+        crop_key: str,
+        *,
+        wild_n: dict[TerrainType, int] | None = None,
+        total_n: dict[TerrainType, int] | None = None,
+    ) -> None:
         """Place a small contiguous wild-crop patch centred near (x, y)."""
-        if not self.plant_wild_crop(x, y, crop_key):
+        if not self.plant_wild_crop(x, y, crop_key, wild_n=wild_n, total_n=total_n):
             return
         extras = self._forage_rng.randint(1, 4)
         placed = 0
@@ -635,7 +830,7 @@ class World:
                 break
             if self._forage_rng.random() > 0.55:
                 continue
-            if self.plant_wild_crop(nx, ny, crop_key):
+            if self.plant_wild_crop(nx, ny, crop_key, wild_n=wild_n, total_n=total_n):
                 placed += 1
 
     def _tick_berries_seasonal(self, day: float) -> None:
@@ -653,18 +848,31 @@ class World:
                 cell.deposit = 0
                 cell.growth_ticks = 0
 
-        # Spread / appear onto empty grass.
+        wild, total = self._wild_plant_counts(TerrainType.GRASS)
+        limit = int(total * WILD_PLANT_MAX_FRACTION)
+        if total <= 0 or wild >= limit:
+            return
         for y in range(self.rows):
             for x in range(self.cols):
+                if wild >= limit:
+                    return
                 cell = self.cells[y][x]
                 if (
                     cell.feature == FeatureType.NONE
                     and cell.terrain == TerrainType.GRASS
                     and self._forage_rng.random() < berry_spawn_rate(day, x, y)
                 ):
-                    self.plant_berry_bush(x, y)
+                    cell.feature = FeatureType.BERRY_BUSH
+                    cell.deposit = BERRY_BUSH_YIELD
+                    cell.growth_ticks = 0
+                    wild += 1
 
     def _tick_mushrooms_seasonal(self, day: float) -> None:
+        # Winter: wipe immediately (also covers any leftovers mid-tick).
+        if season_for_day(int(day)) == Season.WINTER:
+            self.clear_mushrooms()
+            return
+
         existing = [
             (x, y)
             for y in range(self.rows)
@@ -705,6 +913,50 @@ class World:
                     ):
                         cell.feature = FeatureType.MUSHROOM
 
+    def clear_mushrooms(self) -> None:
+        """Remove every mushroom tile (called at winter onset)."""
+        for y in range(self.rows):
+            for x in range(self.cols):
+                cell = self.cells[y][x]
+                if cell.feature == FeatureType.MUSHROOM:
+                    cell.feature = FeatureType.NONE
+                    cell.deposit = 0
+
+    def _wild_plant_counts(self, terrain: TerrainType) -> tuple[int, int]:
+        """Return (wild plant tiles, total tiles) for a terrain type."""
+        total = 0
+        wild = 0
+        for y in range(self.rows):
+            for x in range(self.cols):
+                cell = self.cells[y][x]
+                if cell.terrain != terrain:
+                    continue
+                total += 1
+                if cell.feature in (
+                    FeatureType.WILD_CROP,
+                    FeatureType.HERB,
+                    FeatureType.BERRY_BUSH,
+                    FeatureType.REED,
+                ):
+                    wild += 1
+        return wild, total
+
+    def _wild_plant_room(
+        self,
+        terrain: TerrainType,
+        *,
+        wild_n: dict[TerrainType, int] | None = None,
+        total_n: dict[TerrainType, int] | None = None,
+    ) -> bool:
+        """True while wild plants cover less than WILD_PLANT_MAX_FRACTION of terrain."""
+        if wild_n is not None and total_n is not None:
+            tot = total_n.get(terrain, 0)
+            return tot > 0 and wild_n.get(terrain, 0) < int(tot * WILD_PLANT_MAX_FRACTION)
+        wild, total = self._wild_plant_counts(terrain)
+        if total <= 0:
+            return False
+        return wild < int(total * WILD_PLANT_MAX_FRACTION)
+
     def _try_natural_sprouts(self) -> None:
         """Patches of 4+ trees have a 1/8 chance to sprout a sapling on an adjacent empty cell."""
         for patch in self.tree_patches():
@@ -719,26 +971,32 @@ class World:
                     if (nx, ny) in patch_set:
                         continue
                     cell = self.cells[ny][nx]
-                    if cell.feature == FeatureType.NONE and cell.terrain in (
-                        TerrainType.SOIL,
-                        TerrainType.GRASS,
-                    ):
+                    if cell.feature == FeatureType.NONE and cell.terrain in PLANTABLE_LAND:
                         candidates.append((nx, ny))
             if not candidates:
                 continue
             sx, sy = self._sprout_rng.choice(candidates)
-            self.plant_sapling(sx, sy)
+            # Inherit a species from the patch when possible.
+            species = None
+            for ny, nx in self.neighbourhood(sx, sy, radius=2):
+                ncell = self.cells[ny][nx]
+                if ncell.feature in (FeatureType.TREE, FeatureType.SAPLING) and ncell.tree_species:
+                    species = ncell.tree_species
+                    break
+            self.plant_sapling(sx, sy, species=species)
 
-    def plant_sapling(self, x: int, y: int) -> bool:
+    def plant_sapling(self, x: int, y: int, species: str | None = None) -> bool:
         cell = self.get_cell(x, y)
         if cell is None:
             return False
         if cell.feature != FeatureType.NONE:
             return False
-        if cell.terrain not in (TerrainType.SOIL, TerrainType.GRASS):
+        if cell.terrain not in PLANTABLE_LAND:
             return False
+        tree = resolve_tree(species)
         cell.feature = FeatureType.SAPLING
-        cell.growth_ticks = SAPLING_GROWTH_TICKS
+        cell.tree_species = tree.key
+        cell.growth_ticks = growth_ticks_for(tree)
         cell.deposit = 0
         return True
 
@@ -747,6 +1005,8 @@ class World:
         if cell is None or cell.feature != FeatureType.NONE:
             return False
         if cell.terrain != TerrainType.GRASS:
+            return False
+        if not self._wild_plant_room(TerrainType.GRASS):
             return False
         cell.feature = FeatureType.BERRY_BUSH
         cell.deposit = BERRY_BUSH_YIELD
@@ -757,18 +1017,33 @@ class World:
         """Legacy alias for planting a single wild crop plant."""
         return self.plant_wild_crop(x, y, crop_key)
 
-    def plant_wild_crop(self, x: int, y: int, crop_key: str) -> bool:
+    def plant_wild_crop(
+        self,
+        x: int,
+        y: int,
+        crop_key: str,
+        *,
+        wild_n: dict[TerrainType, int] | None = None,
+        total_n: dict[TerrainType, int] | None = None,
+    ) -> bool:
         cell = self.get_cell(x, y)
         if cell is None or cell.feature != FeatureType.NONE:
             return False
-        if cell.terrain != TerrainType.GRASS:
+        allowed = WILD_CROPS_BY_TERRAIN.get(cell.terrain)
+        if not allowed:
             return False
         if crop_key not in CROP_BY_KEY:
-            crop_key = "sage"
+            crop_key = allowed[0]
+        if crop_key not in allowed:
+            return False
+        if not self._wild_plant_room(cell.terrain, wild_n=wild_n, total_n=total_n):
+            return False
         cell.feature = FeatureType.WILD_CROP
         cell.crop_kind = crop_key
         cell.deposit = 0
         cell.growth_ticks = 0
+        if wild_n is not None:
+            wild_n[cell.terrain] = wild_n.get(cell.terrain, 0) + 1
         return True
 
     def plough_tile(self, x: int, y: int) -> bool:
@@ -871,10 +1146,13 @@ class World:
         return taken
 
     def harvest_herb(self, x: int, y: int) -> str | None:
-        """Harvest wild crop/herb; returns crop_kind or None."""
+        """Harvest wild crop/herb/reed; returns produce key or crop kind."""
         cell = self.get_cell(x, y)
         if cell is None:
             return None
+        if cell.feature == FeatureType.REED:
+            cell.feature = FeatureType.NONE
+            return "reeds"
         if cell.feature == FeatureType.HERB:
             cell.feature = FeatureType.NONE
             cell.crop_kind = None
@@ -885,6 +1163,13 @@ class World:
         cell.feature = FeatureType.NONE
         cell.crop_kind = None
         return kind
+
+    def harvest_reed(self, x: int, y: int) -> bool:
+        cell = self.get_cell(x, y)
+        if cell is None or cell.feature != FeatureType.REED:
+            return False
+        cell.feature = FeatureType.NONE
+        return True
 
     def remove_feature(self, x: int, y: int) -> FeatureType | None:
         cell = self.get_cell(x, y)
@@ -898,7 +1183,7 @@ class World:
         return removed
 
     def harvest_wood(self, x: int, y: int, amount: int = 1) -> int:
-        """Take up to `amount` wood from a tree deposit. Removes tree when empty."""
+        """Take up to `amount` from a tree deposit. Removes tree when empty."""
         cell = self.get_cell(x, y)
         if cell is None or cell.feature != FeatureType.TREE or cell.deposit <= 0:
             return 0
@@ -908,7 +1193,14 @@ class World:
             cell.feature = FeatureType.NONE
             cell.deposit = 0
             cell.growth_ticks = 0
+            cell.tree_species = None
         return taken
+
+    def tree_yield_key(self, x: int, y: int) -> str:
+        cell = self.get_cell(x, y)
+        if cell is None:
+            return "wood"
+        return resolve_tree(cell.tree_species).yield_key
 
     def harvest_rock(self, x: int, y: int, amount: int = 1) -> int:
         """Take up to `amount` rock from a rock deposit. Removes feature when empty."""
@@ -946,18 +1238,18 @@ class World:
         cell.fish_deposit -= taken
         return taken
 
-    def add_fish_deposit(self, x: int, y: int, amount: int) -> None:
-        """Leave caught fish on a walkable shore cell near water."""
+    def add_fish_deposit(self, x: int, y: int, amount: int) -> tuple[int, int] | None:
+        """Leave caught fish on mainland shore (avoid mid-lake islets). Returns deposit tile."""
+        shore = self.best_fish_shore(x, y)
+        if shore is not None:
+            sx, sy = shore
+            self.cells[sy][sx].fish_deposit += amount
+            return shore
         cell = self.get_cell(x, y)
         if cell is None:
-            return
-        if cell.terrain == TerrainType.WATER:
-            # Prefer depositing on an adjacent shore tile.
-            for ny, nx in self.neighbourhood(x, y, radius=1):
-                if self.is_walkable(nx, ny):
-                    self.cells[ny][nx].fish_deposit += amount
-                    return
+            return None
         cell.fish_deposit += amount
+        return (x, y)
 
     def tree_cells(self) -> list[tuple[int, int]]:
         return [
@@ -1012,6 +1304,33 @@ class World:
             for ny, nx in self.neighbourhood(tx, ty, radius=1):
                 if self.is_walkable(nx, ny):
                     habitat.add((nx, ny))
+        return list(habitat)
+
+    def soil_riparian_patches(self) -> list[list[tuple[int, int]]]:
+        """Connected patches of soil / riparian cells (for boar density)."""
+        cells = {
+            (x, y)
+            for y in range(self.rows)
+            for x in range(self.cols)
+            if self.cells[y][x].terrain in BOAR_TERRAINS
+        }
+        return self._connected_patches(cells)
+
+    def boar_habitat_for_patch(
+        self, patch: list[tuple[int, int]]
+    ) -> list[tuple[int, int]]:
+        """Walkable cells within 1 of a soil/riparian patch."""
+        habitat: set[tuple[int, int]] = set()
+        for px, py in patch:
+            for ny, nx in self.neighbourhood(px, py, radius=1):
+                if self.is_walkable(nx, ny):
+                    habitat.add((nx, ny))
+        return list(habitat)
+
+    def boar_habitat_cells(self) -> list[tuple[int, int]]:
+        habitat: set[tuple[int, int]] = set()
+        for patch in self.soil_riparian_patches():
+            habitat.update(self.boar_habitat_for_patch(patch))
         return list(habitat)
 
     def apply_disturbance(self, x: int, y: int) -> None:
