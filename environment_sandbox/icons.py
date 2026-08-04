@@ -1024,18 +1024,23 @@ def get_icon(
     path = _ICONS_DIR / f"{name}.svg"
     if not path.is_file():
         raise FileNotFoundError(f"Icon SVG not found: {path}")
+    if path.stat().st_size == 0:
+        raise FileNotFoundError(f"Icon SVG is empty: {path}")
     mtime_ns = path.stat().st_mtime_ns
     key = _cache_key(name, cell_px, recolour, class_scales, omit, mtime_ns)
     cached = _SURFACE_CACHE.get(key)
     if cached is not None:
         return cached
-    icon = _rasterise_svg(
-        path,
-        cell_px,
-        recolour or {},
-        class_scales or {},
-        set(omit) if omit else set(),
-    )
+    try:
+        icon = _rasterise_svg(
+            path,
+            cell_px,
+            recolour or {},
+            class_scales or {},
+            set(omit) if omit else set(),
+        )
+    except ET.ParseError as exc:
+        raise FileNotFoundError(f"Icon SVG is invalid ({path.name}): {exc}") from exc
     _SURFACE_CACHE[key] = icon
     return icon
 
@@ -1058,13 +1063,16 @@ def blit_icon(
     variants are resolved via ``variant`` (1-based).
     """
     stem = resolve_icon_name(name, variant)
-    icon = get_icon(
-        stem,
-        cell_px,
-        recolour=recolour,
-        class_scales=class_scales,
-        omit_classes=omit_classes,
-    )
+    try:
+        icon = get_icon(
+            stem,
+            cell_px,
+            recolour=recolour,
+            class_scales=class_scales,
+            omit_classes=omit_classes,
+        )
+    except (FileNotFoundError, OSError):
+        return pygame.Rect(cx, cy, 0, 0)
     dest = pygame.Rect(
         cx - icon.anchor_x,
         cy - icon.anchor_y,
