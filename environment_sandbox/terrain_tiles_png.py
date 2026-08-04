@@ -916,6 +916,8 @@ def paint_cell(
     *,
     terrain_at: Callable[[int, int], TerrainType],
     cell_size: int | None = None,
+    grass_mask: pygame.Surface | None = None,
+    soil_mask: pygame.Surface | None = None,
 ) -> tuple[int, TerrainType, TerrainType, tuple[TerrainType, TerrainType, TerrainType, TerrainType]]:
     """Blit soft-joined tile. Returns (mask, fg, bg, neighbourhood)."""
     size = CELL_SIZE if cell_size is None else cell_size
@@ -933,6 +935,16 @@ def paint_cell(
     layer.blit(rgb, dest)
     water_mask.fill((0, 0, 0, 0), pygame.Rect(dest[0], dest[1], size, size))
     water_mask.blit(wmask, dest)
+    # Cell-aligned seasonal masks (PNG soft joins already blend fills).
+    cell_t = terrain_at(x, y)
+    if grass_mask is not None:
+        grass_mask.fill((0, 0, 0, 0), pygame.Rect(dest[0], dest[1], size, size))
+        if cell_t in (TerrainType.GRASS, TerrainType.MEADOW):
+            grass_mask.fill((255, 255, 255, 255), pygame.Rect(dest[0], dest[1], size, size))
+    if soil_mask is not None:
+        soil_mask.fill((0, 0, 0, 0), pygame.Rect(dest[0], dest[1], size, size))
+        if cell_t in (TerrainType.SOIL, TerrainType.FOREST_FLOOR):
+            soil_mask.fill((255, 255, 255, 255), pygame.Rect(dest[0], dest[1], size, size))
     return mask, fg, bg, neigh
 
 

@@ -397,6 +397,7 @@ class TerrainAtlas:
         self._cell_size = size
         self._tile_res = TILE
         self._cache.clear()
+        _COV_CACHE.clear()
 
     def tile_for_corners(
         self,
@@ -457,6 +458,8 @@ def paint_cell(
     *,
     terrain_at: Callable[[int, int], TerrainType],
     cell_size: int | None = None,
+    grass_mask: pygame.Surface | None = None,
+    soil_mask: pygame.Surface | None = None,
 ) -> tuple[int, TerrainType, TerrainType, tuple[TerrainType, TerrainType, TerrainType, TerrainType]]:
     """Blit MS tile. Returns (mask, fg, bg, corners) for diagnostics."""
     size = CELL_SIZE if cell_size is None else cell_size
@@ -469,7 +472,72 @@ def paint_cell(
     layer.blit(rgb, dest)
     water_mask.fill((0, 0, 0, 0), pygame.Rect(dest[0], dest[1], size, size))
     water_mask.blit(wmask, dest)
+    if grass_mask is not None:
+        _blit_type_coverage(grass_mask, dest, size, corners, _GRASS_MASK_TYPES)
+    if soil_mask is not None:
+        _blit_type_coverage(soil_mask, dest, size, corners, _SOIL_MASK_TYPES)
     return mask, fg, bg, corners
+
+
+_GRASS_MASK_TYPES: frozenset[TerrainType] = frozenset(
+    {TerrainType.GRASS, TerrainType.MEADOW}
+)
+_SOIL_MASK_TYPES: frozenset[TerrainType] = frozenset(
+    {TerrainType.SOIL, TerrainType.FOREST_FLOOR}
+)
+
+_COV_CACHE: dict[
+    tuple[tuple[TerrainType, ...], frozenset[TerrainType], int],
+    pygame.Surface,
+] = {}
+
+
+def _blit_type_coverage(
+    mask: pygame.Surface,
+    dest: tuple[int, int],
+    size: int,
+    corners: tuple[TerrainType, TerrainType, TerrainType, TerrainType],
+    types: frozenset[TerrainType],
+) -> None:
+    """Write soft white coverage for terrain types into a seasonal mask."""
+    rect = pygame.Rect(dest[0], dest[1], size, size)
+    mask.fill((0, 0, 0, 0), rect)
+    tl, tr, br, bl = corners
+    if not any(t in types for t in corners):
+        return
+    if all(t in types for t in corners):
+        mask.fill((255, 255, 255, 255), rect)
+        return
+    key = (corners, types, size)
+    hit = _COV_CACHE.get(key)
+    if hit is None:
+        hit = _soft_coverage_surface(tl, tr, br, bl, types, size)
+        _COV_CACHE[key] = hit
+    mask.blit(hit, dest)
+
+
+def _soft_coverage_surface(
+    tl: TerrainType,
+    tr: TerrainType,
+    br: TerrainType,
+    bl: TerrainType,
+    types: frozenset[TerrainType],
+    size: int,
+) -> pygame.Surface:
+    native = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
+    native.fill((0, 0, 0, 0))
+    denom = max(1, TILE - 1)
+    for ly in range(TILE):
+        v = ly / denom
+        for lx in range(TILE):
+            u = lx / denom
+            field = 0.0
+            for terr in types:
+                field = max(field, _fg_field(tl, tr, br, bl, terr, u, v))
+            t = _smoothstep((field - 0.08) / 0.84)
+            if t > 0.001:
+                native.set_at((lx, ly), (255, 255, 255, int(255 * t)))
+    return pygame.transform.smoothscale(native, (size, size))
 
 
 def describe_system() -> str:

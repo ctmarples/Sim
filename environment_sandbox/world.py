@@ -136,6 +136,9 @@ class Cell:
     tree_species: str | None = None  # TreeDef key for TREE / SAPLING
     # 1-based icon variant (e.g. tree_round_2); rolled on first draw.
     icon_variant: int | None = None
+    # Visual sub-patch within a terrain biome (seasonal masking / speckles).
+    terrain_cluster: int = 0
+    terrain_shade: float = 0.55  # 0..1 seasonal wash strength for this subcluster
 
     def habitat_category(self) -> str:
         if self.feature == FeatureType.TREE:
@@ -415,7 +418,73 @@ class World:
             if self.cells[sy][sx].terrain == TerrainType.WATER:
                 self.cells[sy][sx].terrain = TerrainType.GRASS
         self.update_forest_floor()
+        self._paint_terrain_subclusters(rng)
         self.bump_terrain()
+
+    def _paint_terrain_subclusters(self, rng: random.Random) -> None:
+        """Carve small shade clusters inside each grass / meadow / soil patch.
+
+        Gives seasonal washes and speckles non-uniform coverage instead of
+        one flat mask per biome.
+        """
+        land = (
+            TerrainType.GRASS,
+            TerrainType.MEADOW,
+            TerrainType.SOIL,
+            TerrainType.FOREST_FLOOR,
+        )
+        next_id = 1
+        for terrain in land:
+            cells = {
+                (x, y)
+                for y in range(self.rows)
+                for x in range(self.cols)
+                if self.cells[y][x].terrain == terrain
+            }
+            for patch in self._connected_patches(cells):
+                remaining = set(patch)
+                while remaining:
+                    sx, sy = remaining.pop()
+                    target = rng.randint(2, 12)
+                    cluster: list[tuple[int, int]] = [(sx, sy)]
+                    frontier = [(sx, sy)]
+                    while frontier and len(cluster) < target:
+                        cx, cy = frontier.pop(rng.randrange(len(frontier)))
+                        neighbours = [
+                            (nx, ny)
+                            for dx, dy in (
+                                (0, -1),
+                                (0, 1),
+                                (-1, 0),
+                                (1, 0),
+                                (-1, -1),
+                                (1, -1),
+                                (-1, 1),
+                                (1, 1),
+                            )
+                            for nx, ny in ((cx + dx, cy + dy),)
+                            if (nx, ny) in remaining
+                        ]
+                        rng.shuffle(neighbours)
+                        for nx, ny in neighbours[: rng.randint(1, 3)]:
+                            if (nx, ny) not in remaining:
+                                continue
+                            remaining.discard((nx, ny))
+                            cluster.append((nx, ny))
+                            frontier.append((nx, ny))
+                            if len(cluster) >= target:
+                                break
+                    shade = rng.uniform(0.28, 1.0)
+                    # Bias a few clusters very light / very heavy for variety.
+                    if rng.random() < 0.18:
+                        shade = rng.uniform(0.15, 0.35)
+                    elif rng.random() < 0.18:
+                        shade = rng.uniform(0.82, 1.0)
+                    for x, y in cluster:
+                        cell = self.cells[y][x]
+                        cell.terrain_cluster = next_id
+                        cell.terrain_shade = shade
+                    next_id += 1
 
     def update_forest_floor(self) -> None:
         """Mark only tree/sapling tiles as forest floor; clear bare litter.

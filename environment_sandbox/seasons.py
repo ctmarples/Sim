@@ -192,6 +192,36 @@ def terrain_vibrancy(day: float) -> float:
     return _clamp01(0.62 + 0.38 * summer - 0.18 * freeze_amount(d))
 
 
+def grass_winter_fade(day: float) -> float:
+    """0..1 winter wash on grass / meadow."""
+    d = _year_pos(day)
+    # Late autumn → winter peak → thaw in early spring.
+    if d >= 70.0:
+        return _smoothstep(70.0, 88.0, d)
+    if d <= 16.0:
+        return max(0.0, 1.0 - _smoothstep(0.0, 16.0, d))
+    return 0.0
+
+
+def summer_bloom(day: float) -> float:
+    """0..1 mid-summer verdancy for grass speckles / soil greens.
+
+    Peaks early–mid summer and eases off before late summer so flecks
+    don't stay fully bright into the autumn shoulder.
+    """
+    d = _year_pos(day)
+    return _smoothstep(22.0, 34.0, d) * (1.0 - _smoothstep(46.0, 58.0, d))
+
+
+def autumn_bloom(day: float) -> float:
+    """0..1 autumn leaf-tint speckles on grass / meadow / soil.
+
+    Begins late summer so mid-summer→autumn sample windows already show flecks.
+    """
+    d = _year_pos(day)
+    return _smoothstep(46.0, 56.0, d) * (1.0 - _smoothstep(78.0, 90.0, d))
+
+
 def growth_halted(day: float) -> bool:
     return freeze_amount(day) >= 0.85
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -122,6 +123,11 @@ def _cell_to_dict(cell: Cell) -> dict[str, Any]:
     icon_variant = getattr(cell, "icon_variant", None)
     if icon_variant is not None:
         data["icon_variant"] = int(icon_variant)
+    if getattr(cell, "terrain_cluster", 0):
+        data["terrain_cluster"] = int(cell.terrain_cluster)
+    shade = getattr(cell, "terrain_shade", 0.55)
+    if abs(shade - 0.55) > 0.001:
+        data["terrain_shade"] = float(shade)
     return data
 
 
@@ -147,6 +153,10 @@ def _cell_from_save(c: dict[str, Any]) -> Cell:
         setattr(cell, "tree_species", "oak")
     if c.get("icon_variant") is not None:
         cell.icon_variant = int(c["icon_variant"])
+    if c.get("terrain_cluster") is not None:
+        cell.terrain_cluster = int(c["terrain_cluster"])
+    if c.get("terrain_shade") is not None:
+        cell.terrain_shade = float(c["terrain_shade"])
     return cell
 
 
@@ -540,6 +550,13 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         cells.append([_cell_from_save(c) for c in row])
     world.cells = cells
     world.update_forest_floor()
+    # Legacy saves lack subclusters — carve them so seasonal masks look right.
+    if not any(
+        cell.terrain_cluster
+        for row in world.cells
+        for cell in row
+    ):
+        world._paint_terrain_subclusters(random.Random(world.seed + 77))
     world.bump_terrain()
     world.home_pos = tuple(world_data["home_pos"])  # type: ignore[assignment]
     world.workstation_pos = tuple(world_data["workstation_pos"])  # type: ignore[assignment]
@@ -816,7 +833,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     place = data.get("place_kind")
     game.place_kind = BuildingKind[place] if place else None
     game.sim_speed = int(data.get("sim_speed", 1))
-    if game.sim_speed not in (0, 1, 2, 4, 8, 16):
+    if game.sim_speed not in (0, 1, 2, 4, 8, 16, 32, 64, 128):
         game.sim_speed = 1
 
     from seasons import (

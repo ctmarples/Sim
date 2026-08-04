@@ -7,6 +7,7 @@ Esc clears selection / menus (does not quit).
 
 from __future__ import annotations
 
+import math
 import random
 
 import pygame
@@ -282,15 +283,19 @@ class Game:
         self._food_rng = random.Random(99)
         # Headless: no window present; AI still uses real cooldowns.
         self.fast_forward = bool(headless)
-        # Season-neutral tiled map + water alpha mask; seasonal tint/ice at blit time.
+        # Season-neutral tiled map + water/grass/soil alpha masks; seasonal tint at blit.
         self._terrain_base: pygame.Surface | None = None
         self._terrain_base_key: tuple | None = None
         self._terrain_water_mask: pygame.Surface | None = None
+        self._terrain_grass_mask: pygame.Surface | None = None
+        self._terrain_soil_mask: pygame.Surface | None = None
         self._farm_cells_cached: set[tuple[int, int]] = set()
         self._season_mute: pygame.Surface | None = None
         self._season_mute_key: float | None = None
         self._ice_overlay: pygame.Surface | None = None
         self._ice_overlay_key: float | None = None
+        self._season_period_overlay: pygame.Surface | None = None
+        self._season_mask_period_key: tuple | None = None
         # F6: deterministic autotile diagnostic scene + per-cell mask overlay.
         self.autotile_diag = False
         self._diag_cell_meta: dict[tuple[int, int], dict] = {}
@@ -1449,6 +1454,8 @@ class Game:
         """
         self.wildlife.refresh_habitats(self.world)
         self.world.update_forest_floor()
+        # Seasonal terrain masks follow the same ≤8/year cadence (not daily).
+        self._season_mask_period_key = None
         snap = biodiversity_snapshot(
             self.world,
             deer_positions=((a.x, a.y) for a in self.wildlife.deer()),
@@ -4717,11 +4724,15 @@ class Game:
         self._terrain_base = None
         self._terrain_base_key = None
         self._terrain_water_mask = None
+        self._terrain_grass_mask = None
+        self._terrain_soil_mask = None
         self._farm_cells_cached = set()
         self._season_mute = None
         self._season_mute_key = None
         self._ice_overlay = None
         self._ice_overlay_key = None
+        self._season_period_overlay = None
+        self._season_mask_period_key = None
 
     def _visual_terrain_at(
         self, x: int, y: int, farm_cells: set[tuple[int, int]]
@@ -4744,13 +4755,20 @@ class Game:
         y: int,
         farm_cells: set[tuple[int, int]],
     ) -> None:
-        assert self._terrain_base is not None and self._terrain_water_mask is not None
+        assert (
+            self._terrain_base is not None
+            and self._terrain_water_mask is not None
+            and self._terrain_grass_mask is not None
+            and self._terrain_soil_mask is not None
+        )
         paint_cell(
             self._terrain_base,
             self._terrain_water_mask,
             x,
             y,
             terrain_at=lambda tx, ty: self._visual_terrain_at(tx, ty, farm_cells),
+            grass_mask=self._terrain_grass_mask,
+            soil_mask=self._terrain_soil_mask,
         )
 
     def _sync_farm_terrain_dirty(
@@ -4766,12 +4784,14 @@ class Game:
 
     def _ensure_terrain_base(
         self, farm_cells: set[tuple[int, int]]
-    ) -> tuple[pygame.Surface, pygame.Surface]:
+    ) -> tuple[pygame.Surface, pygame.Surface, pygame.Surface, pygame.Surface]:
         """Stitch pre-rendered tiles; full rebuild on revision, else patch dirty."""
         key = self._terrain_base_cache_key()
         full_rebuild = (
             self._terrain_base is None
             or self._terrain_water_mask is None
+            or self._terrain_grass_mask is None
+            or self._terrain_soil_mask is None
             or self._terrain_base_key != key
         )
         self._sync_farm_terrain_dirty(farm_cells)
@@ -4781,6 +4801,10 @@ class Game:
             self._terrain_base = pygame.Surface(size)
             self._terrain_water_mask = pygame.Surface(size, pygame.SRCALPHA)
             self._terrain_water_mask.fill((0, 0, 0, 0))
+            self._terrain_grass_mask = pygame.Surface(size, pygame.SRCALPHA)
+            self._terrain_grass_mask.fill((0, 0, 0, 0))
+            self._terrain_soil_mask = pygame.Surface(size, pygame.SRCALPHA)
+            self._terrain_soil_mask.fill((0, 0, 0, 0))
             self._terrain_base_key = key
             self._farm_cells_cached = set(farm_cells)
             for y in range(self.world.rows):
@@ -4791,7 +4815,14 @@ class Game:
             self._ice_overlay_key = None
             self._season_mute = None
             self._season_mute_key = None
-            return self._terrain_base, self._terrain_water_mask
+            self._season_period_overlay = None
+            self._season_mask_period_key = None
+            return (
+                self._terrain_base,
+                self._terrain_water_mask,
+                self._terrain_grass_mask,
+                self._terrain_soil_mask,
+            )
 
         dirty = self.world.terrain_dirty
         if dirty:
@@ -4800,12 +4831,23 @@ class Game:
             dirty.clear()
             for x, y in cells:
                 self._paint_terrain_cell(x, y, farm_cells)
-            # Ice mask geometry may have changed on patched water edges.
+            # Ice / season mask geometry may have changed on patched edges.
             self._ice_overlay = None
             self._ice_overlay_key = None
-
-        return self._terrain_base, self._terrain_water_mask
-
+            self._season_period_overlay = None
+            self._season_mask_period_key = None
+        assert (
+            self._terrain_base is not None
+            and self._terrain_water_mask is not None
+            and self._terrain_grass_mask is not None
+            and self._terrain_soil_mask is not None
+        )
+        return (
+            self._terrain_base,
+            self._terrain_water_mask,
+            self._terrain_grass_mask,
+            self._terrain_soil_mask,
+        )
     def _ensure_season_mute(self, vibrancy: float) -> pygame.Surface | None:
         """RGB multiply tint; lower vibrancy → cooler / duller map."""
         bucket = round(vibrancy, 2)
@@ -4843,6 +4885,486 @@ class Game:
         self._ice_overlay_key = bucket
         return ice
 
+    @staticmethod
+    def _hash01(x: int, y: int, salt: int = 0) -> float:
+        n = (x * 374761393 + y * 668265263 + salt * 1274126177) & 0x7FFFFFFF
+        return (n % 10007) / 10007.0
+
+    @staticmethod
+    def _season_mask_period(calendar_day: int) -> int:
+        """0..7: spring1/2, summer1/2, autumn1/2, winter1/2."""
+        d = int(calendar_day) % YEAR_DAYS
+        season_i = d // DAYS_PER_SEASON
+        half = 0 if (d % DAYS_PER_SEASON) < (DAYS_PER_SEASON // 2) else 1
+        return season_i * 2 + half
+
+    _AUTUMN_LAND: tuple[TerrainType, ...] = (
+        TerrainType.GRASS,
+        TerrainType.MEADOW,
+        TerrainType.SOIL,
+        TerrainType.FOREST_FLOOR,
+    )
+    _OPEN_LAND: tuple[TerrainType, ...] = (
+        TerrainType.GRASS,
+        TerrainType.MEADOW,
+        TerrainType.SOIL,
+    )
+    _YELLOW: tuple[tuple[int, int, int], ...] = (
+        (210, 195, 55),
+        (230, 210, 65),
+        (200, 180, 50),
+    )
+    _GREEN: tuple[tuple[int, int, int], ...] = (
+        (55, 150, 45),
+        (80, 175, 60),
+        (100, 165, 55),
+    )
+    _BROWN: tuple[tuple[int, int, int], ...] = (
+        (120, 70, 35),
+        (160, 85, 40),
+        (180, 95, 35),
+        (140, 75, 30),
+    )
+    _WHITE: tuple[tuple[int, int, int], ...] = (
+        (235, 240, 245),
+        (210, 220, 230),
+        (200, 205, 210),
+        (190, 205, 220),
+    )
+
+    def _land_cells(self, terrains: tuple[TerrainType, ...]) -> list[tuple[int, int]]:
+        return [
+            (x, y)
+            for y in range(self.world.rows)
+            for x in range(self.world.cols)
+            if self.world.cells[y][x].terrain in terrains
+        ]
+
+    def _scramble(self, i: int, salt: int) -> int:
+        """Knuth-style mix so fleck indices are not sequential on the map."""
+        n = (i * 2654435761 + salt * 1597334677) & 0xFFFFFFFF
+        n ^= (n >> 16)
+        n = (n * 2246822519) & 0xFFFFFFFF
+        n ^= (n >> 13)
+        return n & 0x7FFFFFFF
+
+    def _paint_individual_at(
+        self,
+        surf: pygame.Surface,
+        px: int,
+        py: int,
+        palette: tuple[tuple[int, int, int], ...],
+        *,
+        salt: int,
+        alpha_lo: int = 40,
+        alpha_hi: int = 100,
+    ) -> None:
+        rgb = palette[self._scramble(salt, 2) % len(palette)]
+        alpha = alpha_lo + (self._scramble(salt, 3) % max(1, alpha_hi - alpha_lo + 1))
+        if 0 <= px < surf.get_width() and 0 <= py < surf.get_height():
+            pygame.draw.circle(surf, (*rgb, alpha), (px, py), 1)
+
+    def _paint_cluster_at(
+        self,
+        surf: pygame.Surface,
+        cx: int,
+        cy: int,
+        palette: tuple[tuple[int, int, int], ...],
+        *,
+        salt: int,
+        dots: int = 8,
+        spread: int = 5,
+        alpha_lo: int = 35,
+        alpha_hi: int = 95,
+    ) -> None:
+        for i in range(dots):
+            ang = (self._scramble(salt + i, 10) / 0x7FFFFFFF) * math.tau
+            dist = (self._scramble(salt + i, 40) / 0x7FFFFFFF) * spread
+            px = cx + int(dist * math.cos(ang))
+            py = cy + int(dist * math.sin(ang) * 0.85)
+            rgb = palette[self._scramble(salt + i, 100) % len(palette)]
+            alpha = alpha_lo + (
+                self._scramble(salt + i, 130) % max(1, alpha_hi - alpha_lo + 1)
+            )
+            if i < 2:
+                alpha = min(alpha_hi + 20, alpha + 15)
+            radius = 1 if (self._scramble(salt + i, 160) % 10) < 7 else 2
+            if 0 <= px < surf.get_width() and 0 <= py < surf.get_height():
+                pygame.draw.circle(surf, (*rgb, alpha), (px, py), radius)
+
+    def _world_point_on_land(
+        self,
+        cells: list[tuple[int, int]],
+        i: int,
+        salt: int,
+    ) -> tuple[int, int] | None:
+        """Stable free pixel on a land cell — scrambled, not grid-ordered."""
+        if not cells:
+            return None
+        gx, gy = cells[self._scramble(i, salt) % len(cells)]
+        # Continuous jitter inside the cell (and slight bleed for organic feel).
+        jx = self._scramble(i, salt + 11) / 0x7FFFFFFF
+        jy = self._scramble(i, salt + 12) / 0x7FFFFFFF
+        bleed = int(CELL_SIZE * 0.35)
+        px = gx * CELL_SIZE + int(jx * (CELL_SIZE + bleed)) - bleed // 2
+        py = gy * CELL_SIZE + int(jy * (CELL_SIZE + bleed)) - bleed // 2
+        return px, py
+
+    def _round_tree_cells(self) -> list[tuple[int, int]]:
+        """Mature deciduous (round-canopy) trees present this bake."""
+        from trees import resolve_tree
+
+        out: list[tuple[int, int]] = []
+        for y in range(self.world.rows):
+            for x in range(self.world.cols):
+                cell = self.world.cells[y][x]
+                if cell.feature != FeatureType.TREE:
+                    continue
+                if resolve_tree(cell.tree_species).shape == "round":
+                    out.append((x, y))
+        return out
+
+    def _seed_open_land_speckles(
+        self,
+        surf: pygame.Surface,
+        *,
+        period_salt: int,
+        individual_density: float,
+        cluster_density: float,
+        individual_palette: tuple[tuple[int, int, int], ...],
+        cluster_palette: tuple[tuple[int, int, int], ...],
+        terrains: tuple[TerrainType, ...] | None = None,
+        alpha_lo: int = 40,
+        alpha_hi: int = 100,
+        cluster_dots: int = 8,
+    ) -> None:
+        """Scatter flecks in free world space over matching land (not per-cell lattice)."""
+        lands = terrains if terrains is not None else self._OPEN_LAND
+        cells = self._land_cells(lands)
+        if not cells:
+            return
+        n_ind = max(0, int(round(len(cells) * individual_density)))
+        n_clu = max(0, int(round(len(cells) * cluster_density)))
+        for i in range(n_ind):
+            pt = self._world_point_on_land(cells, i, period_salt + 17)
+            if pt is None:
+                continue
+            self._paint_individual_at(
+                surf,
+                pt[0],
+                pt[1],
+                individual_palette,
+                salt=period_salt + i * 31,
+                alpha_lo=alpha_lo,
+                alpha_hi=alpha_hi,
+            )
+        for i in range(n_clu):
+            pt = self._world_point_on_land(cells, i, period_salt + 91)
+            if pt is None:
+                continue
+            spread = 4 + (self._scramble(i, period_salt + 5) % 4)
+            self._paint_cluster_at(
+                surf,
+                pt[0],
+                pt[1],
+                cluster_palette,
+                salt=period_salt + i * 47,
+                dots=cluster_dots,
+                spread=spread,
+                alpha_lo=alpha_lo,
+                alpha_hi=alpha_hi,
+            )
+
+    def _seed_soil_speckles(
+        self,
+        surf: pygame.Surface,
+        *,
+        period_salt: int,
+        individual_density: float,
+        cluster_density: float,
+        individual_palette: tuple[tuple[int, int, int], ...],
+        cluster_palette: tuple[tuple[int, int, int], ...],
+        terrains: tuple[TerrainType, ...] | None = None,
+        alpha_lo: int = 40,
+        alpha_hi: int = 100,
+        cluster_dots: int = 8,
+    ) -> None:
+        """Scatter flecks in free world space over matching land (not per-cell lattice)."""
+        lands = terrains if terrains is not None else self._OPEN_LAND
+        cells = self._land_cells(lands)
+        if not cells:
+            return
+        n_ind = max(0, int(round(len(cells) * individual_density)))
+        n_clu = max(0, int(round(len(cells) * cluster_density)))
+        for i in range(n_ind):
+            pt = self._world_point_on_land(cells, i, period_salt + 17)
+            if pt is None:
+                continue
+            self._paint_individual_at(
+                surf,
+                pt[0],
+                pt[1],
+                individual_palette,
+                salt=period_salt + i * 31,
+                alpha_lo=alpha_lo,
+                alpha_hi=alpha_hi,
+            )
+        for i in range(n_clu):
+            pt = self._world_point_on_land(cells, i, period_salt + 91)
+            if pt is None:
+                continue
+            spread = 4 + (self._scramble(i, period_salt + 5) % 4)
+            self._paint_cluster_at(
+                surf,
+                pt[0],
+                pt[1],
+                cluster_palette,
+                salt=period_salt + i * 47,
+                dots=cluster_dots,
+                spread=spread,
+                alpha_lo=alpha_lo,
+                alpha_hi=alpha_hi,
+            )
+
+    def _bake_autumn_tree_speckles(
+        self,
+        surf: pygame.Surface,
+        *,
+        radius: int,
+        individuals_per_tree: int,
+        clusters_per_tree: int,
+        period_salt: int,
+    ) -> None:
+        """Free-space leaf flecks around round trees; gone trees clear those spots."""
+        max_dist = radius * CELL_SIZE + CELL_SIZE * 0.4
+        min_dist = CELL_SIZE * 0.35
+        for tx, ty in self._round_tree_cells():
+            tcx = tx * CELL_SIZE + CELL_SIZE // 2
+            tcy = ty * CELL_SIZE + CELL_SIZE // 2
+            tree_salt = period_salt + tx * 97 + ty * 13
+            for i in range(individuals_per_tree):
+                ang = (self._scramble(i, tree_salt + 1) / 0x7FFFFFFF) * math.tau
+                dist = min_dist + (
+                    self._scramble(i, tree_salt + 2) / 0x7FFFFFFF
+                ) * (max_dist - min_dist)
+                px = tcx + int(dist * math.cos(ang))
+                py = tcy + int(dist * math.sin(ang) * 0.9)
+                gx, gy = px // CELL_SIZE, py // CELL_SIZE
+                if not self.world.in_bounds(gx, gy):
+                    continue
+                if self.world.cells[gy][gx].terrain not in self._AUTUMN_LAND:
+                    continue
+                palette = (
+                    self._YELLOW
+                    if (self._scramble(i, tree_salt + 3) % 100) < 55
+                    else self._BROWN
+                )
+                self._paint_individual_at(
+                    surf,
+                    px,
+                    py,
+                    palette,
+                    salt=tree_salt + i * 19,
+                    alpha_lo=50,
+                    alpha_hi=120,
+                )
+            for i in range(clusters_per_tree):
+                ang = (self._scramble(i, tree_salt + 50) / 0x7FFFFFFF) * math.tau
+                dist = min_dist + (
+                    self._scramble(i, tree_salt + 51) / 0x7FFFFFFF
+                ) * (max_dist - min_dist)
+                px = tcx + int(dist * math.cos(ang))
+                py = tcy + int(dist * math.sin(ang) * 0.9)
+                gx, gy = px // CELL_SIZE, py // CELL_SIZE
+                if not self.world.in_bounds(gx, gy):
+                    continue
+                if self.world.cells[gy][gx].terrain not in self._AUTUMN_LAND:
+                    continue
+                self._paint_cluster_at(
+                    surf,
+                    px,
+                    py,
+                    self._BROWN,
+                    salt=tree_salt + 200 + i * 23,
+                    dots=10 + (self._scramble(i, tree_salt + 7) % 8),
+                    spread=5,
+                    alpha_lo=55,
+                    alpha_hi=130,
+                )
+
+    def _bake_season_overlays(
+        self,
+        grass_mask: pygame.Surface,
+        soil_mask: pygame.Surface,
+        *,
+        period: int,
+    ) -> None:
+        """Programmatic speckles for one of the 8 year periods (no envelope overlap)."""
+        size = grass_mask.get_size()
+        overlay = pygame.Surface(size, pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 0))
+        salt = 8000 + period * 1103
+
+        if period == 0:
+            # Spring 1 — some white individuals + clusters.
+            self._seed_open_land_speckles(
+                overlay,
+                period_salt=salt,
+                individual_density=10,
+                cluster_density=0.5,
+                individual_palette=self._WHITE,
+                cluster_palette=self._WHITE,
+                terrains=(TerrainType.GRASS, TerrainType.MEADOW),
+                alpha_lo=50,
+                alpha_hi=130,
+                cluster_dots=100,
+            )
+        elif period == 1:
+            # Spring 2 — no seasonal speckles.
+            self._seed_open_land_speckles(
+                overlay,
+                period_salt=salt,
+                individual_density=2,
+                cluster_density=0,
+                individual_palette=self._WHITE,
+                cluster_palette=self._WHITE,
+                terrains=(TerrainType.GRASS, TerrainType.MEADOW),
+                alpha_lo=50,
+                alpha_hi=130,
+                cluster_dots=100,
+            )
+        elif period == 2:
+            # Summer 1 — sparse yellow individuals + green clusters, low alpha.
+            self._seed_open_land_speckles(
+                overlay,
+                period_salt=salt,
+                individual_density=50,
+                cluster_density=10,
+                individual_palette=self._YELLOW,
+                cluster_palette=self._GREEN,
+                terrains=(TerrainType.GRASS, TerrainType.MEADOW),
+                alpha_lo=40,
+                alpha_hi=70,
+                cluster_dots=4,
+            )
+        elif period == 3:
+            # Summer 2 — more yellows + green clusters, still low alpha.
+            self._seed_open_land_speckles(
+                overlay,
+                period_salt=salt,
+                individual_density=100,
+                cluster_density=0.06,
+                individual_palette=self._YELLOW,
+                cluster_palette=self._GREEN,
+                terrains=(TerrainType.GRASS, TerrainType.MEADOW),
+                alpha_lo=60,
+                alpha_hi=100,
+                cluster_dots=30,
+            )
+            self._seed_open_land_speckles(
+                overlay,
+                period_salt=salt,
+                individual_density=40,
+                cluster_density=0,
+                individual_palette=self._YELLOW,
+                cluster_palette=self._GREEN,
+                terrains=(TerrainType.SOIL,),
+                alpha_lo=40,
+                alpha_hi=50,
+                cluster_dots=0,
+            )
+        elif period == 4:
+            # Autumn 1 — yellow/brown individuals beside round trees.
+            self._bake_autumn_tree_speckles(
+                overlay,
+                radius=5,
+                individuals_per_tree=40,
+                clusters_per_tree=15,
+                period_salt=salt,
+            )
+            self._seed_open_land_speckles(
+                overlay,
+                period_salt=salt,
+                individual_density=10,
+                cluster_density=0,
+                individual_palette=self._YELLOW,
+                cluster_palette=self._GREEN,
+                terrains=(TerrainType.SOIL,),
+                alpha_lo=40,
+                alpha_hi=45,
+                cluster_dots=0,
+            )
+        elif period == 5:
+            # Autumn 2 — denser flecks + brown clusters within 2 of round trees.
+            self._bake_autumn_tree_speckles(
+                overlay,
+                radius=10,
+                individuals_per_tree=50,
+                clusters_per_tree=30,
+                period_salt=salt,
+            )
+        elif period == 6:
+            # Winter 1 — some white individuals + clusters.
+            self._seed_open_land_speckles(
+                overlay,
+                period_salt=salt,
+                individual_density=10,
+                cluster_density=1,
+                individual_palette=self._WHITE,
+                cluster_palette=self._WHITE,
+                terrains=(TerrainType.GRASS, TerrainType.MEADOW),
+                alpha_lo=55,
+                alpha_hi=140,
+                cluster_dots=30,
+            )
+        elif period == 7:
+            # Winter 2 — many white speckles, more clusters.
+            self._seed_open_land_speckles(
+                overlay,
+                period_salt=salt,
+                individual_density=50,
+                cluster_density=7,
+                individual_palette=self._WHITE,
+                cluster_palette=self._WHITE,
+                terrains=(TerrainType.GRASS, TerrainType.MEADOW),
+                alpha_lo=60,
+                alpha_hi=160,
+                cluster_dots=30,
+            )
+            self._seed_open_land_speckles(
+                overlay,
+                period_salt=salt,
+                individual_density=50,
+                cluster_density=4,
+                individual_palette=self._WHITE,
+                cluster_palette=self._WHITE,
+                terrains=(TerrainType.SOIL),
+                alpha_lo=60,
+                alpha_hi=160,
+                cluster_dots=30,
+            )
+
+        # Soft-clip to terrain coverage masks.
+        land = grass_mask.copy()
+        land.blit(soil_mask, (0, 0), special_flags=pygame.BLEND_RGBA_MAX)
+        overlay.blit(land, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        self._season_period_overlay = overlay
+
+    def _refresh_season_masks(
+        self,
+        grass_mask: pygame.Surface,
+        soil_mask: pygame.Surface,
+        *,
+        force: bool = False,
+    ) -> None:
+        """Rebuild period overlay only on the 8-cycle sample or terrain change."""
+        period = self._season_mask_period(self.calendar_day)
+        key = (period, self.world.terrain_revision, CELL_SIZE)
+        if not force and self._season_mask_period_key == key:
+            return
+        self._bake_season_overlays(grass_mask, soil_mask, period=period)
+        self._season_mask_period_key = key
+
     def _blit_camera_world_surface(
         self,
         surf: pygame.Surface,
@@ -4878,7 +5400,7 @@ class Game:
         freeze = freeze_amount(day)
         vibrancy = terrain_vibrancy(day)
         farm_cells = self._farm_field_cells()
-        base, water_mask = self._ensure_terrain_base(farm_cells)
+        base, water_mask, grass_mask, soil_mask = self._ensure_terrain_base(farm_cells)
 
         map_clip = pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())
         self.screen.set_clip(map_clip)
@@ -4890,6 +5412,9 @@ class Game:
             self._blit_camera_world_surface(
                 mute, origin, special_flags=pygame.BLEND_RGB_MULT
             )
+        self._refresh_season_masks(grass_mask, soil_mask)
+        if self._season_period_overlay is not None:
+            self._blit_camera_world_surface(self._season_period_overlay, origin)
         ice = self._ensure_ice_overlay(freeze, water_mask)
         if ice is not None:
             self._blit_camera_world_surface(ice, origin)

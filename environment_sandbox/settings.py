@@ -27,7 +27,7 @@ MAP_OFFSET_Y: int = TOOLBAR_HEIGHT + RESOURCE_BAR_HEIGHT
 WINDOW_WIDTH: int = GRID_COLS * CELL_SIZE + PANEL_WIDTH
 WINDOW_HEIGHT: int = MAP_OFFSET_Y + GRID_ROWS * CELL_SIZE
 FPS: int = 60
-SIM_SPEEDS: tuple[int, ...] = (0, 1, 2, 4, 8, 16)
+SIM_SPEEDS: tuple[int, ...] = (0, 1, 2, 4, 8, 16, 32, 64, 128)
 # Native terrain tile size (pre-rendered, then scaled to CELL_SIZE and stitched).
 TERRAIN_SUBDIV: int = 25
 # Terrain fill backend: "procedural" (default MS + noise) or "png" (assets/terrain).
