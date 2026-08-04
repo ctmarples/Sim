@@ -463,11 +463,30 @@ class HomeStorage:
     def withdraw_keys_to(self, inventory: Inventory, keys: tuple[str, ...]) -> int:
         taken = 0
         for key in keys:
-            while getattr(self, key, 0) > 0 and inventory.can_add(1, key=key):
-                setattr(self, key, getattr(self, key) - 1)
-                setattr(inventory, key, getattr(inventory, key) + 1)
-                taken += 1
+            taken += self.withdraw_key_to(inventory, key)
         return taken
+
+    def withdraw_key_to(self, inventory: Inventory, key: str) -> int:
+        """Move as much of ``key`` as inventory capacity allows."""
+        if not hasattr(self, key) or not hasattr(inventory, key):
+            return 0
+        taken = 0
+        while getattr(self, key, 0) > 0 and inventory.can_add(1, key=key):
+            setattr(self, key, getattr(self, key) - 1)
+            setattr(inventory, key, getattr(inventory, key) + 1)
+            taken += 1
+        return taken
+
+    def deposit_key_from(self, inventory: Inventory, key: str) -> int:
+        """Move all of ``key`` from inventory into storehouse."""
+        if not hasattr(self, key) or not hasattr(inventory, key):
+            return 0
+        n = int(getattr(inventory, key, 0))
+        if n <= 0:
+            return 0
+        setattr(inventory, key, 0)
+        setattr(self, key, getattr(self, key) + n)
+        return n
 
 
 @dataclass
@@ -921,6 +940,14 @@ class Building:
             )
         for key in keys:
             self._take(inventory, key)
+
+    def deposit_key_from(self, inventory: Inventory, key: str) -> int:
+        """Deposit as much of one key as capacity allows. Returns amount moved."""
+        if key not in self.depositable_keys():
+            return 0
+        before = int(getattr(inventory, key, 0))
+        self._take(inventory, key)
+        return before - int(getattr(inventory, key, 0))
 
     def depositable_keys(self) -> tuple[str, ...]:
         if self.kind == BuildingKind.HOME:

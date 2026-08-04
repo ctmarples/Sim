@@ -99,6 +99,55 @@ def resource_label(key: str) -> str:
     return key
 
 
+def resource_icon(key: str) -> str:
+    """Map an inventory resource key to an ``icons`` base name for UI grids."""
+    from icons import (
+        ICON_BERRY_BUSH,
+        ICON_CROP,
+        ICON_FISH,
+        ICON_FLOWER,
+        ICON_MEAT_MARKER,
+        ICON_MUSHROOM,
+        ICON_REED,
+        ICON_ROCK,
+        ICON_SAPLING_CONE,
+        ICON_SAPLING_ROUND,
+        ICON_TREE_CONE,
+        ICON_TREE_ROUND,
+        crop_icon_base,
+    )
+    from trees import TREES
+
+    static = {
+        "wood": ICON_TREE_ROUND,
+        "hardwood": ICON_TREE_CONE,
+        "rock": ICON_ROCK,
+        "meat": ICON_MEAT_MARKER,
+        "fish": ICON_FISH,
+        "mushrooms": ICON_MUSHROOM,
+        "berries": ICON_BERRY_BUSH,
+        "berry_seeds": ICON_BERRY_BUSH,
+        "reeds": ICON_REED,
+    }
+    if key in static:
+        return static[key]
+    for tree in TREES:
+        sap = f"{tree.key}_saplings"
+        if key == sap:
+            return ICON_SAPLING_CONE if tree.shape == "cone" else ICON_SAPLING_ROUND
+    if key.endswith("_seeds"):
+        crop_key = key[: -len("_seeds")]
+        try:
+            return crop_icon_base(crop_key, dense=False)
+        except Exception:
+            return ICON_CROP
+    # Crop produce keys match crop.key.
+    try:
+        return crop_icon_base(key, dense=True)
+    except Exception:
+        return ICON_FLOWER
+
+
 def amounts_from_obj(obj: object) -> dict[str, int]:
     return {key: int(getattr(obj, key, 0)) for key in RESOURCE_KEYS}
 

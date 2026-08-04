@@ -1675,7 +1675,7 @@ class Game:
         if building.kind == BuildingKind.HOME:
             haulers = sum(1 for v in self.villagers if v.assigned_to_home)
             self._set_status(
-                f"Selected Storehouse. {haulers} hauler(s). Assign villagers to haul resources."
+                f"Storehouse open. Click items to transfer. {haulers} hauler(s)."
             )
         elif building.kind == BuildingKind.WORKSTATION:
             hired_count = len(self.villagers)
@@ -1698,6 +1698,12 @@ class Game:
         action = self.building_inspect.take_action()
         if action is None:
             return
+        if action.startswith("xfer_to_player:"):
+            self._transfer_inspect_to_player(action.split(":", 1)[1])
+            return
+        if action.startswith("xfer_to_storage:"):
+            self._transfer_inspect_to_storage(action.split(":", 1)[1])
+            return
         if action.startswith("select_worker:"):
             vid = int(action.split(":")[1])
             villager = self._get_villager(vid)
@@ -1719,6 +1725,64 @@ class Game:
         if action == "hire_villager":
             self._hire_villager()
             return
+
+    def _transfer_inspect_to_player(self, key: str) -> None:
+        building = self._inspect_building()
+        if building is None:
+            return
+        inv = self.player.inventory
+        from resources import resource_label
+
+        label = resource_label(key)
+        if building.kind == BuildingKind.HOME:
+            have = int(getattr(self.home_storage, key, 0))
+            if have <= 0:
+                self._set_status(f"No {label} in storehouse.")
+                return
+            moved = self.home_storage.withdraw_key_to(inv, key)
+        else:
+            have = int(getattr(building, key, 0))
+            if have <= 0:
+                self._set_status(f"No {label} in storage.")
+                return
+            before = int(getattr(inv, key, 0))
+            building.withdraw_to_inventory(inv, keys=(key,))
+            moved = int(getattr(inv, key, 0)) - before
+        if moved <= 0:
+            self._set_status("Inventory is full.")
+            return
+        self._refresh_indicators()
+        self._set_status(f"Took {moved} {label}.")
+
+    def _transfer_inspect_to_storage(self, key: str) -> None:
+        building = self._inspect_building()
+        if building is None:
+            return
+        inv = self.player.inventory
+        from resources import resource_label
+
+        label = resource_label(key)
+        have = int(getattr(inv, key, 0))
+        if have <= 0:
+            self._set_status(f"You have no {label}.")
+            return
+        if key not in building.depositable_keys():
+            self._set_status(f"{BUILDING_LABELS[building.kind]} cannot store {label}.")
+            return
+        if building.kind == BuildingKind.HOME:
+            moved = self.home_storage.deposit_key_from(inv, key)
+            hx, hy = self.world.home_pos
+            self.world.apply_disturbance(hx, hy)
+        else:
+            if building.space_left <= 0:
+                self._set_status("Building storage is full.")
+                return
+            moved = building.deposit_key_from(inv, key)
+        if moved <= 0:
+            self._set_status("Could not deposit.")
+            return
+        self._refresh_indicators()
+        self._set_status(f"Deposited {moved} {label}.")
 
     def _open_villager_inspect(self, villager: Villager) -> None:
         self.selected_villager_id = villager.id
@@ -2067,8 +2131,9 @@ class Game:
             return
 
         if cell.feature == FeatureType.HOME:
-            # Allow deposit but also could select building
-            self._deposit_home(self.player.inventory)
+            building = self._building_at(x, y)
+            if building is not None:
+                self._select_building(building)
             return
 
         if cell.feature in (
@@ -4717,6 +4782,7 @@ class Game:
             selected_villager_id=self.selected_villager_id,
             mouse_pos=mouse,
             storage_amounts=storage_amounts,
+            player_inventory=self.player.inventory,
             hired_count=hired_count,
         )
         inspect_v = self._get_villager(self.villager_inspect.villager_id or -1)

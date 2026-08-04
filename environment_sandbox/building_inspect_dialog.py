@@ -1,6 +1,12 @@
-"""Floating inspection window for workplace buildings (not Fields)."""
+"""Floating inspection window for workplace buildings (not Fields).
+
+Includes dual inventory grids (building storage + player pack). Clicking a
+filled grid cell moves that resource stack to the other inventory.
+"""
 
 from __future__ import annotations
+
+import math
 
 import pygame
 
@@ -9,9 +15,10 @@ from entities import (
     WORK_MODE_LABELS,
     Building,
     BuildingKind,
+    Inventory,
     Villager,
 )
-from resources import format_grouped_counts
+from resources import RESOURCE_KEYS, resource_icon, resource_label
 from settings import (
     COLOUR_MENU_BG,
     COLOUR_SELECTED_ENTITY,
@@ -33,28 +40,35 @@ PAD = 12
 BTN_H = 24
 ROW_H = 22
 SECTION_GAP = 10
+GRID_CELL = 52
+GRID_GAP = 4
+GRID_COLS = 4
+INV_PANEL_GAP = 10
 
 
 class BuildingInspectDialog:
-    """Movable floating inspector: options, workers, local storage."""
+    """Movable floating inspector: options, workers, dual inventory grids."""
 
     def __init__(self) -> None:
         self.font = pygame.font.SysFont("menlo", 14)
         self.font_small = pygame.font.SysFont("menlo", 12)
+        self.font_tiny = pygame.font.SysFont("menlo", 11, bold=True)
         self.font_title = pygame.font.SysFont("menlo", 15, bold=True)
         self.building_id: int | None = None
         self._buttons: list[tuple[str, pygame.Rect]] = []
         self._worker_hits: list[tuple[pygame.Rect, int]] = []
+        self._inv_hits: list[tuple[pygame.Rect, str, str]] = []
         self._pending_action: str | None = None
         self._panel_x = 80
         self._panel_y = MAP_OFFSET_Y + 40
-        self._panel_w = 300
+        self._panel_w = 520
         self._panel_h = 320
         self._moving = False
         self._move_offset = (0, 0)
         self._close_rect = pygame.Rect(0, 0, 0, 0)
         self._title_rect = pygame.Rect(0, 0, 0, 0)
         self._hover_worker: int | None = None
+        self._hover_inv: tuple[str, str] | None = None  # (side, key)
 
     @property
     def open(self) -> bool:
@@ -72,7 +86,8 @@ class BuildingInspectDialog:
         self._pending_action = None
         self._moving = False
         self._hover_worker = None
-        self._layout()
+        self._hover_inv = None
+        self._layout(building)
         map_w = map_view_width()
         if screen_xy is not None:
             prefer_x = screen_xy[0] + 24
@@ -91,6 +106,7 @@ class BuildingInspectDialog:
         self._moving = False
         self._pending_action = None
         self._hover_worker = None
+        self._hover_inv = None
 
     def take_action(self) -> str | None:
         action = self._pending_action
@@ -103,8 +119,14 @@ class BuildingInspectDialog:
     def contains(self, pos: tuple[int, int]) -> bool:
         return self.open and self.panel_rect().collidepoint(pos)
 
-    def _layout(self) -> None:
-        self._panel_w = 300
+    def _has_transfer(self, building: Building) -> bool:
+        return bool(building.depositable_keys())
+
+    def _layout(self, building: Building | None = None) -> None:
+        if building is not None and self._has_transfer(building):
+            self._panel_w = 520
+        else:
+            self._panel_w = 300
         self._panel_h = TITLE_BAR_H + PAD + 120 + 8 * ROW_H + 100
 
     def _clamp_panel(self) -> None:
@@ -139,6 +161,13 @@ class BuildingInspectDialog:
             if rect.collidepoint(pos):
                 self._pending_action = f"select_worker:{vid}"
                 return True
+        for rect, side, key in self._inv_hits:
+            if rect.collidepoint(pos):
+                if side == "storage":
+                    self._pending_action = f"xfer_to_player:{key}"
+                else:
+                    self._pending_action = f"xfer_to_storage:{key}"
+                return True
         return True
 
     def handle_mousemotion(self, pos: tuple[int, int]) -> bool:
@@ -150,10 +179,15 @@ class BuildingInspectDialog:
             self._clamp_panel()
             return True
         self._hover_worker = None
+        self._hover_inv = None
         if self.contains(pos):
             for rect, vid in self._worker_hits:
                 if rect.collidepoint(pos):
                     self._hover_worker = vid
+                    break
+            for rect, side, key in self._inv_hits:
+                if rect.collidepoint(pos):
+                    self._hover_inv = (side, key)
                     break
         return self.contains(pos)
 
@@ -199,6 +233,100 @@ class BuildingInspectDialog:
             state = villager.state.name[:4]
         return f"#{villager.id} {state}"
 
+    @staticmethod
+    def _present_keys(amounts: dict[str, int], allowed: tuple[str, ...] | None) -> list[str]:
+        keys = allowed if allowed is not None else RESOURCE_KEYS
+        return [k for k in keys if int(amounts.get(k, 0)) > 0]
+
+    def _grid_height(self, n_items: int) -> int:
+        rows = max(1, math.ceil(max(1, n_items) / GRID_COLS))
+        return rows * (GRID_CELL + GRID_GAP) - GRID_GAP
+
+    def _draw_inv_grid(
+        self,
+        surface: pygame.Surface,
+        *,
+        origin: tuple[int, int],
+        width: int,
+        title: str,
+        subtitle: str,
+        amounts: dict[str, int],
+        allowed: tuple[str, ...] | None,
+        side: str,
+        mouse_pos: tuple[int, int] | None,
+        interactive: bool = True,
+    ) -> int:
+        """Draw an inventory grid. Returns height consumed from origin y."""
+        from icons import blit_icon
+
+        x0, y0 = origin
+        y = y0
+        surface.blit(self.font.render(title, True, COLOUR_TEXT), (x0, y))
+        y += 18
+        surface.blit(self.font_small.render(subtitle, True, COLOUR_TEXT_DIM), (x0, y))
+        y += 16
+
+        keys = self._present_keys(amounts, allowed)
+        if not keys:
+            surface.blit(
+                self.font_small.render("(empty)", True, COLOUR_TEXT_DIM),
+                (x0, y + 8),
+            )
+            return (y + 28) - y0
+
+        cols = max(1, min(GRID_COLS, max(1, width // (GRID_CELL + GRID_GAP))))
+        for i, key in enumerate(keys):
+            col = i % cols
+            row = i // cols
+            cx = x0 + col * (GRID_CELL + GRID_GAP)
+            cy = y + row * (GRID_CELL + GRID_GAP)
+            cell = pygame.Rect(cx, cy, GRID_CELL, GRID_CELL)
+            hovered = interactive and (
+                self._hover_inv == (side, key)
+                or (mouse_pos is not None and cell.collidepoint(mouse_pos))
+            )
+            bg = (55, 62, 50) if hovered else (42, 44, 52)
+            border = COLOUR_SELECTED_ENTITY if hovered else COLOUR_TOOLBAR_BORDER
+            pygame.draw.rect(surface, bg, cell, border_radius=4)
+            pygame.draw.rect(surface, border, cell, 1, border_radius=4)
+
+            icon_size = GRID_CELL - 14
+            try:
+                blit_icon(
+                    surface,
+                    resource_icon(key),
+                    cell.centerx,
+                    cell.centery - 4,
+                    icon_size,
+                )
+            except (FileNotFoundError, OSError, ValueError, TypeError):
+                tip = resource_label(key)[:3]
+                t = self.font_tiny.render(tip, True, COLOUR_TEXT)
+                surface.blit(
+                    t,
+                    (
+                        cell.centerx - t.get_width() // 2,
+                        cell.centery - t.get_height() // 2 - 4,
+                    ),
+                )
+
+            count = int(amounts.get(key, 0))
+            badge = self.font_tiny.render(str(count), True, COLOUR_TEXT)
+            bx = cell.right - badge.get_width() - 3
+            by = cell.bottom - badge.get_height() - 2
+            pygame.draw.rect(
+                surface,
+                (28, 30, 36),
+                pygame.Rect(bx - 2, by - 1, badge.get_width() + 4, badge.get_height() + 2),
+                border_radius=2,
+            )
+            surface.blit(badge, (bx, by))
+            if interactive:
+                self._inv_hits.append((cell, side, key))
+
+        rows = math.ceil(len(keys) / cols)
+        return (y + rows * (GRID_CELL + GRID_GAP) - GRID_GAP) - y0
+
     def draw(
         self,
         surface: pygame.Surface,
@@ -208,6 +336,8 @@ class BuildingInspectDialog:
         selected_villager_id: int | None = None,
         mouse_pos: tuple[int, int] | None = None,
         storage_amounts: dict[str, int] | None = None,
+        player_amounts: dict[str, int] | None = None,
+        player_inventory: Inventory | None = None,
         hired_count: int = 0,
     ) -> None:
         if not self.open or building is None or building.kind == BuildingKind.FIELD:
@@ -215,17 +345,12 @@ class BuildingInspectDialog:
         if building.id != self.building_id:
             return
 
+        transfer = self._has_transfer(building)
         storage_keys = building.depositable_keys()
         if storage_keys:
             amounts = storage_amounts or {
                 k: int(getattr(building, k, 0)) for k in storage_keys
             }
-            storage_lines = format_grouped_counts(
-                {k: int(amounts.get(k, 0)) for k in storage_keys},
-                skip_zero=True,
-            )
-            if not storage_lines:
-                storage_lines = ["(empty)"]
             stored_total = sum(int(amounts.get(k, 0)) for k in storage_keys)
             capacity_label = (
                 f"{stored_total}"
@@ -233,8 +358,21 @@ class BuildingInspectDialog:
                 else f"{building.stored_total}/{building.capacity}"
             )
         else:
-            storage_lines = ["—"]
+            amounts = {}
             capacity_label = "—"
+
+        if player_amounts is None and player_inventory is not None:
+            from resources import amounts_from_obj
+
+            player_amounts = amounts_from_obj(player_inventory)
+        player_amounts = player_amounts or {}
+
+        player_sub = "—"
+        if player_inventory is not None:
+            player_sub = (
+                f"{player_inventory.cargo_total}/{player_inventory.capacity}"
+                f"  seeds {player_inventory.seed_total}/{player_inventory.seed_capacity}"
+            )
 
         n_workers = max(1, len(workers))
         options_h = BTN_H + 8
@@ -242,6 +380,20 @@ class BuildingInspectDialog:
             options_h = BTN_H + 8
         elif building.supported_work_modes():
             options_h = BTN_H * 2 + 12
+
+        storage_items = len(self._present_keys(amounts, storage_keys or None))
+        player_items = len(self._present_keys(player_amounts, None))
+        if transfer:
+            grid_h = 18 + 16 + max(
+                self._grid_height(storage_items),
+                self._grid_height(player_items),
+                GRID_CELL,
+            ) + 22
+            self._panel_w = 520
+        else:
+            grid_h = 18 + 22 + 18 + 16 + self._grid_height(player_items) + 8
+            self._panel_w = 300
+
         body_h = (
             PAD
             + 18
@@ -250,10 +402,9 @@ class BuildingInspectDialog:
             + 18
             + n_workers * (ROW_H + 2)
             + SECTION_GAP
-            + 18
-            + len(storage_lines) * 16
-            + 24
+            + grid_h
             + PAD
+            + 8
         )
         self._panel_h = TITLE_BAR_H + body_h
         self._clamp_panel()
@@ -287,6 +438,7 @@ class BuildingInspectDialog:
 
         self._buttons = []
         self._worker_hits = []
+        self._inv_hits = []
         x = panel.x + PAD
         y = panel.y + TITLE_BAR_H + PAD
         inner_w = panel.w - PAD * 2
@@ -426,17 +578,57 @@ class BuildingInspectDialog:
                 y += ROW_H + 2
 
         y += SECTION_GAP
-        # --- Storage ---
-        surface.blit(self.font.render("Storage", True, COLOUR_TEXT), (x, y))
-        y += 18
-        surface.blit(
-            self.font_small.render(capacity_label, True, COLOUR_TEXT_DIM),
-            (x, y),
-        )
-        y += 16
-        for line in storage_lines:
-            text = line
-            while self.font_small.size(text)[0] > inner_w and len(text) > 4:
-                text = text[:-2] + "…"
-            surface.blit(self.font_small.render(text, True, COLOUR_TEXT), (x, y))
-            y += 16
+
+        # --- Dual inventory grids ---
+        if transfer:
+            col_w = (inner_w - INV_PANEL_GAP) // 2
+            left_h = self._draw_inv_grid(
+                surface,
+                origin=(x, y),
+                width=col_w,
+                title="Storage",
+                subtitle=capacity_label,
+                amounts=amounts,
+                allowed=storage_keys,
+                side="storage",
+                mouse_pos=mouse_pos,
+            )
+            right_h = self._draw_inv_grid(
+                surface,
+                origin=(x + col_w + INV_PANEL_GAP, y),
+                width=col_w,
+                title="Player",
+                subtitle=player_sub,
+                amounts=player_amounts,
+                allowed=None,
+                side="player",
+                mouse_pos=mouse_pos,
+            )
+            y += max(left_h, right_h)
+            tip = self.font_small.render(
+                "Click an item to move it to the other inventory.",
+                True,
+                COLOUR_TEXT_DIM,
+            )
+            surface.blit(tip, (x, y + 6))
+        else:
+            surface.blit(self.font.render("Storage", True, COLOUR_TEXT), (x, y))
+            y += 18
+            surface.blit(
+                self.font_small.render("No local storage", True, COLOUR_TEXT_DIM),
+                (x, y),
+            )
+            # Still show player pack for reference when attached via interact.
+            y += 22
+            self._draw_inv_grid(
+                surface,
+                origin=(x, y),
+                width=inner_w,
+                title="Player",
+                subtitle=player_sub,
+                amounts=player_amounts,
+                allowed=None,
+                side="player",
+                mouse_pos=mouse_pos,
+                interactive=False,
+            )
