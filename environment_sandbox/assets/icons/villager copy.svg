@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     viewBox="0 0 40 40"
+     width="400"
+     height="400">
+  <title>villager</title>
+  <desc>Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <g id="villager" inkscape:groupmode="layer" inkscape:label="villager">
+    <path id="body" class="body" d="M 10,20 C 10,14.477152502 14.477152502,10 20,10 C 25.522847498,10 30,14.477152502 30,20 C 30,25.522847498 25.522847498,30 20,30 C 14.477152502,30 10,25.522847498 10,20 Z" fill="#dc8c32" stroke="#281e0a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

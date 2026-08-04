@@ -197,7 +197,8 @@ class World:
             apply=lambda c: setattr(c, "terrain", TerrainType.WATER),
         )
         self._expand_terrain_patches(rng, TerrainType.WATER, passes=2, chance=0.55)
-        self._cull_isolated_terrain(TerrainType.WATER, min_neighbours=1)
+        self._cull_isolated_terrain(TerrainType.WATER, min_neighbours=2)
+        self._cull_small_patches(TerrainType.WATER, min_size=5)
 
         # Compact grey rock outcrops.
         def _paint_rock(cell: Cell) -> None:
@@ -212,7 +213,8 @@ class World:
             apply=_paint_rock,
         )
         self._expand_terrain_patches(rng, TerrainType.ROCK, passes=2, chance=0.5)
-        self._cull_isolated_terrain(TerrainType.ROCK, min_neighbours=1)
+        self._cull_isolated_terrain(TerrainType.ROCK, min_neighbours=2)
+        self._cull_small_patches(TerrainType.ROCK, min_size=4)
 
         # Larger forest clearings: soil patches, then dense tree cover on them.
         forest_centres: list[tuple[int, int]] = []
@@ -229,15 +231,21 @@ class World:
                     cell.terrain = TerrainType.SOIL
 
         # Grow soil under forests into coherent clearings; smooth grass/meadow/soil.
-        self._expand_terrain_patches(rng, TerrainType.SOIL, passes=2, chance=0.5)
-        self._expand_terrain_patches(rng, TerrainType.MEADOW, passes=1, chance=0.4)
-        self._expand_terrain_patches(rng, TerrainType.GRASS, passes=1, chance=0.45)
-        self._cull_isolated_terrain(TerrainType.SOIL, min_neighbours=1)
-        self._cull_isolated_terrain(TerrainType.MEADOW, min_neighbours=1)
-        self._cull_isolated_terrain(TerrainType.GRASS, min_neighbours=1)
+        self._expand_terrain_patches(rng, TerrainType.SOIL, passes=3, chance=0.55)
+        self._expand_terrain_patches(rng, TerrainType.MEADOW, passes=2, chance=0.5)
+        self._expand_terrain_patches(rng, TerrainType.GRASS, passes=2, chance=0.5)
+        self._cull_isolated_terrain(TerrainType.SOIL, min_neighbours=2)
+        self._cull_isolated_terrain(TerrainType.MEADOW, min_neighbours=2)
+        self._cull_isolated_terrain(TerrainType.GRASS, min_neighbours=2)
+        self._cull_small_patches(TerrainType.SOIL, min_size=4)
+        self._cull_small_patches(TerrainType.MEADOW, min_size=4)
+        self._cull_small_patches(TerrainType.GRASS, min_size=4)
+        self._cull_small_patches(TerrainType.ROCK, min_size=4)
 
         # Thin riparian strips on ~50% of land cells touching water.
         self._paint_riparian_strips(rng)
+        # Keep shoreline speckles; only remove fully isolated cells.
+        self._cull_isolated_terrain(TerrainType.RIPARIAN, min_neighbours=1)
 
         for cx, cy in forest_centres:
             for ny, nx in self.neighbourhood(cx, cy, radius=3):
@@ -530,7 +538,79 @@ class World:
                 if matching < min_neighbours:
                     to_clear.append((x, y))
         for x, y in to_clear:
-            self.cells[y][x].terrain = fallback
+            self.cells[y][x].terrain = self._majority_neighbour_terrain(
+                x, y, exclude=terrain, fallback=fallback
+            )
+
+    def _majority_neighbour_terrain(
+        self,
+        x: int,
+        y: int,
+        *,
+        exclude: TerrainType | None = None,
+        fallback: TerrainType,
+    ) -> TerrainType:
+        """Pick the most common cardinal-neighbour terrain (for island fill-in)."""
+        counts: dict[TerrainType, int] = {}
+        for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            nx, ny = x + dx, y + dy
+            if not self.in_bounds(nx, ny):
+                continue
+            t = self.cells[ny][nx].terrain
+            if exclude is not None and t == exclude:
+                continue
+            counts[t] = counts.get(t, 0) + 1
+        if not counts:
+            return fallback
+        return max(counts.items(), key=lambda kv: kv[1])[0]
+
+    def _cull_small_patches(self, terrain: TerrainType, *, min_size: int = 4) -> None:
+        """Absorb connected components of ``terrain`` smaller than ``min_size``."""
+        seen = [[False] * self.cols for _ in range(self.rows)]
+        for y in range(self.rows):
+            for x in range(self.cols):
+                if seen[y][x] or self.cells[y][x].terrain != terrain:
+                    continue
+                # Flood-fill component.
+                stack = [(x, y)]
+                seen[y][x] = True
+                patch: list[tuple[int, int]] = []
+                while stack:
+                    cx, cy = stack.pop()
+                    patch.append((cx, cy))
+                    for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                        nx, ny = cx + dx, cy + dy
+                        if not self.in_bounds(nx, ny) or seen[ny][nx]:
+                            continue
+                        if self.cells[ny][nx].terrain != terrain:
+                            continue
+                        seen[ny][nx] = True
+                        stack.append((nx, ny))
+                if len(patch) >= min_size:
+                    continue
+                patch_set = set(patch)
+                replacements: dict[tuple[int, int], TerrainType] = {}
+                fallback = (
+                    TerrainType.GRASS
+                    if terrain != TerrainType.GRASS
+                    else TerrainType.MEADOW
+                )
+                for px, py in patch:
+                    counts: dict[TerrainType, int] = {}
+                    for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                        nx, ny = px + dx, py + dy
+                        if not self.in_bounds(nx, ny) or (nx, ny) in patch_set:
+                            continue
+                        t = self.cells[ny][nx].terrain
+                        counts[t] = counts.get(t, 0) + 1
+                    if counts:
+                        replacements[(px, py)] = max(
+                            counts.items(), key=lambda kv: kv[1]
+                        )[0]
+                    else:
+                        replacements[(px, py)] = fallback
+                for (px, py), t in replacements.items():
+                    self.cells[py][px].terrain = t
 
     def reset(self) -> None:
         self._sprout_timer = NATURAL_SPROUT_INTERVAL

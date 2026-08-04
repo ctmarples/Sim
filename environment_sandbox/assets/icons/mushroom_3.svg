@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 40 40"
+   width="400"
+   height="400"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="mushroom_3.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1" />
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="0.69854405"
+     inkscape:cx="-79.450967"
+     inkscape:cy="254.81571"
+     inkscape:window-width="1470"
+     inkscape:window-height="835"
+     inkscape:window-x="0"
+     inkscape:window-y="33"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="mushroom" />
+  <title
+     id="title1">mushroom</title>
+  <desc
+     id="desc1">Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <g
+     id="mushroom"
+     inkscape:groupmode="layer"
+     inkscape:label="mushroom">
+    <path
+       id="cap"
+       class="cap"
+       d="m 28.315489,27.590899 c 0,-2.997195 2.397875,-5.426901 5.355803,-5.426901 2.957929,0 5.355803,2.429706 5.355803,5.426901 0,2.997194 -2.397874,5.4269 -5.355803,5.4269 -2.957928,0 -5.355803,-2.429706 -5.355803,-5.4269 z"
+       fill="#c8aa8c"
+       stroke="none"
+       style="stroke-width:0.898539" />
+    <path
+       id="stem"
+       class="stem"
+       d="m 33.036089,31.197473 h 3.570536 v 4.522417 h -3.570536 z"
+       fill="#d2c8b4"
+       stroke="none"
+       style="stroke-width:0.898539" />
+    <path
+       id="cap-4"
+       class="cap"
+       d="m 16.101508,23.882692 c 0,-2.260628 2.045366,-4.09323 4.568451,-4.09323 2.523086,0 4.568451,1.832602 4.568451,4.09323 0,2.260629 -2.045365,4.093231 -4.568451,4.093231 -2.523085,0 -4.568451,-1.832602 -4.568451,-4.093231 z"
+       fill="#c8aa8c"
+       stroke="none"
+       style="stroke-width:0.72072" />
+    <path
+       id="stem-6"
+       class="stem"
+       d="m 19.147142,26.212301 h 3.045634 v 3.411025 h -3.045634 z"
+       fill="#d2c8b4"
+       stroke="none"
+       style="stroke-width:0.72072" />
+    <path
+       id="cap-9"
+       class="cap"
+       d="m 25.037027,10.929221 c 0,-2.4189216 2.237644,-4.379846 4.997916,-4.379846 2.760272,0 4.997916,1.9609244 4.997916,4.379846 0,2.418922 -2.237644,4.379846 -4.997916,4.379846 -2.760272,0 -4.997916,-1.960924 -4.997916,-4.379846 z"
+       fill="#c8aa8c"
+       stroke="none"
+       style="stroke-width:0.779781" />
+    <path
+       id="stem-4"
+       class="stem"
+       d="m 28.249725,13.735451 h 3.331944 v 3.649872 h -3.331944 z"
+       fill="#d2c8b4"
+       stroke="none"
+       style="stroke-width:0.779781" />
+  </g>
+</svg>

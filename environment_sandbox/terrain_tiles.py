@@ -1,18 +1,12 @@
 """Soft-joined terrain tiling from PNG textures.
 
-Convention
-----------
-Each ``TerrainType`` has one or more pixel-art tiles in ``assets/terrain/``::
+Each cell blends with its east / south / south-east neighbours so habitat
+edges are gradual on both sides (no one-sided dark rim). Water shores stay
+sharp. Corner priority helpers remain for F6 diagnostics.
 
-    grass_1.png, grass_2.png, …
-    soil_1.png, meadow_1.png, water_1.png, rock_1.png, riparian_1.png
-
-Native tile size should match ``TERRAIN_SUBDIV`` (default 25×25), but any
-square PNG is accepted and scaled with nearest-neighbour (no blur). Variants
-are packed into a repeating sheet and sampled with world-space UVs.
-
-Land cells soft-blend with their east/south neighbours so habitat edges are
-gradual and seamless. Water shores stay sharp (thresholded field).
+Fills come from ``assets/terrain/{stem}_N.png``. PNGs are edge-crossfaded on
+load, then sampled with continuous world-space UVs so the texture period is
+the PNG size (not the cell size) — no per-cell grid/screen-door.
 """
 
 from __future__ import annotations
@@ -92,11 +86,8 @@ CASE_NAMES: dict[int, str] = {
 ATLAS_COLS = 4
 ATLAS_ROWS = 4
 
-# terrain -> list of TILE×TILE surfaces (RGB)
 _VARIANT_CACHE: dict[TerrainType, list[pygame.Surface]] = {}
 _VARIANT_MTIME: dict[TerrainType, tuple[int, ...]] = {}
-# (terrain, size) -> repeating sheet of scaled variants for world-space UV
-_SHEET_CACHE: dict[tuple[TerrainType, int], pygame.Surface] = {}
 
 
 def atlas_row_col(mask: int) -> tuple[int, int]:
@@ -143,7 +134,7 @@ def _lerp_colour(
 
 
 def _opaque_fill(terrain: TerrainType, lx: int, ly: int) -> tuple[int, int, int]:
-    """Fallback procedural fill when no PNG variants exist."""
+    """Procedural fallback when no PNG variants exist."""
     base = _COLOURS[terrain]
     n1 = (_hash01(lx, ly, 11 + terrain.value * 17) - 0.5) * 0.16
     n2 = (_hash01(lx * 2, ly * 3, 40 + terrain.value) - 0.5) * 0.09
@@ -191,6 +182,61 @@ def _variant_paths(terrain: TerrainType) -> list[Path]:
     return paths
 
 
+def _make_seamless(surf: pygame.Surface, blend: int | None = None) -> pygame.Surface:
+    """Crossfade opposite edges so the tile repeats without a hard seam.
+
+    Opposite edge pixels are forced equal (averaged), with a short ramp into
+    the interior so non-tileable art does not leave a dark grid when repeated.
+    """
+    w, h = surf.get_width(), surf.get_height()
+    if w < 2 or h < 2:
+        return surf
+    ramp = blend if blend is not None else max(2, min(w, h) // 5)
+    ramp = max(1, min(ramp, w // 2, h // 2))
+    src = [[surf.get_at((x, y))[:3] for x in range(w)] for y in range(h)]
+
+    def _mix(
+        a: tuple[int, int, int], b: tuple[int, int, int], t: float
+    ) -> tuple[int, int, int]:
+        return (
+            int(round(a[0] + (b[0] - a[0]) * t)),
+            int(round(a[1] + (b[1] - a[1]) * t)),
+            int(round(a[2] + (b[2] - a[2]) * t)),
+        )
+
+    def _wrap_axis(grid: list[list[tuple[int, int, int]]], horizontal: bool):
+        if horizontal:
+            for y in range(h):
+                for i in range(ramp):
+                    t = 1.0 - i / ramp  # 1 at outer edge → 0 at ramp
+                    left = grid[y][i]
+                    right = grid[y][w - 1 - i]
+                    mid = _mix(left, right, 0.5)
+                    grid[y][i] = _mix(left, mid, t)
+                    grid[y][w - 1 - i] = _mix(right, mid, t)
+        else:
+            for x in range(w):
+                for i in range(ramp):
+                    t = 1.0 - i / ramp
+                    top = grid[i][x]
+                    bot = grid[h - 1 - i][x]
+                    mid = _mix(top, bot, 0.5)
+                    grid[i][x] = _mix(top, mid, t)
+                    grid[h - 1 - i][x] = _mix(bot, mid, t)
+
+    # Horizontal then vertical; repeat once so corners stay consistent.
+    _wrap_axis(src, True)
+    _wrap_axis(src, False)
+    _wrap_axis(src, True)
+    _wrap_axis(src, False)
+
+    out = pygame.Surface((w, h))
+    for y in range(h):
+        for x in range(w):
+            out.set_at((x, y), src[y][x])
+    return out
+
+
 def _load_variants(terrain: TerrainType) -> list[pygame.Surface]:
     """Load / refresh PNG variants for ``terrain`` (scaled to TILE×TILE)."""
     paths = _variant_paths(terrain)
@@ -203,7 +249,7 @@ def _load_variants(terrain: TerrainType) -> list[pygame.Surface]:
         raw = pygame.image.load(str(path)).convert()
         if raw.get_width() != TILE or raw.get_height() != TILE:
             raw = pygame.transform.scale(raw, (TILE, TILE))
-        surfs.append(raw)
+        surfs.append(_make_seamless(raw))
     _VARIANT_CACHE[terrain] = surfs
     _VARIANT_MTIME[terrain] = mtimes
     return surfs
@@ -212,9 +258,9 @@ def _load_variants(terrain: TerrainType) -> list[pygame.Surface]:
 def clear_texture_cache() -> None:
     _VARIANT_CACHE.clear()
     _VARIANT_MTIME.clear()
-    _SHEET_CACHE.clear()
     _COVERAGE_CACHE.clear()
     _SOFT_COVERAGE_CACHE.clear()
+    _WORLD_FILL_CACHE.clear()
     global _ATLAS
     _ATLAS = None
 
@@ -224,7 +270,6 @@ def variant_count(terrain: TerrainType) -> int:
 
 
 def cell_variant_roll(cell_x: int, cell_y: int) -> int:
-    """Stable per-cell roll shared by all terrain textures on that cell."""
     return int(_hash01(cell_x, cell_y, 200) * 9973) % 9973
 
 
@@ -235,82 +280,92 @@ def variant_index(terrain: TerrainType, cell_x: int, cell_y: int) -> int:
     return cell_variant_roll(cell_x, cell_y) % n
 
 
-def _variant_key(cell_x: int, cell_y: int) -> tuple[int, ...]:
-    """Compact cache discriminator: one index per terrain type."""
-    return tuple(variant_index(t, cell_x, cell_y) for t in _PRIORITY)
+def _fill_tile(
+    terrain: TerrainType,
+    *,
+    variant: int = 0,
+) -> pygame.Surface:
+    """TILE×TILE seamless fill (variant 0 by default)."""
+    return _terrain_tile_surface(terrain, variant=variant)
 
 
-def sample_terrain(
+def sample_world(
+    terrain: TerrainType,
+    wx: int,
+    wy: int,
+    *,
+    variant: int = 0,
+) -> tuple[int, int, int]:
+    """Colour at continuous world pixel (seamless PNG or procedural)."""
+    variants = _load_variants(terrain)
+    if not variants:
+        return _opaque_fill(terrain, wx, wy)
+    surf = variants[variant % len(variants)]
+    tw, th = surf.get_width(), surf.get_height()
+    return surf.get_at((wx % tw, wy % th))[:3]
+
+
+def sample_fill(
     terrain: TerrainType,
     lx: int,
     ly: int,
     *,
     cell_x: int = 0,
     cell_y: int = 0,
+    variant: int | None = None,
+    cell_size: int | None = None,
 ) -> tuple[int, int, int]:
-    """Colour at local tile pixel using world-space UV into the variant sheet."""
-    sheet = _terrain_sheet(terrain, TILE)
-    sw, sh = sheet.get_width(), sheet.get_height()
-    wx = cell_x * TILE + lx
-    wy = cell_y * TILE + ly
-    return sheet.get_at((wx % sw, wy % sh))[:3]
+    """Colour at local cell pixel using world-space UV (no per-cell restart)."""
+    size = TILE if cell_size is None else cell_size
+    v = 0 if variant is None else variant
+    return sample_world(terrain, cell_x * size + lx, cell_y * size + ly, variant=v)
 
 
-def _procedural_tile(terrain: TerrainType) -> pygame.Surface:
-    surf = pygame.Surface((TILE, TILE))
-    for ly in range(TILE):
-        for lx in range(TILE):
-            surf.set_at((lx, ly), _opaque_fill(terrain, lx, ly))
-    return surf
+_WORLD_FILL_CACHE: dict[tuple, pygame.Surface] = {}
 
 
-def _terrain_sheet(terrain: TerrainType, size: int) -> pygame.Surface:
-    """World-UV sheet for ``terrain`` at cell ``size`` (nearest-neighbour, crisp).
+def world_fill_surface(
+    terrain: TerrainType,
+    cell_x: int,
+    cell_y: int,
+    size: int,
+    *,
+    variant: int = 0,
+) -> pygame.Surface:
+    """``size``×``size`` fill sampled with world UV so adjacent cells continue."""
+    variants = _load_variants(terrain)
+    if not variants:
+        key = (terrain, cell_x, cell_y, size, "proc")
+        hit = _WORLD_FILL_CACHE.get(key)
+        if hit is not None:
+            return hit
+        surf = pygame.Surface((size, size))
+        for ly in range(size):
+            for lx in range(size):
+                surf.set_at(
+                    (lx, ly),
+                    _opaque_fill(terrain, cell_x * size + lx, cell_y * size + ly),
+                )
+        _WORLD_FILL_CACHE[key] = surf
+        return surf
 
-    Variants are packed in a grid and sampled with world-space UVs so neighbouring
-    cells join without bilinear blur.
-    """
-    key = (terrain, size)
-    hit = _SHEET_CACHE.get(key)
+    tex = variants[variant % len(variants)]
+    tw, th = tex.get_width(), tex.get_height()
+    ox = (cell_x * size) % tw
+    oy = (cell_y * size) % th
+    key = (terrain, variant, ox, oy, size, tw, th)
+    hit = _WORLD_FILL_CACHE.get(key)
     if hit is not None:
         return hit
-    natives = _load_variants(terrain)
-    if not natives:
-        natives = [_procedural_tile(terrain)]
-    scaled = [
-        n if (n.get_width() == size and n.get_height() == size)
-        else pygame.transform.scale(n, (size, size))
-        for n in natives
-    ]
-    n = len(scaled)
-    cols = max(1, int(n**0.5 + 0.5))
-    rows = (n + cols - 1) // cols
-    sheet = pygame.Surface((cols * size, rows * size))
-    for i, surf in enumerate(scaled):
-        sheet.blit(surf, ((i % cols) * size, (i // cols) * size))
-    _SHEET_CACHE[key] = sheet
-    return sheet
 
-
-def _cell_texture(terrain: TerrainType, cell_x: int, cell_y: int, size: int) -> pygame.Surface:
-    """``size``×``size`` window from the world-UV sheet for this cell."""
-    sheet = _terrain_sheet(terrain, size)
-    sw, sh = sheet.get_width(), sheet.get_height()
-    out = pygame.Surface((size, size))
-    ox = (cell_x * size) % sw
-    oy = (cell_y * size) % sh
-    if ox + size <= sw and oy + size <= sh:
-        out.blit(sheet, (0, 0), pygame.Rect(ox, oy, size, size))
-        return out
-    # Wrap across sheet edges (end of variant period).
-    for dy in range(size):
-        sy = (oy + dy) % sh
-        if ox + size <= sw:
-            out.blit(sheet, (0, dy), pygame.Rect(ox, sy, size, 1))
-        else:
-            first = sw - ox
-            out.blit(sheet, (0, dy), pygame.Rect(ox, sy, first, 1))
-            out.blit(sheet, (first, dy), pygame.Rect(0, sy, size - first, 1))
+    pad_w = size + tw
+    pad_h = size + th
+    pad = pygame.Surface((pad_w, pad_h))
+    for yy in range(0, pad_h, th):
+        for xx in range(0, pad_w, tw):
+            pad.blit(tex, (xx, yy))
+    out = pad.subsurface((ox, oy, size, size)).convert()
+    _WORLD_FILL_CACHE[key] = out
     return out
 
 
@@ -362,7 +417,11 @@ def resolve_corner_type(
 def corner_type_at(
     terrain_at: Callable[[int, int], TerrainType], vx: int, vy: int
 ) -> TerrainType:
-    """Shared vertex (vx, vy): highest-priority terrain among the 2×2 cells."""
+    """Shared vertex (vx, vy): highest-priority terrain among the 2×2 cells.
+
+    Priority WATER > ROCK > SOIL > RIPARIAN > MEADOW > GRASS (no colour averaging).
+    Adjacent cells read the same vertex, so shared edges cannot disagree.
+    """
     types = (
         terrain_at(vx - 1, vy - 1),
         terrain_at(vx, vy - 1),
@@ -424,7 +483,7 @@ _SOFT_COVERAGE_CACHE: dict[tuple[int, int], pygame.Surface] = {}
 
 
 def _fg_coverage_mask(mask: int, size: int | None = None) -> pygame.Surface:
-    """Hard (binary) MS coverage — used for water edges."""
+    """Hard (binary) MS coverage — water edges."""
     size = TILE if size is None else size
     mask = mask & 15
     key = (mask, size)
@@ -440,9 +499,8 @@ def _fg_coverage_mask(mask: int, size: int | None = None) -> pygame.Surface:
         surf.fill((255, 255, 255, 255))
         _COVERAGE_CACHE[key] = surf
         return surf
-    denom = max(1, size - 1)
     for poly in _unit_polygons(mask):
-        pts = [(int(round(x * denom)), int(round(y * denom))) for x, y in poly]
+        pts = [(int(round(x * (size - 1))), int(round(y * (size - 1)))) for x, y in poly]
         if len(pts) >= 3:
             pygame.draw.polygon(surf, (255, 255, 255, 255), pts)
     _COVERAGE_CACHE[key] = surf
@@ -450,7 +508,7 @@ def _fg_coverage_mask(mask: int, size: int | None = None) -> pygame.Surface:
 
 
 def _fg_soft_coverage_mask(mask: int, size: int | None = None) -> pygame.Surface:
-    """Soft bilinear MS coverage — land↔land autotile joins."""
+    """Soft bilinear MS coverage — land↔land."""
     size = TILE if size is None else size
     mask = mask & 15
     key = (mask, size)
@@ -485,49 +543,99 @@ def _fg_soft_coverage_mask(mask: int, size: int | None = None) -> pygame.Surface
     return surf
 
 
-def _sheet_colour(terrain: TerrainType, wx: int, wy: int, size: int) -> tuple[int, int, int]:
-    """Sample terrain sheet at world pixel coordinates."""
-    sheet = _terrain_sheet(terrain, size)
-    sw, sh = sheet.get_width(), sheet.get_height()
-    return sheet.get_at((wx % sw, wy % sh))[:3]
+def _stamp_terrain(
+    dest: pygame.Surface,
+    texture: pygame.Surface,
+    coverage: pygame.Surface,
+) -> None:
+    stamped = pygame.Surface(dest.get_size(), pygame.SRCALPHA)
+    stamped.blit(texture.convert_alpha(), (0, 0))
+    stamped.blit(coverage, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+    dest.blit(stamped, (0, 0))
 
 
-def _mix_rgb(
-    colours: list[tuple[int, int, int]], weights: list[float]
-) -> tuple[int, int, int]:
-    total = sum(weights)
-    if total <= 1e-6:
-        return colours[0]
-    r = g = b = 0.0
-    inv = 1.0 / total
-    for (cr, cg, cb), w in zip(colours, weights):
-        w *= inv
-        r += cr * w
-        g += cg * w
-        b += cb * w
-    return (int(r), int(g), int(b))
+def _terrain_tile_surface(
+    terrain: TerrainType,
+    *,
+    cell_x: int = 0,
+    cell_y: int = 0,
+    variant: int | None = None,
+) -> pygame.Surface:
+    """TILE×TILE fill surface for MS composition."""
+    variants = _load_variants(terrain)
+    if variants:
+        idx = variant_index(terrain, cell_x, cell_y) if variant is None else variant
+        return variants[idx % len(variants)]
+    surf = pygame.Surface((TILE, TILE))
+    for ly in range(TILE):
+        for lx in range(TILE):
+            surf.set_at((lx, ly), _opaque_fill(terrain, lx, ly))
+    return surf
 
 
-def _water_field(
-    t00: TerrainType,
-    t10: TerrainType,
-    t01: TerrainType,
-    t11: TerrainType,
-    u: float,
-    v: float,
-) -> float:
-    """Bilinear water coverage from the four cells around a point (0..1)."""
-    return _bilinear(
-        1.0 if t00 == TerrainType.WATER else 0.0,
-        1.0 if t10 == TerrainType.WATER else 0.0,
-        1.0 if t11 == TerrainType.WATER else 0.0,
-        1.0 if t01 == TerrainType.WATER else 0.0,
-        u,
-        v,
-    )
+def build_tile_from_corners(
+    tl: TerrainType,
+    tr: TerrainType,
+    br: TerrainType,
+    bl: TerrainType,
+    *,
+    cell_x: int = 0,
+    cell_y: int = 0,
+    join_variant: bool = False,
+) -> tuple[pygame.Surface, pygame.Surface, int, TerrainType, TerrainType]:
+    """MS composition from four shared corners.
+
+    Land↔land transitions are gradual (soft bilinear coverage).
+    Water↔other stays sharp. Fills from PNG variants (or procedural fallback).
+
+    When ``join_variant`` is True (transition tiles), always use variant 0 so
+    neighbouring transition cells share the same fill textures.
+    """
+    corners = (tl, tr, br, bl)
+    present: list[TerrainType] = []
+    for p in _PRIORITY:
+        if p in corners and p not in present:
+            present.append(p)
+    for t in corners:
+        if t not in present:
+            present.append(t)
+
+    bg = present[0]
+    v = 0 if join_variant else None
+    water = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
+    water.fill((0, 0, 0, 0))
+
+    rgb = _terrain_tile_surface(bg, cell_x=cell_x, cell_y=cell_y, variant=v).convert()
+    if bg == TerrainType.WATER:
+        water.fill((255, 255, 255, 255))
+
+    primary_mask = 15 if len(present) == 1 else 0
+    primary_fg = bg
+
+    for fg in present[1:]:
+        mask = mask_for_corners(tl, tr, br, bl, fg)
+        if mask == 0:
+            continue
+        sharp = fg == TerrainType.WATER or bg == TerrainType.WATER
+        coverage = (
+            _fg_coverage_mask(mask) if sharp else _fg_soft_coverage_mask(mask)
+        )
+        tex = _terrain_tile_surface(fg, cell_x=cell_x, cell_y=cell_y, variant=v)
+        _stamp_terrain(rgb, tex, coverage)
+        if fg == TerrainType.WATER:
+            water.blit(coverage, (0, 0))
+        elif bg == TerrainType.WATER:
+            inv = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
+            inv.fill((255, 255, 255, 255))
+            inv.blit(coverage, (0, 0), special_flags=pygame.BLEND_RGBA_SUB)
+            water.blit(inv, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        primary_mask = mask
+        primary_fg = fg
+
+    return rgb, water, primary_mask, primary_fg, bg
 
 
-def build_soft_tile(
+def build_soft_neighbour_tile(
     t00: TerrainType,
     t10: TerrainType,
     t01: TerrainType,
@@ -537,53 +645,93 @@ def build_soft_tile(
     cell_y: int = 0,
     size: int | None = None,
 ) -> tuple[pygame.Surface, pygame.Surface, int, TerrainType, TerrainType]:
-    """Continuous soft land join for one cell using PNG world-UV sampling.
+    """Continuous soft land join using this cell + E/S/SE neighbours.
 
-    ``t00`` is this cell, ``t10`` east, ``t01`` south, ``t11`` south-east.
-    Land colours bilinear-blend across the shared edges with neighbours so
-    joins are seamless. Water stays sharp (thresholded field).
+    Both sides of a shared edge blend the same way, so there is no dark MS rim.
+    Water stays sharp (thresholded bilinear field). Fills use world-space UV.
     """
-    size = TILE if size is None else size
-    water = pygame.Surface((size, size), pygame.SRCALPHA)
-    water.fill((0, 0, 0, 0))
+    size = CELL_SIZE if size is None else size
     corners = (t00, t10, t11, t01)
-
-    # Fast path: four cells agree → solid texture window.
-    if t00 == t10 == t01 == t11:
-        rgb = _cell_texture(t00, cell_x, cell_y, size).convert()
-        if t00 == TerrainType.WATER:
-            water.fill((255, 255, 255, 255))
-        return rgb, water, 15, t00, t00
-
     present: list[TerrainType] = []
     for p in _PRIORITY:
         if p in corners and p not in present:
             present.append(p)
     bg = present[0]
     fg = present[-1]
-    mask = mask_for_corners(
-        # Approximate MS mask from cell-centre domination for diagnostics.
-        t00, t10, t11, t01, fg
-    )
+    mask = mask_for_corners(t00, t10, t11, t01, fg)
 
+    water = pygame.Surface((size, size), pygame.SRCALPHA)
+    water.fill((0, 0, 0, 0))
+
+    if t00 == t10 == t01 == t11:
+        rgb = world_fill_surface(t00, cell_x, cell_y, size).convert()
+        if t00 == TerrainType.WATER:
+            water.fill((255, 255, 255, 255))
+        return rgb, water, 15, t00, t00
+
+    land_types = [t for t in present if t != TerrainType.WATER]
+    has_water = TerrainType.WATER in present
+    if not has_water and len(land_types) <= 2:
+        rgb = world_fill_surface(bg, cell_x, cell_y, size).convert()
+        for terr in land_types[1:]:
+            m = mask_for_corners(t00, t10, t11, t01, terr)
+            if m == 0:
+                continue
+            _stamp_terrain(
+                rgb,
+                world_fill_surface(terr, cell_x, cell_y, size),
+                _fg_soft_coverage_mask(m, size),
+            )
+        return rgb, water, mask, fg, bg
+
+    if has_water and len(land_types) == 1:
+        land = land_types[0]
+        rgb = world_fill_surface(land, cell_x, cell_y, size).convert()
+        wmask = mask_for_corners(t00, t10, t11, t01, TerrainType.WATER)
+        if wmask:
+            cov = _fg_coverage_mask(wmask, size)
+            _stamp_terrain(
+                rgb, world_fill_surface(TerrainType.WATER, cell_x, cell_y, size), cov
+            )
+            water.blit(cov, (0, 0))
+        return rgb, water, mask, fg, bg
+
+    # General path (3+ types): per-pixel blend with world UV.
     rgb = pygame.Surface((size, size))
     denom = max(1, size)
     for ly in range(size):
-        # Sample at pixel centres in cell-local [0,1).
         v = (ly + 0.5) / denom
-        wy = cell_y * size + ly
         for lx in range(size):
             u = (lx + 0.5) / denom
-            wx = cell_x * size + lx
-            wfield = _water_field(t00, t10, t01, t11, u, v)
+            wfield = _bilinear(
+                1.0 if t00 == TerrainType.WATER else 0.0,
+                1.0 if t10 == TerrainType.WATER else 0.0,
+                1.0 if t11 == TerrainType.WATER else 0.0,
+                1.0 if t01 == TerrainType.WATER else 0.0,
+                u,
+                v,
+            )
             if wfield >= 0.5:
-                rgb.set_at((lx, ly), _sheet_colour(TerrainType.WATER, wx, wy, size))
-                a = 255 if wfield >= 0.55 else int(round(_smoothstep((wfield - 0.45) / 0.2) * 255))
+                rgb.set_at(
+                    (lx, ly),
+                    sample_fill(
+                        TerrainType.WATER,
+                        lx,
+                        ly,
+                        cell_x=cell_x,
+                        cell_y=cell_y,
+                        variant=0,
+                        cell_size=size,
+                    ),
+                )
+                a = (
+                    255
+                    if wfield >= 0.55
+                    else int(round(_smoothstep((wfield - 0.45) / 0.2) * 255))
+                )
                 water.set_at((lx, ly), (255, 255, 255, a))
                 continue
 
-            # Soft land: bilinear blend of the four neighbouring cells' textures.
-            # Replace water samples with a land neighbour so shores stay sharp.
             cells = (
                 (t00, (1.0 - u) * (1.0 - v)),
                 (t10, u * (1.0 - v)),
@@ -596,15 +744,36 @@ def build_soft_tile(
                 if w <= 0.0001:
                     continue
                 if terr == TerrainType.WATER:
-                    # Pull land from the highest-weight non-water cell.
                     land = next(
-                        (t for t, _ in sorted(cells, key=lambda kv: -kv[1]) if t != TerrainType.WATER),
+                        (
+                            t
+                            for t, _ in sorted(cells, key=lambda kv: -kv[1])
+                            if t != TerrainType.WATER
+                        ),
                         bg if bg != TerrainType.WATER else TerrainType.GRASS,
                     )
                     terr = land
-                colours.append(_sheet_colour(terr, wx, wy, size))
+                colours.append(
+                    sample_fill(
+                        terr,
+                        lx,
+                        ly,
+                        cell_x=cell_x,
+                        cell_y=cell_y,
+                        variant=0,
+                        cell_size=size,
+                    )
+                )
                 weights.append(w)
-            rgb.set_at((lx, ly), _mix_rgb(colours, weights))
+            total = sum(weights) or 1.0
+            r = g = b = 0.0
+            inv = 1.0 / total
+            for (cr, cg, cb), w in zip(colours, weights):
+                w *= inv
+                r += cr * w
+                g += cg * w
+                b += cb * w
+            rgb.set_at((lx, ly), (int(r), int(g), int(b)))
 
     return rgb, water, mask, fg, bg
 
@@ -625,14 +794,9 @@ class TerrainAtlas:
         self._cell_size = size
         self._tile_res = TILE
         self._cache.clear()
+        # Touch PNG cache so seamless variants are ready.
         for terrain in TerrainType:
-            _terrain_sheet(terrain, TILE)
-            if size != TILE:
-                _terrain_sheet(terrain, size)
-
-    def _uv_period(self, size: int) -> tuple[int, int]:
-        sheet = _terrain_sheet(TerrainType.GRASS, size)
-        return max(1, sheet.get_width() // size), max(1, sheet.get_height() // size)
+            _load_variants(terrain)
 
     def tile_for_neighbourhood(
         self,
@@ -643,42 +807,36 @@ class TerrainAtlas:
         *,
         cell_x: int = 0,
         cell_y: int = 0,
+        force_join_variant: bool = False,
     ) -> tuple[pygame.Surface, pygame.Surface, int, TerrainType, TerrainType]:
+        del force_join_variant
         self.ensure()
         size = self._cell_size
-        px, py = self._uv_period(TILE)
-        ux, uy = cell_x % px, cell_y % py
-        key = (t00, t10, t01, t11, ux, uy, size)
-        hit = self._cache.get(key)
-        if hit is not None:
-            return hit
+        # Phase so soft-join cache stays correct under world UV.
+        variants = _load_variants(t00)
+        tw = variants[0].get_width() if variants else TILE
+        th = variants[0].get_height() if variants else TILE
+        ox = (cell_x * size) % tw
+        oy = (cell_y * size) % th
 
-        # Uniform: direct display-size window (crisp, no soft work).
         if t00 == t10 == t01 == t11:
-            rgb = _cell_texture(t00, ux, uy, size).convert()
+            rgb = world_fill_surface(t00, cell_x, cell_y, size)
             water = pygame.Surface((size, size), pygame.SRCALPHA)
             water.fill((0, 0, 0, 0))
             if t00 == TerrainType.WATER:
                 water.fill((255, 255, 255, 255))
-            out = (rgb, water, 15, t00, t00)
-            self._cache[key] = out
-            return out
+            return rgb, water, 15, t00, t00
 
-        # Transition: soft-blend at native TILE, then nearest-neighbour scale up.
-        n_rgb, n_w, mask, fg, bg = build_soft_tile(
-            t00, t10, t01, t11, cell_x=ux, cell_y=uy, size=TILE
-        )
-        out = (
-            pygame.transform.scale(n_rgb, (size, size)),
-            pygame.transform.scale(n_w, (size, size)),
-            mask,
-            fg,
-            bg,
+        key = (t00, t10, t01, t11, ox, oy, size)
+        hit = self._cache.get(key)
+        if hit is not None:
+            return hit
+        out = build_soft_neighbour_tile(
+            t00, t10, t01, t11, cell_x=cell_x, cell_y=cell_y, size=size
         )
         self._cache[key] = out
         return out
 
-    # Back-compat alias used by diagnostics.
     def tile_for_corners(
         self,
         tl: TerrainType,
@@ -689,8 +847,7 @@ class TerrainAtlas:
         cell_x: int = 0,
         cell_y: int = 0,
     ) -> tuple[pygame.Surface, pygame.Surface, int, TerrainType, TerrainType]:
-        # Map shared-corner MS args onto the four cells of this neighbourhood.
-        # tl/tr/br/bl are corner types, not cell types — keep soft path via cells.
+        """F6 / diagnostics: MS corner args mapped onto a soft neighbourhood."""
         return self.tile_for_neighbourhood(
             tl, tr, bl, br, cell_x=cell_x, cell_y=cell_y
         )
@@ -722,13 +879,29 @@ def cell_corners(
 def cell_neighbourhood(
     terrain_at: Callable[[int, int], TerrainType], x: int, y: int
 ) -> tuple[TerrainType, TerrainType, TerrainType, TerrainType]:
-    """This cell + east + south + south-east (for continuous soft joins)."""
+    """This cell + east + south + south-east."""
     return (
         terrain_at(x, y),
         terrain_at(x + 1, y),
         terrain_at(x, y + 1),
         terrain_at(x + 1, y + 1),
     )
+
+
+def _cell_on_boundary(
+    terrain_at: Callable[[int, int], TerrainType],
+    x: int,
+    y: int,
+    terrain: TerrainType,
+) -> bool:
+    """True when any 8-neighbour differs — lock fill to variant 0 for seamless joins."""
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dx == 0 and dy == 0:
+                continue
+            if terrain_at(x + dx, y + dy) != terrain:
+                return True
+    return False
 
 
 def paint_cell(
@@ -740,13 +913,16 @@ def paint_cell(
     terrain_at: Callable[[int, int], TerrainType],
     cell_size: int | None = None,
 ) -> tuple[int, TerrainType, TerrainType, tuple[TerrainType, TerrainType, TerrainType, TerrainType]]:
-    """Blit soft-joined tile. Returns (mask, fg, bg, neighbourhood) for diagnostics."""
+    """Blit soft-joined tile. Returns (mask, fg, bg, neighbourhood)."""
     size = CELL_SIZE if cell_size is None else cell_size
     atlas = get_atlas()
     atlas.ensure(size)
     neigh = cell_neighbourhood(terrain_at, x, y)
+    on_boundary = neigh[0] == neigh[1] == neigh[2] == neigh[3] and _cell_on_boundary(
+        terrain_at, x, y, neigh[0]
+    )
     rgb, wmask, mask, fg, bg = atlas.tile_for_neighbourhood(
-        *neigh, cell_x=x, cell_y=y
+        *neigh, cell_x=x, cell_y=y, force_join_variant=on_boundary
     )
     dest = (x * size, y * size)
     layer.fill(_COLOURS[bg], pygame.Rect(dest[0], dest[1], size, size))
@@ -759,12 +935,12 @@ def paint_cell(
 def describe_system() -> str:
     counts = {t.name: variant_count(t) for t in TerrainType}
     return (
-        "convention=soft bilinear land joins + PNG world-UV in assets/terrain/\n"
+        "convention=soft E/S neighbour joins + PNG fills in assets/terrain/\n"
         f"variants: {counts}\n"
-        "files: {stem}_1.png, {stem}_2.png, … (or {stem}.png)\n"
-        "joins: each cell blends with E/S/SE neighbours (seamless edges)\n"
+        "joins: each cell blends with east/south/SE (no one-sided MS rim)\n"
         "water: sharp thresholded shore; land: gradual colour mix\n"
-        "uv: world-space into variant sheet (nearest-neighbour, no blur)\n"
+        "fills: seamless PNG world-UV (period=texture size, not cell)\n"
+        "corners (F6): shared vertex grid WATER>ROCK>SOIL>RIPARIAN>MEADOW>GRASS\n"
     )
 
 
@@ -775,8 +951,6 @@ def verify_shared_edges(
 ) -> tuple[bool, bool]:
     """Check east/west and south/north corner agreement with neighbours."""
     tl, tr, br, bl = cell_corners(terrain_at, x, y)
-    east_ok = True
-    south_ok = True
     etl, etr, ebr, ebl = cell_corners(terrain_at, x + 1, y)
     east_ok = tr == etl and br == ebl
     stl, str_, sbr, sbl = cell_corners(terrain_at, x, y + 1)

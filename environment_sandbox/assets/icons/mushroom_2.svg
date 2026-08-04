@@ -5,7 +5,7 @@
    height="400"
    version="1.1"
    id="svg1"
-   sodipodi:docname="mushroom.svg"
+   sodipodi:docname="mushroom_2.svg"
    inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
@@ -23,7 +23,7 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      inkscape:zoom="0.69854405"
-     inkscape:cx="-73.724771"
+     inkscape:cx="-79.450967"
      inkscape:cy="254.81571"
      inkscape:window-width="1470"
      inkscape:window-height="835"
@@ -40,16 +40,32 @@
      inkscape:groupmode="layer"
      inkscape:label="mushroom">
     <path
-       id="cap-9"
+       id="cap"
        class="cap"
-       d="m 24.034943,10.545206 c 0,-3.3137075 2.686292,-5.9999995 6,-5.9999995 3.313708,0 6,2.686292 6,5.9999995 0,3.313708 -2.686292,6 -6,6 -3.313708,0 -6,-2.686292 -6,-6 z"
+       d="m 12.997916,9.982846 c 0,-2.9971944 2.397874,-5.4269005 5.355802,-5.4269005 2.957929,0 5.355803,2.4297061 5.355803,5.4269005 0,2.997194 -2.397874,5.4269 -5.355803,5.4269 -2.957928,0 -5.355802,-2.429706 -5.355802,-5.4269 z"
        fill="#c8aa8c"
-       stroke="none" />
+       stroke="none"
+       style="stroke-width:0.898539" />
     <path
-       id="stem-4"
+       id="stem"
        class="stem"
-       d="m 27.891788,14.389492 h 4 v 5 h -4 z"
+       d="m 17.718515,13.58942 h 3.570536 v 4.522417 h -3.570536 z"
        fill="#d2c8b4"
-       stroke="none" />
+       stroke="none"
+       style="stroke-width:0.898539" />
+    <path
+       id="cap-4"
+       class="cap"
+       d="m 24.547647,25.027931 c 0,-2.260628 2.045366,-4.09323 4.568451,-4.09323 2.523085,0 4.56845,1.832602 4.56845,4.09323 0,2.260629 -2.045365,4.093231 -4.56845,4.093231 -2.523085,0 -4.568451,-1.832602 -4.568451,-4.093231 z"
+       fill="#c8aa8c"
+       stroke="none"
+       style="stroke-width:0.72072" />
+    <path
+       id="stem-6"
+       class="stem"
+       d="m 27.593281,27.35754 h 3.045634 v 3.411025 h -3.045634 z"
+       fill="#d2c8b4"
+       stroke="none"
+       style="stroke-width:0.72072" />
   </g>
 </svg>

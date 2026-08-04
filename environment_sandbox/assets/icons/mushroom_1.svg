@@ -23,7 +23,7 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      inkscape:zoom="0.69854405"
-     inkscape:cx="-73.724771"
+     inkscape:cx="-79.450967"
      inkscape:cy="254.81571"
      inkscape:window-width="1470"
      inkscape:window-height="835"
@@ -40,6 +40,34 @@
      inkscape:groupmode="layer"
      inkscape:label="mushroom">
     <path
+       id="cap"
+       class="cap"
+       d="m 7.8443395,12.702789 c 0,-2.9971944 2.3978745,-5.4269005 5.3558025,-5.4269005 2.957929,0 5.355803,2.4297061 5.355803,5.4269005 0,2.997194 -2.397874,5.4269 -5.355803,5.4269 -2.957928,0 -5.3558025,-2.429706 -5.3558025,-5.4269 z"
+       fill="#c8aa8c"
+       stroke="none"
+       style="stroke-width:0.898539" />
+    <path
+       id="stem"
+       class="stem"
+       d="m 12.564939,16.309363 h 3.570536 v 4.522417 h -3.570536 z"
+       fill="#d2c8b4"
+       stroke="none"
+       style="stroke-width:0.898539" />
+    <path
+       id="cap-4"
+       class="cap"
+       d="m 3.2175677,30.897282 c 0,-2.260628 2.0453656,-4.09323 4.568451,-4.09323 2.5230853,0 4.5684503,1.832602 4.5684503,4.09323 0,2.260629 -2.045365,4.093231 -4.5684503,4.093231 -2.5230854,0 -4.568451,-1.832602 -4.568451,-4.093231 z"
+       fill="#c8aa8c"
+       stroke="none"
+       style="stroke-width:0.72072" />
+    <path
+       id="stem-6"
+       class="stem"
+       d="m 6.2632017,33.226891 h 3.045634 v 3.411025 h -3.045634 z"
+       fill="#d2c8b4"
+       stroke="none"
+       style="stroke-width:0.72072" />
+    <path
        id="cap-9"
        class="cap"
        d="m 24.034943,10.545206 c 0,-3.3137075 2.686292,-5.9999995 6,-5.9999995 3.313708,0 6,2.686292 6,5.9999995 0,3.313708 -2.686292,6 -6,6 -3.313708,0 -6,-2.686292 -6,-6 z"
@@ -49,6 +77,19 @@
        id="stem-4"
        class="stem"
        d="m 27.891788,14.389492 h 4 v 5 h -4 z"
+       fill="#d2c8b4"
+       stroke="none" />
+    <path
+       id="cap-8"
+       class="cap"
+       d="m 26.223212,30.982756 c 0,-1.890587 2.686292,-3.423212 6,-3.423212 3.313708,0 6,1.532625 6,3.423212 0,1.890588 -2.686292,3.423212 -6,3.423212 -3.313708,0 -6,-1.532624 -6,-3.423212 z"
+       fill="#c8aa8c"
+       stroke="none"
+       style="stroke-width:0.755338" />
+    <path
+       id="stem-3"
+       class="stem"
+       d="m 29.936902,33.538648 h 4 v 5 h -4 z"
        fill="#d2c8b4"
        stroke="none" />
   </g>
