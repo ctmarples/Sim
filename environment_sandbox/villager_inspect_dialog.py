@@ -268,7 +268,7 @@ class VillagerInspectDialog:
         body_h = (
             PAD
             + 18
-            + 4 * 16
+            + 5 * 16
             + SECTION_GAP
             + 18
             + BTN_H
@@ -327,15 +327,24 @@ class VillagerInspectDialog:
             else villager.state.name.replace("_", " ").title()
         )
         last = (
-            resource_label(villager.last_food)
-            if villager.last_food
+            ", ".join(resource_label(k) for k in villager.last_meal)
+            if villager.last_meal
             else "—"
         )
+        buff_parts: list[str] = []
+        if abs(villager.food_walk_mult - 1.0) > 0.01:
+            buff_parts.append(f"walk ×{villager.food_walk_mult:g}")
+        if abs(villager.food_work_mult - 1.0) > 0.01:
+            buff_parts.append(f"work ×{villager.food_work_mult:g}")
+        if abs(villager.food_hunger_mult - 1.0) > 0.01:
+            buff_parts.append(f"hunger ×{villager.food_hunger_mult:g}")
+        buff_line = ", ".join(buff_parts) if buff_parts else "—"
         for line in (
             f"State: {state}",
             f"Workplace: {assignment_label}",
             f"Satiation: {int(round(villager.satiation * 100))}%",
-            f"Last food: {last}",
+            f"Last meal: {last}",
+            f"Food buffs: {buff_line}",
         ):
             surface.blit(self.font_small.render(line, True, COLOUR_TEXT_DIM), (x, y))
             y += 16
@@ -405,7 +414,7 @@ class VillagerInspectDialog:
         tip_key: str | None = None
         if dual:
             col_w = (inner_w - INV_PANEL_GAP) // 2
-            left_h, left_hits, left_tips, left_hov = draw_inv_grid(
+            left_h, left_hits, left_tips, left_hov, *_ = draw_inv_grid(
                 surface,
                 origin=(x, y),
                 width=col_w,
@@ -419,7 +428,7 @@ class VillagerInspectDialog:
                 interactive=True,
                 hover_inv=self._hover_inv,
             )
-            right_h, right_hits, right_tips, right_hov = draw_inv_grid(
+            right_h, right_hits, right_tips, right_hov, *_ = draw_inv_grid(
                 surface,
                 origin=(x + col_w + INV_PANEL_GAP, y),
                 width=col_w,
@@ -451,7 +460,7 @@ class VillagerInspectDialog:
                 (x, y + 6),
             )
         else:
-            h, _hits, tips, hov = draw_inv_grid(
+            h, _hits, tips, hov, *_ = draw_inv_grid(
                 surface,
                 origin=(x, y),
                 width=inner_w,

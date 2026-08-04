@@ -249,6 +249,27 @@ CROPS: tuple[CropDef, ...] = (
             SeasonPhase.PLOUGH_PLANT,
         ),
     ),
+    CropDef(
+        key="garlic",
+        label="Garlic",
+        produce_key="garlic",
+        seed_key="garlic_seeds",
+        short="gar",
+        stem_colour=(110, 150, 80),
+        flower_colour=(230, 230, 210),
+        plant_season=Season.AUTUMN,
+        harvest_seasons=(Season.SUMMER,),
+        growth_days=80,
+        wild_seed_chance=WILD_SEED_CHANCE,
+        farm_seed_amounts=FARM_SEED_AMOUNTS,
+        # S_S_A_W: Grow · Harvest · Plough/Plant · Grow
+        year_phases=_phases(
+            SeasonPhase.GROW,
+            SeasonPhase.HARVEST,
+            SeasonPhase.PLOUGH_PLANT,
+            SeasonPhase.GROW,
+        ),
+    ),
 )
 
 CROP_BY_KEY: dict[str, CropDef] = {c.key: c for c in CROPS}

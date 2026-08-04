@@ -130,15 +130,23 @@ def draw_inv_grid(
     fonts: tuple[pygame.font.Font, pygame.font.Font, pygame.font.Font],
     interactive: bool = True,
     hover_inv: tuple[str, str] | None = None,
+    selected_key: str | None = None,
+    item_caps: dict[str, int] | None = None,
+    scroll_y: int = 0,
+    max_body_h: int | None = None,
 ) -> tuple[
     int,
     list[tuple[pygame.Rect, str, str]],
     list[tuple[pygame.Rect, str, str]],
     tuple[str, str] | None,
+    int,
+    int,
 ]:
     """Draw an inventory grid.
 
-    Returns ``(height, click_hits, tip_hits, hovered_side_key)``.
+    Returns
+    ``(height, click_hits, tip_hits, hovered_side_key, body_content_h, body_view_h)``.
+    When ``max_body_h`` is set, only the icon body scrolls (title stays fixed).
     """
     from icons import blit_icon
 
@@ -154,27 +162,52 @@ def draw_inv_grid(
     tip_hits: list[tuple[pygame.Rect, str, str]] = []
     hovered: tuple[str, str] | None = None
     keys = present_keys(amounts, allowed)
+    if item_caps:
+        for k in item_caps:
+            if (allowed is None or k in allowed) and k not in keys:
+                keys.append(k)
     if not keys:
         surface.blit(
             font_small.render("(empty)", True, COLOUR_TEXT_DIM),
             (x0, y + 8),
         )
-        return (y + 28) - y0, hits, tip_hits, None
+        return (y + 28) - y0, hits, tip_hits, None, 28, 28
 
     cols = max(1, min(GRID_COLS, max(1, width // (GRID_CELL + GRID_GAP))))
+    rows = math.ceil(len(keys) / cols)
+    content_h = rows * (GRID_CELL + GRID_GAP) - GRID_GAP
+    view_h = content_h if max_body_h is None else min(content_h, max_body_h)
+    scroll = max(0, min(int(scroll_y), max(0, content_h - view_h)))
+    body = pygame.Rect(x0, y, width, view_h)
+
+    old_clip = surface.get_clip()
+    clipped = body.clip(old_clip) if old_clip.width > 0 else body
+    surface.set_clip(clipped)
+
     for i, key in enumerate(keys):
         col = i % cols
         row = i // cols
         cx = x0 + col * (GRID_CELL + GRID_GAP)
-        cy = y + row * (GRID_CELL + GRID_GAP)
+        cy = y + row * (GRID_CELL + GRID_GAP) - scroll
         cell = pygame.Rect(cx, cy, GRID_CELL, GRID_CELL)
-        is_hov = hover_inv == (side, key) or (
-            mouse_pos is not None and cell.collidepoint(mouse_pos)
+        if not cell.colliderect(body):
+            continue
+        is_sel = selected_key == key and side == "storage"
+        is_hov = body.collidepoint(mouse_pos or (-1, -1)) and (
+            hover_inv == (side, key)
+            or (mouse_pos is not None and cell.collidepoint(mouse_pos))
         )
         if is_hov:
             hovered = (side, key)
-        bg = (55, 62, 50) if is_hov else (42, 44, 52)
-        border = COLOUR_SELECTED_ENTITY if is_hov else COLOUR_TOOLBAR_BORDER
+        if is_sel:
+            bg = (55, 70, 55) if is_hov else (48, 58, 48)
+            border = COLOUR_SELECTED_ENTITY
+        elif is_hov:
+            bg = (55, 62, 50)
+            border = COLOUR_SELECTED_ENTITY
+        else:
+            bg = (42, 44, 52)
+            border = COLOUR_TOOLBAR_BORDER
         pygame.draw.rect(surface, bg, cell, border_radius=4)
         pygame.draw.rect(surface, border, cell, 1, border_radius=4)
 
@@ -194,7 +227,6 @@ def draw_inv_grid(
             if style.badge_key is not None:
                 badge = resource_icon_style(style.badge_key)
                 badge_size = max(10, icon_size // 2)
-                # Top-left quarter of the grid cell.
                 bx = cell.x + cell.w // 4
                 by = cell.y + cell.h // 4
                 blit_icon(
@@ -219,7 +251,9 @@ def draw_inv_grid(
             )
 
         count = int(amounts.get(key, 0))
-        badge = font_tiny.render(str(count), True, COLOUR_TEXT)
+        cap = item_caps.get(key) if item_caps else None
+        count_txt = f"{count}/{cap}" if cap is not None else str(count)
+        badge = font_tiny.render(count_txt, True, COLOUR_TEXT)
         bx = cell.right - badge.get_width() - 3
         by = cell.bottom - badge.get_height() - 2
         pygame.draw.rect(
@@ -233,8 +267,8 @@ def draw_inv_grid(
         if interactive:
             hits.append((cell, side, key))
 
-    rows = math.ceil(len(keys) / cols)
-    return (y + rows * (GRID_CELL + GRID_GAP) - GRID_GAP) - y0, hits, tip_hits, hovered
+    surface.set_clip(old_clip)
+    return (y + view_h) - y0, hits, tip_hits, hovered, content_h, view_h
 
 
 def draw_item_tooltip(

@@ -83,8 +83,8 @@ SOIL_LIKE: tuple[TerrainType, ...] = (
 WILD_CROPS_BY_TERRAIN: dict[TerrainType, tuple[str, ...]] = {
     TerrainType.MEADOW: ("flax", "hemp", "sage"),
     TerrainType.GRASS: ("wheat", "rye"),
-    TerrainType.SOIL: ("onion", "cabbage", "carrot"),
-    TerrainType.FOREST_FLOOR: ("onion", "cabbage", "carrot"),
+    TerrainType.SOIL: ("onion", "cabbage", "carrot", "garlic"),
+    TerrainType.FOREST_FLOOR: ("onion", "cabbage", "carrot", "garlic"),
 }
 
 # Terrains that accept planted saplings / natural sprouts.

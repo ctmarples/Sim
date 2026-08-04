@@ -21,7 +21,7 @@ class ResourceDef:
 
 # Display order within each group follows this list order.
 # Onion / cabbage / carrot are edible produce (food); other crops stay wares.
-_FOOD_CROP_KEYS = frozenset({"onion", "cabbage", "carrot"})
+_FOOD_CROP_KEYS = frozenset({"onion", "cabbage", "carrot", "garlic"})
 _CROP_PRODUCE_FOOD = tuple(
     ResourceDef(c.produce_key, c.label, "food", c.short)
     for c in CROPS
@@ -49,6 +49,9 @@ RESOURCES: tuple[ResourceDef, ...] = (
     *_CROP_PRODUCE_FOOD,
     ResourceDef("bread", "Bread", "food", "bread"),
     ResourceDef("stew", "Stew", "food", "stew"),
+    ResourceDef("fish_stew", "Fish stew", "food", "f.stw"),
+    ResourceDef("grilled_meat", "Grilled meat", "food", "g.mt"),
+    ResourceDef("grilled_fish", "Grilled fish", "food", "g.fh"),
     ResourceDef("wood", "Wood", "wares", "wood"),
     ResourceDef("hardwood", "Hardwood", "wares", "hwood"),
     ResourceDef("rock", "Rock", "wares", "rock"),
@@ -154,6 +157,7 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
         ICON_SAPLING_ROUND,
         ICON_SEEDS,
         ICON_STEW,
+        ICON_FISH_STEW,
         ICON_WOOD,
         crop_icon_base,
     )
@@ -182,6 +186,16 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
         return ResourceIconStyle(ICON_ROCK, {"body": COLOUR_ROCK_FEATURE})
     if key == "meat":
         return ResourceIconStyle(ICON_MEAT_MARKER, {"body": COLOUR_MEAT})
+    if key == "deer":
+        from icons import ICON_DEER_MALE
+        from settings import COLOUR_DEER
+
+        return ResourceIconStyle(ICON_DEER_MALE, {"body": COLOUR_DEER})
+    if key == "boar":
+        from icons import ICON_BOAR_MALE
+        from settings import COLOUR_BOAR
+
+        return ResourceIconStyle(ICON_BOAR_MALE, {"body": COLOUR_BOAR})
     if key == "fish":
         return ResourceIconStyle(ICON_FISH, {"body": COLOUR_FISH})
     if key == "mushrooms":
@@ -218,6 +232,16 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
             ICON_STEW,
             {"body": (140, 100, 70), "accent": (192, 96, 48)},
         )
+    if key == "fish_stew":
+        return ResourceIconStyle(
+            ICON_FISH_STEW,
+            {"body": (140, 100, 70), "accent": (64, 128, 176)},
+        )
+    if key == "grilled_meat":
+        # Same marker as raw meat, browned/cooked tint.
+        return ResourceIconStyle(ICON_MEAT_MARKER, {"body": (160, 90, 45)})
+    if key == "grilled_fish":
+        return ResourceIconStyle(ICON_FISH, {"body": (200, 140, 70)})
 
     for tree in TREES:
         if key == f"{tree.key}_saplings":

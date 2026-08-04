@@ -1156,6 +1156,7 @@ ICON_HARDWOOD = "hardwood"
 ICON_BERRIES = "berries"
 ICON_BREAD = "bread"
 ICON_STEW = "stew"
+ICON_FISH_STEW = "fish_stew"
 
 ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_TREE_ROUND,
@@ -1198,6 +1199,7 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_BERRIES,
     ICON_BREAD,
     ICON_STEW,
+    ICON_FISH_STEW,
 )
 
 

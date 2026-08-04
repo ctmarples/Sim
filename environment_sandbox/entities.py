@@ -7,6 +7,9 @@ from enum import Enum, auto
 
 from crops import PRODUCE_KEYS, SEED_KEYS
 from recipes import (
+    FORESTER_RECIPES,
+    FORAGER_RECIPES,
+    HUNTER_RECIPES,
     KITCHEN_INPUT_KEYS,
     KITCHEN_OUTPUT_KEYS,
     KITCHEN_RECIPES,
@@ -272,6 +275,7 @@ class Inventory:
     onion: int = 0
     cabbage: int = 0
     carrot: int = 0
+    garlic: int = 0
     wheat_seeds: int = 0
     flax_seeds: int = 0
     sage_seeds: int = 0
@@ -280,10 +284,14 @@ class Inventory:
     onion_seeds: int = 0
     cabbage_seeds: int = 0
     carrot_seeds: int = 0
+    garlic_seeds: int = 0
     wheat_flour: int = 0
     rye_flour: int = 0
     bread: int = 0
     stew: int = 0
+    fish_stew: int = 0
+    grilled_meat: int = 0
+    grilled_fish: int = 0
     capacity: int = INVENTORY_CAPACITY
     seed_capacity: int = SEED_CARRY_CAPACITY
 
@@ -457,6 +465,7 @@ class HomeStorage:
     onion: int = 0
     cabbage: int = 0
     carrot: int = 0
+    garlic: int = 0
     wheat_seeds: int = 0
     flax_seeds: int = 0
     sage_seeds: int = 0
@@ -465,10 +474,14 @@ class HomeStorage:
     onion_seeds: int = 0
     cabbage_seeds: int = 0
     carrot_seeds: int = 0
+    garlic_seeds: int = 0
     wheat_flour: int = 0
     rye_flour: int = 0
     bread: int = 0
     stew: int = 0
+    fish_stew: int = 0
+    grilled_meat: int = 0
+    grilled_fish: int = 0
 
     @property
     def saplings(self) -> int:
@@ -512,6 +525,33 @@ class HomeStorage:
         taken = 0
         for key in keys:
             taken += self.withdraw_key_to(inventory, key)
+        return taken
+
+    def withdraw_amounts_to(
+        self, inventory: Inventory, amounts: dict[str, int]
+    ) -> int:
+        """Move up to ``amounts[key]`` of each key, round-robin so no key hogs the pack."""
+        if not amounts:
+            return 0
+        remaining = {k: max(0, int(n)) for k, n in amounts.items() if int(n) > 0}
+        taken = 0
+        progressed = True
+        while progressed and remaining:
+            progressed = False
+            for key in list(remaining):
+                if remaining[key] <= 0:
+                    remaining.pop(key, None)
+                    continue
+                if getattr(self, key, 0) <= 0 or not inventory.can_add(1, key=key):
+                    remaining.pop(key, None)
+                    continue
+                setattr(self, key, getattr(self, key) - 1)
+                setattr(inventory, key, getattr(inventory, key) + 1)
+                remaining[key] -= 1
+                taken += 1
+                progressed = True
+                if remaining[key] <= 0:
+                    remaining.pop(key, None)
         return taken
 
     def withdraw_key_to(self, inventory: Inventory, key: str) -> int:
@@ -770,6 +810,7 @@ class Building:
     onion: int = 0
     cabbage: int = 0
     carrot: int = 0
+    garlic: int = 0
     wheat_seeds: int = 0
     flax_seeds: int = 0
     sage_seeds: int = 0
@@ -778,14 +819,20 @@ class Building:
     onion_seeds: int = 0
     cabbage_seeds: int = 0
     carrot_seeds: int = 0
+    garlic_seeds: int = 0
     wheat_flour: int = 0
     rye_flour: int = 0
     bread: int = 0
     stew: int = 0
+    fish_stew: int = 0
+    grilled_meat: int = 0
+    grilled_fish: int = 0
     capacity: int = BUILDING_STORAGE_CAPACITY
     # Processor buildings use split pools (0 = unused / fall back to capacity).
     input_capacity: int = 0
     output_capacity: int = 0
+    # Per-resource stock limits (omit key = unlimited within the pool).
+    item_caps: dict[str, int] = field(default_factory=dict)
     # recipe name → enabled; progress steps toward PROCESSOR_RECIPE_STEPS.
     recipe_enabled: dict[str, bool] = field(default_factory=dict)
     recipe_progress: dict[str, int] = field(default_factory=dict)
@@ -1006,12 +1053,53 @@ class Building:
     def is_processor(self) -> bool:
         return self.kind in (BuildingKind.MILL, BuildingKind.KITCHEN)
 
+    def has_recipes(self) -> bool:
+        return bool(self.known_recipes())
+
+    def is_gather_recipe_building(self) -> bool:
+        return self.kind in (
+            BuildingKind.FORESTER,
+            BuildingKind.HUNTER,
+            BuildingKind.FORAGER,
+        )
+
     def known_recipes(self) -> tuple[Recipe, ...]:
         if self.kind == BuildingKind.MILL:
             return MILL_RECIPES
         if self.kind == BuildingKind.KITCHEN:
             return KITCHEN_RECIPES
+        if self.kind == BuildingKind.FORESTER:
+            return FORESTER_RECIPES
+        if self.kind == BuildingKind.HUNTER:
+            return HUNTER_RECIPES
+        if self.kind == BuildingKind.FORAGER:
+            return FORAGER_RECIPES
         return ()
+
+    def enabled_output_keys(self) -> frozenset[str]:
+        """Resource keys produced by enabled recipes (gather / craft outputs)."""
+        keys: set[str] = set()
+        for recipe in self.enabled_recipes():
+            keys.update(recipe.outputs)
+        return frozenset(keys)
+
+    def allows_tree_yield(self, yield_key: str) -> bool:
+        if not self.has_recipes():
+            return True
+        return self.is_recipe_enabled(yield_key)
+
+    def allows_hunt_kind(self, kind_name: str) -> bool:
+        """``kind_name`` is ``deer`` or ``boar``."""
+        if self.kind != BuildingKind.HUNTER:
+            return True
+        return self.is_recipe_enabled(kind_name.lower())
+
+    def allows_forage_key(self, key: str) -> bool:
+        if self.kind != BuildingKind.FORAGER:
+            return True
+        if not self.has_recipes():
+            return True
+        return self.is_recipe_enabled(key)
 
     def ensure_recipe_state(self) -> None:
         for recipe in self.known_recipes():
@@ -1051,6 +1139,63 @@ class Building:
     def active_supply_keys(self) -> tuple[str, ...]:
         """Ingredient keys needed by currently enabled recipes."""
         return input_keys_for_recipes(self.enabled_recipes())
+
+    def supply_demand(self) -> dict[str, int]:
+        """Units of each input still needed for enabled recipes, capped by room.
+
+        Prefer recipe gaps over blind top-ups so haulers fetch vegetables when
+        meat is already stocked (instead of filling packs with meat first).
+        """
+        from recipes import missing_inputs
+
+        demand: dict[str, int] = {}
+        for recipe in self.enabled_recipes():
+            if not recipe.inputs:
+                continue
+            for key, need in missing_inputs(self, recipe).items():
+                room = self.space_for_key(key)
+                if room <= 0:
+                    continue
+                want = min(int(need), room)
+                if want > 0:
+                    demand[key] = max(demand.get(key, 0), want)
+        return demand
+
+    def input_keep_amount(self, key: str) -> int:
+        """How many of ``key`` to retain for enabled recipes (2 crafts of buffer)."""
+        keep = 0
+        for recipe in self.enabled_recipes():
+            n = int(recipe.inputs.get(key, 0))
+            if n > 0:
+                keep = max(keep, n * 2)
+        return keep
+
+    def excess_input_amounts(self) -> dict[str, int]:
+        """Input stock beyond recipe needs — haulers should clear this to free room."""
+        excess: dict[str, int] = {}
+        if not self.is_processor():
+            return excess
+        for key in self.processor_input_keys():
+            have = int(getattr(self, key, 0))
+            keep = self.input_keep_amount(key)
+            if have > keep:
+                excess[key] = have - keep
+        return excess
+
+    def haulable_amount(self, key: str) -> int:
+        """How many units of ``key`` haulers may remove right now."""
+        have = int(getattr(self, key, 0))
+        if have <= 0:
+            return 0
+        if self.is_processor():
+            if key in self.processor_output_keys():
+                return have
+            if key in self.unused_input_keys():
+                return have
+            return int(self.excess_input_amounts().get(key, 0))
+        if key in self.haul_keys():
+            return have
+        return 0
 
     def unused_input_keys(self) -> tuple[str, ...]:
         """Input keys stocked here that no enabled recipe uses."""
@@ -1092,13 +1237,61 @@ class Building:
         return max(0, self.output_capacity - self.output_stored_total())
 
     def space_for_key(self, key: str) -> int:
-        if not self.is_processor() or (self.input_capacity <= 0 and self.output_capacity <= 0):
-            return self.space_left
-        if key in self.processor_input_keys():
-            return self.input_space_left()
-        if key in self.processor_output_keys():
-            return self.output_space_left()
-        return 0
+        if self.is_processor() and (self.input_capacity > 0 or self.output_capacity > 0):
+            if key in self.processor_input_keys():
+                room = self.input_space_left()
+            elif key in self.processor_output_keys():
+                room = self.output_space_left()
+            else:
+                return 0
+        else:
+            room = self.space_left
+        cap = self.item_caps.get(key)
+        if cap is not None:
+            have = int(getattr(self, key, 0))
+            room = min(room, max(0, int(cap) - have))
+        return max(0, room)
+
+    def item_cap(self, key: str) -> int | None:
+        """Return the per-item cap, or None if unlimited."""
+        cap = self.item_caps.get(key)
+        return int(cap) if cap is not None else None
+
+    def max_item_cap(self, key: str) -> int:
+        """Upper bound when setting a cap (pool size for this key)."""
+        if self.is_processor() and (self.input_capacity > 0 or self.output_capacity > 0):
+            if key in self.processor_input_keys():
+                return max(1, self.input_capacity)
+            if key in self.processor_output_keys():
+                return max(1, self.output_capacity)
+            return 1
+        return max(1, self.capacity)
+
+    def set_item_cap(self, key: str, cap: int | None) -> None:
+        """Set or clear a per-item stock limit. ``None`` / <=0 clears."""
+        if key not in self.depositable_keys():
+            return
+        if cap is None or int(cap) <= 0:
+            self.item_caps.pop(key, None)
+            return
+        self.item_caps[key] = min(int(cap), self.max_item_cap(key))
+
+    def adjust_item_cap(self, key: str, delta: int) -> int | None:
+        """Nudge cap by ``delta``. From unlimited, ``+`` starts at 1. Returns new cap or None."""
+        if key not in self.depositable_keys():
+            return None
+        current = self.item_cap(key)
+        if current is None:
+            if delta <= 0:
+                return None
+            self.set_item_cap(key, delta)
+            return self.item_cap(key)
+        nxt = current + delta
+        if nxt <= 0:
+            self.set_item_cap(key, None)
+            return None
+        self.set_item_cap(key, nxt)
+        return self.item_cap(key)
 
     @property
     def space_left(self) -> int:
@@ -1144,11 +1337,10 @@ class Building:
     def deposit_from_inventory(
         self, inventory: Inventory, *, keep_plantables: bool = False
     ) -> None:
-        keys = (
-            self.active_supply_keys()
-            if self.is_processor()
-            else self.depositable_keys()
-        )
+        if self.is_processor():
+            self.deposit_needed_from(inventory)
+            return
+        keys = self.depositable_keys()
         if keep_plantables:
             keys = tuple(
                 k
@@ -1157,6 +1349,17 @@ class Building:
             )
         for key in keys:
             self._take(inventory, key)
+
+    def deposit_needed_from(self, inventory: Inventory) -> int:
+        """Deposit only recipe gaps (``supply_demand``). Returns units moved."""
+        moved = 0
+        # Snapshot wants; restock updates change demand as we go.
+        for key, want in list(self.supply_demand().items()):
+            for _ in range(want):
+                if not self.deposit_one_from(inventory, key):
+                    break
+                moved += 1
+        return moved
 
     def deposit_key_from(self, inventory: Inventory, key: str) -> int:
         """Deposit as much of one key as capacity allows. Returns amount moved."""
@@ -1202,7 +1405,7 @@ class Building:
         if self.kind == BuildingKind.FISHER:
             return ("fish",)
         if self.kind == BuildingKind.FORAGER:
-            return _FORAGE_KEYS
+            return ("wood", *_FORAGE_KEYS)
         if self.kind == BuildingKind.FARM:
             return PRODUCE_KEYS + SEED_KEYS
         if self.kind == BuildingKind.MILL:
@@ -1220,12 +1423,22 @@ class Building:
                 return ("wood", "hardwood", *SAPLING_ITEM_KEYS)
             return ("wood", "hardwood")
         if self.kind == BuildingKind.FORAGER:
-            return _FORAGE_KEYS
+            return ("wood", *_FORAGE_KEYS)
         if self.kind == BuildingKind.FARM:
             return PRODUCE_KEYS
         if self.is_processor():
-            # Outputs plus ingredients for disabled recipes.
-            return self.processor_output_keys() + self.unused_input_keys()
+            # Outputs, unused inputs, and excess stock of still-needed inputs.
+            keys: list[str] = []
+            seen: set[str] = set()
+            for key in (
+                *self.processor_output_keys(),
+                *self.unused_input_keys(),
+                *self.excess_input_amounts().keys(),
+            ):
+                if key not in seen and self.haulable_amount(key) > 0:
+                    seen.add(key)
+                    keys.append(key)
+            return tuple(keys)
         return self.depositable_keys()
 
     def plant_keys(self) -> tuple[str, ...]:
@@ -1236,15 +1449,17 @@ class Building:
         return ()
 
     def haulable_total(self) -> int:
-        return sum(getattr(self, key, 0) for key in self.haul_keys())
+        return sum(self.haulable_amount(key) for key in self.haul_keys())
 
     def can_accept_from(self, inventory: Inventory) -> bool:
-        """True if inventory holds at least one item this building will store."""
-        keys = (
-            self.active_supply_keys()
-            if self.is_processor()
-            else self.depositable_keys()
-        )
+        """True if inventory holds something this building still needs for recipes."""
+        if self.is_processor():
+            demand = self.supply_demand()
+            return any(
+                int(getattr(inventory, key, 0)) > 0 and demand.get(key, 0) > 0
+                for key in demand
+            )
+        keys = self.depositable_keys()
         return any(
             getattr(inventory, key, 0) > 0 and self.space_for_key(key) > 0
             for key in keys
@@ -1264,9 +1479,20 @@ class Building:
     ) -> None:
         use_keys = keys if keys is not None else self.haul_keys()
         for key in use_keys:
-            while getattr(self, key) > 0 and inventory.can_add(1, key=key):
+            limit = (
+                self.haulable_amount(key)
+                if keys is None
+                else int(getattr(self, key, 0))
+            )
+            taken = 0
+            while (
+                taken < limit
+                and int(getattr(self, key, 0)) > 0
+                and inventory.can_add(1, key=key)
+            ):
                 setattr(self, key, getattr(self, key) - 1)
                 setattr(inventory, key, getattr(inventory, key) + 1)
+                taken += 1
 
     def give_item_to(self, inventory: Inventory, key: str) -> bool:
         if getattr(self, key) <= 0 or not inventory.can_add(1, key=key):
@@ -1508,7 +1734,12 @@ class Villager:
     satiation: float = 0.75
     ration_mode: RationMode = RationMode.NORMAL
     seeking_food: bool = False
-    last_food: str | None = None
+    # Food keys from the most recent meal (up to 3 types, one each).
+    last_meal: list[str] = field(default_factory=list)
+    # Meal buffs (reset on each meal from foods eaten).
+    food_walk_mult: float = 1.0
+    food_work_mult: float = 1.0
+    food_hunger_mult: float = 1.0
 
     def clear_assignment(self) -> None:
         self.building_id = None
@@ -1554,6 +1785,18 @@ class Villager:
 
     def needs_food(self) -> bool:
         return self.satiation <= self.eat_threshold()
+
+    def apply_food_buffs(
+        self, walk: float = 1.0, work: float = 1.0, hunger: float = 1.0
+    ) -> None:
+        self.food_walk_mult = max(0.1, float(walk))
+        self.food_work_mult = max(0.1, float(work))
+        self.food_hunger_mult = max(0.05, float(hunger))
+
+    def clear_food_buffs(self) -> None:
+        self.food_walk_mult = 1.0
+        self.food_work_mult = 1.0
+        self.food_hunger_mult = 1.0
 
 
 @dataclass

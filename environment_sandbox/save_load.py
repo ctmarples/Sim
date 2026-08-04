@@ -177,6 +177,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "capacity": b.capacity,
             "input_capacity": b.input_capacity,
             "output_capacity": b.output_capacity,
+            "item_caps": {k: int(v) for k, v in b.item_caps.items()},
             "recipe_enabled": dict(b.recipe_enabled),
             "recipe_progress": dict(b.recipe_progress),
             "draw_task_type": b.draw_task_type.name,
@@ -259,7 +260,10 @@ def serialize_game(game: Game) -> dict[str, Any]:
                 "satiation": round(v.satiation, 4),
                 "ration_mode": v.ration_mode.name,
                 "seeking_food": v.seeking_food,
-                "last_food": v.last_food,
+                "last_meal": list(v.last_meal),
+                "food_walk_mult": round(v.food_walk_mult, 4),
+                "food_work_mult": round(v.food_work_mult, 4),
+                "food_hunger_mult": round(v.food_hunger_mult, 4),
             }
         )
     sites = [
@@ -643,6 +647,13 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             building.capacity = cap
             building.input_capacity = in_cap
             building.output_capacity = out_cap
+        raw_caps = bdata.get("item_caps") or {}
+        if isinstance(raw_caps, dict):
+            building.item_caps = {
+                str(k): max(1, int(v))
+                for k, v in raw_caps.items()
+                if v is not None and int(v) > 0
+            }
         raw_enabled = bdata.get("recipe_enabled") or {}
         raw_progress = bdata.get("recipe_progress") or {}
         if building.is_processor():
@@ -773,8 +784,16 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         except KeyError:
             villager.ration_mode = RationMode.NORMAL
         villager.seeking_food = bool(vdata.get("seeking_food", False))
-        raw_last = vdata.get("last_food")
-        villager.last_food = str(raw_last) if raw_last else None
+        raw_meal = vdata.get("last_meal")
+        if isinstance(raw_meal, list):
+            villager.last_meal = [str(k) for k in raw_meal if k]
+        else:
+            # Migrate older saves that stored a single last_food key.
+            raw_last = vdata.get("last_food")
+            villager.last_meal = [str(raw_last)] if raw_last else []
+        villager.food_walk_mult = max(0.1, float(vdata.get("food_walk_mult", 1.0)))
+        villager.food_work_mult = max(0.1, float(vdata.get("food_work_mult", 1.0)))
+        villager.food_hunger_mult = max(0.05, float(vdata.get("food_hunger_mult", 1.0)))
         game.villagers.append(villager)
 
     game.construction_sites.clear()

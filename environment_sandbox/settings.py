@@ -156,8 +156,12 @@ VILLAGER_FOOD_KEYS: tuple[str, ...] = (
     "onion",
     "cabbage",
     "carrot",
+    "garlic",
     "bread",
     "stew",
+    "fish_stew",
+    "grilled_meat",
+    "grilled_fish",
 )
 
 INDICATOR_RADIUS: int = 2

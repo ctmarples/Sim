@@ -48,6 +48,13 @@ BTN_H = 24
 ROW_H = 22
 RECIPE_ROW_H = GRID_CELL + 14
 SECTION_GAP = 10
+SCROLL_STEP = 28
+# Visible size before a section starts scrolling.
+MAX_RECIPE_VIEW_H = 3 * RECIPE_ROW_H
+MAX_GATHER_VIEW_H = 2 * (GRID_CELL + GRID_GAP) - GRID_GAP
+MAX_CAP_VIEW_H = 2 * (GRID_CELL + GRID_GAP) - GRID_GAP
+MAX_STORAGE_BODY_H = 3 * (GRID_CELL + GRID_GAP) - GRID_GAP
+MAX_WORKER_VIEW_H = 4 * (ROW_H + 2)
 
 
 class BuildingInspectDialog:
@@ -75,6 +82,10 @@ class BuildingInspectDialog:
         self._hover_worker: int | None = None
         self._hover_inv: tuple[str, str] | None = None
         self._tooltip_key: str | None = None
+        self.selected_cap_key: str | None = None
+        self._scroll: dict[str, int] = {}
+        # name → (view_rect, content_h, view_h) rebuilt each draw.
+        self._scroll_areas: dict[str, tuple[pygame.Rect, int, int]] = {}
 
     @property
     def open(self) -> bool:
@@ -96,6 +107,9 @@ class BuildingInspectDialog:
         self._hover_worker = None
         self._hover_inv = None
         self._tooltip_key = None
+        self.selected_cap_key = None
+        self._scroll = {}
+        self._scroll_areas = {}
         self._layout(building)
         map_w = map_view_width()
         if screen_xy is not None:
@@ -118,6 +132,9 @@ class BuildingInspectDialog:
         self._hover_worker = None
         self._hover_inv = None
         self._tooltip_key = None
+        self.selected_cap_key = None
+        self._scroll = {}
+        self._scroll_areas = {}
 
     def take_action(self) -> str | None:
         action = self._pending_action
@@ -132,6 +149,60 @@ class BuildingInspectDialog:
 
     def _has_storage(self, building: Building) -> bool:
         return bool(building.depositable_keys())
+
+    def _supports_item_caps(self, building: Building) -> bool:
+        return (
+            building.kind
+            not in (BuildingKind.HOME, BuildingKind.WORKSTATION, BuildingKind.FIELD)
+            and bool(building.depositable_keys())
+        )
+
+    def _scroll_value(self, name: str, content_h: int, view_h: int) -> int:
+        max_s = max(0, content_h - view_h)
+        value = max(0, min(int(self._scroll.get(name, 0)), max_s))
+        self._scroll[name] = value
+        return value
+
+    def _register_scroll(
+        self, name: str, view: pygame.Rect, content_h: int, view_h: int
+    ) -> int:
+        scroll = self._scroll_value(name, content_h, view_h)
+        self._scroll_areas[name] = (view, content_h, view_h)
+        return scroll
+
+    def _draw_scrollbar(
+        self,
+        surface: pygame.Surface,
+        view: pygame.Rect,
+        content_h: int,
+        scroll: int,
+    ) -> None:
+        if content_h <= view.h:
+            return
+        track = pygame.Rect(view.right - 5, view.y, 4, view.h)
+        pygame.draw.rect(surface, (40, 42, 48), track, border_radius=2)
+        ratio = view.h / content_h
+        thumb_h = max(12, int(view.h * ratio))
+        thumb_y = view.y + int((view.h - thumb_h) * (scroll / max(1, content_h - view.h)))
+        pygame.draw.rect(
+            surface,
+            (120, 130, 140),
+            pygame.Rect(track.x, thumb_y, track.w, thumb_h),
+            border_radius=2,
+        )
+
+    def handle_mousewheel(self, dy: int, pos: tuple[int, int]) -> bool:
+        """Scroll the section under the cursor. Returns True if the event is consumed."""
+        if not self.open or not self.contains(pos):
+            return False
+        for name, (rect, content_h, view_h) in self._scroll_areas.items():
+            if content_h <= view_h:
+                continue
+            if rect.collidepoint(pos):
+                self._scroll[name] = self._scroll_value(name, content_h, view_h) - dy * SCROLL_STEP
+                self._scroll_value(name, content_h, view_h)
+                return True
+        return True
 
     def _layout(self, building: Building | None = None) -> None:
         if building is not None and self.show_player and self._has_storage(building):
@@ -174,8 +245,13 @@ class BuildingInspectDialog:
                 return True
         for rect, side, key in self._inv_hits:
             if rect.collidepoint(pos):
-                if side == "storage":
-                    self._pending_action = f"xfer_to_player:{key}"
+                if side == "cap":
+                    self._pending_action = f"select_cap:{key}"
+                elif side == "storage":
+                    if self.show_player:
+                        self._pending_action = f"xfer_to_player:{key}"
+                    else:
+                        self._pending_action = f"select_cap:{key}"
                 else:
                     self._pending_action = f"xfer_to_storage:{key}"
                 return True
@@ -303,33 +379,68 @@ class BuildingInspectDialog:
                 f"  seeds {player_inventory.seed_total}/{player_inventory.seed_capacity}"
             )
 
-        n_workers = max(1, len(workers))
         options_h = BTN_H + 8
         if building.kind == BuildingKind.WORKSTATION:
             options_h = BTN_H + 8
         elif building.supported_work_modes():
             options_h = BTN_H * 2 + 12
-        elif building.is_processor():
+        elif building.has_recipes():
             options_h = BTN_H + 8
 
-        recipes = building.known_recipes() if building.is_processor() else ()
+        recipes = building.known_recipes() if building.has_recipes() else ()
         recipes_h = 0
         if recipes:
-            recipes_h = 18 + len(recipes) * RECIPE_ROW_H + SECTION_GAP
+            if building.is_gather_recipe_building():
+                cols = max(1, (380 - PAD * 2) // (GRID_CELL + GRID_GAP))
+                rows = max(1, (len(recipes) + cols - 1) // cols)
+                content = rows * (GRID_CELL + GRID_GAP) - GRID_GAP
+                recipes_h = 18 + min(content, MAX_GATHER_VIEW_H) + SECTION_GAP
+            else:
+                content = len(recipes) * RECIPE_ROW_H
+                recipes_h = 18 + min(content, MAX_RECIPE_VIEW_H) + SECTION_GAP
 
         storage_items = len(present_keys(amounts, storage_keys or None))
-        player_items = len(present_keys(player_amounts, None))
-        if dual:
-            grid_h = (
-                18
-                + 16
-                + max(grid_height(storage_items), grid_height(player_items), GRID_CELL)
-                + 22
+        if building.item_caps:
+            storage_items = len(
+                {
+                    *present_keys(amounts, storage_keys or None),
+                    *building.item_caps.keys(),
+                }
             )
+        player_items = len(present_keys(player_amounts, None))
+        supports_caps = self._supports_item_caps(building)
+        cap_keys = building.depositable_keys() if supports_caps else ()
+        caps_h = 0
+        if supports_caps and cap_keys:
+            cols = max(1, (380 - PAD * 2) // (GRID_CELL + GRID_GAP))
+            rows = max(1, (len(cap_keys) + cols - 1) // cols)
+            content = rows * (GRID_CELL + GRID_GAP) - GRID_GAP
+            caps_h = (
+                18
+                + min(content, MAX_CAP_VIEW_H)
+                + BTN_H
+                + 8
+                + SECTION_GAP
+            )
+
+        workers_content = (
+            ROW_H
+            if building.kind == BuildingKind.WORKSTATION or not workers
+            else len(workers) * (ROW_H + 2)
+        )
+        workers_h = 18 + min(workers_content, MAX_WORKER_VIEW_H)
+
+        if dual:
+            body = max(
+                min(grid_height(storage_items), MAX_STORAGE_BODY_H),
+                min(grid_height(player_items), MAX_STORAGE_BODY_H),
+                GRID_CELL,
+            )
+            grid_h = 18 + 16 + body + 22
             self._panel_w = 520
         elif has_storage:
-            grid_h = 18 + 16 + grid_height(storage_items) + 8
-            self._panel_w = 380 if building.is_processor() else 300
+            grid_h = 18 + 16 + min(grid_height(storage_items), MAX_STORAGE_BODY_H) + 8
+            self._panel_w = 380 if (building.has_recipes() or supports_caps) else 300
         else:
             grid_h = 40
             self._panel_w = 300
@@ -340,16 +451,18 @@ class BuildingInspectDialog:
             + options_h
             + SECTION_GAP
             + recipes_h
-            + 18
-            + n_workers * (ROW_H + 2)
+            + workers_h
             + SECTION_GAP
+            + caps_h
             + grid_h
             + PAD
             + 8
         )
-        self._panel_h = TITLE_BAR_H + body_h
+        max_panel = WINDOW_HEIGHT - MAP_OFFSET_Y - 8
+        self._panel_h = min(TITLE_BAR_H + body_h, max_panel)
         self._clamp_panel()
         panel = self.panel_rect()
+        self._scroll_areas = {}
 
         shadow = panel.move(3, 4)
         sh = pygame.Surface((shadow.w, shadow.h), pygame.SRCALPHA)
@@ -449,78 +562,147 @@ class BuildingInspectDialog:
         if building.kind in (BuildingKind.HOME, BuildingKind.WORKSTATION):
             y += SECTION_GAP // 2
 
-        # --- Recipes (mill / kitchen) ---
+        # --- Recipes / collect toggles ---
         if recipes:
             building.ensure_recipe_state()
-            surface.blit(self.font.render("Recipes", True, COLOUR_TEXT), (x, y))
+            section = "Collect" if building.is_gather_recipe_building() else "Recipes"
+            surface.blit(self.font.render(section, True, COLOUR_TEXT), (x, y))
             y += 18
             fonts = self._fonts()
-            for recipe in recipes:
-                enabled = building.is_recipe_enabled(recipe.name)
-                out_key = next(iter(recipe.outputs))
-                out_n = int(recipe.outputs[out_key])
-                out_cell = pygame.Rect(x, y, GRID_CELL, GRID_CELL)
-                out_hov = mouse_pos is not None and out_cell.collidepoint(mouse_pos)
-                draw_resource_cell(
-                    surface,
-                    cell=out_cell,
-                    key=out_key,
-                    count=out_n if out_n != 1 else None,
-                    fonts=fonts,
-                    hovered=out_hov,
-                    dimmed=not enabled,
-                    active=enabled,
-                )
-                self._buttons.append((f"toggle_recipe:{recipe.name}", out_cell))
-                self._inv_tip_hits.append((out_cell, "recipe", out_key))
-
-                # Ingredients as inventory icons to the right of the product.
-                ix = out_cell.right + GRID_GAP + 6
-                arrow = self.font_small.render("←", True, COLOUR_TEXT_DIM)
-                surface.blit(
-                    arrow,
-                    (ix, y + (GRID_CELL - arrow.get_height()) // 2),
-                )
-                ix += arrow.get_width() + 6
-                for in_key, in_n in recipe.inputs.items():
-                    if ix + GRID_CELL > x + inner_w:
-                        break
-                    in_cell = pygame.Rect(ix, y, GRID_CELL, GRID_CELL)
-                    in_hov = mouse_pos is not None and in_cell.collidepoint(mouse_pos)
+            if building.is_gather_recipe_building():
+                cols = max(1, inner_w // (GRID_CELL + GRID_GAP))
+                rows = max(1, (len(recipes) + cols - 1) // cols)
+                content_h = rows * (GRID_CELL + GRID_GAP) - GRID_GAP
+                view_h = min(content_h, MAX_GATHER_VIEW_H)
+                view = pygame.Rect(x, y, inner_w, view_h)
+                scroll = self._register_scroll("recipes", view, content_h, view_h)
+                old_clip = surface.get_clip()
+                surface.set_clip(view.clip(old_clip) if old_clip.width else view)
+                for i, recipe in enumerate(recipes):
+                    col = i % cols
+                    row = i // cols
+                    cell = pygame.Rect(
+                        x + col * (GRID_CELL + GRID_GAP),
+                        y + row * (GRID_CELL + GRID_GAP) - scroll,
+                        GRID_CELL,
+                        GRID_CELL,
+                    )
+                    if not cell.colliderect(view):
+                        continue
+                    enabled = building.is_recipe_enabled(recipe.name)
+                    hov = (
+                        view.collidepoint(mouse_pos or (-1, -1))
+                        and mouse_pos is not None
+                        and cell.collidepoint(mouse_pos)
+                    )
                     draw_resource_cell(
                         surface,
-                        cell=in_cell,
-                        key=in_key,
-                        count=in_n,
+                        cell=cell,
+                        key=recipe.display_icon_key(),
+                        count=None,
                         fonts=fonts,
-                        hovered=in_hov,
+                        hovered=hov,
                         dimmed=not enabled,
+                        active=enabled,
                     )
-                    self._inv_tip_hits.append((in_cell, "recipe", in_key))
-                    ix += GRID_CELL + GRID_GAP
+                    self._buttons.append((f"toggle_recipe:{recipe.name}", cell))
+                    self._inv_tip_hits.append(
+                        (cell, "recipe", recipe.display_icon_key())
+                    )
+                surface.set_clip(old_clip)
+                self._draw_scrollbar(surface, view, content_h, scroll)
+                y += view_h + SECTION_GAP
+            else:
+                content_h = len(recipes) * RECIPE_ROW_H
+                view_h = min(content_h, MAX_RECIPE_VIEW_H)
+                view = pygame.Rect(x, y, inner_w, view_h)
+                scroll = self._register_scroll("recipes", view, content_h, view_h)
+                old_clip = surface.get_clip()
+                surface.set_clip(view.clip(old_clip) if old_clip.width else view)
+                for i, recipe in enumerate(recipes):
+                    row_y = y + i * RECIPE_ROW_H - scroll
+                    if row_y + RECIPE_ROW_H < view.top or row_y > view.bottom:
+                        continue
+                    enabled = building.is_recipe_enabled(recipe.name)
+                    out_key = recipe.display_icon_key()
+                    out_n = (
+                        int(next(iter(recipe.outputs.values()))) if recipe.outputs else 1
+                    )
+                    out_cell = pygame.Rect(x, row_y, GRID_CELL, GRID_CELL)
+                    out_hov = (
+                        view.collidepoint(mouse_pos or (-1, -1))
+                        and mouse_pos is not None
+                        and out_cell.collidepoint(mouse_pos)
+                    )
+                    draw_resource_cell(
+                        surface,
+                        cell=out_cell,
+                        key=out_key,
+                        count=out_n if out_n != 1 else None,
+                        fonts=fonts,
+                        hovered=out_hov,
+                        dimmed=not enabled,
+                        active=enabled,
+                    )
+                    if out_cell.colliderect(view):
+                        self._buttons.append((f"toggle_recipe:{recipe.name}", out_cell))
+                        self._inv_tip_hits.append((out_cell, "recipe", out_key))
 
-                bar_x = x
-                bar_y = y + GRID_CELL + 3
-                bar_w = inner_w
-                pygame.draw.rect(
-                    surface,
-                    (40, 40, 40),
-                    pygame.Rect(bar_x, bar_y, bar_w, 7),
-                    border_radius=2,
-                )
-                fill = (
-                    building.recipe_progress_fraction(recipe.name) if enabled else 0.0
-                )
-                if fill > 0:
-                    fill_c = (90, 150, 200) if enabled else (70, 70, 70)
+                    if recipe.inputs:
+                        ix = out_cell.right + GRID_GAP + 6
+                        arrow = self.font_small.render("←", True, COLOUR_TEXT_DIM)
+                        surface.blit(
+                            arrow,
+                            (ix, row_y + (GRID_CELL - arrow.get_height()) // 2),
+                        )
+                        ix += arrow.get_width() + 6
+                        for in_key, in_n in recipe.inputs.items():
+                            if ix + GRID_CELL > x + inner_w:
+                                break
+                            in_cell = pygame.Rect(ix, row_y, GRID_CELL, GRID_CELL)
+                            in_hov = (
+                                view.collidepoint(mouse_pos or (-1, -1))
+                                and mouse_pos is not None
+                                and in_cell.collidepoint(mouse_pos)
+                            )
+                            draw_resource_cell(
+                                surface,
+                                cell=in_cell,
+                                key=in_key,
+                                count=in_n,
+                                fonts=fonts,
+                                hovered=in_hov,
+                                dimmed=not enabled,
+                            )
+                            if in_cell.colliderect(view):
+                                self._inv_tip_hits.append((in_cell, "recipe", in_key))
+                            ix += GRID_CELL + GRID_GAP
+
+                    bar_x = x
+                    bar_y = row_y + GRID_CELL + 3
+                    bar_w = inner_w - 8
                     pygame.draw.rect(
                         surface,
-                        fill_c,
-                        pygame.Rect(bar_x, bar_y, max(1, int(bar_w * fill)), 7),
+                        (40, 40, 40),
+                        pygame.Rect(bar_x, bar_y, bar_w, 7),
                         border_radius=2,
                     )
-                y += RECIPE_ROW_H
-            y += SECTION_GAP
+                    fill = (
+                        building.recipe_progress_fraction(recipe.name)
+                        if enabled
+                        else 0.0
+                    )
+                    if fill > 0:
+                        fill_c = (90, 150, 200) if enabled else (70, 70, 70)
+                        pygame.draw.rect(
+                            surface,
+                            fill_c,
+                            pygame.Rect(bar_x, bar_y, max(1, int(bar_w * fill)), 7),
+                            border_radius=2,
+                        )
+                surface.set_clip(old_clip)
+                self._draw_scrollbar(surface, view, content_h, scroll)
+                y += view_h + SECTION_GAP
 
         # --- Workers / haulers ---
         workers_title = (
@@ -549,11 +731,22 @@ class BuildingInspectDialog:
             )
             y += ROW_H
         else:
-            for villager in workers:
-                row = pygame.Rect(x - 2, y - 1, inner_w + 4, ROW_H)
+            content_h = len(workers) * (ROW_H + 2)
+            view_h = min(content_h, MAX_WORKER_VIEW_H)
+            view = pygame.Rect(x - 2, y - 1, inner_w + 4, view_h)
+            scroll = self._register_scroll("workers", view, content_h, view_h)
+            old_clip = surface.get_clip()
+            surface.set_clip(view.clip(old_clip) if old_clip.width else view)
+            for i, villager in enumerate(workers):
+                row_y = y + i * (ROW_H + 2) - scroll
+                row = pygame.Rect(x - 2, row_y - 1, inner_w + 4, ROW_H)
+                if not row.colliderect(view):
+                    continue
                 selected = selected_villager_id == villager.id
                 hovered = self._hover_worker == villager.id or (
-                    mouse_pos is not None and row.collidepoint(mouse_pos)
+                    view.collidepoint(mouse_pos or (-1, -1))
+                    and mouse_pos is not None
+                    and row.collidepoint(mouse_pos)
                 )
                 if selected:
                     pygame.draw.rect(surface, (55, 70, 55), row, border_radius=3)
@@ -566,10 +759,10 @@ class BuildingInspectDialog:
                 colour = COLOUR_TEXT if selected or hovered else COLOUR_TEXT_DIM
                 surface.blit(
                     self.font_small.render(label, True, colour),
-                    (x + 2, y + 3),
+                    (x + 2, row_y + 3),
                 )
                 bar_x = x + 2 + self.font_small.size(label)[0] + 8
-                bar_y = y + (ROW_H - 7) // 2
+                bar_y = row_y + (ROW_H - 7) // 2
                 bar_w = 36
                 pygame.draw.rect(
                     surface, (40, 40, 40), pygame.Rect(bar_x, bar_y, bar_w, 7), border_radius=2
@@ -591,17 +784,100 @@ class BuildingInspectDialog:
                 tip = "Seeking food" if villager.seeking_food else villager.state.name
                 surface.blit(
                     self.font_small.render(tip[:8], True, COLOUR_TEXT_DIM),
-                    (bar_x + bar_w + 6, y + 3),
+                    (bar_x + bar_w + 6, row_y + 3),
                 )
                 self._worker_hits.append((row, villager.id))
-                y += ROW_H + 2
+            surface.set_clip(old_clip)
+            self._draw_scrollbar(surface, view, content_h, scroll)
+            y += view_h
 
         y += SECTION_GAP
         tip_key: str | None = None
+        fonts = self._fonts()
+
+        # --- Item caps (per-resource stock limits) ---
+        if self._supports_item_caps(building):
+            surface.blit(self.font.render("Item caps", True, COLOUR_TEXT), (x, y))
+            y += 18
+            keys = list(building.depositable_keys())
+            cols = max(1, inner_w // (GRID_CELL + GRID_GAP))
+            rows = max(1, (len(keys) + cols - 1) // cols)
+            content_h = rows * (GRID_CELL + GRID_GAP) - GRID_GAP
+            view_h = min(content_h, MAX_CAP_VIEW_H)
+            view = pygame.Rect(x, y, inner_w, view_h)
+            scroll = self._register_scroll("caps", view, content_h, view_h)
+            old_clip = surface.get_clip()
+            surface.set_clip(view.clip(old_clip) if old_clip.width else view)
+            for i, key in enumerate(keys):
+                col = i % cols
+                row = i // cols
+                cell = pygame.Rect(
+                    x + col * (GRID_CELL + GRID_GAP),
+                    y + row * (GRID_CELL + GRID_GAP) - scroll,
+                    GRID_CELL,
+                    GRID_CELL,
+                )
+                if not cell.colliderect(view):
+                    continue
+                hov = (
+                    view.collidepoint(mouse_pos or (-1, -1))
+                    and mouse_pos is not None
+                    and cell.collidepoint(mouse_pos)
+                )
+                selected = self.selected_cap_key == key
+                cap = building.item_cap(key)
+                draw_resource_cell(
+                    surface,
+                    cell=cell,
+                    key=key,
+                    count=cap,
+                    fonts=fonts,
+                    hovered=hov,
+                    active=selected,
+                    dimmed=cap is None and not selected,
+                )
+                self._inv_hits.append((cell, "cap", key))
+                self._inv_tip_hits.append((cell, "cap", key))
+                if hov:
+                    tip_key = key
+            surface.set_clip(old_clip)
+            self._draw_scrollbar(surface, view, content_h, scroll)
+            y += view_h + 6
+
+            sel = self.selected_cap_key
+            if sel is not None and sel in building.depositable_keys():
+                from resources import resource_label
+
+                cap = building.item_cap(sel)
+                cap_txt = "∞" if cap is None else str(cap)
+                label = f"{resource_label(sel)}: {cap_txt}"
+                surface.blit(
+                    self.font_small.render(label, True, COLOUR_TEXT_DIM),
+                    (x, y + 4),
+                )
+                bx = x + max(120, 8 + self.font_small.size(label)[0])
+                for glyph, action in (("−", "cap_dec"), ("+", "cap_inc"), ("∞", "cap_clear")):
+                    w = max(28, 10 + self.font_small.size(glyph)[0])
+                    rect = pygame.Rect(bx, y, w, BTN_H)
+                    hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+                    self._draw_button(surface, rect, glyph, hovered=hovered)
+                    self._buttons.append((action, rect))
+                    bx += w + 4
+                y += BTN_H + SECTION_GAP
+            else:
+                surface.blit(
+                    self.font_small.render(
+                        "Select an item, then + / − to set a max.",
+                        True,
+                        COLOUR_TEXT_DIM,
+                    ),
+                    (x, y),
+                )
+                y += ROW_H + SECTION_GAP
 
         if dual:
             col_w = (inner_w - INV_PANEL_GAP) // 2
-            left_h, left_hits, left_tips, left_hov = draw_inv_grid(
+            left_h, left_hits, left_tips, left_hov, left_ch, left_vh = draw_inv_grid(
                 surface,
                 origin=(x, y),
                 width=col_w,
@@ -611,11 +887,15 @@ class BuildingInspectDialog:
                 allowed=storage_keys,
                 side="storage",
                 mouse_pos=mouse_pos,
-                fonts=self._fonts(),
+                fonts=fonts,
                 interactive=True,
                 hover_inv=self._hover_inv,
+                selected_key=self.selected_cap_key,
+                item_caps=building.item_caps,
+                scroll_y=self._scroll.get("storage", 0),
+                max_body_h=MAX_STORAGE_BODY_H,
             )
-            right_h, right_hits, right_tips, right_hov = draw_inv_grid(
+            right_h, right_hits, right_tips, right_hov, right_ch, right_vh = draw_inv_grid(
                 surface,
                 origin=(x + col_w + INV_PANEL_GAP, y),
                 width=col_w,
@@ -625,9 +905,37 @@ class BuildingInspectDialog:
                 allowed=None,
                 side="player",
                 mouse_pos=mouse_pos,
-                fonts=self._fonts(),
+                fonts=fonts,
                 interactive=True,
                 hover_inv=self._hover_inv,
+                scroll_y=self._scroll.get("player", 0),
+                max_body_h=MAX_STORAGE_BODY_H,
+            )
+            # Register body viewports (below title+subtitle ≈ 34px).
+            header = 34
+            self._register_scroll(
+                "storage",
+                pygame.Rect(x, y + header, col_w, left_vh),
+                left_ch,
+                left_vh,
+            )
+            self._draw_scrollbar(
+                surface,
+                pygame.Rect(x, y + header, col_w, left_vh),
+                left_ch,
+                self._scroll_value("storage", left_ch, left_vh),
+            )
+            self._register_scroll(
+                "player",
+                pygame.Rect(x + col_w + INV_PANEL_GAP, y + header, col_w, right_vh),
+                right_ch,
+                right_vh,
+            )
+            self._draw_scrollbar(
+                surface,
+                pygame.Rect(x + col_w + INV_PANEL_GAP, y + header, col_w, right_vh),
+                right_ch,
+                self._scroll_value("player", right_ch, right_vh),
             )
             self._inv_hits.extend(left_hits)
             self._inv_hits.extend(right_hits)
@@ -647,7 +955,7 @@ class BuildingInspectDialog:
                 (x, y + 6),
             )
         elif has_storage:
-            h, _hits, tips, hov = draw_inv_grid(
+            h, hits, tips, hov, ch, vh = draw_inv_grid(
                 surface,
                 origin=(x, y),
                 width=inner_w,
@@ -657,10 +965,21 @@ class BuildingInspectDialog:
                 allowed=storage_keys,
                 side="storage",
                 mouse_pos=mouse_pos,
-                fonts=self._fonts(),
-                interactive=False,
+                fonts=fonts,
+                interactive=self._supports_item_caps(building),
                 hover_inv=self._hover_inv,
+                selected_key=self.selected_cap_key,
+                item_caps=building.item_caps,
+                scroll_y=self._scroll.get("storage", 0),
+                max_body_h=MAX_STORAGE_BODY_H,
             )
+            header = 34
+            body = pygame.Rect(x, y + header, inner_w, vh)
+            self._register_scroll("storage", body, ch, vh)
+            self._draw_scrollbar(
+                surface, body, ch, self._scroll_value("storage", ch, vh)
+            )
+            self._inv_hits.extend(hits)
             self._inv_tip_hits.extend(tips)
             if hov:
                 tip_key = hov[1]

@@ -335,6 +335,15 @@ class UI:
         bar_y = y + (row_h - 7) // 2
         self._draw_hunger_bar(surface, bar_x, bar_y, bar_w, 7, villager.satiation)
         tip = f"Hunger {int(villager.satiation * 100)}%"
+        buff_bits: list[str] = []
+        if abs(villager.food_walk_mult - 1.0) > 0.01:
+            buff_bits.append(f"walk ×{villager.food_walk_mult:g}")
+        if abs(villager.food_work_mult - 1.0) > 0.01:
+            buff_bits.append(f"work ×{villager.food_work_mult:g}")
+        if abs(villager.food_hunger_mult - 1.0) > 0.01:
+            buff_bits.append(f"hunger ×{villager.food_hunger_mult:g}")
+        if buff_bits:
+            tip = f"{tip} · {', '.join(buff_bits)}"
         bar_rect = pygame.Rect(bar_x, bar_y, bar_w, 7)
         if local_mouse is not None and bar_rect.collidepoint(local_mouse):
             self._tooltip = (tip, (bar_rect.centerx, bar_rect.top))

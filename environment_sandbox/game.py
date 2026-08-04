@@ -612,6 +612,9 @@ class Game:
                 if self.building_inspect.open and self.building_inspect.contains(
                     pygame.mouse.get_pos()
                 ):
+                    self.building_inspect.handle_mousewheel(
+                        event.y, pygame.mouse.get_pos()
+                    )
                     continue
                 if self.villager_inspect.open and self.villager_inspect.contains(
                     pygame.mouse.get_pos()
@@ -1754,16 +1757,56 @@ class Game:
             return
         if action.startswith("toggle_recipe:"):
             building = self._inspect_building()
-            if building is None or not building.is_processor():
+            if building is None or not building.has_recipes():
                 return
             name = action.split(":", 1)[1]
             enabled = building.toggle_recipe(name)
-            from recipes import RECIPE_LABELS
+            from recipes import RECIPE_LABELS, recipe_label
 
-            label = RECIPE_LABELS.get(name, name)
+            label = RECIPE_LABELS.get(name)
+            if label is None:
+                for recipe in building.known_recipes():
+                    if recipe.name == name:
+                        label = recipe_label(recipe)
+                        break
+                else:
+                    label = name
             state = "on" if enabled else "off"
             self._wake_building_workers(building.id)
             self._set_status(f"{BUILDING_LABELS[building.kind]}: {label} {state}.")
+            return
+        if action.startswith("select_cap:"):
+            key = action.split(":", 1)[1]
+            building = self._inspect_building()
+            if building is None:
+                return
+            if key not in building.depositable_keys():
+                return
+            self.building_inspect.selected_cap_key = key
+            from resources import resource_label
+
+            cap = building.item_cap(key)
+            tip = "unlimited" if cap is None else f"max {cap}"
+            self._set_status(f"{resource_label(key)} selected ({tip}). Use + / −.")
+            return
+        if action in ("cap_inc", "cap_dec", "cap_clear"):
+            building = self._inspect_building()
+            key = self.building_inspect.selected_cap_key
+            if building is None or key is None:
+                return
+            from resources import resource_label
+
+            label = resource_label(key)
+            if action == "cap_clear":
+                building.set_item_cap(key, None)
+                self._set_status(f"{label} cap cleared (unlimited).")
+                return
+            delta = 1 if action == "cap_inc" else -1
+            new_cap = building.adjust_item_cap(key, delta)
+            if new_cap is None:
+                self._set_status(f"{label} cap cleared (unlimited).")
+            else:
+                self._set_status(f"{label} cap: {new_cap}.")
             return
 
     def _transfer_inspect_to_player(self, key: str) -> None:
@@ -1813,8 +1856,12 @@ class Game:
             hx, hy = self.world.home_pos
             self.world.apply_disturbance(hx, hy)
         else:
-            if building.space_left <= 0:
-                self._set_status("Building storage is full.")
+            if building.space_for_key(key) <= 0:
+                cap = building.item_cap(key)
+                if cap is not None and int(getattr(building, key, 0)) >= cap:
+                    self._set_status(f"{label} cap reached ({cap}).")
+                else:
+                    self._set_status("Building storage is full.")
                 return
             ok = building.deposit_one_from(inv, key)
         if not ok:
@@ -2934,7 +2981,9 @@ class Game:
                 villager.work_cooldown -= 1
 
             villager.satiation = max(
-                0.0, villager.satiation - VILLAGER_SATIATION_DECAY_PER_TICK
+                0.0,
+                villager.satiation
+                - VILLAGER_SATIATION_DECAY_PER_TICK * villager.food_hunger_mult,
             )
 
             # Both timers blocking — no move or work this tick.
@@ -2994,11 +3043,15 @@ class Game:
         return 0.4 + 0.6 * s
 
     def _villager_move_interval(self, villager: Villager) -> int:
-        factor = self._satiation_speed_factor(villager)
+        factor = self._satiation_speed_factor(villager) * max(
+            0.1, villager.food_walk_mult
+        )
         return max(8, int(round(VILLAGER_MOVE_INTERVAL / factor)))
 
     def _villager_work_interval(self, villager: Villager) -> int:
-        factor = self._satiation_speed_factor(villager)
+        factor = self._satiation_speed_factor(villager) * max(
+            0.1, villager.food_work_mult
+        )
         return max(12, int(round(VILLAGER_WORK_INTERVAL / factor)))
 
     def _food_count(self, storage) -> int:
@@ -3041,33 +3094,72 @@ class Game:
         )
 
     def _eat_random_from(
-        self, storage, amount: int, villager: Villager | None = None
+        self, storage, villager: Villager | None = None
     ) -> int:
-        """Consume up to `amount` random food units. Returns how many eaten."""
-        eaten = 0
-        for _ in range(amount):
-            choices = [
-                key for key in VILLAGER_FOOD_KEYS if getattr(storage, key, 0) > 0
-            ]
-            if not choices:
+        """Consume food toward a meal. Returns how many items eaten.
+
+        One unit of each food type, up to ``MAX_FOOD_TYPES_PER_MEAL`` types,
+        preferring highest-satiation foods first. Stops early once the villager
+        reaches their ration refill target (or a full meal for non-villager calls).
+        """
+        from foods import (
+            MAX_FOOD_TYPES_PER_MEAL,
+            combine_meal_buffs,
+            food_def,
+            satiation_from_points,
+        )
+
+        target = (
+            villager.ration_refill()
+            if villager is not None
+            else 0.75
+        )
+        available = [
+            key for key in VILLAGER_FOOD_KEYS if getattr(storage, key, 0) > 0
+        ]
+        # Highest satiation first; prefer stronger walk buff (cooked over raw).
+        available.sort(
+            key=lambda k: (
+                -food_def(k).satiation,
+                -food_def(k).walk_speed,
+                k,
+            ),
+        )
+        eaten_keys: list[str] = []
+        points = 0.0
+        for key in available:
+            if len(eaten_keys) >= MAX_FOOD_TYPES_PER_MEAL:
                 break
-            key = self._food_rng.choice(choices)
+            if villager is not None and villager.satiation >= target and eaten_keys:
+                break
+            if villager is None and points >= 5.0 and eaten_keys:
+                break
             setattr(storage, key, getattr(storage, key) - 1)
+            fx = food_def(key)
+            points += fx.satiation
+            eaten_keys.append(key)
             if villager is not None:
-                villager.last_food = key
-            eaten += 1
-        return eaten
+                villager.satiation = min(
+                    1.0, villager.satiation + satiation_from_points(fx.satiation)
+                )
+                if villager.satiation >= target:
+                    break
+            elif points >= 5.0:
+                break
+        if villager is not None and eaten_keys:
+            villager.last_meal = list(eaten_keys)
+            walk, work, hunger = combine_meal_buffs(eaten_keys)
+            villager.apply_food_buffs(walk, work, hunger)
+        return len(eaten_keys)
 
     def _update_seek_food(self, villager: Villager) -> None:
         """Walk to nearest food store and eat according to ration mode."""
         villager.seeking_food = True
-        amount = villager.ration_food_amount()
 
         # Eat from carried food first.
         if self._food_count(villager.inventory) > 0:
-            eaten = self._eat_random_from(villager.inventory, amount, villager)
+            eaten = self._eat_random_from(villager.inventory, villager)
             if eaten > 0:
-                villager.satiation = villager.ration_refill()
                 villager.seeking_food = False
                 villager.work_cooldown = self._villager_work_interval(villager)
                 villager.state = VillagerState.WORKING
@@ -3093,9 +3185,8 @@ class Game:
             if storage is None:
                 villager.seeking_food = villager.needs_food()
                 return
-            eaten = self._eat_random_from(storage, amount, villager)
+            eaten = self._eat_random_from(storage, villager)
             if eaten > 0:
-                villager.satiation = villager.ration_refill()
                 villager.seeking_food = False
             else:
                 villager.seeking_food = villager.needs_food()
@@ -3177,6 +3268,7 @@ class Game:
                     can_plant_berry=can_plant_berry,
                     can_plant_herb=can_plant_herb,
                 )
+                and self._building_allows_cell(building, cell)
                 for task in tasks
             )
         task = building.draw_task_type
@@ -3196,7 +3288,7 @@ class Game:
             can_plant_sapling=False,
             can_plant_berry=False,
             can_plant_herb=False,
-        )
+        ) and self._building_allows_cell(building, cell)
 
     def _delivery_destination(
         self, villager: Villager, building: Building
@@ -3299,7 +3391,7 @@ class Game:
             return True
         if self._find_haul_source(villager) is not None:
             return True
-        return self._find_processor_needing_supply() is not None
+        return self._find_processor_needing_supply_for(villager) is not None
 
     def _construction_has_work(self, villager: Villager) -> bool:
         if not self.construction_sites:
@@ -4014,6 +4106,11 @@ class Game:
         else:
             animals = list(self.wildlife.animals)
             ox, oy = building.center_cell()
+        animals = [
+            a
+            for a in animals
+            if building.allows_hunt_kind(a.kind.name)
+        ]
         if not animals:
             return None
         return min(animals, key=lambda a: abs(a.x - ox) + abs(a.y - oy))
@@ -4212,6 +4309,10 @@ class Game:
                 villager.target = home
 
         if villager.state == VillagerState.DELIVERING:
+            if villager.inventory.is_empty:
+                villager.haul_building_id = None
+                villager.state = VillagerState.IDLE
+                return
             if (villager.x, villager.y) == home:
                 self._deposit_home(villager.inventory, status=False)
                 villager.haul_building_id = None
@@ -4221,33 +4322,76 @@ class Game:
             return
 
         if villager.state == VillagerState.HAULING and villager.haul_building_id is not None:
-            sink = self.buildings.get(villager.haul_building_id)
-            if (
-                sink is not None
-                and sink.is_processor()
-                and not villager.inventory.is_empty
-                and sink.can_accept_from(villager.inventory)
-            ):
-                dest = sink.center_cell()
-                villager.target = dest
-                if (villager.x, villager.y) == dest:
-                    if villager.work_cooldown == 0:
-                        # Deposit only ingredients for enabled recipes.
-                        for key in sink.active_supply_keys():
-                            sink.deposit_key_from(villager.inventory, key)
-                        villager.work_cooldown = self._villager_work_interval(villager)
-                        if villager.inventory.is_empty:
-                            villager.haul_building_id = None
-                            villager.state = VillagerState.IDLE
-                        elif not sink.can_accept_from(villager.inventory):
-                            villager.state = VillagerState.DELIVERING
-                            villager.target = home
+            claimed = self.buildings.get(villager.haul_building_id)
+            if claimed is not None and claimed.is_processor():
+                # Deliver cargo the processor can accept.
+                if (
+                    not villager.inventory.is_empty
+                    and claimed.can_accept_from(villager.inventory)
+                ):
+                    dest = claimed.center_cell()
+                    villager.target = dest
+                    if (villager.x, villager.y) == dest:
+                        if villager.work_cooldown == 0:
+                            claimed.deposit_needed_from(villager.inventory)
+                            villager.work_cooldown = self._villager_work_interval(
+                                villager
+                            )
+                            if villager.inventory.is_empty:
+                                villager.haul_building_id = None
+                                villager.state = VillagerState.IDLE
+                            elif not claimed.can_accept_from(villager.inventory):
+                                villager.state = VillagerState.DELIVERING
+                                villager.target = home
+                        return
+                    self._step_villager_toward(villager, dest)
                     return
-                self._step_villager_toward(villager, dest)
-                return
-            # Fall through if the claimed sink is gone / full.
+                if not villager.inventory.is_empty:
+                    # Cargo left that this sink will not take — return home.
+                    villager.state = VillagerState.DELIVERING
+                    villager.target = home
+                    return
+                # Sticky supply trip: keep fetching for this processor (don't divert
+                # to farm clearing mid-walk).
+                if self._processor_can_be_supplied(claimed) and self._owns_haul_claim(
+                    villager, claimed.id
+                ):
+                    if (villager.x, villager.y) != home:
+                        self._step_villager_toward(villager, home)
+                        return
+                    taken = self._withdraw_processor_supply(villager, claimed)
+                    if taken <= 0:
+                        villager.haul_building_id = None
+                        villager.state = VillagerState.IDLE
+                    return
+                villager.haul_building_id = None
+            elif claimed is not None and villager.inventory.is_empty:
+                # Drop duplicate empty claims so only one hauler walks to each source.
+                if not self._owns_haul_claim(villager, claimed.id):
+                    villager.haul_building_id = None
+                else:
+                    # Clearing a stocked workplace → withdraw then deliver home.
+                    dest = claimed.center_cell()
+                    if (villager.x, villager.y) == dest:
+                        if villager.work_cooldown == 0:
+                            claimed.withdraw_to_inventory(villager.inventory)
+                            villager.work_cooldown = self._villager_work_interval(
+                                villager
+                            )
+                            if not villager.inventory.is_empty:
+                                villager.state = VillagerState.DELIVERING
+                                villager.target = home
+                            else:
+                                # Race / emptied by another hauler — abort empty walk.
+                                villager.haul_building_id = None
+                                villager.state = VillagerState.IDLE
+                        return
+                    self._step_villager_toward(villager, dest)
+                    return
+            else:
+                villager.haul_building_id = None
 
-        # Prefer clearing processor outputs, then supplying inputs from home.
+        # Prefer clearing processor outputs / farm produce, then supplying inputs.
         source = self._find_haul_source(villager)
         if source is not None:
             villager.haul_building_id = source.id
@@ -4259,31 +4403,86 @@ class Game:
                     if not villager.inventory.is_empty:
                         villager.state = VillagerState.DELIVERING
                         villager.target = home
+                    else:
+                        villager.haul_building_id = None
+                        villager.state = VillagerState.IDLE
                 return
             self._step_villager_toward(villager, source.center_cell())
             return
 
-        sink = self._find_processor_needing_supply()
+        sink = self._find_processor_needing_supply_for(villager)
         if sink is not None:
             villager.haul_building_id = sink.id
             villager.state = VillagerState.HAULING
             if (villager.x, villager.y) != home:
                 self._step_villager_toward(villager, home)
                 return
-            taken = self.home_storage.withdraw_keys_to(
-                villager.inventory, sink.active_supply_keys()
-            )
+            taken = self._withdraw_processor_supply(villager, sink)
             if taken <= 0:
                 villager.haul_building_id = None
                 villager.state = VillagerState.IDLE
-                return
-            # Next tick delivers to the processor via HAULING branch above.
             return
 
+        villager.haul_building_id = None
         villager.state = VillagerState.IDLE
 
+    def _processor_can_be_supplied(self, building: Building) -> bool:
+        demand = building.supply_demand()
+        if not demand:
+            return False
+        return any(getattr(self.home_storage, key, 0) > 0 for key in demand)
+
+    def _withdraw_processor_supply(self, villager: Villager, sink: Building) -> int:
+        """Pack a balanced load of what the processor still needs (≤ inventory)."""
+        demand = sink.supply_demand()
+        if not demand:
+            return 0
+        # Cap each key by home stock and remaining kitchen/mill room.
+        amounts: dict[str, int] = {}
+        for key, want in demand.items():
+            have = int(getattr(self.home_storage, key, 0))
+            room = sink.space_for_key(key)
+            n = min(want, have, room)
+            if n > 0:
+                amounts[key] = n
+        if not amounts:
+            return 0
+        return self.home_storage.withdraw_amounts_to(villager.inventory, amounts)
+
+    def _claimed_haul_targets(self, exclude_id: int) -> set[int]:
+        """Buildings already reserved by empty haulers walking to pick up stock."""
+        claimed: set[int] = set()
+        for other in self.villagers:
+            if other.id == exclude_id:
+                continue
+            if other.haul_building_id is None:
+                continue
+            if other.inventory.is_empty and other.state == VillagerState.HAULING:
+                claimed.add(other.haul_building_id)
+        return claimed
+
+    def _owns_haul_claim(self, villager: Villager, building_id: int) -> bool:
+        """True if this villager should keep the empty-pickup claim (lowest id wins)."""
+        for other in self.villagers:
+            if other.id == villager.id:
+                continue
+            if other.haul_building_id != building_id:
+                continue
+            if (
+                other.inventory.is_empty
+                and other.state == VillagerState.HAULING
+                and other.id < villager.id
+            ):
+                return False
+        return True
+
     def _find_haul_source(self, villager: Villager) -> Building | None:
-        stocked = [b for b in self.buildings.values() if b.haulable_total() > 0]
+        claimed = self._claimed_haul_targets(villager.id)
+        stocked = [
+            b
+            for b in self.buildings.values()
+            if b.haulable_total() > 0 and b.id not in claimed
+        ]
         if not stocked:
             return None
         return min(
@@ -4293,15 +4492,23 @@ class Game:
         )
 
     def _find_processor_needing_supply(self) -> Building | None:
+        return self._find_processor_needing_supply_for(None)
+
+    def _find_processor_needing_supply_for(
+        self, villager: Villager | None
+    ) -> Building | None:
+        claimed = (
+            self._claimed_haul_targets(villager.id) if villager is not None else set()
+        )
         needy: list[Building] = []
         for building in self.buildings.values():
-            if not building.is_processor() or building.input_space_left() <= 0:
+            if not building.is_processor():
                 continue
-            supply = building.active_supply_keys()
-            if not supply:
+            if villager is not None and building.id in claimed:
                 continue
-            if any(getattr(self.home_storage, key, 0) > 0 for key in supply):
-                needy.append(building)
+            if not self._processor_can_be_supplied(building):
+                continue
+            needy.append(building)
         if not needy:
             return None
         return min(
@@ -4314,12 +4521,7 @@ class Game:
         sinks = [
             b
             for b in self.buildings.values()
-            if b.is_processor()
-            and b.can_accept_from(villager.inventory)
-            and any(
-                getattr(villager.inventory, key, 0) > 0
-                for key in b.active_supply_keys()
-            )
+            if b.is_processor() and b.can_accept_from(villager.inventory)
         ]
         if not sinks:
             return None
@@ -4469,13 +4671,15 @@ class Game:
         origin = (villager.x, villager.y)
 
         def match(cell, task_type: TaskType, *, plant_ok: bool) -> bool:
-            return self._cell_matches_task(
+            if not self._cell_matches_task(
                 cell,
                 task_type,
                 can_plant_sapling=can_plant_sapling if plant_ok else False,
                 can_plant_berry=can_plant_berry if plant_ok else False,
                 can_plant_herb=can_plant_herb if plant_ok else False,
-            )
+            ):
+                return False
+            return self._building_allows_cell(building, cell)
 
         if building.areas:
             gather: list[tuple[int, int]] = []
@@ -4487,7 +4691,12 @@ class Game:
                         continue
                     task = area.task_type
                     if task == TaskType.FULL_MANAGE:
-                        if allow_collect and cell.feature == FeatureType.TREE and cell.deposit > 0:
+                        if (
+                            allow_collect
+                            and cell.feature == FeatureType.TREE
+                            and cell.deposit > 0
+                            and self._building_allows_cell(building, cell)
+                        ):
                             gather.append((x, y))
                         elif allow_plant and self._cell_matches_manage_plant(
                             cell, can_plant_sapling=can_plant_sapling
@@ -4533,6 +4742,7 @@ class Game:
                     can_plant_sapling=False,
                     can_plant_berry=False,
                     can_plant_herb=False,
+                    building=building,
                 )
             return None
 
@@ -4545,6 +4755,7 @@ class Game:
                     can_plant_sapling=False,
                     can_plant_berry=False,
                     can_plant_herb=False,
+                    building=building,
                 )
             return None
 
@@ -4563,6 +4774,7 @@ class Game:
             can_plant_sapling=False,
             can_plant_berry=False,
             can_plant_herb=False,
+            building=building,
         )
 
     def _find_closest_task_cell(
@@ -4574,6 +4786,7 @@ class Game:
         can_plant_sapling: bool,
         can_plant_berry: bool,
         can_plant_herb: bool,
+        building: Building | None = None,
     ) -> tuple[int, int] | None:
         best: tuple[int, int] | None = None
         best_d = 10**9
@@ -4593,6 +4806,8 @@ class Game:
                     can_plant_berry=can_plant_berry,
                     can_plant_herb=can_plant_herb,
                 ):
+                    continue
+                if building is not None and not self._building_allows_cell(building, cell):
                     continue
                 d = abs(x - ox) + abs(y - oy)
                 if d < best_d:
@@ -4657,6 +4872,43 @@ class Game:
                     best = (x, y)
         return best
 
+    def _forage_key_for_cell(self, cell) -> str | None:
+        """Inventory key a forager would collect from this cell, if any."""
+        if cell.feature == FeatureType.MUSHROOM:
+            return "mushrooms"
+        if cell.feature == FeatureType.BERRY_BUSH and cell.deposit > 0:
+            return "berries"
+        if cell.feature == FeatureType.REED:
+            return "reeds"
+        if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP):
+            crop = CROP_BY_KEY.get(cell.crop_kind or "sage", CROP_BY_KEY["sage"])
+            return crop.produce_key
+        if cell.feature == FeatureType.TREE and cell.deposit > 0:
+            from trees import resolve_tree
+
+            return resolve_tree(cell.tree_species).yield_key
+        return None
+
+    def _building_allows_cell(self, building: Building, cell) -> bool:
+        """Respect gather-recipe toggles for forester / forager cells."""
+        if building.kind == BuildingKind.FORESTER:
+            if cell.feature == FeatureType.TREE and cell.deposit > 0:
+                from trees import resolve_tree
+
+                return building.allows_tree_yield(
+                    resolve_tree(cell.tree_species).yield_key
+                )
+            return True
+        if building.kind == BuildingKind.FORAGER:
+            key = self._forage_key_for_cell(cell)
+            if key is None:
+                return True
+            # Reeds have no recipe toggle — leave them for manual collection.
+            if key == "reeds":
+                return False
+            return building.allows_forage_key(key)
+        return True
+
     def _cell_matches_task(
         self,
         cell,
@@ -4708,6 +4960,11 @@ class Game:
                 return True
             if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.REED):
                 return True
+            if cell.feature == FeatureType.TREE and cell.deposit > 0:
+                from trees import resolve_tree
+
+                # Softwood only when forager wood recipe is used.
+                return resolve_tree(cell.tree_species).yield_key == "wood"
             return False
         return False
 
@@ -4733,6 +4990,7 @@ class Game:
             allow_collect
             and cell.feature == FeatureType.TREE
             and (TaskType.CHOP_TREES in tasks or TaskType.FULL_MANAGE in tasks)
+            and self._building_allows_cell(building, cell)
         ):
             self._chop_tree(x, y, inv, status=False)
         elif allow_collect and cell.feature == FeatureType.ROCK and TaskType.COLLECT_ROCKS in tasks:
@@ -4741,20 +4999,30 @@ class Game:
             allow_collect
             and cell.feature == FeatureType.MUSHROOM
             and (TaskType.FORAGE_MUSHROOMS in tasks or TaskType.FULL_FORAGE in tasks)
+            and self._building_allows_cell(building, cell)
         ):
             self._collect_mushroom(x, y, inv, status=False)
         elif (
             allow_collect
             and cell.feature == FeatureType.BERRY_BUSH
             and (TaskType.FORAGE_BERRIES in tasks or TaskType.FULL_FORAGE in tasks)
+            and self._building_allows_cell(building, cell)
         ):
             self._collect_berries(x, y, inv, status=False)
         elif (
             allow_collect
             and cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.REED)
             and (TaskType.FORAGE_HERBS in tasks or TaskType.FULL_FORAGE in tasks)
+            and self._building_allows_cell(building, cell)
         ):
             self._collect_herb(x, y, inv, status=False)
+        elif (
+            allow_collect
+            and cell.feature == FeatureType.TREE
+            and TaskType.FULL_FORAGE in tasks
+            and self._building_allows_cell(building, cell)
+        ):
+            self._chop_tree(x, y, inv, status=False)
         elif allow_plant and cell.feature == FeatureType.NONE:
             # Prefer inventory stock (filled by storage withdraw). Fall back to remote pull.
             if building.kind == BuildingKind.FORESTER and (
@@ -4875,7 +5143,10 @@ class Game:
                     villager.work_cooldown = max(0, villager.work_cooldown - skip)
                     villager.satiation = max(
                         0.0,
-                        villager.satiation - VILLAGER_SATIATION_DECAY_PER_TICK * skip,
+                        villager.satiation
+                        - VILLAGER_SATIATION_DECAY_PER_TICK
+                        * villager.food_hunger_mult
+                        * skip,
                     )
                 for animal in self.wildlife.animals:
                     animal.move_cooldown = max(0, animal.move_cooldown - skip)
