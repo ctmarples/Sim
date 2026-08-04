@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import random
+import time
 
 import pygame
 
@@ -296,6 +297,21 @@ class Game:
         self._ice_overlay_key: float | None = None
         self._season_period_overlay: pygame.Surface | None = None
         self._season_mask_period_key: tuple | None = None
+        # Prebaked fleck rasters (one per 8-period); cycle only remasks.
+        self._season_fleck_atlas: list[pygame.Surface | None] = [None] * 8
+        self._season_fleck_atlas_key: tuple | None = None
+        self._season_fleck_atlas_gen = None
+        self._season_fleck_atlas_period = 0
+        self._season_cluster_stamps: dict = {}
+        self._season_reveal_period: int | None = None
+        self._season_reveal_tick = 0
+        self._season_fleck_baking: pygame.Surface | None = None
+        self._season_tree_halo: pygame.Surface | None = None
+        self._season_tree_halo_key: tuple | None = None
+        self._season_atlas_tree_sig: int | None = None
+        self._season_compose_source: pygame.Surface | None = None
+        self._season_compose_source_key: tuple | None = None
+        self._season_check_trees = False
         # F6: deterministic autotile diagnostic scene + per-cell mask overlay.
         self.autotile_diag = False
         self._diag_cell_meta: dict[tuple[int, int], dict] = {}
@@ -1455,7 +1471,9 @@ class Game:
         self.wildlife.refresh_habitats(self.world)
         self.world.update_forest_floor()
         # Seasonal terrain masks follow the same ≤8/year cadence (not daily).
+        # Fleck atlas stays; remask to current terrain and refresh autumn if trees changed.
         self._season_mask_period_key = None
+        self._season_check_trees = True
         snap = biodiversity_snapshot(
             self.world,
             deer_positions=((a.x, a.y) for a in self.wildlife.deer()),
@@ -4733,6 +4751,7 @@ class Game:
         self._ice_overlay_key = None
         self._season_period_overlay = None
         self._season_mask_period_key = None
+        self._invalidate_season_fleck_atlas()
 
     def _visual_terrain_at(
         self, x: int, y: int, farm_cells: set[tuple[int, int]]
@@ -4817,6 +4836,7 @@ class Game:
             self._season_mute_key = None
             self._season_period_overlay = None
             self._season_mask_period_key = None
+            # Terrain paint changed — remask only; keep fleck atlas.
             return (
                 self._terrain_base,
                 self._terrain_water_mask,
@@ -4932,6 +4952,11 @@ class Game:
         (190, 205, 220),
     )
 
+    # Half-res fleck atlas: ~1/4 memory, soft speckles after upscale.
+    _SEASON_FLECK_SCALE: int = 2
+    # Flecks unlock over this many in-game days (scales with sim_speed).
+    _SEASON_REVEAL_DAYS: float = 2.5
+
     def _land_cells(self, terrains: tuple[TerrainType, ...]) -> list[tuple[int, int]]:
         return [
             (x, y)
@@ -4940,13 +4965,21 @@ class Game:
             if self.world.cells[y][x].terrain in terrains
         ]
 
-    def _scramble(self, i: int, salt: int) -> int:
+    @staticmethod
+    def _scramble(i: int, salt: int) -> int:
         """Knuth-style mix so fleck indices are not sequential on the map."""
         n = (i * 2654435761 + salt * 1597334677) & 0xFFFFFFFF
         n ^= (n >> 16)
         n = (n * 2246822519) & 0xFFFFFFFF
         n ^= (n >> 13)
         return n & 0x7FFFFFFF
+
+    def _fleck_size(self) -> tuple[int, int]:
+        s = self._SEASON_FLECK_SCALE
+        return (
+            max(1, (self.world.cols * CELL_SIZE) // s),
+            max(1, (self.world.rows * CELL_SIZE) // s),
+        )
 
     def _paint_individual_at(
         self,
@@ -4962,7 +4995,43 @@ class Game:
         rgb = palette[self._scramble(salt, 2) % len(palette)]
         alpha = alpha_lo + (self._scramble(salt, 3) % max(1, alpha_hi - alpha_lo + 1))
         if 0 <= px < surf.get_width() and 0 <= py < surf.get_height():
-            pygame.draw.circle(surf, (*rgb, alpha), (px, py), 1)
+            surf.set_at((px, py), (*rgb, alpha))
+
+    def _cluster_stamp(
+        self,
+        palette: tuple[tuple[int, int, int], ...],
+        *,
+        salt: int,
+        dots: int,
+        spread: int,
+        alpha_lo: int,
+        alpha_hi: int,
+    ) -> pygame.Surface:
+        """Cached organic cluster; one blit replaces dozens of circle draws."""
+        variant = salt % 24
+        key = (palette, dots, spread, alpha_lo, alpha_hi, variant)
+        cached = self._season_cluster_stamps.get(key)
+        if cached is not None:
+            return cached
+        size = spread * 2 + 6
+        stamp = pygame.Surface((size, size), pygame.SRCALPHA)
+        cx = cy = size // 2
+        for i in range(dots):
+            ang = (self._scramble(variant + i, 10) / 0x7FFFFFFF) * math.tau
+            dist = (self._scramble(variant + i, 40) / 0x7FFFFFFF) * spread
+            px = cx + int(dist * math.cos(ang))
+            py = cy + int(dist * math.sin(ang) * 0.85)
+            rgb = palette[self._scramble(variant + i, 100) % len(palette)]
+            alpha = alpha_lo + (
+                self._scramble(variant + i, 130) % max(1, alpha_hi - alpha_lo + 1)
+            )
+            if i < 2:
+                alpha = min(alpha_hi + 20, alpha + 15)
+            radius = 1 if (self._scramble(variant + i, 160) % 10) < 7 else 2
+            if 0 <= px < size and 0 <= py < size:
+                pygame.draw.circle(stamp, (*rgb, alpha), (px, py), radius)
+        self._season_cluster_stamps[key] = stamp
+        return stamp
 
     def _paint_cluster_at(
         self,
@@ -4977,20 +5046,15 @@ class Game:
         alpha_lo: int = 35,
         alpha_hi: int = 95,
     ) -> None:
-        for i in range(dots):
-            ang = (self._scramble(salt + i, 10) / 0x7FFFFFFF) * math.tau
-            dist = (self._scramble(salt + i, 40) / 0x7FFFFFFF) * spread
-            px = cx + int(dist * math.cos(ang))
-            py = cy + int(dist * math.sin(ang) * 0.85)
-            rgb = palette[self._scramble(salt + i, 100) % len(palette)]
-            alpha = alpha_lo + (
-                self._scramble(salt + i, 130) % max(1, alpha_hi - alpha_lo + 1)
-            )
-            if i < 2:
-                alpha = min(alpha_hi + 20, alpha + 15)
-            radius = 1 if (self._scramble(salt + i, 160) % 10) < 7 else 2
-            if 0 <= px < surf.get_width() and 0 <= py < surf.get_height():
-                pygame.draw.circle(surf, (*rgb, alpha), (px, py), radius)
+        stamp = self._cluster_stamp(
+            palette,
+            salt=salt,
+            dots=dots,
+            spread=spread,
+            alpha_lo=alpha_lo,
+            alpha_hi=alpha_hi,
+        )
+        surf.blit(stamp, (cx - stamp.get_width() // 2, cy - stamp.get_height() // 2))
 
     def _world_point_on_land(
         self,
@@ -5002,7 +5066,6 @@ class Game:
         if not cells:
             return None
         gx, gy = cells[self._scramble(i, salt) % len(cells)]
-        # Continuous jitter inside the cell (and slight bleed for organic feel).
         jx = self._scramble(i, salt + 11) / 0x7FFFFFFF
         jy = self._scramble(i, salt + 12) / 0x7FFFFFFF
         bleed = int(CELL_SIZE * 0.35)
@@ -5024,7 +5087,17 @@ class Game:
                     out.append((x, y))
         return out
 
-    def _seed_open_land_speckles(
+    def _round_tree_signature(self) -> int:
+        sig = 0
+        for x, y in self._round_tree_cells():
+            sig = (sig * 1315423911 + x * 73856093 + y * 19349663) & 0xFFFFFFFF
+        return sig
+
+    def _fleck_xy(self, px: int, py: int) -> tuple[int, int]:
+        s = self._SEASON_FLECK_SCALE
+        return px // s, py // s
+
+    def _iter_seed_open_land_speckles(
         self,
         surf: pygame.Surface,
         *,
@@ -5037,96 +5110,51 @@ class Game:
         alpha_lo: int = 40,
         alpha_hi: int = 100,
         cluster_dots: int = 8,
-    ) -> None:
-        """Scatter flecks in free world space over matching land (not per-cell lattice)."""
+        yield_every: int = 512,
+    ):
+        """Scatter flecks onto atlas layer (coordinates in fleck-space)."""
         lands = terrains if terrains is not None else self._OPEN_LAND
         cells = self._land_cells(lands)
         if not cells:
             return
         n_ind = max(0, int(round(len(cells) * individual_density)))
         n_clu = max(0, int(round(len(cells) * cluster_density)))
+        scale = self._SEASON_FLECK_SCALE
         for i in range(n_ind):
             pt = self._world_point_on_land(cells, i, period_salt + 17)
-            if pt is None:
-                continue
-            self._paint_individual_at(
-                surf,
-                pt[0],
-                pt[1],
-                individual_palette,
-                salt=period_salt + i * 31,
-                alpha_lo=alpha_lo,
-                alpha_hi=alpha_hi,
-            )
+            if pt is not None:
+                fx, fy = self._fleck_xy(pt[0], pt[1])
+                self._paint_individual_at(
+                    surf,
+                    fx,
+                    fy,
+                    individual_palette,
+                    salt=period_salt + i * 31,
+                    alpha_lo=alpha_lo,
+                    alpha_hi=alpha_hi,
+                )
+            if (i + 1) % yield_every == 0:
+                yield
         for i in range(n_clu):
             pt = self._world_point_on_land(cells, i, period_salt + 91)
-            if pt is None:
-                continue
-            spread = 4 + (self._scramble(i, period_salt + 5) % 4)
-            self._paint_cluster_at(
-                surf,
-                pt[0],
-                pt[1],
-                cluster_palette,
-                salt=period_salt + i * 47,
-                dots=cluster_dots,
-                spread=spread,
-                alpha_lo=alpha_lo,
-                alpha_hi=alpha_hi,
-            )
+            if pt is not None:
+                spread = max(2, (4 + (self._scramble(i, period_salt + 5) % 4)) // scale)
+                fx, fy = self._fleck_xy(pt[0], pt[1])
+                self._paint_cluster_at(
+                    surf,
+                    fx,
+                    fy,
+                    cluster_palette,
+                    salt=period_salt + i * 47,
+                    dots=cluster_dots,
+                    spread=spread,
+                    alpha_lo=alpha_lo,
+                    alpha_hi=alpha_hi,
+                )
+            if (i + 1) % max(1, yield_every // 4) == 0:
+                yield
 
-    def _seed_soil_speckles(
-        self,
-        surf: pygame.Surface,
-        *,
-        period_salt: int,
-        individual_density: float,
-        cluster_density: float,
-        individual_palette: tuple[tuple[int, int, int], ...],
-        cluster_palette: tuple[tuple[int, int, int], ...],
-        terrains: tuple[TerrainType, ...] | None = None,
-        alpha_lo: int = 40,
-        alpha_hi: int = 100,
-        cluster_dots: int = 8,
-    ) -> None:
-        """Scatter flecks in free world space over matching land (not per-cell lattice)."""
-        lands = terrains if terrains is not None else self._OPEN_LAND
-        cells = self._land_cells(lands)
-        if not cells:
-            return
-        n_ind = max(0, int(round(len(cells) * individual_density)))
-        n_clu = max(0, int(round(len(cells) * cluster_density)))
-        for i in range(n_ind):
-            pt = self._world_point_on_land(cells, i, period_salt + 17)
-            if pt is None:
-                continue
-            self._paint_individual_at(
-                surf,
-                pt[0],
-                pt[1],
-                individual_palette,
-                salt=period_salt + i * 31,
-                alpha_lo=alpha_lo,
-                alpha_hi=alpha_hi,
-            )
-        for i in range(n_clu):
-            pt = self._world_point_on_land(cells, i, period_salt + 91)
-            if pt is None:
-                continue
-            spread = 4 + (self._scramble(i, period_salt + 5) % 4)
-            self._paint_cluster_at(
-                surf,
-                pt[0],
-                pt[1],
-                cluster_palette,
-                salt=period_salt + i * 47,
-                dots=cluster_dots,
-                spread=spread,
-                alpha_lo=alpha_lo,
-                alpha_hi=alpha_hi,
-            )
-
-    def _bake_autumn_tree_speckles(
+    def _iter_bake_autumn_tree_speckles(
         self,
         surf: pygame.Surface,
         *,
@@ -5134,10 +5162,13 @@ class Game:
         individuals_per_tree: int,
         clusters_per_tree: int,
         period_salt: int,
-    ) -> None:
-        """Free-space leaf flecks around round trees; gone trees clear those spots."""
+        yield_every: int = 256,
+    ):
+        """Tree-adjacent autumn flecks into atlas (live tree halo remasks later)."""
         max_dist = radius * CELL_SIZE + CELL_SIZE * 0.4
         min_dist = CELL_SIZE * 0.35
+        scale = self._SEASON_FLECK_SCALE
+        done = 0
         for tx, ty in self._round_tree_cells():
             tcx = tx * CELL_SIZE + CELL_SIZE // 2
             tcy = ty * CELL_SIZE + CELL_SIZE // 2
@@ -5150,24 +5181,27 @@ class Game:
                 px = tcx + int(dist * math.cos(ang))
                 py = tcy + int(dist * math.sin(ang) * 0.9)
                 gx, gy = px // CELL_SIZE, py // CELL_SIZE
-                if not self.world.in_bounds(gx, gy):
-                    continue
-                if self.world.cells[gy][gx].terrain not in self._AUTUMN_LAND:
-                    continue
-                palette = (
-                    self._YELLOW
-                    if (self._scramble(i, tree_salt + 3) % 100) < 55
-                    else self._BROWN
-                )
-                self._paint_individual_at(
-                    surf,
-                    px,
-                    py,
-                    palette,
-                    salt=tree_salt + i * 19,
-                    alpha_lo=50,
-                    alpha_hi=120,
-                )
+                if self.world.in_bounds(gx, gy) and (
+                    self.world.cells[gy][gx].terrain in self._AUTUMN_LAND
+                ):
+                    palette = (
+                        self._YELLOW
+                        if (self._scramble(i, tree_salt + 3) % 100) < 55
+                        else self._BROWN
+                    )
+                    fx, fy = self._fleck_xy(px, py)
+                    self._paint_individual_at(
+                        surf,
+                        fx,
+                        fy,
+                        palette,
+                        salt=tree_salt + i * 19,
+                        alpha_lo=50,
+                        alpha_hi=120,
+                    )
+                done += 1
+                if done % yield_every == 0:
+                    yield
             for i in range(clusters_per_tree):
                 ang = (self._scramble(i, tree_salt + 50) / 0x7FFFFFFF) * math.tau
                 dist = min_dist + (
@@ -5176,39 +5210,31 @@ class Game:
                 px = tcx + int(dist * math.cos(ang))
                 py = tcy + int(dist * math.sin(ang) * 0.9)
                 gx, gy = px // CELL_SIZE, py // CELL_SIZE
-                if not self.world.in_bounds(gx, gy):
-                    continue
-                if self.world.cells[gy][gx].terrain not in self._AUTUMN_LAND:
-                    continue
-                self._paint_cluster_at(
-                    surf,
-                    px,
-                    py,
-                    self._BROWN,
-                    salt=tree_salt + 200 + i * 23,
-                    dots=10 + (self._scramble(i, tree_salt + 7) % 8),
-                    spread=5,
-                    alpha_lo=55,
-                    alpha_hi=130,
-                )
+                if self.world.in_bounds(gx, gy) and (
+                    self.world.cells[gy][gx].terrain in self._AUTUMN_LAND
+                ):
+                    fx, fy = self._fleck_xy(px, py)
+                    self._paint_cluster_at(
+                        surf,
+                        fx,
+                        fy,
+                        self._BROWN,
+                        salt=tree_salt + 200 + i * 23,
+                        dots=10 + (self._scramble(i, tree_salt + 7) % 8),
+                        spread=max(2, 5 // scale),
+                        alpha_lo=55,
+                        alpha_hi=130,
+                    )
+                done += 1
+                if done % max(1, yield_every // 4) == 0:
+                    yield
 
-    def _bake_season_overlays(
-        self,
-        grass_mask: pygame.Surface,
-        soil_mask: pygame.Surface,
-        *,
-        period: int,
-    ) -> None:
-        """Programmatic speckles for one of the 8 year periods (no envelope overlap)."""
-        size = grass_mask.get_size()
-        overlay = pygame.Surface(size, pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 0))
+    def _iter_bake_period_flecks(self, surf: pygame.Surface, *, period: int):
+        """Paint one period's flecks into an atlas layer (no terrain clip)."""
         salt = 8000 + period * 1103
-
         if period == 0:
-            # Spring 1 — some white individuals + clusters.
-            self._seed_open_land_speckles(
-                overlay,
+            yield from self._iter_seed_open_land_speckles(
+                surf,
                 period_salt=salt,
                 individual_density=10,
                 cluster_density=0.5,
@@ -5220,9 +5246,8 @@ class Game:
                 cluster_dots=100,
             )
         elif period == 1:
-            # Spring 2 — no seasonal speckles.
-            self._seed_open_land_speckles(
-                overlay,
+            yield from self._iter_seed_open_land_speckles(
+                surf,
                 period_salt=salt,
                 individual_density=2,
                 cluster_density=0,
@@ -5234,9 +5259,8 @@ class Game:
                 cluster_dots=100,
             )
         elif period == 2:
-            # Summer 1 — sparse yellow individuals + green clusters, low alpha.
-            self._seed_open_land_speckles(
-                overlay,
+            yield from self._iter_seed_open_land_speckles(
+                surf,
                 period_salt=salt,
                 individual_density=50,
                 cluster_density=10,
@@ -5248,9 +5272,8 @@ class Game:
                 cluster_dots=4,
             )
         elif period == 3:
-            # Summer 2 — more yellows + green clusters, still low alpha.
-            self._seed_open_land_speckles(
-                overlay,
+            yield from self._iter_seed_open_land_speckles(
+                surf,
                 period_salt=salt,
                 individual_density=100,
                 cluster_density=0.06,
@@ -5261,8 +5284,8 @@ class Game:
                 alpha_hi=100,
                 cluster_dots=30,
             )
-            self._seed_open_land_speckles(
-                overlay,
+            yield from self._iter_seed_open_land_speckles(
+                surf,
                 period_salt=salt,
                 individual_density=40,
                 cluster_density=0,
@@ -5274,16 +5297,15 @@ class Game:
                 cluster_dots=0,
             )
         elif period == 4:
-            # Autumn 1 — yellow/brown individuals beside round trees.
-            self._bake_autumn_tree_speckles(
-                overlay,
+            yield from self._iter_bake_autumn_tree_speckles(
+                surf,
                 radius=5,
                 individuals_per_tree=40,
                 clusters_per_tree=15,
                 period_salt=salt,
             )
-            self._seed_open_land_speckles(
-                overlay,
+            yield from self._iter_seed_open_land_speckles(
+                surf,
                 period_salt=salt,
                 individual_density=10,
                 cluster_density=0,
@@ -5295,18 +5317,16 @@ class Game:
                 cluster_dots=0,
             )
         elif period == 5:
-            # Autumn 2 — denser flecks + brown clusters within 2 of round trees.
-            self._bake_autumn_tree_speckles(
-                overlay,
+            yield from self._iter_bake_autumn_tree_speckles(
+                surf,
                 radius=10,
                 individuals_per_tree=50,
                 clusters_per_tree=30,
                 period_salt=salt,
             )
         elif period == 6:
-            # Winter 1 — some white individuals + clusters.
-            self._seed_open_land_speckles(
-                overlay,
+            yield from self._iter_seed_open_land_speckles(
+                surf,
                 period_salt=salt,
                 individual_density=10,
                 cluster_density=1,
@@ -5318,9 +5338,8 @@ class Game:
                 cluster_dots=30,
             )
         elif period == 7:
-            # Winter 2 — many white speckles, more clusters.
-            self._seed_open_land_speckles(
-                overlay,
+            yield from self._iter_seed_open_land_speckles(
+                surf,
                 period_salt=salt,
                 individual_density=50,
                 cluster_density=7,
@@ -5331,24 +5350,194 @@ class Game:
                 alpha_hi=160,
                 cluster_dots=30,
             )
-            self._seed_open_land_speckles(
-                overlay,
+            yield from self._iter_seed_open_land_speckles(
+                surf,
                 period_salt=salt,
                 individual_density=50,
                 cluster_density=4,
                 individual_palette=self._WHITE,
                 cluster_palette=self._WHITE,
-                terrains=(TerrainType.SOIL),
+                terrains=(TerrainType.SOIL,),
                 alpha_lo=60,
                 alpha_hi=160,
                 cluster_dots=30,
             )
 
-        # Soft-clip to terrain coverage masks.
-        land = grass_mask.copy()
-        land.blit(soil_mask, (0, 0), special_flags=pygame.BLEND_RGBA_MAX)
-        overlay.blit(land, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+    def _invalidate_season_fleck_atlas(self) -> None:
+        self._season_fleck_atlas = [None] * 8
+        self._season_fleck_atlas_key = None
+        self._season_fleck_atlas_gen = None
+        self._season_fleck_atlas_period = 0
+        self._season_fleck_baking = None
+        self._season_atlas_tree_sig = None
+        self._season_period_overlay = None
+        self._season_mask_period_key = None
+        self._season_reveal_period = None
+        self._season_reveal_tick = 0
+        self._season_tree_halo = None
+        self._season_tree_halo_key = None
+        self._season_compose_source = None
+        self._season_compose_source_key = None
+        self._season_check_trees = True
+
+    def _atlas_key(self) -> tuple:
+        return (
+            self.world.seed,
+            self.world.cols,
+            self.world.rows,
+            CELL_SIZE,
+            self._SEASON_FLECK_SCALE,
+        )
+
+    def _advance_fleck_atlas(self, *, budget_s: float = 0.008) -> None:
+        """Build fleck layers once per map (frame-sliced). Publish only when complete."""
+        key = self._atlas_key()
+        if self._season_fleck_atlas_key != key:
+            self._invalidate_season_fleck_atlas()
+            self._season_fleck_atlas_key = key
+            self._season_atlas_tree_sig = self._round_tree_signature()
+            self._season_check_trees = False
+        elif getattr(self, "_season_check_trees", False):
+            self._season_check_trees = False
+            tree_sig = self._round_tree_signature()
+            if self._season_atlas_tree_sig != tree_sig:
+                self._season_fleck_atlas[4] = None
+                self._season_fleck_atlas[5] = None
+                self._season_atlas_tree_sig = tree_sig
+                self._season_tree_halo = None
+                self._season_tree_halo_key = None
+                self._season_mask_period_key = None
+                self._season_compose_source = None
+                if (
+                    self._season_fleck_atlas_gen is not None
+                    and self._season_fleck_atlas_period in (4, 5)
+                ):
+                    self._season_fleck_atlas_gen = None
+                    self._season_fleck_baking = None
+                if self._season_fleck_atlas_gen is None:
+                    self._season_fleck_atlas_period = 4
+        if all(layer is not None for layer in self._season_fleck_atlas):
+            return
+        if self._season_fleck_atlas_gen is None:
+            period = self._season_fleck_atlas_period
+            current = self._season_mask_period(self.calendar_day)
+            if self._season_fleck_atlas[current] is None:
+                period = current
+            else:
+                while period < 8 and self._season_fleck_atlas[period] is not None:
+                    period += 1
+                if period >= 8:
+                    for p in range(8):
+                        if self._season_fleck_atlas[p] is None:
+                            period = p
+                            break
+                    else:
+                        return
+            self._season_fleck_atlas_period = period
+            layer = pygame.Surface(self._fleck_size(), pygame.SRCALPHA)
+            layer.fill((0, 0, 0, 0))
+            self._season_fleck_baking = layer
+            self._season_fleck_atlas_gen = self._iter_bake_period_flecks(
+                layer, period=period
+            )
+        deadline = time.perf_counter() + budget_s
+        try:
+            while time.perf_counter() < deadline:
+                next(self._season_fleck_atlas_gen)
+        except StopIteration:
+            period = self._season_fleck_atlas_period
+            self._season_fleck_atlas[period] = self._season_fleck_baking
+            self._season_fleck_baking = None
+            self._season_fleck_atlas_gen = None
+            self._season_fleck_atlas_period = period + 1
+            if self._season_mask_period(self.calendar_day) == period:
+                self._season_mask_period_key = None
+                self._season_compose_source = None
+                self._season_reveal_period = None
+
+    def _tree_halo_mask(self, *, radius: int) -> pygame.Surface:
+        """Cheap live mask so chopped trees drop autumn flecks without rebaking."""
+        tree_sig = self._season_atlas_tree_sig
+        if tree_sig is None:
+            tree_sig = self._round_tree_signature()
+            self._season_atlas_tree_sig = tree_sig
+        key = (radius, tree_sig, self._fleck_size())
+        if self._season_tree_halo is not None and self._season_tree_halo_key == key:
+            return self._season_tree_halo
+        halo = pygame.Surface(self._fleck_size(), pygame.SRCALPHA)
+        halo.fill((0, 0, 0, 0))
+        scale = self._SEASON_FLECK_SCALE
+        r_px = max(1, (radius * CELL_SIZE) // scale)
+        for tx, ty in self._round_tree_cells():
+            cx = (tx * CELL_SIZE + CELL_SIZE // 2) // scale
+            cy = (ty * CELL_SIZE + CELL_SIZE // 2) // scale
+            pygame.draw.circle(halo, (255, 255, 255, 255), (cx, cy), r_px)
+        self._season_tree_halo = halo
+        self._season_tree_halo_key = key
+        return halo
+
+    def _reset_season_reveal(self, period: int) -> None:
+        """Start a random patch reveal (no cell lattice, no giant pixel lists)."""
+        self._season_reveal_period = period
+        self._season_reveal_tick = 0
+        size = (self.world.cols * CELL_SIZE, self.world.rows * CELL_SIZE)
+        overlay = pygame.Surface(size, pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 0))
         self._season_period_overlay = overlay
+
+    def _advance_season_reveal(self, source: pygame.Surface) -> bool:
+        """Stamp random micro-patches from source; rate tracks sim_speed."""
+        overlay = self._season_period_overlay
+        if overlay is None:
+            return True
+        speed = max(0, int(self.sim_speed))
+        if speed <= 0:
+            return False
+        total_ticks = max(1, int(TICKS_PER_DAY * self._SEASON_REVEAL_DAYS))
+        self._season_reveal_tick += speed
+        # ~120 patches/tick at 1x covers densely before the final snap.
+        stamps = max(1, int(120 * speed))
+        stamps = min(stamps, 2_500)
+        w, h = source.get_size()
+        period = self._season_reveal_period or 0
+        salt = 13000 + period * 97 + self._season_reveal_tick * 13
+        for i in range(stamps):
+            x = self._scramble(i, salt) % w
+            y = self._scramble(i, salt + 3) % h
+            r = 2 + (self._scramble(i, salt + 7) % 6)
+            rect = pygame.Rect(x - r // 2, y - r // 2, r, r).clip(source.get_rect())
+            if rect.w > 0 and rect.h > 0:
+                overlay.blit(source, rect.topleft, rect)
+        return self._season_reveal_tick >= total_ticks
+
+    def _compose_season_source(
+        self,
+        grass_mask: pygame.Surface,
+        soil_mask: pygame.Surface,
+        *,
+        period: int,
+    ) -> pygame.Surface | None:
+        """Terrain-mask (and autumn tree-halo) the prebaked fleck layer once."""
+        layer = self._season_fleck_atlas[period]
+        if layer is None:
+            return None
+        fleck = layer.copy()
+        size = self._fleck_size()
+        land = pygame.transform.scale(grass_mask, size)
+        soil_s = pygame.transform.scale(soil_mask, size)
+        land.blit(soil_s, (0, 0), special_flags=pygame.BLEND_RGBA_MAX)
+        fleck.blit(land, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        if period in (4, 5):
+            radius = 5 if period == 4 else 10
+            fleck.blit(
+                self._tree_halo_mask(radius=radius),
+                (0, 0),
+                special_flags=pygame.BLEND_RGBA_MULT,
+            )
+        full = (self.world.cols * CELL_SIZE, self.world.rows * CELL_SIZE)
+        if fleck.get_size() != full:
+            return pygame.transform.scale(fleck, full)
+        return fleck
 
     def _refresh_season_masks(
         self,
@@ -5357,13 +5546,38 @@ class Game:
         *,
         force: bool = False,
     ) -> None:
-        """Rebuild period overlay only on the 8-cycle sample or terrain change."""
+        """Ensure fleck atlas exists; on 8-cycle only remask + staggered reveal."""
+        if force:
+            self._invalidate_season_fleck_atlas()
+        self._advance_fleck_atlas()
         period = self._season_mask_period(self.calendar_day)
-        key = (period, self.world.terrain_revision, CELL_SIZE)
-        if not force and self._season_mask_period_key == key:
+        if self._season_fleck_atlas[period] is None:
             return
-        self._bake_season_overlays(grass_mask, soil_mask, period=period)
-        self._season_mask_period_key = key
+        tree_sig = getattr(self, "_season_atlas_tree_sig", None)
+        key = (period, self.world.terrain_revision, CELL_SIZE, tree_sig)
+        total_ticks = max(1, int(TICKS_PER_DAY * self._SEASON_REVEAL_DAYS))
+        revealing = (
+            self._season_reveal_period == period
+            and self._season_reveal_tick < total_ticks
+        )
+        if not force and self._season_mask_period_key == key and not revealing:
+            return
+
+        source = getattr(self, "_season_compose_source", None)
+        source_key = getattr(self, "_season_compose_source_key", None)
+        if source is None or source_key != key or force:
+            source = self._compose_season_source(grass_mask, soil_mask, period=period)
+            self._season_compose_source = source
+            self._season_compose_source_key = key
+        if source is None:
+            return
+
+        if self._season_reveal_period != period:
+            self._reset_season_reveal(period)
+        done = self._advance_season_reveal(source)
+        if done:
+            self._season_period_overlay = source
+            self._season_mask_period_key = key
 
     def _blit_camera_world_surface(
         self,
