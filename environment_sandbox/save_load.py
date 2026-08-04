@@ -539,6 +539,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     for row in world_data["cells"]:
         cells.append([_cell_from_save(c) for c in row])
     world.cells = cells
+    world.update_forest_floor()
     world.bump_terrain()
     world.home_pos = tuple(world_data["home_pos"])  # type: ignore[assignment]
     world.workstation_pos = tuple(world_data["workstation_pos"])  # type: ignore[assignment]

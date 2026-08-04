@@ -65,6 +65,7 @@ from settings import (
 
 class TerrainType(Enum):
     SOIL = auto()
+    FOREST_FLOOR = auto()  # darker soil on tiles that currently hold a tree/sapling
     GRASS = auto()
     MEADOW = auto()  # open meadow — slightly greener than grass
     RIPARIAN = auto()  # shoreline strip beside water
@@ -72,16 +73,24 @@ class TerrainType(Enum):
     ROCK = auto()  # bare rocky ground (distinct from rock resource feature)
 
 
+# Soil and forest floor share plough / sow / forage behaviour.
+SOIL_LIKE: tuple[TerrainType, ...] = (
+    TerrainType.SOIL,
+    TerrainType.FOREST_FLOOR,
+)
+
 # Wild forage plants by preferred terrain (farm crops may still grow on fields).
 WILD_CROPS_BY_TERRAIN: dict[TerrainType, tuple[str, ...]] = {
     TerrainType.MEADOW: ("flax", "hemp", "sage"),
     TerrainType.GRASS: ("wheat", "rye"),
     TerrainType.SOIL: ("onion", "cabbage", "carrot"),
+    TerrainType.FOREST_FLOOR: ("onion", "cabbage", "carrot"),
 }
 
 # Terrains that accept planted saplings / natural sprouts.
 PLANTABLE_LAND: tuple[TerrainType, ...] = (
     TerrainType.SOIL,
+    TerrainType.FOREST_FLOOR,
     TerrainType.GRASS,
     TerrainType.MEADOW,
 )
@@ -405,7 +414,33 @@ class World:
             self.cells[sy][sx].feature = FeatureType.NONE
             if self.cells[sy][sx].terrain == TerrainType.WATER:
                 self.cells[sy][sx].terrain = TerrainType.GRASS
+        self.update_forest_floor()
         self.bump_terrain()
+
+    def update_forest_floor(self) -> None:
+        """Mark only tree/sapling tiles as forest floor; clear bare litter.
+
+        Runs on the same ≤8/year cadence as biodiversity / habitat refresh.
+        Forest floor never spreads onto empty soil between trees.
+        """
+        changed = False
+        for y in range(self.rows):
+            for x in range(self.cols):
+                cell = self.cells[y][x]
+                has_tree = cell.feature in (FeatureType.TREE, FeatureType.SAPLING)
+                if has_tree and cell.terrain == TerrainType.SOIL:
+                    cell.terrain = TerrainType.FOREST_FLOOR
+                    self.mark_terrain_dirty(x, y)
+                    changed = True
+                elif (
+                    not has_tree
+                    and cell.terrain == TerrainType.FOREST_FLOOR
+                ):
+                    cell.terrain = TerrainType.SOIL
+                    self.mark_terrain_dirty(x, y)
+                    changed = True
+        if changed:
+            self.terrain_revision += 1
 
     def _paint_base_grass_soil(self, rng: random.Random) -> None:
         """Fill the map with large grass / meadow / soil regions via coarse value noise."""
@@ -450,7 +485,7 @@ class World:
 
     def _paint_riparian_strips(self, rng: random.Random) -> None:
         """Convert ~50% of land cells that touch water into riparian strips."""
-        shore_ok = (TerrainType.GRASS, TerrainType.MEADOW, TerrainType.SOIL)
+        shore_ok = (TerrainType.GRASS, TerrainType.MEADOW, TerrainType.SOIL, TerrainType.FOREST_FLOOR)
         to_paint: list[tuple[int, int]] = []
         for y in range(self.rows):
             for x in range(self.cols):
@@ -1031,7 +1066,7 @@ class World:
                 cell = self.cells[ny][nx]
                 if (
                     cell.feature == FeatureType.NONE
-                    and cell.terrain == TerrainType.SOIL
+                    and cell.terrain in SOIL_LIKE
                     and self._forage_rng.random()
                     < MUSHROOM_SPREAD_CHANCE * mushroom_spawn_rate(day, nx, ny) * 20.0
                 ):
@@ -1047,7 +1082,7 @@ class World:
                     cell = self.cells[ny][nx]
                     if (
                         cell.feature == FeatureType.NONE
-                        and cell.terrain == TerrainType.SOIL
+                        and cell.terrain in SOIL_LIKE
                         and self._forage_rng.random() < mushroom_spawn_rate(day, nx, ny)
                     ):
                         cell.feature = FeatureType.MUSHROOM
@@ -1206,7 +1241,7 @@ class World:
         ):
             return False
         # Legacy Field marker on origin: clear it when ploughing that tile.
-        if cell.terrain == TerrainType.SOIL and cell.feature in (
+        if cell.terrain in SOIL_LIKE and cell.feature in (
             FeatureType.NONE,
             FeatureType.FIELD,
         ):
@@ -1230,7 +1265,7 @@ class World:
         cell = self.get_cell(x, y)
         if cell is None or cell.feature != FeatureType.NONE:
             return False
-        if cell.terrain != TerrainType.SOIL:
+        if cell.terrain not in SOIL_LIKE:
             return False
         if crop_key not in CROP_BY_KEY:
             return False

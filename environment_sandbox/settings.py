@@ -268,6 +268,7 @@ COLOUR_TOOLBAR_BORDER: Colour = (80, 84, 96)
 COLOUR_MENU_BG: Colour = (48, 50, 58)
 
 COLOUR_SOIL: Colour = (139, 105, 70)
+COLOUR_FOREST_FLOOR: Colour = (95, 68, 42)  # darker soil under trees
 COLOUR_GRASS: Colour = (90, 150, 70)
 COLOUR_MEADOW: Colour = (100, 175, 85)  # slightly greener than grass
 COLOUR_RIPARIAN: Colour = (148, 142, 158)  # light grey–purple–green shoreline

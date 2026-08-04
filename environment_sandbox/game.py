@@ -159,7 +159,7 @@ from terrain_tiles import (
     verify_shared_edges,
 )
 from wildlife import AnimalKind, FishManager, WildlifeManager
-from world import FeatureType, PLANTABLE_LAND, TerrainType, World
+from world import FeatureType, PLANTABLE_LAND, SOIL_LIKE, TerrainType, World
 
 
 TASK_COLOURS = {
@@ -1448,6 +1448,7 @@ class Game:
         Also refreshes wildlife forest-patch habitats on the same cadence.
         """
         self.wildlife.refresh_habitats(self.world)
+        self.world.update_forest_floor()
         snap = biodiversity_snapshot(
             self.world,
             deer_positions=((a.x, a.y) for a in self.wildlife.deer()),
@@ -3496,7 +3497,7 @@ class Game:
                     cell = self.world.get_cell(x, y)
                     if cell is None or cell.feature == FeatureType.CROP_HERB:
                         continue
-                    if cell.terrain == TerrainType.SOIL and cell.feature == FeatureType.NONE:
+                    if cell.terrain in SOIL_LIKE and cell.feature == FeatureType.NONE:
                         if can_sow and (
                             getattr(villager.inventory, seed_key, 0) > 0
                             or villager.inventory.can_add(1, key=seed_key)
@@ -3614,7 +3615,7 @@ class Game:
         phase = phase_for_crop(crop, self.season)
         if not phase_allows_plough_plant(phase):
             return
-        if cell.terrain == TerrainType.SOIL and cell.feature == FeatureType.NONE:
+        if cell.terrain in SOIL_LIKE and cell.feature == FeatureType.NONE:
             seed_key = crop.seed_key
             if getattr(inv, seed_key, 0) <= 0:
                 if not building.give_item_to(inv, seed_key):

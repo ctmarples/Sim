@@ -58,6 +58,7 @@ from settings import (
     COLOUR_SAPLING,
     COLOUR_SELECTED_ENTITY,
     COLOUR_SOIL,
+    COLOUR_FOREST_FLOOR,
     COLOUR_STATUS,
     COLOUR_TEXT,
     COLOUR_TEXT_DIM,
@@ -779,6 +780,7 @@ def terrain_colour(
 ) -> tuple[int, int, int]:
     base = {
         TerrainType.SOIL: COLOUR_SOIL,
+        TerrainType.FOREST_FLOOR: COLOUR_FOREST_FLOOR,
         TerrainType.GRASS: COLOUR_GRASS,
         TerrainType.MEADOW: COLOUR_MEADOW,
         TerrainType.RIPARIAN: COLOUR_RIPARIAN,
@@ -845,7 +847,7 @@ def _paint_texture(
         14
         if terrain in (TerrainType.GRASS, TerrainType.MEADOW, TerrainType.RIPARIAN)
         else 10
-        if terrain == TerrainType.SOIL
+        if terrain in (TerrainType.SOIL, TerrainType.FOREST_FLOOR)
         else 8
     )
     if terrain == TerrainType.WATER:

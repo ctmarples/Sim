@@ -15,6 +15,18 @@
    xmlns:svg="http://www.w3.org/2000/svg">
   <defs
      id="defs2">
+    <linearGradient
+       id="linearGradient9"
+       inkscape:swatch="gradient">
+      <stop
+         style="stop-color:#000000;stop-opacity:1;"
+         offset="0"
+         id="stop9" />
+      <stop
+         style="stop-color:#000000;stop-opacity:0;"
+         offset="1"
+         id="stop10" />
+    </linearGradient>
     <inkscape:path-effect
        effect="powerstroke"
        message=""
@@ -221,14 +233,14 @@
      inkscape:pageopacity="0.0"
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
-     inkscape:zoom="5.4632911"
-     inkscape:cx="-12.72127"
-     inkscape:cy="40.817887"
-     inkscape:window-width="1470"
-     inkscape:window-height="835"
-     inkscape:window-x="0"
-     inkscape:window-y="33"
-     inkscape:window-maximized="1"
+     inkscape:zoom="7.7262604"
+     inkscape:cx="37.922615"
+     inkscape:cy="47.953341"
+     inkscape:window-width="1171"
+     inkscape:window-height="946"
+     inkscape:window-x="834"
+     inkscape:window-y="41"
+     inkscape:window-maximized="0"
      inkscape:current-layer="svg2" />
   <title
      id="title1">tree round</title>
