@@ -101,51 +101,130 @@ def resource_label(key: str) -> str:
 
 def resource_icon(key: str) -> str:
     """Map an inventory resource key to an ``icons`` base name for UI grids."""
+    return resource_icon_style(key).name
+
+
+@dataclass(frozen=True)
+class ResourceIconStyle:
+    """Raster style for an inventory grid icon (matches map feature colours)."""
+
+    name: str
+    recolour: dict[str, tuple[int, int, int]]
+    class_scales: dict[str, float] | None = None
+    omit_classes: tuple[str, ...] = ()
+    # If set, draw this resource's icon as a small badge in the top-left quarter.
+    badge_key: str | None = None
+
+
+# Seed pile colour (matches seeds.svg brown).
+_SEED_COLOUR: tuple[int, int, int] = (130, 62, 39)
+
+
+def _crop_plant_style(crop, *, dense: bool) -> ResourceIconStyle:
+    recolour: dict[str, tuple[int, int, int]] = {"stem": crop.stem_colour}
+    omit: tuple[str, ...] = ()
+    if crop.flower_colour is not None:
+        recolour["flower"] = crop.flower_colour
+    else:
+        omit = ("flower",)
+    return ResourceIconStyle(
+        name=crop.plant_icon(dense=dense),
+        recolour=recolour,
+        omit_classes=omit,
+    )
+
+
+def resource_icon_style(key: str) -> ResourceIconStyle:
+    """Return icon style matching map feature colours (and seed composites)."""
     from icons import (
-        ICON_BERRY_BUSH,
-        ICON_CROP,
+        ICON_BERRIES,
         ICON_FISH,
         ICON_FLOWER,
+        ICON_HARDWOOD,
         ICON_MEAT_MARKER,
         ICON_MUSHROOM,
         ICON_REED,
         ICON_ROCK,
         ICON_SAPLING_CONE,
         ICON_SAPLING_ROUND,
-        ICON_TREE_CONE,
-        ICON_TREE_ROUND,
+        ICON_SEEDS,
+        ICON_WOOD,
         crop_icon_base,
+    )
+    from settings import (
+        COLOUR_BERRY,
+        COLOUR_FISH,
+        COLOUR_MEAT,
+        COLOUR_MUSHROOM,
+        COLOUR_REED,
+        COLOUR_ROCK_FEATURE,
+        COLOUR_TREE_CANOPY,
+        COLOUR_TREE_TRUNK,
     )
     from trees import TREES
 
-    static = {
-        "wood": ICON_TREE_ROUND,
-        "hardwood": ICON_TREE_CONE,
-        "rock": ICON_ROCK,
-        "meat": ICON_MEAT_MARKER,
-        "fish": ICON_FISH,
-        "mushrooms": ICON_MUSHROOM,
-        "berries": ICON_BERRY_BUSH,
-        "berry_seeds": ICON_BERRY_BUSH,
-        "reeds": ICON_REED,
-    }
-    if key in static:
-        return static[key]
+    trunk = COLOUR_TREE_TRUNK
+
+    if key == "wood":
+        # Dedicated log icon (baked SVG colours; no class recolour needed).
+        return ResourceIconStyle(ICON_WOOD, {})
+
+    if key == "hardwood":
+        return ResourceIconStyle(ICON_HARDWOOD, {})
+
+    if key == "rock":
+        return ResourceIconStyle(ICON_ROCK, {"body": COLOUR_ROCK_FEATURE})
+    if key == "meat":
+        return ResourceIconStyle(ICON_MEAT_MARKER, {"body": COLOUR_MEAT})
+    if key == "fish":
+        return ResourceIconStyle(ICON_FISH, {"body": COLOUR_FISH})
+    if key == "mushrooms":
+        return ResourceIconStyle(
+            ICON_MUSHROOM, {"cap": COLOUR_MUSHROOM, "stem": (210, 200, 180)}
+        )
+    if key == "berries":
+        return ResourceIconStyle(ICON_BERRIES, {"berry": COLOUR_BERRY})
+    if key == "berry_seeds":
+        return ResourceIconStyle(
+            ICON_SEEDS,
+            {"flower": _SEED_COLOUR},
+            badge_key="berries",
+        )
+    if key == "reeds":
+        return ResourceIconStyle(ICON_REED, {"stem": COLOUR_REED})
+
     for tree in TREES:
-        sap = f"{tree.key}_saplings"
-        if key == sap:
-            return ICON_SAPLING_CONE if tree.shape == "cone" else ICON_SAPLING_ROUND
+        if key == f"{tree.key}_saplings":
+            base = ICON_SAPLING_CONE if tree.shape == "cone" else ICON_SAPLING_ROUND
+            scales = {"canopy": tree.cone_scale} if tree.shape == "cone" else None
+            return ResourceIconStyle(
+                base,
+                {"canopy": tree.sapling_colour, "trunk": trunk},
+                scales,
+            )
+
+    from crops import CROP_BY_KEY
+
     if key.endswith("_seeds"):
         crop_key = key[: -len("_seeds")]
-        try:
-            return crop_icon_base(crop_key, dense=False)
-        except Exception:
-            return ICON_CROP
-    # Crop produce keys match crop.key.
+        if crop_key in CROP_BY_KEY:
+            return ResourceIconStyle(
+                ICON_SEEDS,
+                {"flower": _SEED_COLOUR},
+                badge_key=crop_key,
+            )
+        return ResourceIconStyle(ICON_SEEDS, {"flower": _SEED_COLOUR})
+
+    crop = CROP_BY_KEY.get(key)
+    if crop is not None:
+        return _crop_plant_style(crop, dense=True)
+
     try:
-        return crop_icon_base(key, dense=True)
+        return ResourceIconStyle(
+            crop_icon_base(key, dense=True), {"stem": COLOUR_TREE_CANOPY}
+        )
     except Exception:
-        return ICON_FLOWER
+        return ResourceIconStyle(ICON_FLOWER, {"stem": COLOUR_TREE_CANOPY})
 
 
 def amounts_from_obj(obj: object) -> dict[str, int]:

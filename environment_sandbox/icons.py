@@ -34,7 +34,7 @@ Editing SVGs (Inkscape / Affinity / Figma / Illustrator)
 * **``class`` is what the game reads** for recolour / scale / omit. ``id`` is
   only for you (and should match when convenient).
 * Shared classes: ``canopy``, ``trunk``, ``stem``, ``flower``, ``body``,
-  ``shadow``, plus building faces ``wall_l`` / ``wall_r`` / ``roof`` / …
+  ``antler``, ``shadow``, plus building faces ``wall_l`` / ``wall_r`` / ``roof`` / …
 * Put **every part that should share a tint** on that class (e.g. all legs
   ``class="body"``). Untagged fills stay as baked SVG colours.
 * Draw order = paint order: shadows first, then trunk, then canopy.
@@ -1148,6 +1148,10 @@ ICON_VILLAGER = "villager"
 ICON_PLAYER = "player"
 ICON_MEAT_MARKER = "meat_marker"
 ICON_FISH_MARKER = "fish_marker"
+ICON_SEEDS = "seeds"
+ICON_WOOD = "wood"
+ICON_HARDWOOD = "hardwood"
+ICON_BERRIES = "berries"
 
 ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_TREE_ROUND,
@@ -1182,6 +1186,10 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_PLAYER,
     ICON_MEAT_MARKER,
     ICON_FISH_MARKER,
+    ICON_SEEDS,
+    ICON_WOOD,
+    ICON_HARDWOOD,
+    ICON_BERRIES,
 )
 
 

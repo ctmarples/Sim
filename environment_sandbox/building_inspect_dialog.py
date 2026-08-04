@@ -1,12 +1,10 @@
 """Floating inspection window for workplace buildings (not Fields).
 
-Includes dual inventory grids (building storage + player pack). Clicking a
-filled grid cell moves that resource stack to the other inventory.
+Storage is always a grid. The player inventory grid is only shown when the
+menu was opened while the player stands on the building (transfer mode).
 """
 
 from __future__ import annotations
-
-import math
 
 import pygame
 
@@ -18,7 +16,14 @@ from entities import (
     Inventory,
     Villager,
 )
-from resources import RESOURCE_KEYS, resource_icon, resource_label
+from inventory_ui import (
+    GRID_CELL,
+    INV_PANEL_GAP,
+    draw_inv_grid,
+    draw_item_tooltip,
+    grid_height,
+    present_keys,
+)
 from settings import (
     COLOUR_MENU_BG,
     COLOUR_SELECTED_ENTITY,
@@ -40,14 +45,10 @@ PAD = 12
 BTN_H = 24
 ROW_H = 22
 SECTION_GAP = 10
-GRID_CELL = 52
-GRID_GAP = 4
-GRID_COLS = 4
-INV_PANEL_GAP = 10
 
 
 class BuildingInspectDialog:
-    """Movable floating inspector: options, workers, dual inventory grids."""
+    """Movable floating inspector: options, workers, inventory grid(s)."""
 
     def __init__(self) -> None:
         self.font = pygame.font.SysFont("menlo", 14)
@@ -55,20 +56,22 @@ class BuildingInspectDialog:
         self.font_tiny = pygame.font.SysFont("menlo", 11, bold=True)
         self.font_title = pygame.font.SysFont("menlo", 15, bold=True)
         self.building_id: int | None = None
+        self.show_player: bool = False
         self._buttons: list[tuple[str, pygame.Rect]] = []
         self._worker_hits: list[tuple[pygame.Rect, int]] = []
         self._inv_hits: list[tuple[pygame.Rect, str, str]] = []
         self._pending_action: str | None = None
         self._panel_x = 80
         self._panel_y = MAP_OFFSET_Y + 40
-        self._panel_w = 520
+        self._panel_w = 300
         self._panel_h = 320
         self._moving = False
         self._move_offset = (0, 0)
         self._close_rect = pygame.Rect(0, 0, 0, 0)
         self._title_rect = pygame.Rect(0, 0, 0, 0)
         self._hover_worker: int | None = None
-        self._hover_inv: tuple[str, str] | None = None  # (side, key)
+        self._hover_inv: tuple[str, str] | None = None
+        self._tooltip_key: str | None = None
 
     @property
     def open(self) -> bool:
@@ -79,14 +82,17 @@ class BuildingInspectDialog:
         building: Building,
         *,
         screen_xy: tuple[int, int] | None = None,
+        show_player: bool = False,
     ) -> None:
         if building.kind == BuildingKind.FIELD:
             return
         self.building_id = building.id
+        self.show_player = show_player and bool(building.depositable_keys())
         self._pending_action = None
         self._moving = False
         self._hover_worker = None
         self._hover_inv = None
+        self._tooltip_key = None
         self._layout(building)
         map_w = map_view_width()
         if screen_xy is not None:
@@ -103,10 +109,12 @@ class BuildingInspectDialog:
 
     def close(self) -> None:
         self.building_id = None
+        self.show_player = False
         self._moving = False
         self._pending_action = None
         self._hover_worker = None
         self._hover_inv = None
+        self._tooltip_key = None
 
     def take_action(self) -> str | None:
         action = self._pending_action
@@ -119,11 +127,11 @@ class BuildingInspectDialog:
     def contains(self, pos: tuple[int, int]) -> bool:
         return self.open and self.panel_rect().collidepoint(pos)
 
-    def _has_transfer(self, building: Building) -> bool:
+    def _has_storage(self, building: Building) -> bool:
         return bool(building.depositable_keys())
 
     def _layout(self, building: Building | None = None) -> None:
-        if building is not None and self._has_transfer(building):
+        if building is not None and self.show_player and self._has_storage(building):
             self._panel_w = 520
         else:
             self._panel_w = 300
@@ -180,6 +188,7 @@ class BuildingInspectDialog:
             return True
         self._hover_worker = None
         self._hover_inv = None
+        self._tooltip_key = None
         if self.contains(pos):
             for rect, vid in self._worker_hits:
                 if rect.collidepoint(pos):
@@ -188,7 +197,14 @@ class BuildingInspectDialog:
             for rect, side, key in self._inv_hits:
                 if rect.collidepoint(pos):
                     self._hover_inv = (side, key)
+                    self._tooltip_key = key
                     break
+            # Also tip on non-interactive display-only cells tracked via hover paint.
+            if self._tooltip_key is None:
+                for rect, side, key in getattr(self, "_inv_tip_hits", []):
+                    if rect.collidepoint(pos):
+                        self._tooltip_key = key
+                        break
         return self.contains(pos)
 
     def handle_mouseup(self, pos: tuple[int, int]) -> bool:
@@ -233,99 +249,8 @@ class BuildingInspectDialog:
             state = villager.state.name[:4]
         return f"#{villager.id} {state}"
 
-    @staticmethod
-    def _present_keys(amounts: dict[str, int], allowed: tuple[str, ...] | None) -> list[str]:
-        keys = allowed if allowed is not None else RESOURCE_KEYS
-        return [k for k in keys if int(amounts.get(k, 0)) > 0]
-
-    def _grid_height(self, n_items: int) -> int:
-        rows = max(1, math.ceil(max(1, n_items) / GRID_COLS))
-        return rows * (GRID_CELL + GRID_GAP) - GRID_GAP
-
-    def _draw_inv_grid(
-        self,
-        surface: pygame.Surface,
-        *,
-        origin: tuple[int, int],
-        width: int,
-        title: str,
-        subtitle: str,
-        amounts: dict[str, int],
-        allowed: tuple[str, ...] | None,
-        side: str,
-        mouse_pos: tuple[int, int] | None,
-        interactive: bool = True,
-    ) -> int:
-        """Draw an inventory grid. Returns height consumed from origin y."""
-        from icons import blit_icon
-
-        x0, y0 = origin
-        y = y0
-        surface.blit(self.font.render(title, True, COLOUR_TEXT), (x0, y))
-        y += 18
-        surface.blit(self.font_small.render(subtitle, True, COLOUR_TEXT_DIM), (x0, y))
-        y += 16
-
-        keys = self._present_keys(amounts, allowed)
-        if not keys:
-            surface.blit(
-                self.font_small.render("(empty)", True, COLOUR_TEXT_DIM),
-                (x0, y + 8),
-            )
-            return (y + 28) - y0
-
-        cols = max(1, min(GRID_COLS, max(1, width // (GRID_CELL + GRID_GAP))))
-        for i, key in enumerate(keys):
-            col = i % cols
-            row = i // cols
-            cx = x0 + col * (GRID_CELL + GRID_GAP)
-            cy = y + row * (GRID_CELL + GRID_GAP)
-            cell = pygame.Rect(cx, cy, GRID_CELL, GRID_CELL)
-            hovered = interactive and (
-                self._hover_inv == (side, key)
-                or (mouse_pos is not None and cell.collidepoint(mouse_pos))
-            )
-            bg = (55, 62, 50) if hovered else (42, 44, 52)
-            border = COLOUR_SELECTED_ENTITY if hovered else COLOUR_TOOLBAR_BORDER
-            pygame.draw.rect(surface, bg, cell, border_radius=4)
-            pygame.draw.rect(surface, border, cell, 1, border_radius=4)
-
-            icon_size = GRID_CELL - 14
-            try:
-                blit_icon(
-                    surface,
-                    resource_icon(key),
-                    cell.centerx,
-                    cell.centery - 4,
-                    icon_size,
-                )
-            except (FileNotFoundError, OSError, ValueError, TypeError):
-                tip = resource_label(key)[:3]
-                t = self.font_tiny.render(tip, True, COLOUR_TEXT)
-                surface.blit(
-                    t,
-                    (
-                        cell.centerx - t.get_width() // 2,
-                        cell.centery - t.get_height() // 2 - 4,
-                    ),
-                )
-
-            count = int(amounts.get(key, 0))
-            badge = self.font_tiny.render(str(count), True, COLOUR_TEXT)
-            bx = cell.right - badge.get_width() - 3
-            by = cell.bottom - badge.get_height() - 2
-            pygame.draw.rect(
-                surface,
-                (28, 30, 36),
-                pygame.Rect(bx - 2, by - 1, badge.get_width() + 4, badge.get_height() + 2),
-                border_radius=2,
-            )
-            surface.blit(badge, (bx, by))
-            if interactive:
-                self._inv_hits.append((cell, side, key))
-
-        rows = math.ceil(len(keys) / cols)
-        return (y + rows * (GRID_CELL + GRID_GAP) - GRID_GAP) - y0
+    def _fonts(self) -> tuple[pygame.font.Font, pygame.font.Font, pygame.font.Font]:
+        return self.font, self.font_small, self.font_tiny
 
     def draw(
         self,
@@ -345,7 +270,8 @@ class BuildingInspectDialog:
         if building.id != self.building_id:
             return
 
-        transfer = self._has_transfer(building)
+        has_storage = self._has_storage(building)
+        dual = self.show_player and has_storage
         storage_keys = building.depositable_keys()
         if storage_keys:
             amounts = storage_amounts or {
@@ -381,17 +307,21 @@ class BuildingInspectDialog:
         elif building.supported_work_modes():
             options_h = BTN_H * 2 + 12
 
-        storage_items = len(self._present_keys(amounts, storage_keys or None))
-        player_items = len(self._present_keys(player_amounts, None))
-        if transfer:
-            grid_h = 18 + 16 + max(
-                self._grid_height(storage_items),
-                self._grid_height(player_items),
-                GRID_CELL,
-            ) + 22
+        storage_items = len(present_keys(amounts, storage_keys or None))
+        player_items = len(present_keys(player_amounts, None))
+        if dual:
+            grid_h = (
+                18
+                + 16
+                + max(grid_height(storage_items), grid_height(player_items), GRID_CELL)
+                + 22
+            )
             self._panel_w = 520
+        elif has_storage:
+            grid_h = 18 + 16 + grid_height(storage_items) + 8
+            self._panel_w = 300
         else:
-            grid_h = 18 + 22 + 18 + 16 + self._grid_height(player_items) + 8
+            grid_h = 40
             self._panel_w = 300
 
         body_h = (
@@ -439,6 +369,7 @@ class BuildingInspectDialog:
         self._buttons = []
         self._worker_hits = []
         self._inv_hits = []
+        self._inv_tip_hits: list[tuple[pygame.Rect, str, str]] = []
         x = panel.x + PAD
         y = panel.y + TITLE_BAR_H + PAD
         inner_w = panel.w - PAD * 2
@@ -578,11 +509,11 @@ class BuildingInspectDialog:
                 y += ROW_H + 2
 
         y += SECTION_GAP
+        tip_key: str | None = None
 
-        # --- Dual inventory grids ---
-        if transfer:
+        if dual:
             col_w = (inner_w - INV_PANEL_GAP) // 2
-            left_h = self._draw_inv_grid(
+            left_h, left_hits, left_tips, left_hov = draw_inv_grid(
                 surface,
                 origin=(x, y),
                 width=col_w,
@@ -592,8 +523,11 @@ class BuildingInspectDialog:
                 allowed=storage_keys,
                 side="storage",
                 mouse_pos=mouse_pos,
+                fonts=self._fonts(),
+                interactive=True,
+                hover_inv=self._hover_inv,
             )
-            right_h = self._draw_inv_grid(
+            right_h, right_hits, right_tips, right_hov = draw_inv_grid(
                 surface,
                 origin=(x + col_w + INV_PANEL_GAP, y),
                 width=col_w,
@@ -603,14 +537,46 @@ class BuildingInspectDialog:
                 allowed=None,
                 side="player",
                 mouse_pos=mouse_pos,
+                fonts=self._fonts(),
+                interactive=True,
+                hover_inv=self._hover_inv,
             )
+            self._inv_hits.extend(left_hits)
+            self._inv_hits.extend(right_hits)
+            self._inv_tip_hits.extend(left_tips)
+            self._inv_tip_hits.extend(right_tips)
             y += max(left_h, right_h)
-            tip = self.font_small.render(
-                "Click an item to move it to the other inventory.",
-                True,
-                COLOUR_TEXT_DIM,
+            if left_hov:
+                tip_key = left_hov[1]
+            elif right_hov:
+                tip_key = right_hov[1]
+            surface.blit(
+                self.font_small.render(
+                    "Click an item to move one to the other inventory.",
+                    True,
+                    COLOUR_TEXT_DIM,
+                ),
+                (x, y + 6),
             )
-            surface.blit(tip, (x, y + 6))
+        elif has_storage:
+            h, _hits, tips, hov = draw_inv_grid(
+                surface,
+                origin=(x, y),
+                width=inner_w,
+                title="Storage",
+                subtitle=capacity_label,
+                amounts=amounts,
+                allowed=storage_keys,
+                side="storage",
+                mouse_pos=mouse_pos,
+                fonts=self._fonts(),
+                interactive=False,
+                hover_inv=self._hover_inv,
+            )
+            self._inv_tip_hits.extend(tips)
+            if hov:
+                tip_key = hov[1]
+            y += h
         else:
             surface.blit(self.font.render("Storage", True, COLOUR_TEXT), (x, y))
             y += 18
@@ -618,17 +584,10 @@ class BuildingInspectDialog:
                 self.font_small.render("No local storage", True, COLOUR_TEXT_DIM),
                 (x, y),
             )
-            # Still show player pack for reference when attached via interact.
-            y += 22
-            self._draw_inv_grid(
-                surface,
-                origin=(x, y),
-                width=inner_w,
-                title="Player",
-                subtitle=player_sub,
-                amounts=player_amounts,
-                allowed=None,
-                side="player",
-                mouse_pos=mouse_pos,
-                interactive=False,
+
+        if tip_key is not None:
+            self._tooltip_key = tip_key
+        if self._tooltip_key and mouse_pos is not None:
+            draw_item_tooltip(
+                surface, mouse_pos=mouse_pos, key=self._tooltip_key, font=self.font_small
             )

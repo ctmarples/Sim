@@ -1,4 +1,8 @@
-"""Floating inspection window for a selected villager."""
+"""Floating inspection window for a selected villager.
+
+Cargo is shown as a grid. The player inventory grid appears only when the
+menu was opened by interacting while standing on/near the villager.
+"""
 
 from __future__ import annotations
 
@@ -7,11 +11,20 @@ import pygame
 from entities import (
     PRIORITY_LABELS,
     RATION_LABELS,
+    Inventory,
     RationMode,
     WorkPriority,
     Villager,
 )
-from resources import format_grouped_counts, resource_label
+from inventory_ui import (
+    GRID_CELL,
+    INV_PANEL_GAP,
+    draw_inv_grid,
+    draw_item_tooltip,
+    grid_height,
+    present_keys,
+)
+from resources import amounts_from_obj, resource_label
 from settings import (
     COLOUR_MENU_BG,
     COLOUR_SELECTED_ENTITY,
@@ -35,14 +48,18 @@ SECTION_GAP = 10
 
 
 class VillagerInspectDialog:
-    """Movable floating inspector: status, work options, carried items."""
+    """Movable floating inspector: status, work options, inventory grid(s)."""
 
     def __init__(self) -> None:
         self.font = pygame.font.SysFont("menlo", 14)
         self.font_small = pygame.font.SysFont("menlo", 12)
+        self.font_tiny = pygame.font.SysFont("menlo", 11, bold=True)
         self.font_title = pygame.font.SysFont("menlo", 15, bold=True)
         self.villager_id: int | None = None
+        self.show_player: bool = False
         self._buttons: list[tuple[str, pygame.Rect]] = []
+        self._inv_hits: list[tuple[pygame.Rect, str, str]] = []
+        self._inv_tip_hits: list[tuple[pygame.Rect, str, str]] = []
         self._pending_action: str | None = None
         self._panel_x = 80
         self._panel_y = MAP_OFFSET_Y + 40
@@ -52,6 +69,8 @@ class VillagerInspectDialog:
         self._move_offset = (0, 0)
         self._close_rect = pygame.Rect(0, 0, 0, 0)
         self._title_rect = pygame.Rect(0, 0, 0, 0)
+        self._hover_inv: tuple[str, str] | None = None
+        self._tooltip_key: str | None = None
 
     @property
     def open(self) -> bool:
@@ -62,11 +81,15 @@ class VillagerInspectDialog:
         villager: Villager,
         *,
         screen_xy: tuple[int, int] | None = None,
+        show_player: bool = False,
     ) -> None:
         self.villager_id = villager.id
+        self.show_player = show_player
         self._pending_action = None
         self._moving = False
-        self._panel_w = 300
+        self._hover_inv = None
+        self._tooltip_key = None
+        self._panel_w = 520 if show_player else 300
         self._panel_h = 360
         map_w = map_view_width()
         if screen_xy is not None:
@@ -83,8 +106,11 @@ class VillagerInspectDialog:
 
     def close(self) -> None:
         self.villager_id = None
+        self.show_player = False
         self._moving = False
         self._pending_action = None
+        self._hover_inv = None
+        self._tooltip_key = None
 
     def take_action(self) -> str | None:
         action = self._pending_action
@@ -125,6 +151,13 @@ class VillagerInspectDialog:
             if rect.collidepoint(pos):
                 self._pending_action = action
                 return True
+        for rect, side, key in self._inv_hits:
+            if rect.collidepoint(pos):
+                if side == "villager":
+                    self._pending_action = f"xfer_to_player:{key}"
+                else:
+                    self._pending_action = f"xfer_to_villager:{key}"
+                return True
         return True
 
     def handle_mousemotion(self, pos: tuple[int, int]) -> bool:
@@ -135,6 +168,19 @@ class VillagerInspectDialog:
             self._panel_y = pos[1] - self._move_offset[1]
             self._clamp_panel()
             return True
+        self._hover_inv = None
+        self._tooltip_key = None
+        if self.contains(pos):
+            for rect, side, key in self._inv_hits:
+                if rect.collidepoint(pos):
+                    self._hover_inv = (side, key)
+                    self._tooltip_key = key
+                    break
+            if self._tooltip_key is None:
+                for rect, side, key in self._inv_tip_hits:
+                    if rect.collidepoint(pos):
+                        self._tooltip_key = key
+                        break
         return self.contains(pos)
 
     def handle_mouseup(self, pos: tuple[int, int]) -> bool:
@@ -172,6 +218,9 @@ class VillagerInspectDialog:
             ),
         )
 
+    def _fonts(self) -> tuple[pygame.font.Font, pygame.font.Font, pygame.font.Font]:
+        return self.font, self.font_small, self.font_tiny
+
     def draw(
         self,
         surface: pygame.Surface,
@@ -179,50 +228,42 @@ class VillagerInspectDialog:
         *,
         assignment_label: str = "—",
         mouse_pos: tuple[int, int] | None = None,
+        player_inventory: Inventory | None = None,
     ) -> None:
         if not self.open or villager is None:
             return
         if villager.id != self.villager_id:
             return
 
-        cargo_lines = format_grouped_counts(
-            {
-                k: int(getattr(villager.inventory, k, 0))
-                for k in (
-                    "wood",
-                    "hardwood",
-                    "rock",
-                    "meat",
-                    "fish",
-                    "berries",
-                    "mushrooms",
-                    "oak_saplings",
-                    "maple_saplings",
-                    "pine_saplings",
-                    "cedar_saplings",
-                    "wheat",
-                    "flax",
-                    "sage",
-                    "hemp",
-                    "rye",
-                    "onion",
-                    "cabbage",
-                    "carrot",
-                    "berry_seeds",
-                    "wheat_seeds",
-                    "flax_seeds",
-                    "sage_seeds",
-                    "hemp_seeds",
-                    "rye_seeds",
-                    "onion_seeds",
-                    "cabbage_seeds",
-                    "carrot_seeds",
-                )
-            },
-            skip_zero=True,
+        villager_amounts = amounts_from_obj(villager.inventory)
+        player_amounts = (
+            amounts_from_obj(player_inventory) if player_inventory is not None else {}
         )
-        if not cargo_lines:
-            cargo_lines = ["(empty)"]
+        v_sub = (
+            f"{villager.inventory.cargo_total}/{villager.inventory.capacity}"
+            f"  seeds {villager.inventory.seed_total}/{villager.inventory.seed_capacity}"
+        )
+        p_sub = "—"
+        if player_inventory is not None:
+            p_sub = (
+                f"{player_inventory.cargo_total}/{player_inventory.capacity}"
+                f"  seeds {player_inventory.seed_total}/{player_inventory.seed_capacity}"
+            )
+
+        dual = self.show_player
+        v_items = len(present_keys(villager_amounts, None))
+        p_items = len(present_keys(player_amounts, None))
+        if dual:
+            grid_h = (
+                18
+                + 16
+                + max(grid_height(v_items), grid_height(p_items), GRID_CELL)
+                + 22
+            )
+            self._panel_w = 520
+        else:
+            grid_h = 18 + 16 + grid_height(v_items) + 8
+            self._panel_w = 300
 
         body_h = (
             PAD
@@ -238,8 +279,7 @@ class VillagerInspectDialog:
             + BTN_H
             + 6
             + SECTION_GAP
-            + 18
-            + len(cargo_lines) * 16
+            + grid_h
             + PAD
         )
         self._panel_h = TITLE_BAR_H + body_h
@@ -272,6 +312,8 @@ class VillagerInspectDialog:
         self._draw_button(surface, self._close_rect, "×", hovered=close_hov)
 
         self._buttons = []
+        self._inv_hits = []
+        self._inv_tip_hits = []
         x = panel.x + PAD
         y = panel.y + TITLE_BAR_H + PAD
         inner_w = panel.w - PAD * 2
@@ -303,7 +345,6 @@ class VillagerInspectDialog:
         surface.blit(self.font.render("Work", True, COLOUR_TEXT), (x, y))
         y += 18
 
-        # Ration
         bx = x
         for mode in (RationMode.HALF, RationMode.NORMAL, RationMode.DOUBLE):
             label = RATION_LABELS[mode]
@@ -320,7 +361,6 @@ class VillagerInspectDialog:
         )
         y += BTN_H + 6
 
-        # Priority slots
         while len(villager.priorities) < 3:
             villager.priorities.append(WorkPriority.NONE)
         for slot in range(3):
@@ -349,7 +389,6 @@ class VillagerInspectDialog:
             y += BTN_H + 4
 
         y += SECTION_GAP // 2
-        # Assign / unassign
         bx = x
         for label, action in (
             ("Assign workplace", "assign_workplace"),
@@ -363,12 +402,78 @@ class VillagerInspectDialog:
             bx += w + 4
         y += BTN_H + SECTION_GAP
 
-        # --- Carried ---
-        surface.blit(self.font.render("Carried", True, COLOUR_TEXT), (x, y))
-        y += 18
-        for line in cargo_lines:
-            surface.blit(self.font_small.render(line, True, COLOUR_TEXT_DIM), (x, y))
-            y += 16
+        tip_key: str | None = None
+        if dual:
+            col_w = (inner_w - INV_PANEL_GAP) // 2
+            left_h, left_hits, left_tips, left_hov = draw_inv_grid(
+                surface,
+                origin=(x, y),
+                width=col_w,
+                title="Villager",
+                subtitle=v_sub,
+                amounts=villager_amounts,
+                allowed=None,
+                side="villager",
+                mouse_pos=mouse_pos,
+                fonts=self._fonts(),
+                interactive=True,
+                hover_inv=self._hover_inv,
+            )
+            right_h, right_hits, right_tips, right_hov = draw_inv_grid(
+                surface,
+                origin=(x + col_w + INV_PANEL_GAP, y),
+                width=col_w,
+                title="Player",
+                subtitle=p_sub,
+                amounts=player_amounts,
+                allowed=None,
+                side="player",
+                mouse_pos=mouse_pos,
+                fonts=self._fonts(),
+                interactive=True,
+                hover_inv=self._hover_inv,
+            )
+            self._inv_hits.extend(left_hits)
+            self._inv_hits.extend(right_hits)
+            self._inv_tip_hits.extend(left_tips)
+            self._inv_tip_hits.extend(right_tips)
+            y += max(left_h, right_h)
+            if left_hov:
+                tip_key = left_hov[1]
+            elif right_hov:
+                tip_key = right_hov[1]
+            surface.blit(
+                self.font_small.render(
+                    "Click an item to move one to the other inventory.",
+                    True,
+                    COLOUR_TEXT_DIM,
+                ),
+                (x, y + 6),
+            )
+        else:
+            h, _hits, tips, hov = draw_inv_grid(
+                surface,
+                origin=(x, y),
+                width=inner_w,
+                title="Carried",
+                subtitle=v_sub,
+                amounts=villager_amounts,
+                allowed=None,
+                side="villager",
+                mouse_pos=mouse_pos,
+                fonts=self._fonts(),
+                interactive=False,
+                hover_inv=self._hover_inv,
+            )
+            self._inv_tip_hits.extend(tips)
+            if hov:
+                tip_key = hov[1]
 
-        # Selection accent
+        if tip_key is not None:
+            self._tooltip_key = tip_key
+        if self._tooltip_key and mouse_pos is not None:
+            draw_item_tooltip(
+                surface, mouse_pos=mouse_pos, key=self._tooltip_key, font=self.font_small
+            )
+
         pygame.draw.rect(surface, COLOUR_SELECTED_ENTITY, panel, 1, border_radius=6)

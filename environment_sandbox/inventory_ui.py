@@ -1,0 +1,180 @@
+"""Shared inventory grid drawing for building / villager inspect dialogs."""
+
+from __future__ import annotations
+
+import math
+
+import pygame
+
+from resources import RESOURCE_KEYS, resource_icon_style, resource_label
+from settings import (
+    COLOUR_SELECTED_ENTITY,
+    COLOUR_TEXT,
+    COLOUR_TEXT_DIM,
+    COLOUR_TOOLBAR_BORDER,
+)
+
+GRID_CELL = 52
+GRID_GAP = 4
+GRID_COLS = 4
+INV_PANEL_GAP = 10
+
+
+def present_keys(
+    amounts: dict[str, int], allowed: tuple[str, ...] | None = None
+) -> list[str]:
+    keys = allowed if allowed is not None else RESOURCE_KEYS
+    return [k for k in keys if int(amounts.get(k, 0)) > 0]
+
+
+def grid_height(n_items: int, *, cols: int = GRID_COLS) -> int:
+    rows = max(1, math.ceil(max(1, n_items) / max(1, cols)))
+    return rows * (GRID_CELL + GRID_GAP) - GRID_GAP
+
+
+def draw_inv_grid(
+    surface: pygame.Surface,
+    *,
+    origin: tuple[int, int],
+    width: int,
+    title: str,
+    subtitle: str,
+    amounts: dict[str, int],
+    allowed: tuple[str, ...] | None,
+    side: str,
+    mouse_pos: tuple[int, int] | None,
+    fonts: tuple[pygame.font.Font, pygame.font.Font, pygame.font.Font],
+    interactive: bool = True,
+    hover_inv: tuple[str, str] | None = None,
+) -> tuple[
+    int,
+    list[tuple[pygame.Rect, str, str]],
+    list[tuple[pygame.Rect, str, str]],
+    tuple[str, str] | None,
+]:
+    """Draw an inventory grid.
+
+    Returns ``(height, click_hits, tip_hits, hovered_side_key)``.
+    """
+    from icons import blit_icon
+
+    font, font_small, font_tiny = fonts
+    x0, y0 = origin
+    y = y0
+    surface.blit(font.render(title, True, COLOUR_TEXT), (x0, y))
+    y += 18
+    surface.blit(font_small.render(subtitle, True, COLOUR_TEXT_DIM), (x0, y))
+    y += 16
+
+    hits: list[tuple[pygame.Rect, str, str]] = []
+    tip_hits: list[tuple[pygame.Rect, str, str]] = []
+    hovered: tuple[str, str] | None = None
+    keys = present_keys(amounts, allowed)
+    if not keys:
+        surface.blit(
+            font_small.render("(empty)", True, COLOUR_TEXT_DIM),
+            (x0, y + 8),
+        )
+        return (y + 28) - y0, hits, tip_hits, None
+
+    cols = max(1, min(GRID_COLS, max(1, width // (GRID_CELL + GRID_GAP))))
+    for i, key in enumerate(keys):
+        col = i % cols
+        row = i // cols
+        cx = x0 + col * (GRID_CELL + GRID_GAP)
+        cy = y + row * (GRID_CELL + GRID_GAP)
+        cell = pygame.Rect(cx, cy, GRID_CELL, GRID_CELL)
+        is_hov = hover_inv == (side, key) or (
+            mouse_pos is not None and cell.collidepoint(mouse_pos)
+        )
+        if is_hov:
+            hovered = (side, key)
+        bg = (55, 62, 50) if is_hov else (42, 44, 52)
+        border = COLOUR_SELECTED_ENTITY if is_hov else COLOUR_TOOLBAR_BORDER
+        pygame.draw.rect(surface, bg, cell, border_radius=4)
+        pygame.draw.rect(surface, border, cell, 1, border_radius=4)
+
+        icon_size = GRID_CELL - 14
+        try:
+            style = resource_icon_style(key)
+            blit_icon(
+                surface,
+                style.name,
+                cell.centerx,
+                cell.centery - 4,
+                icon_size,
+                recolour=style.recolour,
+                class_scales=style.class_scales,
+                omit_classes=style.omit_classes or None,
+            )
+            if style.badge_key is not None:
+                badge = resource_icon_style(style.badge_key)
+                badge_size = max(10, icon_size // 2)
+                # Top-left quarter of the grid cell.
+                bx = cell.x + cell.w // 4
+                by = cell.y + cell.h // 4
+                blit_icon(
+                    surface,
+                    badge.name,
+                    bx,
+                    by,
+                    badge_size,
+                    recolour=badge.recolour,
+                    class_scales=badge.class_scales,
+                    omit_classes=badge.omit_classes or None,
+                )
+        except (FileNotFoundError, OSError, ValueError, TypeError):
+            tip = resource_label(key)[:3]
+            t = font_tiny.render(tip, True, COLOUR_TEXT)
+            surface.blit(
+                t,
+                (
+                    cell.centerx - t.get_width() // 2,
+                    cell.centery - t.get_height() // 2 - 4,
+                ),
+            )
+
+        count = int(amounts.get(key, 0))
+        badge = font_tiny.render(str(count), True, COLOUR_TEXT)
+        bx = cell.right - badge.get_width() - 3
+        by = cell.bottom - badge.get_height() - 2
+        pygame.draw.rect(
+            surface,
+            (28, 30, 36),
+            pygame.Rect(bx - 2, by - 1, badge.get_width() + 4, badge.get_height() + 2),
+            border_radius=2,
+        )
+        surface.blit(badge, (bx, by))
+        tip_hits.append((cell, side, key))
+        if interactive:
+            hits.append((cell, side, key))
+
+    rows = math.ceil(len(keys) / cols)
+    return (y + rows * (GRID_CELL + GRID_GAP) - GRID_GAP) - y0, hits, tip_hits, hovered
+
+
+def draw_item_tooltip(
+    surface: pygame.Surface,
+    *,
+    mouse_pos: tuple[int, int],
+    key: str,
+    font: pygame.font.Font,
+) -> None:
+    """Draw a small name label near the cursor for a hovered inventory item."""
+    label = resource_label(key)
+    text = font.render(label, True, COLOUR_TEXT)
+    pad = 4
+    tip = pygame.Rect(
+        mouse_pos[0] + 14,
+        mouse_pos[1] + 12,
+        text.get_width() + pad * 2,
+        text.get_height() + pad * 2,
+    )
+    # Keep on-screen horizontally within the surface.
+    if tip.right > surface.get_width() - 4:
+        tip.x = mouse_pos[0] - tip.w - 8
+    if tip.bottom > surface.get_height() - 4:
+        tip.y = mouse_pos[1] - tip.h - 8
+    pygame.draw.rect(surface, (28, 30, 36), tip, border_radius=3)
+    pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, tip, 1, border_radius=3)
+    surface.blit(text, (tip.x + pad, tip.y + pad))

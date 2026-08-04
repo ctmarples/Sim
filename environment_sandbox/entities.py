@@ -477,6 +477,16 @@ class HomeStorage:
             taken += 1
         return taken
 
+    def withdraw_one_to(self, inventory: Inventory, key: str) -> bool:
+        """Move a single unit of ``key`` into inventory if possible."""
+        if not hasattr(self, key) or not hasattr(inventory, key):
+            return False
+        if getattr(self, key, 0) <= 0 or not inventory.can_add(1, key=key):
+            return False
+        setattr(self, key, getattr(self, key) - 1)
+        setattr(inventory, key, getattr(inventory, key) + 1)
+        return True
+
     def deposit_key_from(self, inventory: Inventory, key: str) -> int:
         """Move all of ``key`` from inventory into storehouse."""
         if not hasattr(self, key) or not hasattr(inventory, key):
@@ -487,6 +497,16 @@ class HomeStorage:
         setattr(inventory, key, 0)
         setattr(self, key, getattr(self, key) + n)
         return n
+
+    def deposit_one_from(self, inventory: Inventory, key: str) -> bool:
+        """Move a single unit of ``key`` from inventory into storehouse."""
+        if not hasattr(self, key) or not hasattr(inventory, key):
+            return False
+        if getattr(inventory, key, 0) <= 0:
+            return False
+        setattr(inventory, key, getattr(inventory, key) - 1)
+        setattr(self, key, getattr(self, key) + 1)
+        return True
 
 
 @dataclass
@@ -948,6 +968,16 @@ class Building:
         before = int(getattr(inventory, key, 0))
         self._take(inventory, key)
         return before - int(getattr(inventory, key, 0))
+
+    def deposit_one_from(self, inventory: Inventory, key: str) -> bool:
+        """Deposit a single unit of ``key`` if capacity allows."""
+        if key not in self.depositable_keys() or self.space_left <= 0:
+            return False
+        if getattr(inventory, key, 0) <= 0:
+            return False
+        setattr(inventory, key, getattr(inventory, key) - 1)
+        setattr(self, key, getattr(self, key) + 1)
+        return True
 
     def depositable_keys(self) -> tuple[str, ...]:
         if self.kind == BuildingKind.HOME:

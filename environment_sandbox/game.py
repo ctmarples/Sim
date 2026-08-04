@@ -1622,7 +1622,9 @@ class Game:
         elif action.startswith("speed_"):
             self._set_sim_speed(int(action[len("speed_") :]))
 
-    def _select_building(self, building: Building) -> None:
+    def _select_building(
+        self, building: Building, *, show_player: bool = False
+    ) -> None:
         """Select a building and open its inspection popup (closes any previous)."""
         self.selected_building_id = building.id
         self.selected_villager_id = None
@@ -1634,7 +1636,7 @@ class Game:
         if building.kind == BuildingKind.FIELD:
             self._open_field_plan(building)
             return
-        self._open_building_inspect(building)
+        self._open_building_inspect(building, show_player=show_player)
 
     def _field_plan_building(self) -> Building | None:
         bid = self.field_plan_dialog.building_id
@@ -1665,18 +1667,27 @@ class Game:
             f"Select season & crop, drag to plant."
         )
 
-    def _open_building_inspect(self, building: Building) -> None:
+    def _open_building_inspect(
+        self, building: Building, *, show_player: bool = False
+    ) -> None:
         self.field_plan_dialog.close()
         self.villager_inspect.close()
         self.resource_inspect.close()
         self.selected_building_id = building.id
         screen_xy = self.camera.world_to_screen(*building.center_cell())
-        self.building_inspect.open_for(building, screen_xy=screen_xy)
+        self.building_inspect.open_for(
+            building, screen_xy=screen_xy, show_player=show_player
+        )
         if building.kind == BuildingKind.HOME:
             haulers = sum(1 for v in self.villagers if v.assigned_to_home)
-            self._set_status(
-                f"Storehouse open. Click items to transfer. {haulers} hauler(s)."
-            )
+            if show_player:
+                self._set_status(
+                    f"Storehouse open. Click items to transfer one. {haulers} hauler(s)."
+                )
+            else:
+                self._set_status(
+                    f"Selected Storehouse. {haulers} hauler(s). Assign villagers to haul."
+                )
         elif building.kind == BuildingKind.WORKSTATION:
             hired_count = len(self.villagers)
             self._set_status(
@@ -1727,6 +1738,8 @@ class Game:
             return
 
     def _transfer_inspect_to_player(self, key: str) -> None:
+        if not self.building_inspect.show_player:
+            return
         building = self._inspect_building()
         if building is None:
             return
@@ -1735,26 +1748,24 @@ class Game:
 
         label = resource_label(key)
         if building.kind == BuildingKind.HOME:
-            have = int(getattr(self.home_storage, key, 0))
-            if have <= 0:
+            if int(getattr(self.home_storage, key, 0)) <= 0:
                 self._set_status(f"No {label} in storehouse.")
                 return
-            moved = self.home_storage.withdraw_key_to(inv, key)
+            ok = self.home_storage.withdraw_one_to(inv, key)
         else:
-            have = int(getattr(building, key, 0))
-            if have <= 0:
+            if int(getattr(building, key, 0)) <= 0:
                 self._set_status(f"No {label} in storage.")
                 return
-            before = int(getattr(inv, key, 0))
-            building.withdraw_to_inventory(inv, keys=(key,))
-            moved = int(getattr(inv, key, 0)) - before
-        if moved <= 0:
+            ok = building.give_item_to(inv, key)
+        if not ok:
             self._set_status("Inventory is full.")
             return
         self._refresh_indicators()
-        self._set_status(f"Took {moved} {label}.")
+        self._set_status(f"Took 1 {label}.")
 
     def _transfer_inspect_to_storage(self, key: str) -> None:
+        if not self.building_inspect.show_player:
+            return
         building = self._inspect_building()
         if building is None:
             return
@@ -1762,29 +1773,30 @@ class Game:
         from resources import resource_label
 
         label = resource_label(key)
-        have = int(getattr(inv, key, 0))
-        if have <= 0:
+        if int(getattr(inv, key, 0)) <= 0:
             self._set_status(f"You have no {label}.")
             return
         if key not in building.depositable_keys():
             self._set_status(f"{BUILDING_LABELS[building.kind]} cannot store {label}.")
             return
         if building.kind == BuildingKind.HOME:
-            moved = self.home_storage.deposit_key_from(inv, key)
+            ok = self.home_storage.deposit_one_from(inv, key)
             hx, hy = self.world.home_pos
             self.world.apply_disturbance(hx, hy)
         else:
             if building.space_left <= 0:
                 self._set_status("Building storage is full.")
                 return
-            moved = building.deposit_key_from(inv, key)
-        if moved <= 0:
+            ok = building.deposit_one_from(inv, key)
+        if not ok:
             self._set_status("Could not deposit.")
             return
         self._refresh_indicators()
-        self._set_status(f"Deposited {moved} {label}.")
+        self._set_status(f"Deposited 1 {label}.")
 
-    def _open_villager_inspect(self, villager: Villager) -> None:
+    def _open_villager_inspect(
+        self, villager: Villager, *, show_player: bool = False
+    ) -> None:
         self.selected_villager_id = villager.id
         self.selected_building_id = None
         self.selected_habitat_kind = None
@@ -1794,16 +1806,29 @@ class Game:
         self.building_inspect.close()
         self.resource_inspect.close()
         screen_xy = self.camera.world_to_screen(villager.x, villager.y)
-        self.villager_inspect.open_for(villager, screen_xy=screen_xy)
-        label = self._villager_assignment_label(villager)
-        self._set_status(
-            f"Selected villager {villager.id} ({label}). "
-            f"Set priorities & ration in the popup."
+        self.villager_inspect.open_for(
+            villager, screen_xy=screen_xy, show_player=show_player
         )
+        label = self._villager_assignment_label(villager)
+        if show_player:
+            self._set_status(
+                f"Villager {villager.id} ({label}). Click items to transfer one."
+            )
+        else:
+            self._set_status(
+                f"Selected villager {villager.id} ({label}). "
+                f"Set priorities & ration in the popup."
+            )
 
     def _apply_villager_inspect_action(self) -> None:
         action = self.villager_inspect.take_action()
         if action is None:
+            return
+        if action.startswith("xfer_to_player:"):
+            self._transfer_villager_to_player(action.split(":", 1)[1])
+            return
+        if action.startswith("xfer_to_villager:"):
+            self._transfer_player_to_villager(action.split(":", 1)[1])
             return
         villager = self._get_villager(self.villager_inspect.villager_id or -1)
         if villager is None:
@@ -1843,6 +1868,46 @@ class Game:
         if action == "unassign":
             self._unassign_villager(villager)
             return
+
+    def _transfer_villager_to_player(self, key: str) -> None:
+        if not self.villager_inspect.show_player:
+            return
+        villager = self._get_villager(self.villager_inspect.villager_id or -1)
+        if villager is None:
+            return
+        from resources import resource_label
+
+        label = resource_label(key)
+        if int(getattr(villager.inventory, key, 0)) <= 0:
+            self._set_status(f"Villager has no {label}.")
+            return
+        if not self.player.inventory.can_add(1, key=key):
+            self._set_status("Inventory is full.")
+            return
+        villager.inventory.consume_item(key, 1)
+        self.player.inventory.add_item(key, 1)
+        self._refresh_indicators()
+        self._set_status(f"Took 1 {label}.")
+
+    def _transfer_player_to_villager(self, key: str) -> None:
+        if not self.villager_inspect.show_player:
+            return
+        villager = self._get_villager(self.villager_inspect.villager_id or -1)
+        if villager is None:
+            return
+        from resources import resource_label
+
+        label = resource_label(key)
+        if int(getattr(self.player.inventory, key, 0)) <= 0:
+            self._set_status(f"You have no {label}.")
+            return
+        if not villager.inventory.can_add(1, key=key):
+            self._set_status("Villager inventory is full.")
+            return
+        self.player.inventory.consume_item(key, 1)
+        villager.inventory.add_item(key, 1)
+        self._refresh_indicators()
+        self._set_status(f"Gave 1 {label}.")
 
     def _unassign_villager(self, villager: Villager) -> None:
         villager.clear_assignment()
@@ -2045,6 +2110,17 @@ class Game:
                 return villager
         return None
 
+    def _adjacent_villager(self, x: int, y: int) -> Villager | None:
+        """Nearest villager at Chebyshev distance 1."""
+        best: Villager | None = None
+        best_dist = 99
+        for villager in self.villagers:
+            dist = max(abs(villager.x - x), abs(villager.y - y))
+            if dist == 1 and dist < best_dist:
+                best = villager
+                best_dist = dist
+        return best
+
     def _building_at(self, x: int, y: int) -> Building | None:
         for building in self.buildings.values():
             if building.contains_plot(x, y):
@@ -2127,13 +2203,13 @@ class Game:
         if cell.feature == FeatureType.WORKSTATION:
             building = self._building_at(x, y)
             if building is not None:
-                self._select_building(building)
+                self._select_building(building, show_player=True)
             return
 
         if cell.feature == FeatureType.HOME:
             building = self._building_at(x, y)
             if building is not None:
-                self._select_building(building)
+                self._select_building(building, show_player=True)
             return
 
         if cell.feature in (
@@ -2149,7 +2225,13 @@ class Game:
         ):
             building = self._building_at(x, y)
             if building is not None:
-                self._select_building(building)
+                self._select_building(building, show_player=True)
+            return
+
+        # Talk / trade with a villager on this cell (or adjacent).
+        villager = self._villager_at(x, y) or self._adjacent_villager(x, y)
+        if villager is not None:
+            self._open_villager_inspect(villager, show_player=True)
             return
 
         # Collect meat / fish on this cell first if present.
@@ -4793,6 +4875,7 @@ class Game:
                 self._villager_assignment_label(inspect_v) if inspect_v else "—"
             ),
             mouse_pos=mouse,
+            player_inventory=self.player.inventory,
         )
         self.resource_inspect.draw(self.screen, mouse_pos=mouse)
         pygame.display.flip()
