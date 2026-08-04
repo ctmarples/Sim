@@ -1121,6 +1121,7 @@ ICON_TREE_CONE = "tree_cone"
 ICON_SAPLING_ROUND = "sapling_round"
 ICON_SAPLING_CONE = "sapling_cone"
 ICON_ROCK = "rock"
+ICON_ROCK_BIG = "rock_big"
 ICON_MUSHROOM = "mushroom"
 ICON_BERRY_BUSH = "berry_bush"
 ICON_REED = "reed"
@@ -1154,6 +1155,7 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_SAPLING_ROUND,
     ICON_SAPLING_CONE,
     ICON_ROCK,
+    ICON_ROCK_BIG,
     ICON_MUSHROOM,
     ICON_BERRY_BUSH,
     ICON_REED,
@@ -1196,10 +1198,12 @@ def icon_base_for_feature(
     *,
     tree_species: str | None = None,
     crop_kind: str | None = None,
+    deposit: int = 0,
 ) -> str | None:
     """Logical icon base for a map ``FeatureType``, or None if none/unknown."""
     # Local import avoids a hard cycle with world.py at module load.
     from trees import resolve_tree
+    from settings import ROCK_LARGE_MIN
     from world import FeatureType
 
     if not isinstance(feature, FeatureType) or feature == FeatureType.NONE:
@@ -1215,7 +1219,7 @@ def icon_base_for_feature(
     if feature == FeatureType.CROP_HERB:
         return crop_icon_base(crop_kind, dense=True)
     mapping = {
-        FeatureType.ROCK: ICON_ROCK,
+        FeatureType.ROCK: ICON_ROCK_BIG if deposit >= ROCK_LARGE_MIN else ICON_ROCK,
         FeatureType.HOME: ICON_HOME,
         FeatureType.WORKSTATION: ICON_WORKSTATION,
         FeatureType.FORESTER: ICON_FORESTER,

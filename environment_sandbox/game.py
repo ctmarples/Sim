@@ -62,6 +62,13 @@ from settings import (
     COLOUR_DEER,
     COLOUR_BG,
     COLOUR_FISH,
+    COLOUR_FARM,
+    COLOUR_FISHER,
+    COLOUR_FORAGER,
+    COLOUR_FORESTER,
+    COLOUR_HOME,
+    COLOUR_HUNTER,
+    COLOUR_MASON,
     COLOUR_MEAT,
     COLOUR_PLAYER,
     COLOUR_SELECTED_ENTITY,
@@ -1962,6 +1969,23 @@ class Game:
             if building is not None:
                 return BUILDING_LABELS[building.kind]
         return "unassigned"
+
+    def _villager_job_colour(self, villager: Villager) -> tuple[int, int, int]:
+        if villager.assigned_to_home:
+            return COLOUR_HOME
+        if villager.building_id is not None:
+            building = self.buildings.get(villager.building_id)
+            if building is not None:
+                return {
+                    BuildingKind.FORESTER: COLOUR_FORESTER,
+                    BuildingKind.MASON: COLOUR_MASON,
+                    BuildingKind.HUNTER: COLOUR_HUNTER,
+                    BuildingKind.FORAGER: COLOUR_FORAGER,
+                    BuildingKind.FISHER: COLOUR_FISHER,
+                    BuildingKind.FARM: COLOUR_FARM,
+                    BuildingKind.FIELD: COLOUR_FARM,
+                }.get(building.kind, COLOUR_VILLAGER)
+        return COLOUR_VILLAGER
 
     def _wake_building_workers(self, building_id: int) -> None:
         for villager in self.villagers:
@@ -4678,11 +4702,14 @@ class Game:
         pygame.draw.rect(self.screen, colour, border, width)
 
     def _terrain_base_cache_key(self) -> tuple:
+        from terrain_tiles import active_fill_mode
+
         return (
             self.world.cols,
             self.world.rows,
             CELL_SIZE,
             self.world.terrain_revision,
+            active_fill_mode(),
         )
 
     def _invalidate_terrain_layer(self) -> None:
@@ -4905,6 +4932,7 @@ class Game:
                     cell.feature,
                     tree_species=cell.tree_species,
                     crop_kind=cell.crop_kind,
+                    deposit=cell.deposit,
                 )
                 if base is not None:
                     cell.icon_variant = ensure_icon_variant(
@@ -4926,6 +4954,7 @@ class Game:
                 crop_kind=cell.crop_kind,
                 tree_species=cell.tree_species,
                 icon_variant=cell.icon_variant,
+                deposit=cell.deposit,
             )
             if cell.feature == FeatureType.CONSTRUCTION_SITE:
                 site = self._construction_at(x, y)
@@ -5176,13 +5205,14 @@ class Game:
         size = self.camera.view_cell()
         for villager in self.villagers:
             cx, cy = self._cell_center(villager.x, villager.y)
+            job_colour = self._villager_job_colour(villager)
             blit_icon(
                 self.screen,
                 ICON_VILLAGER,
                 cx,
                 cy,
                 size,
-                recolour={"body": COLOUR_VILLAGER},
+                recolour={"shirt": job_colour, "hat": job_colour},
             )
 
     def _draw_player(self) -> None:

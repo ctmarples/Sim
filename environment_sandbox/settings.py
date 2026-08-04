@@ -30,6 +30,8 @@ FPS: int = 60
 SIM_SPEEDS: tuple[int, ...] = (0, 1, 2, 4, 8, 16)
 # Native terrain tile size (pre-rendered, then scaled to CELL_SIZE and stitched).
 TERRAIN_SUBDIV: int = 25
+# Terrain fill backend: "procedural" (default MS + noise) or "png" (assets/terrain).
+TERRAIN_FILL_MODE: str = "procedural"
 
 # Camera
 ZOOM_MIN: float = 0.35

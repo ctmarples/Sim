@@ -72,6 +72,7 @@ from settings import (
     MAP_OFFSET_Y,
     MAX_VILLAGERS,
     PANEL_WIDTH,
+    ROCK_LARGE_MIN,
     TERRAIN_SUBDIV,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
@@ -1087,6 +1088,7 @@ def draw_feature(
     crop_kind: str | None = None,
     tree_species: str | None = None,
     icon_variant: int | None = None,
+    deposit: int = 0,
 ) -> None:
     if feature == FeatureType.NONE:
         return
@@ -1107,6 +1109,7 @@ def draw_feature(
         ICON_MUSHROOM,
         ICON_REED,
         ICON_ROCK,
+        ICON_ROCK_BIG,
         ICON_SAPLING_CONE,
         ICON_SAPLING_ROUND,
         ICON_TREE_CONE,
@@ -1154,9 +1157,10 @@ def draw_feature(
             class_scales=scales,
         )
     elif feature == FeatureType.ROCK:
+        base = ICON_ROCK_BIG if deposit >= ROCK_LARGE_MIN else ICON_ROCK
         blit_icon(
             surface,
-            ICON_ROCK,
+            base,
             cx,
             cy,
             size,

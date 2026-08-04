@@ -231,21 +231,17 @@ class World:
                     cell.terrain = TerrainType.SOIL
 
         # Grow soil under forests into coherent clearings; smooth grass/meadow/soil.
-        self._expand_terrain_patches(rng, TerrainType.SOIL, passes=3, chance=0.55)
-        self._expand_terrain_patches(rng, TerrainType.MEADOW, passes=2, chance=0.5)
-        self._expand_terrain_patches(rng, TerrainType.GRASS, passes=2, chance=0.5)
-        self._cull_isolated_terrain(TerrainType.SOIL, min_neighbours=2)
-        self._cull_isolated_terrain(TerrainType.MEADOW, min_neighbours=2)
-        self._cull_isolated_terrain(TerrainType.GRASS, min_neighbours=2)
-        self._cull_small_patches(TerrainType.SOIL, min_size=4)
-        self._cull_small_patches(TerrainType.MEADOW, min_size=4)
-        self._cull_small_patches(TerrainType.GRASS, min_size=4)
-        self._cull_small_patches(TerrainType.ROCK, min_size=4)
+        # Keep land cull gentle — aggressive grass absorption removes forest-edge
+        # grass that deer breeding grounds require.
+        self._expand_terrain_patches(rng, TerrainType.SOIL, passes=2, chance=0.5)
+        self._expand_terrain_patches(rng, TerrainType.MEADOW, passes=1, chance=0.4)
+        self._expand_terrain_patches(rng, TerrainType.GRASS, passes=1, chance=0.45)
+        self._cull_isolated_terrain(TerrainType.SOIL, min_neighbours=1)
+        self._cull_isolated_terrain(TerrainType.MEADOW, min_neighbours=1)
+        self._cull_isolated_terrain(TerrainType.GRASS, min_neighbours=1)
 
         # Thin riparian strips on ~50% of land cells touching water.
         self._paint_riparian_strips(rng)
-        # Keep shoreline speckles; only remove fully isolated cells.
-        self._cull_isolated_terrain(TerrainType.RIPARIAN, min_neighbours=1)
 
         for cx, cy in forest_centres:
             for ny, nx in self.neighbourhood(cx, cy, radius=3):
@@ -281,10 +277,11 @@ class World:
                     cell.tree_species = species
                     cell.deposit = tree.yield_amount
 
-        # Small rock deposits on soil/grass/meadow.
+        # More scattered small rock deposits on soil/grass/meadow.
         placed_small = 0
         attempts = 0
-        while placed_small < 14 and attempts < 300:
+        target_small = max(20, (self.cols * self.rows) // 320)
+        while placed_small < target_small and attempts < 500:
             attempts += 1
             x = rng.randint(0, self.cols - 1)
             y = rng.randint(0, self.rows - 1)
@@ -297,7 +294,7 @@ class World:
                 cell.deposit = rng.randint(ROCK_SMALL_MIN, ROCK_SMALL_MAX)
                 placed_small += 1
 
-        # Large rock deposits (20+) only on grey rock terrain patches.
+        # Rock-terrain clusters mix mostly small deposits with some big ones.
         rock_tiles = [
             (x, y)
             for y in range(self.rows)
@@ -306,11 +303,15 @@ class World:
             and self.cells[y][x].feature == FeatureType.NONE
         ]
         rng.shuffle(rock_tiles)
-        large_count = min(len(rock_tiles), max(3, len(rock_tiles) // 2))
-        for x, y in rock_tiles[:large_count]:
+        cluster_count = min(len(rock_tiles), max(6, int(round(len(rock_tiles) * 0.5))))
+        big_count = int(round(cluster_count * 0.4))
+        for i, (x, y) in enumerate(rock_tiles[:cluster_count]):
             cell = self.cells[y][x]
             cell.feature = FeatureType.ROCK
-            cell.deposit = rng.randint(ROCK_LARGE_MIN, ROCK_LARGE_MAX)
+            if i < big_count:
+                cell.deposit = rng.randint(ROCK_LARGE_MIN, ROCK_LARGE_MAX)
+            else:
+                cell.deposit = rng.randint(ROCK_SMALL_MIN, ROCK_SMALL_MAX)
 
         # A few starter berry bushes on grass.
         placed_bushes = 0

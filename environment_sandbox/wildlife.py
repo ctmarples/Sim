@@ -265,14 +265,15 @@ class WildlifeManager:
     def _deer_breeding_tiles(
         world: World, forest: list[tuple[int, int]]
     ) -> list[tuple[int, int]]:
-        """Forest tiles that border grass without a tree/sapling."""
+        """Forest tiles that border open grass/meadow (no tree/sapling on that neighbour)."""
+        open_land = (TerrainType.GRASS, TerrainType.MEADOW)
         breeding: list[tuple[int, int]] = []
         for fx, fy in forest:
             for ny, nx in world.neighbourhood(fx, fy, radius=1):
                 if (nx, ny) == (fx, fy):
                     continue
                 cell = world.cells[ny][nx]
-                if cell.terrain != TerrainType.GRASS:
+                if cell.terrain not in open_land:
                     continue
                 if cell.feature in (FeatureType.TREE, FeatureType.SAPLING):
                     continue
