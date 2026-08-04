@@ -60,6 +60,11 @@ class CropDef:
     farm_seed_amounts: tuple[int, ...]
     # Year cycle S→S→A→W (Spring, Summer, Autumn, Winter).
     year_phases: tuple[SeasonPhase, SeasonPhase, SeasonPhase, SeasonPhase]
+    # Icon folder base: crop_plant / flower_plant (dense → ``{base}_dense``).
+    icon_base: str = "crop_plant"
+
+    def plant_icon(self, *, dense: bool = False) -> str:
+        return f"{self.icon_base}_dense" if dense else self.icon_base
 
 
 WILD_SEED_CHANCE: float = 1.0 / 3.0
@@ -117,6 +122,7 @@ CROPS: tuple[CropDef, ...] = (
             SeasonPhase.FALLOW,
             SeasonPhase.FALLOW,
         ),
+        icon_base="flower_plant",
     ),
     CropDef(
         key="sage",
@@ -137,6 +143,7 @@ CROPS: tuple[CropDef, ...] = (
             SeasonPhase.FALLOW,
             SeasonPhase.FALLOW,
         ),
+        icon_base="flower_plant",
     ),
     CropDef(
         key="hemp",
@@ -145,7 +152,7 @@ CROPS: tuple[CropDef, ...] = (
         seed_key="hemp_seeds",
         short="hmp",
         stem_colour=(60, 140, 55),
-        flower_colour=None,
+        flower_colour=(170, 220, 110),  # light green blooms
         plant_season=Season.SPRING,
         harvest_seasons=(Season.SUMMER,),
         growth_days=32,
@@ -157,6 +164,7 @@ CROPS: tuple[CropDef, ...] = (
             SeasonPhase.FALLOW,
             SeasonPhase.FALLOW,
         ),
+        icon_base="flower_plant",
     ),
     CropDef(
         key="rye",

@@ -6,7 +6,12 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 
 from crops import PRODUCE_KEYS, SEED_KEYS
-from settings import BUILDING_STORAGE_CAPACITY, INVENTORY_CAPACITY, SEED_CARRY_CAPACITY
+from settings import (
+    BUILDING_FOOTPRINT,
+    BUILDING_STORAGE_CAPACITY,
+    INVENTORY_CAPACITY,
+    SEED_CARRY_CAPACITY,
+)
 from trees import SAPLING_ITEM_KEYS, sapling_item_key
 
 # Seeds share a dedicated carry pool (separate from wood/food/etc.).
@@ -107,6 +112,14 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
     BuildingKind.FARM: "Farm",
     BuildingKind.FIELD: "Field",
 }
+
+
+def default_building_plot(kind: BuildingKind) -> tuple[int, int]:
+    """Default footprint size. Fields are drag-sized; all other buildings are square."""
+    if kind == BuildingKind.FIELD:
+        return 1, 1
+    n = max(1, int(BUILDING_FOOTPRINT))
+    return n, n
 
 
 class VillagerState(Enum):
@@ -701,14 +714,16 @@ class Building:
         return self.x, self.y, self.x + w - 1, self.y + h - 1
 
     def contains_plot(self, x: int, y: int) -> bool:
-        if self.kind != BuildingKind.FIELD:
-            return self.x == x and self.y == y
         left, top, right, bottom = self.plot_bounds()
         return left <= x <= right and top <= y <= bottom
 
     def plot_cells(self) -> list[tuple[int, int]]:
         left, top, right, bottom = self.plot_bounds()
         return [(x, y) for y in range(top, bottom + 1) for x in range(left, right + 1)]
+
+    def center_cell(self) -> tuple[int, int]:
+        left, top, right, bottom = self.plot_bounds()
+        return (left + right) // 2, (top + bottom) // 2
 
     def plot_size_label(self) -> str:
         return f"{max(1, self.plot_w)}×{max(1, self.plot_h)}"
@@ -1153,6 +1168,23 @@ class ConstructionSite:
     build_progress: int = 0
     plot_w: int = 1
     plot_h: int = 1
+
+    def plot_bounds(self) -> tuple[int, int, int, int]:
+        w = max(1, self.plot_w)
+        h = max(1, self.plot_h)
+        return self.x, self.y, self.x + w - 1, self.y + h - 1
+
+    def contains_plot(self, x: int, y: int) -> bool:
+        left, top, right, bottom = self.plot_bounds()
+        return left <= x <= right and top <= y <= bottom
+
+    def plot_cells(self) -> list[tuple[int, int]]:
+        left, top, right, bottom = self.plot_bounds()
+        return [(x, y) for y in range(top, bottom + 1) for x in range(left, right + 1)]
+
+    def center_cell(self) -> tuple[int, int]:
+        left, top, right, bottom = self.plot_bounds()
+        return (left + right) // 2, (top + bottom) // 2
 
     @property
     def wood_needed(self) -> int:

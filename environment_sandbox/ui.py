@@ -39,6 +39,7 @@ from settings import (
     COLOUR_GRASS,
     COLOUR_HERB,
     COLOUR_HOME,
+    COLOUR_HOME_ROOF,
     COLOUR_HUNTER,
     COLOUR_ICE,
     COLOUR_MASON,
@@ -64,6 +65,7 @@ from settings import (
     COLOUR_TOOLBAR_BTN_ACTIVE,
     COLOUR_TOOLBAR_BORDER,
     COLOUR_TREE_CANOPY,
+    COLOUR_TREE_TRUNK,
     COLOUR_VILLAGER,
     COLOUR_WATER,
     COLOUR_WORKSTATION,
@@ -1036,29 +1038,43 @@ def draw_terrain(
 
 # Scratch buffer for TERRAIN_SUBDIV × TERRAIN_SUBDIV colour painting.
 
-def _draw_crop_plant(
-    surface: pygame.Surface,
-    cx: int,
-    cy: int,
-    stem_colour: tuple[int, int, int],
-    flower_colour: tuple[int, int, int] | None,
+def _iso_shade(
+    colour: tuple[int, int, int], amount: float
+) -> tuple[int, int, int]:
+    """Lighten (amount>0) or darken (amount<0) for isometric faces."""
+    return _shift_colour(colour, amount)
+
+
+def _iso_building_recolour(
+    wall: tuple[int, int, int],
     *,
-    dense: bool = False,
-) -> None:
-    """Herb/crop glyph: stems flipped 180° (base near top, tip toward bottom)."""
-    offsets = (-4, -1, 2, 5) if dense else (-3, 0, 3)
-    for ox in offsets:
-        tip_x = cx + ox // 2
-        tip_y = cy + 6
-        pygame.draw.line(
-            surface,
-            stem_colour,
-            (cx + ox, cy - 4),
-            (tip_x, tip_y),
-            2,
-        )
-        if flower_colour is not None:
-            pygame.draw.circle(surface, flower_colour, (tip_x, tip_y), 2)
+    roof: tuple[int, int, int] | None = None,
+    accent: tuple[int, int, int] | None = None,
+    accent2: tuple[int, int, int] | None = None,
+    stem: tuple[int, int, int] | None = None,
+    vibrancy: float = 1.0,
+) -> dict[str, tuple[int, int, int]]:
+    """Map building SVG face classes to shaded colours from a wall/roof base."""
+    from seasons import adjust_colour
+
+    w = adjust_colour(wall, vibrancy)
+    r = adjust_colour(roof if roof is not None else wall, vibrancy)
+    out: dict[str, tuple[int, int, int]] = {
+        "wall_l": _iso_shade(w, -0.28),
+        "wall_r": _iso_shade(w, 0.14),
+        "body": _iso_shade(w, -0.1),
+        "roof": r,
+        "roof_dark": _iso_shade(r, -0.22),
+        "door": _iso_shade(w, -0.45),
+        "trim": _iso_shade(r, -0.12),
+    }
+    if accent is not None:
+        out["accent"] = adjust_colour(accent, vibrancy)
+    if accent2 is not None:
+        out["accent2"] = adjust_colour(accent2, vibrancy)
+    if stem is not None:
+        out["stem"] = adjust_colour(stem, vibrancy)
+    return out
 
 
 def draw_feature(
@@ -1070,165 +1086,281 @@ def draw_feature(
     vibrancy: float = 1.0,
     crop_kind: str | None = None,
     tree_species: str | None = None,
+    icon_variant: int | None = None,
 ) -> None:
     if feature == FeatureType.NONE:
         return
+    if feature == FeatureType.STRUCTURE_PAD:
+        return
     from crops import CROP_BY_KEY
+    from icons import (
+        ICON_BERRY_BUSH,
+        ICON_CONSTRUCTION,
+        ICON_FARM,
+        ICON_FIELD,
+        ICON_FISHER,
+        ICON_FORAGER,
+        ICON_FORESTER,
+        ICON_HOME,
+        ICON_HUNTER,
+        ICON_MASON,
+        ICON_MUSHROOM,
+        ICON_REED,
+        ICON_ROCK,
+        ICON_SAPLING_CONE,
+        ICON_SAPLING_ROUND,
+        ICON_TREE_CONE,
+        ICON_TREE_ROUND,
+        ICON_WORKSTATION,
+        blit_icon,
+    )
     from trees import resolve_tree
 
-    herb_c = adjust_colour(COLOUR_HERB, vibrancy)
-    berry_c = adjust_colour(COLOUR_BERRY, vibrancy)
-    mush_c = adjust_colour(COLOUR_MUSHROOM, vibrancy)
-    bush_c = adjust_colour((50, 110, 50), vibrancy)
+    trunk = adjust_colour(COLOUR_TREE_TRUNK, vibrancy)
+    v = icon_variant
+
     if feature == FeatureType.TREE:
         tree = resolve_tree(tree_species)
-        colour = adjust_colour(tree.canopy, vibrancy)
-        trunk_w = max(2, size // 10)
-        trunk_h = size // 4
-        pygame.draw.rect(
+        base = ICON_TREE_CONE if tree.shape == "cone" else ICON_TREE_ROUND
+        scales = {"canopy": tree.cone_scale} if tree.shape == "cone" else None
+        blit_icon(
             surface,
-            adjust_colour((90, 55, 30), vibrancy),
-            pygame.Rect(cx - trunk_w // 2, cy, trunk_w, trunk_h),
+            base,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour={
+                "canopy": adjust_colour(tree.canopy, vibrancy),
+                "trunk": trunk,
+            },
+            class_scales=scales,
         )
-        if tree.shape == "cone":
-            scale = tree.cone_scale
-            half_w = int((size // 5) * scale)
-            height = int((size // 3) * scale)
-            tip = (cx, cy - height)
-            left = (cx - half_w, cy + size // 16)
-            right = (cx + half_w, cy + size // 16)
-            pygame.draw.polygon(surface, colour, [tip, left, right])
-        else:
-            pygame.draw.circle(surface, colour, (cx, cy - size // 10), size // 4)
     elif feature == FeatureType.SAPLING:
         tree = resolve_tree(tree_species)
-        colour = adjust_colour(tree.sapling_colour, vibrancy)
-        pygame.draw.line(
+        base = ICON_SAPLING_CONE if tree.shape == "cone" else ICON_SAPLING_ROUND
+        scales = {"canopy": tree.cone_scale} if tree.shape == "cone" else None
+        blit_icon(
             surface,
-            adjust_colour((90, 55, 30), vibrancy),
-            (cx, cy),
-            (cx, cy + size // 8),
-            2,
+            base,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour={
+                "canopy": adjust_colour(tree.sapling_colour, vibrancy),
+                "trunk": trunk,
+            },
+            class_scales=scales,
         )
-        if tree.shape == "cone":
-            scale = 0.55 * tree.cone_scale
-            half_w = max(3, int((size // 8) * scale))
-            height = max(5, int((size // 6) * scale))
-            tip = (cx, cy - height // 2)
-            left = (cx - half_w, cy + 2)
-            right = (cx + half_w, cy + 2)
-            pygame.draw.polygon(surface, colour, [tip, left, right])
-        else:
-            pygame.draw.circle(surface, colour, (cx, cy), max(3, size // 8))
     elif feature == FeatureType.ROCK:
-        points = [
-            (cx - size // 5, cy + size // 8),
-            (cx - size // 8, cy - size // 6),
-            (cx + size // 5, cy - size // 10),
-            (cx + size // 4, cy + size // 8),
-        ]
-        pygame.draw.polygon(surface, COLOUR_ROCK_FEATURE, points)
-    elif feature == FeatureType.HOME:
-        half = size // 4
-        body = pygame.Rect(cx - half, cy - half // 2, half * 2, half + half // 2)
-        pygame.draw.rect(surface, COLOUR_HOME, body)
-        roof = [(cx - half - 2, cy - half // 2), (cx, cy - half - 4), (cx + half + 2, cy - half // 2)]
-        pygame.draw.polygon(surface, (170, 60, 50), roof)
-    elif feature == FeatureType.WORKSTATION:
-        half = size // 3
-        desk = pygame.Rect(cx - half, cy - half // 2, half * 2, half)
-        pygame.draw.rect(surface, COLOUR_WORKSTATION, desk)
-        pygame.draw.rect(surface, (200, 200, 230), desk, 2)
-        pygame.draw.circle(surface, (255, 220, 80), (cx, cy - 2), max(3, size // 10))
-    elif feature == FeatureType.FORESTER:
-        half = size // 3
-        body = pygame.Rect(cx - half, cy - half // 2, half * 2, half)
-        pygame.draw.rect(surface, COLOUR_FORESTER, body)
-        pygame.draw.circle(surface, COLOUR_TREE_CANOPY, (cx, cy - half // 2 - 2), size // 6)
-    elif feature == FeatureType.MASON:
-        half = size // 3
-        body = pygame.Rect(cx - half, cy - half // 2, half * 2, half)
-        pygame.draw.rect(surface, COLOUR_MASON, body)
-        pygame.draw.polygon(
+        blit_icon(
             surface,
-            COLOUR_ROCK_FEATURE,
-            [
-                (cx - size // 6, cy + 2),
-                (cx, cy - size // 6),
-                (cx + size // 6, cy + 2),
-            ],
+            ICON_ROCK,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour={"body": COLOUR_ROCK_FEATURE},
+        )
+    elif feature == FeatureType.HOME:
+        blit_icon(
+            surface,
+            ICON_HOME,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour=_iso_building_recolour(
+                COLOUR_HOME, roof=COLOUR_HOME_ROOF, vibrancy=vibrancy
+            ),
+        )
+    elif feature == FeatureType.WORKSTATION:
+        blit_icon(
+            surface,
+            ICON_WORKSTATION,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour=_iso_building_recolour(
+                COLOUR_WORKSTATION,
+                accent=(255, 220, 80),
+                vibrancy=vibrancy,
+            ),
+        )
+    elif feature == FeatureType.FORESTER:
+        blit_icon(
+            surface,
+            ICON_FORESTER,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour=_iso_building_recolour(
+                COLOUR_FORESTER,
+                roof=(30, 90, 40),
+                accent=COLOUR_TREE_CANOPY,
+                accent2=(46, 154, 60),
+                vibrancy=vibrancy,
+            ),
+        )
+    elif feature == FeatureType.MASON:
+        blit_icon(
+            surface,
+            ICON_MASON,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour=_iso_building_recolour(
+                COLOUR_MASON,
+                accent=COLOUR_ROCK_FEATURE,
+                vibrancy=vibrancy,
+            ),
         )
     elif feature == FeatureType.HUNTER:
-        half = size // 3
-        body = pygame.Rect(cx - half, cy - half // 2, half * 2, half)
-        pygame.draw.rect(surface, COLOUR_HUNTER, body)
-        pygame.draw.polygon(
+        blit_icon(
             surface,
-            COLOUR_MEAT,
-            [
-                (cx - 4, cy + 4),
-                (cx, cy - half // 2 - 2),
-                (cx + 4, cy + 4),
-            ],
+            ICON_HUNTER,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour=_iso_building_recolour(
+                COLOUR_HUNTER,
+                roof=(120, 50, 40),
+                accent=COLOUR_MEAT,
+                vibrancy=vibrancy,
+            ),
         )
     elif feature == FeatureType.FORAGER:
-        half = size // 3
-        body = pygame.Rect(cx - half, cy - half // 2, half * 2, half)
-        pygame.draw.rect(surface, COLOUR_FORAGER, body)
-        pygame.draw.circle(surface, COLOUR_BERRY, (cx - 4, cy), 3)
-        pygame.draw.circle(surface, COLOUR_MUSHROOM, (cx + 4, cy - 2), 3)
-    elif feature == FeatureType.CONSTRUCTION_SITE:
-        half = size // 3
-        body = pygame.Rect(cx - half, cy - half // 2, half * 2, half)
-        pygame.draw.rect(surface, (90, 90, 70), body, 1)
-        pygame.draw.line(surface, (180, 160, 80), (cx - half, cy - half), (cx - half, cy + half), 2)
-        pygame.draw.line(surface, (180, 160, 80), (cx + half, cy - half), (cx + half, cy + half), 2)
-        pygame.draw.line(surface, (180, 160, 80), (cx - half, cy - half), (cx + half, cy - half), 2)
-    elif feature == FeatureType.FISHER:
-        half = size // 3
-        body = pygame.Rect(cx - half, cy - half // 2, half * 2, half)
-        pygame.draw.rect(surface, COLOUR_FISHER, body)
-        pygame.draw.ellipse(
+        blit_icon(
             surface,
-            COLOUR_FISH,
-            pygame.Rect(cx - 6, cy - 2, 10, 5),
+            ICON_FORAGER,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour=_iso_building_recolour(
+                COLOUR_FORAGER,
+                roof=(40, 90, 55),
+                accent=COLOUR_BERRY,
+                accent2=COLOUR_MUSHROOM,
+                vibrancy=vibrancy,
+            ),
+        )
+    elif feature == FeatureType.CONSTRUCTION_SITE:
+        blit_icon(
+            surface,
+            ICON_CONSTRUCTION,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour=_iso_building_recolour(
+                (90, 90, 70),
+                accent=(180, 160, 80),
+                vibrancy=vibrancy,
+            ),
+        )
+    elif feature == FeatureType.FISHER:
+        blit_icon(
+            surface,
+            ICON_FISHER,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour=_iso_building_recolour(
+                COLOUR_FISHER,
+                roof=(40, 70, 110),
+                accent=COLOUR_FISH,
+                vibrancy=vibrancy,
+            ),
         )
     elif feature == FeatureType.FARM:
-        half = size // 3
-        body = pygame.Rect(cx - half, cy - half // 2, half * 2, half)
-        pygame.draw.rect(surface, COLOUR_FARM, body)
-        _draw_crop_plant(surface, cx, cy, COLOUR_CROP, None, dense=False)
+        blit_icon(
+            surface,
+            ICON_FARM,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour=_iso_building_recolour(
+                COLOUR_FARM,
+                roof=(140, 90, 50),
+                stem=COLOUR_CROP,
+                vibrancy=vibrancy,
+            ),
+        )
     elif feature == FeatureType.FIELD:
-        half = size // 3
-        body = pygame.Rect(cx - half, cy - half // 2, half * 2, half)
-        pygame.draw.rect(surface, COLOUR_FIELD, body)
-        pygame.draw.line(surface, (200, 180, 90), (cx - half + 2, cy), (cx + half - 2, cy), 1)
-        pygame.draw.line(surface, (200, 180, 90), (cx, cy - half // 2 + 2), (cx, cy + half // 2 - 2), 1)
+        blit_icon(
+            surface,
+            ICON_FIELD,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour=_iso_building_recolour(
+                COLOUR_FIELD,
+                accent=(200, 180, 90),
+                vibrancy=vibrancy,
+            ),
+        )
     elif feature == FeatureType.MUSHROOM:
-        pygame.draw.circle(surface, mush_c, (cx, cy - 2), max(4, size // 7))
-        pygame.draw.rect(surface, (210, 200, 180), pygame.Rect(cx - 2, cy, 4, size // 8))
+        blit_icon(
+            surface,
+            ICON_MUSHROOM,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour={
+                "cap": adjust_colour(COLOUR_MUSHROOM, vibrancy),
+                "stem": (210, 200, 180),
+            },
+        )
     elif feature == FeatureType.BERRY_BUSH:
-        pygame.draw.circle(surface, bush_c, (cx, cy), size // 5)
-        for ox, oy in ((-4, -2), (3, -3), (0, 2), (4, 1), (-3, 3)):
-            pygame.draw.circle(surface, berry_c, (cx + ox, cy + oy), 2)
+        blit_icon(
+            surface,
+            ICON_BERRY_BUSH,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour={
+                "bush": adjust_colour((50, 110, 50), vibrancy),
+                "berry": adjust_colour(COLOUR_BERRY, vibrancy),
+            },
+        )
     elif feature == FeatureType.REED:
-        reed_c = adjust_colour(COLOUR_REED, vibrancy)
-        for ox in (-3, 0, 3):
-            tip_x = cx + ox // 2
-            pygame.draw.line(
-                surface,
-                reed_c,
-                (cx + ox, cy + 4),
-                (tip_x, cy - 8),
-                2,
-            )
+        blit_icon(
+            surface,
+            ICON_REED,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour={"stem": adjust_colour(COLOUR_REED, vibrancy)},
+        )
     elif feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.CROP_HERB):
         crop = CROP_BY_KEY.get(crop_kind or "sage") or CROP_BY_KEY["sage"]
         stem = adjust_colour(crop.stem_colour, vibrancy)
-        flower = (
-            adjust_colour(crop.flower_colour, vibrancy)
-            if crop.flower_colour is not None
-            else None
+        name = crop.plant_icon(dense=feature == FeatureType.CROP_HERB)
+        recolour = {"stem": stem}
+        omit: tuple[str, ...] = ()
+        if crop.flower_colour is not None:
+            recolour["flower"] = adjust_colour(crop.flower_colour, vibrancy)
+        else:
+            omit = ("flower",)
+        blit_icon(
+            surface,
+            name,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour=recolour,
+            omit_classes=omit,
         )
-        dense = feature == FeatureType.CROP_HERB
-        _draw_crop_plant(surface, cx, cy, stem, flower, dense=dense)

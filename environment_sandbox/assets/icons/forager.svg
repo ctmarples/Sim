@@ -1,0 +1,36 @@
+<svg width="60" height="60" xmlns="http://www.w3.org/2000/svg" data-anchor="20,20" data-home="0,0,40">
+ <title>forager</title>
+
+ <desc>Isometric building; front two walls toward viewer. Classes: wall_l wall_r roof roof_dark door trim accent accent2 stem.</desc>
+ <g>
+  <title>Layer 1</title>
+  <path fill="#8a6a48" d="m36.14824,24.53943l-11.22127,5.6392l0.48927,-8.67582l2.72397,-0.8911l8.00804,3.92772l-0.00001,0z" class="wall_r" id="svg_1"/>
+  <path fill="#5a4030" d="m13.78442,33l11.2,5.6l0,-8.45l-11.2,-5.6l0,8.45z" class="wall_l" id="wall_l"/>
+  <path fill="#8a6a48" d="m36.09872,33l-11.2,5.6l0,-8.45l11.2,-5.6l0,8.45z" class="wall_r" id="wall_r"/>
+  <path fill="#6a3028" d="m24.98442,18.95l11.2,5.6l-5.6,-2.08l-11.2,-5.59l5.6,2.07z" class="roof_dark" id="roof_dark"/>
+  <path fill="#aa3c32" d="m13.78442,24.55l11.2,5.6l5.6,-7.68l-11.2,-5.59l-5.6,7.67z" class="roof" id="roof"/>
+  <ellipse id="svg_6" cy="43.39367" cx="36.79869" stroke="null" fill="#c8aa8c"/>
+  <g stroke="null" id="svg_11">
+   <path stroke="null" fill="#7f3f00" opacity="undefined" d="m16.12178,33.14479c1.59118,-0.01568 3.18235,-0.03136 4.77353,-0.04704c0.45507,0.85159 0.62572,3.49499 0,5.1145l-4.77353,0c-0.32929,-0.74834 -0.65857,-3.19015 0,-5.06746z" id="svg_2"/>
+   <ellipse stroke="null" ry="1.11066" rx="2.43111" id="svg_5" cy="32.96171" cx="18.53784" fill="#c8aa8c"/>
+   <path stroke="null" fill="#7f3f00" opacity="undefined" d="m18.53784,39.2468c-1.34315,0 -2.43111,-0.49704 -2.43111,-1.11066c0,-0.61362 1.08796,-1.11066 2.43111,-1.11066c1.34315,0 2.43111,0.49704 2.43111,1.11066c0,0.61362 -1.08796,1.11066 -2.43111,1.11066z" id="svg_3"/>
+   <circle stroke="null" fill="#a0285a" r="0.68037" cy="33.0622" cx="17.4525" class="accent" id="accent"/>
+   <circle stroke="null" fill="#a0285a" r="0.68037" cy="33.21482" cx="18.62258" class="accent" id="svg_4"/>
+   <circle stroke="null" fill="#a0285a" r="0.68037" cy="32.40085" cx="18.21559" class="accent" id="svg_7"/>
+   <circle stroke="null" fill="#a0285a" r="0.68037" cy="33.21482" cx="18.62258" class="accent" id="svg_8"/>
+   <circle stroke="null" fill="#a0285a" r="0.68037" cy="32.2991" cx="19.38567" class="accent" id="svg_9"/>
+   <circle stroke="null" fill="#a0285a" r="0.68037" cy="33.16394" cx="19.79265" class="accent" id="svg_10"/>
+  </g>
+  <g stroke="null" id="svg_21">
+   <path stroke="null" fill="#7f3f00" opacity="undefined" d="m20.96701,35.16363c1.59117,-0.01568 3.18235,-0.03136 4.77352,-0.04704c0.45507,0.85159 0.62572,3.49499 0,5.1145l-4.77352,0c-0.32929,-0.74834 -0.65857,-3.19014 0,-5.06746z" id="svg_12"/>
+   <ellipse stroke="null" ry="1.11066" rx="2.43111" id="svg_13" cy="34.98055" cx="23.38306" fill="#c8aa8c"/>
+   <path stroke="null" fill="#7f3f00" opacity="undefined" d="m23.38306,41.26564c-1.34315,0 -2.43111,-0.49704 -2.43111,-1.11066c0,-0.61362 1.08796,-1.11066 2.43111,-1.11066c1.34315,0 2.43111,0.49704 2.43111,1.11066c0,0.61362 -1.08796,1.11066 -2.43111,1.11066z" id="svg_14"/>
+   <circle stroke="null" fill="#3f7f00" r="0.68037" cy="35.08104" cx="22.29772" class="accent" id="svg_15"/>
+   <circle stroke="null" fill="#a0285a" r="0.68037" cy="35.23366" cx="23.4678" class="accent" id="svg_16"/>
+   <circle stroke="null" fill="#3f7f00" r="0.68037" cy="34.41969" cx="23.06082" class="accent" id="svg_17"/>
+   <circle stroke="null" fill="#3f7f00" r="0.68037" cy="35.23366" cx="23.4678" class="accent" id="svg_18"/>
+   <circle stroke="null" fill="#3f7f00" r="0.68037" cy="34.31795" cx="24.23089" class="accent" id="svg_19"/>
+   <circle stroke="null" fill="#3f7f00" r="0.68037" cy="35.18279" cx="24.63788" class="accent" id="svg_20"/>
+  </g>
+ </g>
+</svg>

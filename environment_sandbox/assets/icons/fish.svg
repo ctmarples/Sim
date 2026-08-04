@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     viewBox="0 0 40 40"
+     width="400"
+     height="400">
+  <title>fish</title>
+  <desc>Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <g id="fish" inkscape:groupmode="layer" inkscape:label="fish">
+    <path id="body" class="body" d="M 8,20 C 8,17.7908610008 12.477152502,16 18,16 C 23.522847498,16 28,17.7908610008 28,20 C 28,22.2091389992 23.522847498,24 18,24 C 12.477152502,24 8,22.2091389992 8,20 Z" fill="#50a0c8" stroke="none"/>
+    <path id="tail" class="body" d="M 28,20 L 34,16 L 34,24 Z" fill="#50a0c8" stroke="none"/>
+  </g>
+</svg>

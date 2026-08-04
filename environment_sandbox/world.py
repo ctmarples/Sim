@@ -102,6 +102,8 @@ class FeatureType(Enum):
     FARM = auto()
     FIELD = auto()
     CONSTRUCTION_SITE = auto()
+    # Invisible reserved cells of a multi-cell building footprint (not the glyph cell).
+    STRUCTURE_PAD = auto()
     MUSHROOM = auto()
     BERRY_BUSH = auto()
     HERB = auto()  # legacy; migrated to WILD_CROP on load
@@ -123,6 +125,8 @@ class Cell:
     fish_deposit: int = 0
     crop_kind: str | None = None  # CropDef key for wild & farm crops
     tree_species: str | None = None  # TreeDef key for TREE / SAPLING
+    # 1-based icon variant (e.g. tree_round_2); rolled on first draw.
+    icon_variant: int | None = None
 
     def habitat_category(self) -> str:
         if self.feature == FeatureType.TREE:
@@ -314,26 +318,45 @@ class World:
                 placed_bushes += 1
 
         # Home near the centre-left so the starting area is clear.
-        home_x = max(1, self.cols // 4)
-        home_y = self.rows // 2
-        self.cells[home_y][home_x].terrain = TerrainType.SOIL
-        self.cells[home_y][home_x].feature = FeatureType.HOME
-        self.home_pos = (home_x, home_y)
+        # Buildings occupy a square footprint; home_pos is the centre (glyph) cell.
+        from settings import BUILDING_FOOTPRINT
 
-        # Work station beside home — hire villagers from its inspection popup.
-        station_x = home_x + 1
-        station_y = home_y
-        if not self.in_bounds(station_x, station_y):
-            station_x = home_x - 1
-        self.cells[station_y][station_x].terrain = TerrainType.SOIL
-        self.cells[station_y][station_x].feature = FeatureType.WORKSTATION
-        self.workstation_pos = (station_x, station_y)
+        fp = max(1, int(BUILDING_FOOTPRINT))
+        half = fp // 2
+        home_cx = max(half, self.cols // 4)
+        home_cy = min(max(half, self.rows // 2), self.rows - 1 - half)
+        self.claim_structure_footprint(
+            home_cx - half,
+            home_cy - half,
+            fp,
+            fp,
+            FeatureType.HOME,
+        )
+        self.home_pos = (home_cx, home_cy)
+
+        # Hiring hall immediately to the right of the storehouse footprint.
+        station_cx = home_cx + fp
+        station_cy = home_cy
+        if station_cx + half >= self.cols:
+            station_cx = home_cx - fp
+        self.claim_structure_footprint(
+            station_cx - half,
+            station_cy - half,
+            fp,
+            fp,
+            FeatureType.WORKSTATION,
+        )
+        self.workstation_pos = (station_cx, station_cy)
 
         # Clear a small yard around home/workstation and choose a free start cell.
         clear_centres = [self.home_pos, self.workstation_pos]
-        protected = {FeatureType.HOME, FeatureType.WORKSTATION}
+        protected = {
+            FeatureType.HOME,
+            FeatureType.WORKSTATION,
+            FeatureType.STRUCTURE_PAD,
+        }
         for cx, cy in clear_centres:
-            for ny, nx in self.neighbourhood(cx, cy, radius=1):
+            for ny, nx in self.neighbourhood(cx, cy, radius=half + 1):
                 cell = self.cells[ny][nx]
                 if cell.feature not in protected:
                     if cell.feature in (
@@ -357,7 +380,7 @@ class World:
 
         start_candidates = [
             (nx, ny)
-            for ny, nx in self.neighbourhood(home_x, home_y, radius=1)
+            for ny, nx in self.neighbourhood(home_cx, home_cy, radius=half + 1)
             if (nx, ny) not in (self.home_pos, self.workstation_pos)
             and self.cells[ny][nx].feature == FeatureType.NONE
             and self.cells[ny][nx].terrain != TerrainType.WATER
@@ -365,7 +388,7 @@ class World:
         if start_candidates:
             self.start_pos = start_candidates[0]
         else:
-            self.start_pos = (home_x, home_y - 1 if home_y > 0 else home_y + 1)
+            self.start_pos = (home_cx, home_cy - half - 1 if home_cy > half else home_cy + half + 1)
 
         # Ensure start cell is walkable / empty.
         sx, sy = self.start_pos
@@ -528,6 +551,43 @@ class World:
         if not self.in_bounds(x, y):
             return None
         return self.cells[y][x]
+
+    def claim_structure_footprint(
+        self,
+        origin_x: int,
+        origin_y: int,
+        plot_w: int,
+        plot_h: int,
+        centre_feature: FeatureType,
+    ) -> tuple[int, int]:
+        """Clear a rectangular footprint; put glyph on centre, pads on the rest.
+
+        Returns the centre cell coordinates.
+        """
+        w = max(1, plot_w)
+        h = max(1, plot_h)
+        cx = origin_x + w // 2
+        cy = origin_y + h // 2
+        for y in range(origin_y, origin_y + h):
+            for x in range(origin_x, origin_x + w):
+                cell = self.get_cell(x, y)
+                if cell is None:
+                    continue
+                if cell.terrain in (TerrainType.WATER, TerrainType.RIPARIAN, TerrainType.ROCK):
+                    cell.terrain = TerrainType.SOIL
+                elif cell.terrain != TerrainType.SOIL:
+                    cell.terrain = TerrainType.SOIL
+                cell.feature = (
+                    centre_feature
+                    if (x, y) == (cx, cy)
+                    else FeatureType.STRUCTURE_PAD
+                )
+                cell.deposit = 0
+                cell.growth_ticks = 0
+                cell.crop_kind = None
+                cell.tree_species = None
+                cell.icon_variant = None
+        return cx, cy
 
     def neighbourhood(self, x: int, y: int, radius: int) -> Iterator[tuple[int, int]]:
         """Yield (y, x) cells within Chebyshev distance `radius`, including centre."""
@@ -1061,6 +1121,7 @@ class World:
             FeatureType.FISHER,
             FeatureType.FARM,
             FeatureType.CONSTRUCTION_SITE,
+            FeatureType.STRUCTURE_PAD,
         ):
             return False
         # Legacy Field marker on origin: clear it when ploughing that tile.
@@ -1192,6 +1253,7 @@ class World:
             cell.deposit = 0
             cell.growth_ticks = 0
             cell.tree_species = None
+            cell.icon_variant = None
         return taken
 
     def tree_yield_key(self, x: int, y: int) -> str:

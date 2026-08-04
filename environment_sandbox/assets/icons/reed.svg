@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     viewBox="0 0 40 40"
+     width="400"
+     height="400">
+  <title>reed</title>
+  <desc>Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <g id="reed" inkscape:groupmode="layer" inkscape:label="reed">
+    <path id="stem_0" class="stem" d="M 17,24 L 18,12" fill="none" stroke="#467850" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path id="stem_1" class="stem" d="M 20,24 L 20,12" fill="none" stroke="#467850" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path id="stem_2" class="stem" d="M 23,24 L 22,12" fill="none" stroke="#467850" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

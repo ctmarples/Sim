@@ -1,0 +1,11 @@
+<svg width="40" height="40" xmlns="http://www.w3.org/2000/svg">
+ <title>crop plant</title>
+
+ <desc>Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+ <g>
+  <title>Layer 1</title>
+  <path transform="rotate(-13.6828 17.4226 14.1797)" stroke="#5aae50" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" fill="none" d="m17.42266,7.5601l0,13.2391" class="stem" id="svg_10"/>
+  <path transform="rotate(8.73613 19.3072 13.9441)" stroke="#5aae50" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" fill="none" d="m19.30723,7.32454l0,13.2391" class="stem" id="svg_11"/>
+  <path fill="#466ec8" d="m16.00924,20.2874c0,-1.46235 1.18547,-2.64782 2.64782,-2.64782c1.46235,0 2.64782,1.18547 2.64782,2.64782c0,1.46235 -1.18547,2.64782 -2.64782,2.64782c-1.46235,0 -2.64782,-1.18547 -2.64782,-2.64782z" class="flower" id="svg_14"/>
+ </g>
+</svg>

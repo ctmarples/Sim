@@ -41,6 +41,7 @@ from entities import (
     VillagerState,
     WorkMode,
     WorkPriority,
+    default_building_plot,
 )
 from indicators import (
     BIODIVERSITY_SAMPLES_PER_YEAR,
@@ -55,6 +56,7 @@ from settings import (
     BOAR_MEAT_YIELD,
     DEER_MEAT_YIELD,
     BUILDING_STORAGE_CAPACITY,
+    BUILDING_FOOTPRINT,
     CELL_SIZE,
     COLOUR_BOAR,
     COLOUR_DEER,
@@ -170,6 +172,8 @@ TASK_COLOURS = {
 }
 
 FEATURE_FOR_BUILDING = {
+    BuildingKind.HOME: FeatureType.HOME,
+    BuildingKind.WORKSTATION: FeatureType.WORKSTATION,
     BuildingKind.FORESTER: FeatureType.FORESTER,
     BuildingKind.MASON: FeatureType.MASON,
     BuildingKind.HUNTER: FeatureType.HUNTER,
@@ -177,6 +181,11 @@ FEATURE_FOR_BUILDING = {
     BuildingKind.FISHER: FeatureType.FISHER,
     BuildingKind.FARM: FeatureType.FARM,
     BuildingKind.FIELD: FeatureType.FIELD,
+}
+
+BUILDING_FEATURES = frozenset(FEATURE_FOR_BUILDING.values()) | {
+    FeatureType.CONSTRUCTION_SITE,
+    FeatureType.STRUCTURE_PAD,
 }
 
 # Buildings that draw rectangular work areas via drag.
@@ -197,6 +206,9 @@ class Game:
         else:
             self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
             pygame.display.set_caption("Environmental Farming Sandbox")
+        from icons import ALL_ICON_NAMES, preload
+
+        preload(ALL_ICON_NAMES, sizes=(CELL_SIZE,))
         self.clock = pygame.time.Clock()
         self.ui = UI()
         self.toolbar = Toolbar()
@@ -284,47 +296,44 @@ class Game:
 
     def _ensure_core_buildings(self) -> None:
         """Ensure HOME and WORKSTATION buildings exist at their world positions."""
-        # Find or create HOME building
-        home_building = None
-        for b in self.buildings.values():
-            if b.kind == BuildingKind.HOME:
-                home_building = b
-                break
-        if home_building is None:
-            home_building = Building(
-                id=self.next_building_id,
-                kind=BuildingKind.HOME,
-                x=self.world.home_pos[0],
-                y=self.world.home_pos[1],
-                capacity=BUILDING_STORAGE_CAPACITY * 50,
-            )
-            self.buildings[home_building.id] = home_building
-            self.next_building_id += 1
-        else:
-            # Sync position
-            home_building.x = self.world.home_pos[0]
-            home_building.y = self.world.home_pos[1]
+        pw, ph = default_building_plot(BuildingKind.HOME)
+        half_w, half_h = pw // 2, ph // 2
 
-        # Find or create WORKSTATION building
-        workstation_building = None
-        for b in self.buildings.values():
-            if b.kind == BuildingKind.WORKSTATION:
-                workstation_building = b
-                break
-        if workstation_building is None:
-            workstation_building = Building(
-                id=self.next_building_id,
-                kind=BuildingKind.WORKSTATION,
-                x=self.world.workstation_pos[0],
-                y=self.world.workstation_pos[1],
-                capacity=BUILDING_STORAGE_CAPACITY * 50,
-            )
-            self.buildings[workstation_building.id] = workstation_building
-            self.next_building_id += 1
-        else:
-            # Sync position
-            workstation_building.x = self.world.workstation_pos[0]
-            workstation_building.y = self.world.workstation_pos[1]
+        def _sync_core(kind: BuildingKind, centre: tuple[int, int]) -> Building:
+            building = next((b for b in self.buildings.values() if b.kind == kind), None)
+            cx, cy = centre
+            ox, oy = cx - half_w, cy - half_h
+            if building is None:
+                building = Building(
+                    id=self.next_building_id,
+                    kind=kind,
+                    x=ox,
+                    y=oy,
+                    capacity=BUILDING_STORAGE_CAPACITY * 50,
+                    plot_w=pw,
+                    plot_h=ph,
+                )
+                self.buildings[building.id] = building
+                self.next_building_id += 1
+            else:
+                building.x, building.y = ox, oy
+                building.plot_w, building.plot_h = pw, ph
+            feature = FEATURE_FOR_BUILDING[kind]
+            self.world.claim_structure_footprint(ox, oy, pw, ph, feature)
+            return building
+
+        # Keep hiring hall clear of the storehouse footprint on legacy saves.
+        hx, hy = self.world.home_pos
+        sx, sy = self.world.workstation_pos
+        if max(abs(sx - hx), abs(sy - hy)) < pw:
+            sx = hx + pw
+            if sx + half_w >= self.world.cols:
+                sx = hx - pw
+            sy = hy
+            self.world.workstation_pos = (sx, sy)
+
+        _sync_core(BuildingKind.HOME, self.world.home_pos)
+        _sync_core(BuildingKind.WORKSTATION, self.world.workstation_pos)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -1596,7 +1605,7 @@ class Game:
         self.villager_inspect.close()
         self.resource_inspect.close()
         self.selected_building_id = building.id
-        screen_xy = self.camera.world_to_screen(building.x, building.y)
+        screen_xy = self.camera.world_to_screen(*building.center_cell())
         self.building_inspect.open_for(building, screen_xy=screen_xy)
         if building.kind == BuildingKind.HOME:
             haulers = sum(1 for v in self.villagers if v.assigned_to_home)
@@ -1908,19 +1917,35 @@ class Game:
         return None
 
     def _building_at(self, x: int, y: int) -> Building | None:
-        # Prefer Field plot hits (any cell of the plot).
         for building in self.buildings.values():
-            if building.kind == BuildingKind.FIELD and building.contains_plot(x, y):
-                return building
-        for building in self.buildings.values():
-            if building.x == x and building.y == y:
+            if building.contains_plot(x, y):
                 return building
         return None
 
     def _construction_at(self, x: int, y: int) -> ConstructionSite | None:
         for site in self.construction_sites.values():
-            if site.x == x and site.y == y:
+            if site.contains_plot(x, y):
                 return site
+        return None
+
+    def _footprint_blocked(self, cells: list[tuple[int, int]], *, ignore_site_id: int | None = None) -> str | None:
+        """Return a status reason if any cell cannot host a structure footprint."""
+        for x, y in cells:
+            cell = self.world.get_cell(x, y)
+            if cell is None:
+                return "Footprint leaves the map."
+            if cell.terrain not in PLANTABLE_LAND:
+                return "Build on soil, grass, or meadow."
+            if cell.feature != FeatureType.NONE:
+                return "Cannot place construction site here."
+            for building in self.buildings.values():
+                if building.contains_plot(x, y):
+                    return "Overlaps an existing building."
+            for site in self.construction_sites.values():
+                if ignore_site_id is not None and site.id == ignore_site_id:
+                    continue
+                if site.contains_plot(x, y):
+                    return "Overlaps a construction site."
         return None
 
     def _get_villager(self, villager_id: int) -> Villager | None:
@@ -1972,6 +1997,8 @@ class Game:
             FeatureType.FISHER,
             FeatureType.FARM,
             FeatureType.FIELD,
+            FeatureType.WORKSTATION,
+            FeatureType.STRUCTURE_PAD,
         ):
             building = self._building_at(x, y)
             if building is not None:
@@ -2134,6 +2161,7 @@ class Game:
             FeatureType.FARM,
             FeatureType.FIELD,
             FeatureType.CONSTRUCTION_SITE,
+            FeatureType.STRUCTURE_PAD,
         )
         for y in range(y0, y1 + 1):
             for x in range(x0, x1 + 1):
@@ -2142,6 +2170,9 @@ class Game:
                     self._set_status("Field must be entirely on soil, grass, or meadow.")
                     return False
                 if cell.feature in blocked:
+                    self._set_status("Field overlaps a building or construction site.")
+                    return False
+                if self._building_at(x, y) is not None or self._construction_at(x, y) is not None:
                     self._set_status("Field overlaps a building or construction site.")
                     return False
         # Construction marker on top-left; clear natural cover there if needed.
@@ -2180,25 +2211,35 @@ class Game:
     def _place_construction_site(self, kind: BuildingKind, x: int, y: int) -> bool:
         if kind == BuildingKind.FIELD:
             return self._place_field_site((x, y), (x, y))
-        cell = self.world.get_cell(x, y)
-        if cell is None or cell.feature != FeatureType.NONE:
-            self._set_status("Cannot place construction site here.")
-            return False
-        if cell.terrain not in PLANTABLE_LAND:
-            self._set_status("Build on soil, grass, or meadow.")
+        plot_w, plot_h = default_building_plot(kind)
+        # Click cell is the centre of the footprint.
+        ox = x - plot_w // 2
+        oy = y - plot_h // 2
+        cells = [
+            (px, py)
+            for py in range(oy, oy + plot_h)
+            for px in range(ox, ox + plot_w)
+        ]
+        reason = self._footprint_blocked(cells)
+        if reason is not None:
+            self._set_status(reason)
             return False
         cost_w, cost_r, _ = self._building_cost(kind)
         site = ConstructionSite(
             id=self.next_construction_id,
-            x=x,
-            y=y,
+            x=ox,
+            y=oy,
             kind=kind,
             need_wood=cost_w,
             need_rock=cost_r,
+            plot_w=plot_w,
+            plot_h=plot_h,
         )
         self.next_construction_id += 1
         self.construction_sites[site.id] = site
-        cell.feature = FeatureType.CONSTRUCTION_SITE
+        self.world.claim_structure_footprint(
+            ox, oy, plot_w, plot_h, FeatureType.CONSTRUCTION_SITE
+        )
         self.world.apply_disturbance(x, y)
         self._refresh_indicators()
         self.place_kind = None
@@ -2209,10 +2250,16 @@ class Game:
         return True
 
     def _complete_construction(self, site: ConstructionSite) -> None:
-        cell = self.world.get_cell(site.x, site.y)
+        cx, cy = site.center_cell()
+        cell = self.world.get_cell(cx, cy)
         if cell is None:
             return
         _, _, default_task = self._building_cost(site.kind)
+        plot_w = max(1, site.plot_w)
+        plot_h = max(1, site.plot_h)
+        if site.kind != BuildingKind.FIELD:
+            pw, ph = default_building_plot(site.kind)
+            plot_w, plot_h = pw, ph
         building = Building(
             id=self.next_building_id,
             kind=site.kind,
@@ -2221,18 +2268,29 @@ class Game:
             capacity=BUILDING_STORAGE_CAPACITY,
             draw_task_type=default_task,
             work_mode=Building.work_mode_from_task(site.kind, default_task),
-            plot_w=max(1, site.plot_w) if site.kind == BuildingKind.FIELD else 1,
-            plot_h=max(1, site.plot_h) if site.kind == BuildingKind.FIELD else 1,
+            plot_w=plot_w,
+            plot_h=plot_h,
         )
         building.sync_draw_task_from_mode()
         self.next_building_id += 1
         self.buildings[building.id] = building
         if site.kind == BuildingKind.FIELD:
             # Field is a plot outline only — no building glyph on the map.
-            if cell.feature == FeatureType.CONSTRUCTION_SITE:
-                cell.feature = FeatureType.NONE
+            for px, py in site.plot_cells():
+                pad = self.world.get_cell(px, py)
+                if pad is not None and pad.feature in (
+                    FeatureType.CONSTRUCTION_SITE,
+                    FeatureType.STRUCTURE_PAD,
+                ):
+                    pad.feature = FeatureType.NONE
         else:
-            cell.feature = FEATURE_FOR_BUILDING[site.kind]
+            self.world.claim_structure_footprint(
+                building.x,
+                building.y,
+                building.plot_w,
+                building.plot_h,
+                FEATURE_FOR_BUILDING[site.kind],
+            )
         del self.construction_sites[site.id]
         for villager in self.villagers:
             if villager.construction_id == site.id:
@@ -2679,7 +2737,7 @@ class Game:
         if pos == self.world.home_pos:
             return self.home_storage
         for building in self.buildings.values():
-            if (building.x, building.y) == pos and building.kind in (
+            if building.center_cell() == pos and building.kind in (
                 BuildingKind.FORAGER,
                 BuildingKind.HUNTER,
                 BuildingKind.FISHER,
@@ -2701,7 +2759,7 @@ class Game:
             ):
                 continue
             if self._food_count(building) > 0:
-                options.append((building.x, building.y))
+                options.append(building.center_cell())
         if not options:
             return None
         return min(
@@ -2866,7 +2924,7 @@ class Game:
     ) -> tuple[int, int]:
         """Workplace if it can take cargo; otherwise home for the rest."""
         if building.can_accept_from(villager.inventory):
-            return building.x, building.y
+            return building.center_cell()
         return self.world.home_pos
 
     def _update_workplace_delivery(self, villager: Villager, building: Building) -> bool:
@@ -3035,7 +3093,7 @@ class Game:
             ):
                 site = useful
                 villager.construction_id = site.id
-            if (villager.x, villager.y) == (site.x, site.y):
+            if (villager.x, villager.y) == site.center_cell():
                 if villager.work_cooldown == 0:
                     self._deposit_materials_at_site(villager, site)
                     villager.work_cooldown = self._villager_work_interval(villager)
@@ -3054,7 +3112,7 @@ class Game:
                     other = self._find_site_needing_materials(villager)
                     if other is not None:
                         villager.construction_id = other.id
-                        self._step_villager_toward(villager, (other.x, other.y))
+                        self._step_villager_toward(villager, other.center_cell())
                         villager.state = VillagerState.DELIVERING
                         return
                     villager.construction_id = None
@@ -3062,7 +3120,7 @@ class Game:
                     return
                 # Empty hands — fall through to build or fetch more.
             else:
-                self._step_villager_toward(villager, (site.x, site.y))
+                self._step_villager_toward(villager, site.center_cell())
                 villager.state = VillagerState.DELIVERING
                 return
 
@@ -3077,8 +3135,8 @@ class Game:
 
         # Build when materials ready.
         if site.materials_ready:
-            if (villager.x, villager.y) != (site.x, site.y):
-                self._step_villager_toward(villager, (site.x, site.y))
+            if (villager.x, villager.y) != site.center_cell():
+                self._step_villager_toward(villager, site.center_cell())
                 villager.state = VillagerState.BUILDING
                 return
             villager.state = VillagerState.BUILDING
@@ -3122,13 +3180,18 @@ class Game:
             return None
         return min(
             candidates,
-            key=lambda s: abs(s.x - villager.x) + abs(s.y - villager.y),
+            key=lambda s: abs(s.center_cell()[0] - villager.x)
+            + abs(s.center_cell()[1] - villager.y),
         )
 
     def _find_best_construction_site(self, villager: Villager) -> ConstructionSite | None:
         ready = [s for s in self.construction_sites.values() if s.materials_ready and not s.is_complete]
         if ready:
-            return min(ready, key=lambda s: abs(s.x - villager.x) + abs(s.y - villager.y))
+            return min(
+                ready,
+                key=lambda s: abs(s.center_cell()[0] - villager.x)
+                + abs(s.center_cell()[1] - villager.y),
+            )
         needing = [
             s
             for s in self.construction_sites.values()
@@ -3140,7 +3203,11 @@ class Game:
         ]
         if not needing:
             return None
-        return min(needing, key=lambda s: abs(s.x - villager.x) + abs(s.y - villager.y))
+        return min(
+            needing,
+            key=lambda s: abs(s.center_cell()[0] - villager.x)
+            + abs(s.center_cell()[1] - villager.y),
+        )
 
     def _find_material_source(
         self, villager: Villager, want_wood: bool, want_rock: bool
@@ -3152,12 +3219,13 @@ class Game:
             options.append((hx, hy, "home", abs(hx - villager.x) + abs(hy - villager.y)))
         for building in self.buildings.values():
             if (want_wood and building.wood > 0) or (want_rock and building.rock > 0):
+                cx, cy = building.center_cell()
                 options.append(
                     (
-                        building.x,
-                        building.y,
+                        cx,
+                        cy,
                         f"b{building.id}",
-                        abs(building.x - villager.x) + abs(building.y - villager.y),
+                        abs(cx - villager.x) + abs(cy - villager.y),
                     )
                 )
         if not options:
@@ -3422,6 +3490,7 @@ class Game:
                             FeatureType.FISHER,
                             FeatureType.FARM,
                             FeatureType.CONSTRUCTION_SITE,
+                            FeatureType.STRUCTURE_PAD,
                         ):
                             plough.append((x, y))
         origin = (villager.x, villager.y)
@@ -3443,9 +3512,10 @@ class Game:
             if building.kind != BuildingKind.FIELD:
                 continue
             left, top, right, bottom = building.plot_bounds()
-            cx = min(max(farm.x, left), right)
-            cy = min(max(farm.y, top), bottom)
-            if max(abs(cx - farm.x), abs(cy - farm.y)) <= FARM_FIELD_RADIUS:
+            fcx, fcy = farm.center_cell()
+            cx = min(max(fcx, left), right)
+            cy = min(max(fcy, top), bottom)
+            if max(abs(cx - fcx), abs(cy - fcy)) <= FARM_FIELD_RADIUS:
                 nearby.append(building)
         return nearby
 
@@ -3622,7 +3692,7 @@ class Game:
             ox, oy = villager.x, villager.y
         else:
             animals = list(self.wildlife.animals)
-            ox, oy = building.x, building.y
+            ox, oy = building.center_cell()
         if not animals:
             return None
         return min(animals, key=lambda a: abs(a.x - ox) + abs(a.y - oy))
@@ -3760,7 +3830,7 @@ class Game:
             ox, oy = villager.x, villager.y
         else:
             found = list(self.fish.fish)
-            ox, oy = building.x, building.y
+            ox, oy = building.center_cell()
         if not found:
             return None
         return min(found, key=lambda f: abs(f.x - ox) + abs(f.y - oy))
@@ -3832,7 +3902,7 @@ class Game:
 
         villager.haul_building_id = source.id
         villager.state = VillagerState.HAULING
-        if (villager.x, villager.y) == (source.x, source.y):
+        if (villager.x, villager.y) == source.center_cell():
             if villager.work_cooldown == 0:
                 source.withdraw_to_inventory(villager.inventory)
                 villager.work_cooldown = self._villager_work_interval(villager)
@@ -3840,7 +3910,7 @@ class Game:
                     villager.state = VillagerState.DELIVERING
                     villager.target = home
             return
-        self._step_villager_toward(villager, (source.x, source.y))
+        self._step_villager_toward(villager, source.center_cell())
 
     def _find_haul_source(self, villager: Villager) -> Building | None:
         stocked = [b for b in self.buildings.values() if b.haulable_total() > 0]
@@ -3848,7 +3918,8 @@ class Game:
             return None
         return min(
             stocked,
-            key=lambda b: abs(b.x - villager.x) + abs(b.y - villager.y),
+            key=lambda b: abs(b.center_cell()[0] - villager.x)
+            + abs(b.center_cell()[1] - villager.y),
         )
 
     def _plant_stock_in_inv(self, villager: Villager, building: Building) -> bool:
@@ -3886,7 +3957,7 @@ class Game:
         so they keep working fields instead of parking on the house tile.
         """
         if any(getattr(building, key, 0) > 0 for key in building.plant_keys()):
-            return building.x, building.y
+            return building.center_cell()
         if building.kind == BuildingKind.FARM:
             return None
         if any(getattr(self.home_storage, key, 0) > 0 for key in building.plant_keys()):
@@ -4039,17 +4110,18 @@ class Game:
             return self._closest_of(origin, plant)
 
         # No areas: whole-map behaviour from work_mode.
+        ox, oy = building.center_cell()
         if building.kind == BuildingKind.FORESTER:
             if allow_plant and can_plant_sapling:
                 planted = self._find_closest_manage_plant_cell(
-                    building.x, building.y, can_plant_sapling=True
+                    ox, oy, can_plant_sapling=True
                 )
                 if planted is not None:
                     return planted
             if allow_collect:
                 return self._find_closest_task_cell(
-                    building.x,
-                    building.y,
+                    ox,
+                    oy,
                     TaskType.CHOP_TREES,
                     can_plant_sapling=False,
                     can_plant_berry=False,
@@ -4060,8 +4132,8 @@ class Game:
         if building.kind == BuildingKind.FORAGER:
             if allow_collect:
                 return self._find_closest_task_cell(
-                    building.x,
-                    building.y,
+                    ox,
+                    oy,
                     TaskType.FULL_FORAGE,
                     can_plant_sapling=False,
                     can_plant_berry=False,
@@ -4078,8 +4150,8 @@ class Game:
         if not allow_collect:
             return None
         return self._find_closest_task_cell(
-            building.x,
-            building.y,
+            ox,
+            oy,
             task,
             can_plant_sapling=False,
             can_plant_berry=False,
@@ -4796,33 +4868,102 @@ class Game:
 
         x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
         vc = self.camera.view_cell()
+        # Tall / overhanging icons (trees, buildings) must paint after ground
+        # features and in north→south order, or neighbour cells square-cut them.
+        overhang = BUILDING_FEATURES | {
+            FeatureType.TREE,
+            FeatureType.SAPLING,
+        }
+        ground_cells: list[tuple[int, int]] = []
+        tall_cells: list[tuple[int, int]] = []
         for y in range(y0, y1 + 1):
             for x in range(x0, x1 + 1):
                 if not self.world.in_bounds(x, y):
                     continue
                 cell = self.world.cells[y][x]
-                rect = self._cell_rect(x, y)
-                cx, cy = self._cell_center(x, y)
-                draw_feature(
-                    self.screen,
+                if cell.feature in overhang and cell.feature != FeatureType.STRUCTURE_PAD:
+                    tall_cells.append((x, y))
+                else:
+                    ground_cells.append((x, y))
+        # Include one-cell halo so off-screen tree canopies still overhang in.
+        for y in range(max(0, y0 - 1), min(self.world.rows, y1 + 2)):
+            for x in range(max(0, x0 - 1), min(self.world.cols, x1 + 2)):
+                if y0 <= y <= y1 and x0 <= x <= x1:
+                    continue
+                cell = self.world.cells[y][x]
+                if cell.feature in overhang and cell.feature != FeatureType.STRUCTURE_PAD:
+                    tall_cells.append((x, y))
+        tall_cells.sort(key=lambda p: (p[1], p[0]))
+
+        def _draw_cell_feature(x: int, y: int) -> None:
+            cell = self.world.cells[y][x]
+            cx, cy = self._cell_center(x, y)
+            if cell.feature != FeatureType.NONE:
+                from icons import ensure_icon_variant, icon_base_for_feature
+
+                base = icon_base_for_feature(
                     cell.feature,
-                    cx,
-                    cy,
-                    vc,
-                    vibrancy=vibrancy,
-                    crop_kind=cell.crop_kind,
                     tree_species=cell.tree_species,
+                    crop_kind=cell.crop_kind,
                 )
-                if cell.feature == FeatureType.CONSTRUCTION_SITE:
-                    site = self._construction_at(x, y)
-                    if site is not None:
-                        self._draw_construction_progress(site, rect)
-                if cell.meat_deposit > 0:
-                    pygame.draw.circle(self.screen, COLOUR_MEAT, (cx + 8, cy + 8), 5)
-                    pygame.draw.circle(self.screen, (80, 20, 20), (cx + 8, cy + 8), 5, 1)
-                if cell.fish_deposit > 0:
-                    pygame.draw.circle(self.screen, COLOUR_FISH, (cx - 8, cy + 8), 5)
-                    pygame.draw.circle(self.screen, (20, 60, 90), (cx - 8, cy + 8), 5, 1)
+                if base is not None:
+                    cell.icon_variant = ensure_icon_variant(
+                        base, cell.icon_variant, self._drop_rng
+                    )
+            draw_size = vc
+            if (
+                cell.feature in BUILDING_FEATURES
+                and cell.feature != FeatureType.STRUCTURE_PAD
+            ):
+                draw_size = vc * max(1, BUILDING_FOOTPRINT)
+            draw_feature(
+                self.screen,
+                cell.feature,
+                cx,
+                cy,
+                draw_size,
+                vibrancy=vibrancy,
+                crop_kind=cell.crop_kind,
+                tree_species=cell.tree_species,
+                icon_variant=cell.icon_variant,
+            )
+            if cell.feature == FeatureType.CONSTRUCTION_SITE:
+                site = self._construction_at(x, y)
+                if site is not None and site.center_cell() == (x, y):
+                    left, top, right, bottom = site.plot_bounds()
+                    footprint = self._cell_rect(left, top).union(
+                        self._cell_rect(right, bottom)
+                    )
+                    self._draw_construction_progress(site, footprint)
+
+        for x, y in ground_cells:
+            cell = self.world.cells[y][x]
+            cx, cy = self._cell_center(x, y)
+            _draw_cell_feature(x, y)
+            if cell.meat_deposit > 0:
+                from icons import ICON_MEAT_MARKER, blit_icon
+
+                blit_icon(
+                    self.screen,
+                    ICON_MEAT_MARKER,
+                    cx + max(4, vc // 5),
+                    cy + max(4, vc // 5),
+                    max(10, vc // 2),
+                    recolour={"body": COLOUR_MEAT},
+                )
+            if cell.fish_deposit > 0:
+                from icons import ICON_FISH_MARKER, blit_icon
+
+                blit_icon(
+                    self.screen,
+                    ICON_FISH_MARKER,
+                    cx - max(4, vc // 5),
+                    cy + max(4, vc // 5),
+                    max(10, vc // 2),
+                    recolour={"body": COLOUR_FISH},
+                )
+        for x, y in tall_cells:
+            _draw_cell_feature(x, y)
 
         self.screen.set_clip(None)
 
@@ -4887,6 +5028,40 @@ class Game:
                 fill_alpha=0,
             )
 
+        # Non-field build ghost: 3×3 footprint centred on the hovered cell.
+        if (
+            self.place_kind is not None
+            and self.place_kind != BuildingKind.FIELD
+            and not self.drawing
+        ):
+            mouse = pygame.mouse.get_pos()
+            hover = self._map_cell_from_pos(mouse)
+            if hover is not None:
+                plot_w, plot_h = default_building_plot(self.place_kind)
+                ox = hover[0] - plot_w // 2
+                oy = hover[1] - plot_h // 2
+                cells = [
+                    (px, py)
+                    for py in range(oy, oy + plot_h)
+                    for px in range(ox, ox + plot_w)
+                ]
+                blocked = self._footprint_blocked(cells) is not None
+                colour = (180, 70, 70) if blocked else COLOUR_TASK_PREVIEW
+                for px, py in cells:
+                    rect = self._cell_rect(px, py)
+                    tint = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+                    tint.fill((*colour, 55))
+                    self.screen.blit(tint, rect.topleft)
+                self._draw_field_plot_outline(
+                    ox,
+                    oy,
+                    ox + plot_w - 1,
+                    oy + plot_h - 1,
+                    colour=colour,
+                    width=2,
+                    fill_alpha=0,
+                )
+
         if building is not None and building.kind not in (
             BuildingKind.FARM,
             BuildingKind.FIELD,
@@ -4950,10 +5125,18 @@ class Game:
 
     def _draw_animals(self) -> None:
         from wildlife import AnimalSex
+        from icons import (
+            ICON_BOAR_FEMALE,
+            ICON_BOAR_MALE,
+            ICON_DEER_FEMALE,
+            ICON_DEER_MALE,
+            blit_icon,
+        )
 
+        size = self.camera.view_cell()
         for animal in self.wildlife.animals:
             cx, cy = self._cell_center(animal.x, animal.y)
-            cy += 2
+            cy += max(1, size // 20)
             colour = COLOUR_BOAR if animal.kind == AnimalKind.BOAR else COLOUR_DEER
             if animal.sex == AnimalSex.FEMALE:
                 colour = (
@@ -4961,47 +5144,59 @@ class Game:
                     min(255, colour[1] + 18),
                     min(255, colour[2] + 22),
                 )
-            pygame.draw.ellipse(
-                self.screen,
-                colour,
-                pygame.Rect(
-                    cx - CELL_SIZE // 5,
-                    cy - CELL_SIZE // 8,
-                    max(6, CELL_SIZE // 2),
-                    max(4, CELL_SIZE // 4),
-                ),
-            )
-            # Head — males face right, females left.
-            hx = cx + (CELL_SIZE // 6 if animal.sex == AnimalSex.MALE else -(CELL_SIZE // 6))
-            pygame.draw.circle(
-                self.screen, colour, (hx, cy - 2), max(2, CELL_SIZE // 10)
-            )
+            if animal.kind == AnimalKind.BOAR:
+                name = (
+                    ICON_BOAR_FEMALE
+                    if animal.sex == AnimalSex.FEMALE
+                    else ICON_BOAR_MALE
+                )
+            else:
+                name = (
+                    ICON_DEER_FEMALE
+                    if animal.sex == AnimalSex.FEMALE
+                    else ICON_DEER_MALE
+                )
+            blit_icon(self.screen, name, cx, cy, size, recolour={"body": colour})
 
     def _draw_fish(self) -> None:
+        from icons import ICON_FISH, blit_icon
+
         freeze = freeze_amount(
             float(self.calendar_day) + (1.0 - self.day_tick / TICKS_PER_DAY)
         )
         colour = blend_colour(COLOUR_FISH, (150, 190, 210), freeze)
+        size = self.camera.view_cell()
         for item in self.fish.fish:
             cx, cy = self._cell_center(item.x, item.y)
-            body = pygame.Rect(cx - CELL_SIZE // 5, cy - 2, max(8, CELL_SIZE // 2), max(4, CELL_SIZE // 5))
-            pygame.draw.ellipse(self.screen, colour, body)
-            pygame.draw.polygon(
-                self.screen,
-                colour,
-                [(cx + CELL_SIZE // 5, cy), (cx + CELL_SIZE // 3, cy - 4), (cx + CELL_SIZE // 3, cy + 4)],
-            )
+            blit_icon(self.screen, ICON_FISH, cx, cy, size, recolour={"body": colour})
 
     def _draw_villagers(self) -> None:
+        from icons import ICON_VILLAGER, blit_icon
+
+        size = self.camera.view_cell()
         for villager in self.villagers:
             cx, cy = self._cell_center(villager.x, villager.y)
-            pygame.draw.circle(self.screen, COLOUR_VILLAGER, (cx, cy), CELL_SIZE // 4)
-            pygame.draw.circle(self.screen, (40, 30, 10), (cx, cy), CELL_SIZE // 4, 2)
+            blit_icon(
+                self.screen,
+                ICON_VILLAGER,
+                cx,
+                cy,
+                size,
+                recolour={"body": COLOUR_VILLAGER},
+            )
 
     def _draw_player(self) -> None:
+        from icons import ICON_PLAYER, blit_icon
+
         cx, cy = self._cell_center(self.player.x, self.player.y)
-        pygame.draw.circle(self.screen, COLOUR_PLAYER, (cx, cy), CELL_SIZE // 3)
-        pygame.draw.circle(self.screen, (255, 255, 255), (cx, cy), CELL_SIZE // 3, 2)
+        blit_icon(
+            self.screen,
+            ICON_PLAYER,
+            cx,
+            cy,
+            self.camera.view_cell(),
+            recolour={"body": COLOUR_PLAYER},
+        )
 
     def _draw_selection_highlights(self) -> None:
         if self.selected_villager_id is not None:
@@ -5012,7 +5207,8 @@ class Game:
         if self.selected_building_id is not None:
             building = self.buildings.get(self.selected_building_id)
             if building is not None:
-                rect = self._cell_rect(building.x, building.y)
+                left, top, right, bottom = building.plot_bounds()
+                rect = self._cell_rect(left, top).union(self._cell_rect(right, bottom))
                 pygame.draw.rect(self.screen, COLOUR_SELECTED_ENTITY, rect, 3)
         if (
             self.selected_habitat_id is not None
@@ -5070,8 +5266,9 @@ class Game:
         
         # Draw buildings as dots
         for building in self.buildings.values():
-            mini_x = minimap_rect.x + int(building.x * MINIMAP_WIDTH / self.world.cols)
-            mini_y = minimap_rect.y + int(building.y * MINIMAP_HEIGHT / self.world.rows)
+            cx, cy = building.center_cell()
+            mini_x = minimap_rect.x + int(cx * MINIMAP_WIDTH / self.world.cols)
+            mini_y = minimap_rect.y + int(cy * MINIMAP_HEIGHT / self.world.rows)
             
             # Color by building kind
             from settings import COLOUR_HOME, COLOUR_WORKSTATION, COLOUR_FORESTER, COLOUR_MASON, COLOUR_HUNTER, COLOUR_FORAGER, COLOUR_FISHER, COLOUR_FARM, COLOUR_FIELD

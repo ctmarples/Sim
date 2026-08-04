@@ -119,6 +119,9 @@ def _cell_to_dict(cell: Cell) -> dict[str, Any]:
     tree_species = getattr(cell, "tree_species", None)
     if tree_species is not None:
         data["tree_species"] = tree_species
+    icon_variant = getattr(cell, "icon_variant", None)
+    if icon_variant is not None:
+        data["icon_variant"] = int(icon_variant)
     return data
 
 
@@ -142,6 +145,8 @@ def _cell_from_save(c: dict[str, Any]) -> Cell:
         setattr(cell, "tree_species", str(tree_species))
     elif cell.feature in (FeatureType.TREE, FeatureType.SAPLING):
         setattr(cell, "tree_species", "oak")
+    if c.get("icon_variant") is not None:
+        cell.icon_variant = int(c["icon_variant"])
     return cell
 
 
@@ -405,6 +410,73 @@ def _migrate_legacy_fields(game: Game) -> None:
                 )
 
 
+def _migrate_building_footprints(game: Game) -> None:
+    """Expand legacy 1×1 non-field buildings to the current square footprint."""
+    from entities import default_building_plot
+    from world import FeatureType
+
+    FEATURE_FOR_BUILDING = {
+        BuildingKind.HOME: FeatureType.HOME,
+        BuildingKind.WORKSTATION: FeatureType.WORKSTATION,
+        BuildingKind.FORESTER: FeatureType.FORESTER,
+        BuildingKind.MASON: FeatureType.MASON,
+        BuildingKind.HUNTER: FeatureType.HUNTER,
+        BuildingKind.FORAGER: FeatureType.FORAGER,
+        BuildingKind.FISHER: FeatureType.FISHER,
+        BuildingKind.FARM: FeatureType.FARM,
+    }
+
+    for building in list(game.buildings.values()):
+        if building.kind == BuildingKind.FIELD:
+            continue
+        pw, ph = default_building_plot(building.kind)
+        if building.plot_w == pw and building.plot_h == ph:
+            # Still refresh pads in case a prior save lost them.
+            feature = FEATURE_FOR_BUILDING.get(building.kind)
+            if feature is not None:
+                game.world.claim_structure_footprint(
+                    building.x, building.y, pw, ph, feature
+                )
+            continue
+        # Legacy saves stored the glyph cell as x/y (1×1). Treat as centre.
+        if building.plot_w <= 1 and building.plot_h <= 1:
+            cx, cy = building.x, building.y
+        else:
+            cx, cy = building.center_cell()
+        building.plot_w, building.plot_h = pw, ph
+        building.x = cx - pw // 2
+        building.y = cy - ph // 2
+        feature = FEATURE_FOR_BUILDING.get(building.kind)
+        if feature is not None:
+            game.world.claim_structure_footprint(
+                building.x, building.y, pw, ph, feature
+            )
+        if building.kind == BuildingKind.HOME:
+            game.world.home_pos = (cx, cy)
+        elif building.kind == BuildingKind.WORKSTATION:
+            game.world.workstation_pos = (cx, cy)
+
+    for site in list(game.construction_sites.values()):
+        if site.kind == BuildingKind.FIELD:
+            continue
+        pw, ph = default_building_plot(site.kind)
+        if site.plot_w == pw and site.plot_h == ph:
+            game.world.claim_structure_footprint(
+                site.x, site.y, pw, ph, FeatureType.CONSTRUCTION_SITE
+            )
+            continue
+        if site.plot_w <= 1 and site.plot_h <= 1:
+            cx, cy = site.x, site.y
+        else:
+            cx, cy = site.center_cell()
+        site.plot_w, site.plot_h = pw, ph
+        site.x = cx - pw // 2
+        site.y = cy - ph // 2
+        game.world.claim_structure_footprint(
+            site.x, site.y, pw, ph, FeatureType.CONSTRUCTION_SITE
+        )
+
+
 def _spawn_field_building(
     game: Game,
     x: int,
@@ -610,6 +682,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
 
     # Promote nested Farm.fields / legacy Field areas into Field buildings.
     _migrate_legacy_fields(game)
+    _migrate_building_footprints(game)
 
     # Re-sync after migration may have spawned buildings.
     if game.buildings:

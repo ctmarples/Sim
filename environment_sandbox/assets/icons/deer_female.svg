@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     viewBox="0 0 40 40"
+     width="400"
+     height="400">
+  <title>deer female</title>
+  <desc>Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <g id="deer_female" inkscape:groupmode="layer" inkscape:label="deer_female">
+    <path id="body" class="body" d="M 10,22 C 10,19.238576251 14.477152502,17 20,17 C 25.522847498,17 30,19.238576251 30,22 C 30,24.761423749 25.522847498,27 20,27 C 14.477152502,27 10,24.761423749 10,22 Z" fill="#a0643c" stroke="none"/>
+    <path id="head" class="body" d="M 9,20 C 9,17.7908610008 10.7908610008,16 13,16 C 15.2091389992,16 17,17.7908610008 17,20 C 17,22.2091389992 15.2091389992,24 13,24 C 10.7908610008,24 9,22.2091389992 9,20 Z" fill="#a0643c" stroke="none"/>
+  </g>
+</svg>

@@ -1,0 +1,16 @@
+<svg width="40" height="40" xmlns="http://www.w3.org/2000/svg">
+ <title>boar male</title>
+ <desc>Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+ <g>
+  <title>Layer 1</title>
+  <path fill="#5a4637" d="m9.91297,22c0,-2.76142 4.47715,-5 10,-5c5.52285,0 10,2.23858 10,5c0,2.76142 -4.47715,5 -10,5c-5.52285,0 -10,-2.23858 -10,-5z" class="body" id="body"/>
+  <path fill="#5a4637" d="m24.65361,18.78155c0,-2.20914 1.79086,-4 4,-4c2.20914,0 4,1.79086 4,4c0,2.20914 -1.79086,4 -4,4c-2.20914,0 -4,-1.79086 -4,-4z" class="body" id="head"/>
+  <path stroke="null" fill="#5a4637" d="m30.39774,19.78242c0,-1.22378 0.99207,-2.21584 2.21584,-2.21584c1.22378,0 2.21584,0.99206 2.21584,2.21584c0,1.22378 -0.99206,2.21584 -2.21584,2.21584c-1.22377,0 -2.21584,-0.99206 -2.21584,-2.21584z" class="body" id="svg_1"/>
+  <rect stroke="null" class="body" id="svg_5" height="9.13838" width="1.74064" y="22.73281" x="14.11662" fill="#5a4637"/>
+  <rect stroke="null" class="body" id="svg_7" height="9.13838" width="1.74064" y="20.64403" x="16.72759" fill="#5a4637"/>
+  <rect stroke="null" class="body" id="svg_8" height="9.13838" width="1.74064" y="22.73281" x="22.73281" fill="#5a4637"/>
+  <rect stroke="null" class="body" id="svg_9" height="9.13838" width="1.74064" y="20.46997" x="25.34377" fill="#5a4637"/>
+  <rect transform="rotate(-56.5157 30.6922 18.2138)" stroke="null" id="svg_10" height="2.78201" width="0.55968" y="16.82275" x="30.41235" fill="#bfac9e"/>
+  <rect transform="rotate(37.3132 33.9225 17.2759)" stroke="null" id="svg_11" height="2.78201" width="0.55968" y="15.88492" x="33.64264" fill="#bfac9e"/>
+ </g>
+</svg>

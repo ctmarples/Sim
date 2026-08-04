@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     viewBox="0 0 40 40"
+     width="400"
+     height="400">
+  <title>mushroom</title>
+  <desc>Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <g id="mushroom" inkscape:groupmode="layer" inkscape:label="mushroom">
+    <path id="cap" class="cap" d="M 14,18 C 14,14.6862915012 16.6862915012,12 20,12 C 23.3137084988,12 26,14.6862915012 26,18 C 26,21.3137084988 23.3137084988,24 20,24 C 16.6862915012,24 14,21.3137084988 14,18 Z" fill="#c8aa8c" stroke="none"/>
+    <path id="stem" class="stem" d="M 18,20 L 22,20 L 22,25 L 18,25 Z" fill="#d2c8b4" stroke="none"/>
+  </g>
+</svg>

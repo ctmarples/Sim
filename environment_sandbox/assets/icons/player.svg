@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     viewBox="0 0 40 40"
+     width="400"
+     height="400">
+  <title>player</title>
+  <desc>Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <g id="player" inkscape:groupmode="layer" inkscape:label="player">
+    <path id="body" class="body" d="M 7,20 C 7,12.8202982526 12.8202982526,7 20,7 C 27.1797017474,7 33,12.8202982526 33,20 C 33,27.1797017474 27.1797017474,33 20,33 C 12.8202982526,33 7,27.1797017474 7,20 Z" fill="#3278ff" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

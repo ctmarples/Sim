@@ -44,20 +44,27 @@ def _draw_crop_glyph(
     flower: tuple[int, int, int] | None,
     *,
     scale: float = 1.0,
+    icon_base: str = "crop_plant",
 ) -> None:
-    s = max(0.5, scale)
-    for ox in (-3, 0, 3):
-        tip_x = cx + int(ox * s) // 2
-        tip_y = cy + int(6 * s)
-        pygame.draw.line(
-            surface,
-            stem,
-            (cx + int(ox * s), cy - int(4 * s)),
-            (tip_x, tip_y),
-            max(1, int(2 * s)),
-        )
-        if flower is not None:
-            pygame.draw.circle(surface, flower, (tip_x, tip_y), max(1, int(2 * s)))
+    from icons import blit_icon
+
+    size = max(8, int(round(24 * max(0.5, scale))))
+    recolour = {"stem": stem}
+    omit: tuple[str, ...] = ()
+    if flower is not None:
+        recolour["flower"] = flower
+    else:
+        omit = ("flower",)
+    blit_icon(
+        surface,
+        icon_base,
+        cx,
+        cy,
+        size,
+        variant=1,
+        recolour=recolour,
+        omit_classes=omit,
+    )
 
 
 class FieldPlanDialog:
@@ -452,6 +459,7 @@ class FieldPlanDialog:
                         crop.stem_colour,
                         crop.flower_colour,
                         scale=cell / 24,
+                        icon_base=crop.plant_icon(),
                     )
                 pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1)
 
@@ -502,6 +510,7 @@ class FieldPlanDialog:
             harvest_crop.stem_colour,
             harvest_crop.flower_colour,
             scale=rect.w / 28,
+            icon_base=harvest_crop.plant_icon(),
         )
         _draw_crop_glyph(
             surface,
@@ -510,6 +519,7 @@ class FieldPlanDialog:
             plant_crop.stem_colour,
             plant_crop.flower_colour,
             scale=rect.w / 28,
+            icon_base=plant_crop.plant_icon(),
         )
 
     def _paint_cell(
@@ -536,6 +546,7 @@ class FieldPlanDialog:
                 crop.stem_colour,
                 crop.flower_colour,
                 scale=rect.w / 28,
+                icon_base=crop.plant_icon(),
             )
             _draw_crop_glyph(
                 surface,
@@ -544,6 +555,7 @@ class FieldPlanDialog:
                 crop.stem_colour,
                 crop.flower_colour,
                 scale=rect.w / 28,
+                icon_base=crop.plant_icon(),
             )
             return
         if phase_allows_harvest(phase):
@@ -560,6 +572,7 @@ class FieldPlanDialog:
             crop.stem_colour,
             crop.flower_colour,
             scale=rect.w / 24,
+            icon_base=crop.plant_icon(),
         )
 
     def _draw_btn(

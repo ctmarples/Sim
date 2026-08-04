@@ -1,0 +1,16 @@
+<svg width="40" height="40" xmlns="http://www.w3.org/2000/svg">
+ <title>crop plant</title>
+
+ <desc>Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+ <g>
+  <title>Layer 1</title>
+  <path stroke="#5aae50" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" fill="none" d="m7.66708,11.45888l0,13.2391" class="stem" id="svg_3"/>
+  <path transform="rotate(8.73613 9.5516 17.8429)" stroke="#5aae50" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" fill="none" d="m9.55165,11.22331l0,13.2391" class="stem" id="svg_5"/>
+  <path transform="rotate(-13.6828 31.1833 14.5362)" stroke="#5aae50" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" fill="none" d="m31.18333,7.91661l0,13.2391" class="stem" id="svg_10"/>
+  <path transform="rotate(8.73613 33.7809 13.9441)" stroke="#5aae50" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" fill="none" d="m33.78091,7.32454l0,13.2391" class="stem" id="svg_11"/>
+  <path fill="#466ec8" d="m9.17876,10.86509c0,-1.46235 1.18547,-2.64782 2.64782,-2.64782c1.46235,0 2.64782,1.18547 2.64782,2.64782c0,1.46235 -1.18547,2.64782 -2.64782,2.64782c-1.46235,0 -2.64782,-1.18547 -2.64782,-2.64782z" class="flower" id="svg_13"/>
+  <path fill="#466ec8" d="m32.26545,5.31416c0,-1.46235 1.18547,-2.64782 2.64782,-2.64782c1.46235,0 2.64782,1.18547 2.64782,2.64782c0,1.46235 -1.18547,2.64782 -2.64782,2.64782c-1.46235,0 -2.64782,-1.18547 -2.64782,-2.64782z" class="flower" id="svg_14"/>
+  <path fill="#466ec8" d="m3.29641,9.61732c0,-1.46235 1.18547,-2.64782 2.64782,-2.64782c1.46235,0 2.64782,1.18547 2.64782,2.64782c0,1.46235 -1.18547,2.64782 -2.64782,2.64782c-1.46235,0 -2.64782,-1.18547 -2.64782,-2.64782z" class="flower" id="svg_1"/>
+  <path fill="#466ec8" d="m25.67009,6.56193c0,-1.46235 1.18547,-2.64782 2.64782,-2.64782c1.46235,0 2.64782,1.18547 2.64782,2.64782c0,1.46235 -1.18547,2.64782 -2.64782,2.64782c-1.46235,0 -2.64782,-1.18547 -2.64782,-2.64782z" class="flower" id="svg_2"/>
+ </g>
+</svg>

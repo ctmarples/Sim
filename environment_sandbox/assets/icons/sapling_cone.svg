@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     viewBox="0 0 40 40"
+     width="400"
+     height="400">
+  <title>sapling cone</title>
+  <desc>Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <g id="sapling_cone" inkscape:groupmode="layer" inkscape:label="sapling_cone">
+    <path id="trunk" class="trunk" d="M 20,20 L 20,25" fill="none" stroke="#5a371e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path id="canopy" class="canopy" d="M 20,15 L 15,22 L 25,22 Z" fill="#3c8c46" stroke="none"/>
+  </g>
+</svg>

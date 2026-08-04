@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="400" height="400"
+     data-home="0,0,40" data-anchor="20,20">
+  <title>home</title>
+  <desc>Isometric building; front two walls toward viewer. Classes: wall_l wall_r roof roof_dark door trim accent accent2 stem.</desc>
+  <g id="home">
+    <path id="wall_l" class="wall_l" d="M 6.70,33.00 L 20.00,39.65 L 20.00,30.23 L 6.70,23.58 Z" fill="#5a4030"/>
+    <path id="wall_r" class="wall_r" d="M 33.30,33.00 L 20.00,39.65 L 20.00,30.23 L 33.30,23.58 Z" fill="#8a6a48"/>
+    <path id="roof_dark" class="roof_dark" d="M 20.00,16.93 L 33.30,23.58 L 26.65,19.43 L 13.35,12.78 Z" fill="#6a3028"/>
+    <path id="roof" class="roof" d="M 6.70,23.58 L 20.00,30.23 L 26.65,19.43 L 13.35,12.78 Z" fill="#aa3c32"/>
+    <path id="door" class="door" d="M 13.70,36.50 L 16.50,37.90 L 16.50,32.38 L 13.70,30.98 Z" fill="#3a2418"/>
+    <path id="trim" class="trim" d="M 29.80,31.18 L 27.00,32.57 L 27.00,29.32 L 29.80,27.93 Z" fill="#c8d8e8"/>
+    <path id="wall_l_2" class="wall_l" d="M 20.00,15.45 L 17.90,16.50 L 17.90,11.30 L 20.00,10.25 Z" fill="#5a4030"/>
+    <path id="wall_r_2" class="wall_r" d="M 20.00,15.45 L 22.10,16.50 L 22.10,11.30 L 20.00,10.25 Z" fill="#8a6a48"/>
+    <path id="trim_2" class="trim" d="M 20.00,10.25 L 22.10,11.30 L 20.00,12.35 L 17.90,11.30 Z" fill="#4a4038"/>
+  </g>
+</svg>

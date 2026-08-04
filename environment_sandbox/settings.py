@@ -125,6 +125,8 @@ STARTING_FOOD: int = 12  # berries at home so early hires can eat
 BUILD_SECONDS_PER_ITEM: float = 2.0
 # Ticks of construction work required per wood/rock unit (at simulation ×1).
 BUILD_TICKS_PER_ITEM: int = int(FPS * BUILD_SECONDS_PER_ITEM)
+# Square footprint (cells) for storehouse, hiring hall, and production buildings.
+BUILDING_FOOTPRINT: int = 3
 
 # Satiation 1.0 → 0.0 over this many seconds at ×1 (75%→50% ≈ 45s, matching old meal pace).
 VILLAGER_SATIATION_SECONDS: float = 180.0
