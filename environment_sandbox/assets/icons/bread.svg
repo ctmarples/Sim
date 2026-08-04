@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="400" height="400">
+  <title>bread</title>
+  <desc>Inventory bread loaf. class=body</desc>
+  <ellipse class="body" cx="20" cy="24" rx="12" ry="7" fill="#c4a060"/>
+  <ellipse class="body" cx="20" cy="20" rx="11" ry="6" fill="#e0c080"/>
+  <path class="body" d="M 12,18 Q 20,12 28,18" fill="none" stroke="#a08040" stroke-width="1.2"/>
+</svg>

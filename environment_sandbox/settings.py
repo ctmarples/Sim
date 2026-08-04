@@ -122,6 +122,15 @@ FARM_COST_WOOD: int = 2
 FARM_COST_ROCK: int = 2
 FIELD_COST_WOOD: int = 1
 FIELD_COST_ROCK: int = 0
+MILL_COST_WOOD: int = 2
+MILL_COST_ROCK: int = 2
+KITCHEN_COST_WOOD: int = 2
+KITCHEN_COST_ROCK: int = 2
+# Separate input / output storage pools for processor buildings.
+MILL_INPUT_CAPACITY: int = 40
+MILL_OUTPUT_CAPACITY: int = 10
+KITCHEN_INPUT_CAPACITY: int = 40
+KITCHEN_OUTPUT_CAPACITY: int = 10
 # Chebyshev distance from Farm to a Field plot for workers to manage it.
 FARM_FIELD_RADIUS: int = 20
 
@@ -147,6 +156,8 @@ VILLAGER_FOOD_KEYS: tuple[str, ...] = (
     "onion",
     "cabbage",
     "carrot",
+    "bread",
+    "stew",
 )
 
 INDICATOR_RADIUS: int = 2
@@ -192,6 +203,8 @@ FARM_HERB_SEED_DROP_CHANCE: float = 1.0  # farm always yields 1–3 seeds (see c
 
 VILLAGER_MOVE_INTERVAL: int = 48
 VILLAGER_WORK_INTERVAL: int = 72
+# Work actions (each spaced by villager work interval) to finish one mill/kitchen craft.
+PROCESSOR_RECIPE_STEPS: int = 3
 
 ANIMAL_MOVE_INTERVAL: int = 80
 ANIMAL_GROWTH_INTERVAL: int = 480
@@ -262,6 +275,8 @@ COLOUR_TASK_FISH: Colour = (60, 140, 190)
 COLOUR_TASK_FARM: Colour = (150, 130, 60)
 COLOUR_FARM: Colour = (160, 130, 70)
 COLOUR_FIELD: Colour = (140, 120, 55)
+COLOUR_MILL: Colour = (170, 150, 100)
+COLOUR_KITCHEN: Colour = (180, 100, 70)
 COLOUR_CROP: Colour = (110, 190, 80)
 
 COLOUR_TOOLBAR_BG: Colour = (36, 38, 44)

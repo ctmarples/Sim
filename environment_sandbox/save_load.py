@@ -24,6 +24,7 @@ from entities import (
     WorkMode,
     WorkPriority,
 )
+from recipes import PROCESSED_KEYS
 from world import Cell, FeatureType, TerrainType, World
 
 if TYPE_CHECKING:
@@ -44,7 +45,7 @@ _BASE_STORAGE_KEYS = (
     "reeds",
 )
 _CROP_STORAGE_KEYS = PRODUCE_KEYS + SEED_KEYS
-_STORAGE_KEYS = _BASE_STORAGE_KEYS + _CROP_STORAGE_KEYS
+_STORAGE_KEYS = _BASE_STORAGE_KEYS + _CROP_STORAGE_KEYS + PROCESSED_KEYS
 
 
 def saves_dir() -> Path:
@@ -174,6 +175,10 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "y": b.y,
             "storage": _storage_to_dict(b),
             "capacity": b.capacity,
+            "input_capacity": b.input_capacity,
+            "output_capacity": b.output_capacity,
+            "recipe_enabled": dict(b.recipe_enabled),
+            "recipe_progress": dict(b.recipe_progress),
             "draw_task_type": b.draw_task_type.name,
             "work_mode": b.work_mode.name,
             "areas": [
@@ -434,6 +439,8 @@ def _migrate_building_footprints(game: Game) -> None:
         BuildingKind.FORAGER: FeatureType.FORAGER,
         BuildingKind.FISHER: FeatureType.FISHER,
         BuildingKind.FARM: FeatureType.FARM,
+        BuildingKind.MILL: FeatureType.MILL,
+        BuildingKind.KITCHEN: FeatureType.KITCHEN,
     }
 
     for building in list(game.buildings.values()):
@@ -586,6 +593,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             BuildingKind.FORAGER: TaskType.FULL_FORAGE,
             BuildingKind.FARM: TaskType.FARM_FIELD,
             BuildingKind.FIELD: TaskType.FARM_FIELD,
+            BuildingKind.MILL: TaskType.FULL_FORAGE,
+            BuildingKind.KITCHEN: TaskType.FULL_FORAGE,
         }.get(kind, TaskType.FULL_MANAGE)
         raw_task = bdata.get("draw_task_type")
         if raw_task is None:
@@ -619,11 +628,30 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             x=int(bdata["x"]),
             y=int(bdata["y"]),
             capacity=int(bdata.get("capacity", BUILDING_STORAGE_CAPACITY)),
+            input_capacity=int(bdata.get("input_capacity", 0)),
+            output_capacity=int(bdata.get("output_capacity", 0)),
             draw_task_type=draw_task,
             work_mode=work_mode,
             plot_w=max(1, int(bdata.get("plot_w", 1))),
             plot_h=max(1, int(bdata.get("plot_h", 1))),
         )
+        # Migrate pre-split processor saves to input/output pools.
+        from entities import default_processor_capacities
+
+        if building.is_processor() and building.input_capacity <= 0:
+            cap, in_cap, out_cap = default_processor_capacities(kind)
+            building.capacity = cap
+            building.input_capacity = in_cap
+            building.output_capacity = out_cap
+        raw_enabled = bdata.get("recipe_enabled") or {}
+        raw_progress = bdata.get("recipe_progress") or {}
+        if building.is_processor():
+            building.ensure_recipe_state()
+            for name in list(building.recipe_enabled):
+                if name in raw_enabled:
+                    building.recipe_enabled[name] = bool(raw_enabled[name])
+                if name in raw_progress:
+                    building.recipe_progress[name] = max(0, int(raw_progress[name]))
         if kind == BuildingKind.FIELD:
             building.crop_kind = str(bdata.get("crop_kind", "sage"))
             if kind == BuildingKind.FIELD and work_mode not in building.supported_work_modes():

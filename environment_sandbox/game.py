@@ -45,6 +45,7 @@ from entities import (
     WorkPriority,
     arm_cell_step_visual,
     default_building_plot,
+    default_processor_capacities,
     entity_draw_xy,
     note_cell_step,
 )
@@ -73,8 +74,10 @@ from settings import (
     COLOUR_FORESTER,
     COLOUR_HOME,
     COLOUR_HUNTER,
+    COLOUR_KITCHEN,
     COLOUR_MASON,
     COLOUR_MEAT,
+    COLOUR_MILL,
     COLOUR_PLAYER,
     COLOUR_SELECTED_ENTITY,
     COLOUR_TASK_AREA,
@@ -107,9 +110,13 @@ from settings import (
     HUNTER_COST_ROCK,
     HUNTER_COST_WOOD,
     BERRY_SEED_DROP_CHANCE,
+    KITCHEN_COST_ROCK,
+    KITCHEN_COST_WOOD,
     MASON_COST_ROCK,
     MASON_COST_WOOD,
     MAX_VILLAGERS,
+    MILL_COST_ROCK,
+    MILL_COST_WOOD,
     MINIMAP_HEIGHT,
     MINIMAP_WIDTH,
     OVERLAY_ALPHA,
@@ -139,6 +146,9 @@ from field_plan_dialog import FieldPlanDialog
 from resource_inspect_dialog import ResourceInspectDialog
 from villager_inspect_dialog import VillagerInspectDialog
 from resource_bar import VIEW_LABELS, ResourceBar
+from recipes import (
+    apply_recipe,
+)
 from save_load import load_from_path, save_to_path
 from seasons import (
     DAYS_PER_SEASON,
@@ -194,6 +204,8 @@ FEATURE_FOR_BUILDING = {
     BuildingKind.FISHER: FeatureType.FISHER,
     BuildingKind.FARM: FeatureType.FARM,
     BuildingKind.FIELD: FeatureType.FIELD,
+    BuildingKind.MILL: FeatureType.MILL,
+    BuildingKind.KITCHEN: FeatureType.KITCHEN,
 }
 
 BUILDING_FEATURES = frozenset(FEATURE_FOR_BUILDING.values()) | {
@@ -1184,6 +1196,8 @@ class Game:
             BuildingKind.FISHER,
             BuildingKind.FARM,
             BuildingKind.FIELD,
+            BuildingKind.MILL,
+            BuildingKind.KITCHEN,
             None,
         ]
         if self.place_kind not in order:
@@ -1206,6 +1220,8 @@ class Game:
             BuildingKind.FISHER: (FISHER_COST_WOOD, FISHER_COST_ROCK, "Fisher"),
             BuildingKind.FARM: (FARM_COST_WOOD, FARM_COST_ROCK, "Farm"),
             BuildingKind.FIELD: (FIELD_COST_WOOD, FIELD_COST_ROCK, "Field"),
+            BuildingKind.MILL: (MILL_COST_WOOD, MILL_COST_ROCK, "Mill"),
+            BuildingKind.KITCHEN: (KITCHEN_COST_WOOD, KITCHEN_COST_ROCK, "Kitchen"),
         }
         if self.place_kind is None:
             self._set_status("Build mode off.")
@@ -1736,6 +1752,19 @@ class Game:
         if action == "hire_villager":
             self._hire_villager()
             return
+        if action.startswith("toggle_recipe:"):
+            building = self._inspect_building()
+            if building is None or not building.is_processor():
+                return
+            name = action.split(":", 1)[1]
+            enabled = building.toggle_recipe(name)
+            from recipes import RECIPE_LABELS
+
+            label = RECIPE_LABELS.get(name, name)
+            state = "on" if enabled else "off"
+            self._wake_building_workers(building.id)
+            self._set_status(f"{BUILDING_LABELS[building.kind]}: {label} {state}.")
+            return
 
     def _transfer_inspect_to_player(self, key: str) -> None:
         if not self.building_inspect.show_player:
@@ -2182,6 +2211,8 @@ class Game:
                     BuildingKind.FISHER: COLOUR_FISHER,
                     BuildingKind.FARM: COLOUR_FARM,
                     BuildingKind.FIELD: COLOUR_FARM,
+                    BuildingKind.MILL: COLOUR_MILL,
+                    BuildingKind.KITCHEN: COLOUR_KITCHEN,
                 }.get(building.kind, COLOUR_VILLAGER)
         return COLOUR_VILLAGER
 
@@ -2220,6 +2251,8 @@ class Game:
             FeatureType.FISHER,
             FeatureType.FARM,
             FeatureType.FIELD,
+            FeatureType.MILL,
+            FeatureType.KITCHEN,
             FeatureType.WORKSTATION,
             FeatureType.STRUCTURE_PAD,
         ):
@@ -2369,6 +2402,10 @@ class Game:
             return FARM_COST_WOOD, FARM_COST_ROCK, TaskType.FARM_FIELD
         if kind == BuildingKind.FIELD:
             return FIELD_COST_WOOD, FIELD_COST_ROCK, TaskType.FARM_FIELD
+        if kind == BuildingKind.MILL:
+            return MILL_COST_WOOD, MILL_COST_ROCK, TaskType.FULL_FORAGE
+        if kind == BuildingKind.KITCHEN:
+            return KITCHEN_COST_WOOD, KITCHEN_COST_ROCK, TaskType.FULL_FORAGE
         return FORAGER_COST_WOOD, FORAGER_COST_ROCK, TaskType.FULL_FORAGE
 
     def _place_field_site(
@@ -2389,6 +2426,8 @@ class Game:
             FeatureType.FISHER,
             FeatureType.FARM,
             FeatureType.FIELD,
+            FeatureType.MILL,
+            FeatureType.KITCHEN,
             FeatureType.CONSTRUCTION_SITE,
             FeatureType.STRUCTURE_PAD,
         )
@@ -2489,12 +2528,15 @@ class Game:
         if site.kind != BuildingKind.FIELD:
             pw, ph = default_building_plot(site.kind)
             plot_w, plot_h = pw, ph
+        cap, in_cap, out_cap = default_processor_capacities(site.kind)
         building = Building(
             id=self.next_building_id,
             kind=site.kind,
             x=site.x,
             y=site.y,
-            capacity=BUILDING_STORAGE_CAPACITY,
+            capacity=cap,
+            input_capacity=in_cap,
+            output_capacity=out_cap,
             draw_task_type=default_task,
             work_mode=Building.work_mode_from_task(site.kind, default_task),
             plot_w=plot_w,
@@ -2971,6 +3013,7 @@ class Game:
                 BuildingKind.HUNTER,
                 BuildingKind.FISHER,
                 BuildingKind.FARM,
+                BuildingKind.KITCHEN,
             ):
                 return building
         return None
@@ -2985,6 +3028,7 @@ class Game:
                 BuildingKind.HUNTER,
                 BuildingKind.FISHER,
                 BuildingKind.FARM,
+                BuildingKind.KITCHEN,
             ):
                 continue
             if self._food_count(building) > 0:
@@ -3094,11 +3138,17 @@ class Game:
             )
         if building.kind == BuildingKind.FARM:
             return self._find_farm_work(villager, building) is not None
+        if building.kind in (BuildingKind.MILL, BuildingKind.KITCHEN):
+            return self._processor_has_work(villager, building)
         target = self._find_work_in_building(villager, building)
         if target is not None:
             villager.target = target
             return True
         return False
+
+    def _processor_has_work(self, villager: Villager, building: Building) -> bool:
+        # Stay at the mill/kitchen — man the station even while waiting for stock.
+        return True
 
     def _work_target_valid(
         self, villager: Villager, building: Building, pos: tuple[int, int]
@@ -3247,7 +3297,9 @@ class Game:
     def _transport_has_work(self, villager: Villager) -> bool:
         if not villager.inventory.is_empty:
             return True
-        return self._find_haul_source(villager) is not None
+        if self._find_haul_source(villager) is not None:
+            return True
+        return self._find_processor_needing_supply() is not None
 
     def _construction_has_work(self, villager: Villager) -> bool:
         if not self.construction_sites:
@@ -3523,6 +3575,9 @@ class Game:
         if building.kind == BuildingKind.FARM:
             self._update_farmer(villager, building)
             return
+        if building.kind in (BuildingKind.MILL, BuildingKind.KITCHEN):
+            self._update_processor(villager, building)
+            return
 
         # Full gather cargo → deliver to workplace or home.
         if (
@@ -3655,6 +3710,41 @@ class Game:
         else:
             self._step_villager_toward(villager, target)
 
+    def _update_processor(self, villager: Villager, building: Building) -> None:
+        """Mill / Kitchen: stay on-site and craft from building stock."""
+        # Finish dumping non-input cargo home, then return to the station.
+        if villager.state == VillagerState.DELIVERING:
+            if self._update_workplace_delivery(villager, building):
+                return
+
+        bx, by = building.center_cell()
+        villager.target = (bx, by)
+        villager.state = VillagerState.WORKING
+
+        # Walk back to the building if away (e.g. after eating).
+        if (villager.x, villager.y) != (bx, by):
+            if villager.move_cooldown > 0:
+                return
+            self._step_villager_toward(villager, (bx, by))
+            return
+
+        # Deposit any carried inputs while standing at the workplace.
+        if building.can_accept_from(villager.inventory):
+            building.deposit_from_inventory(villager.inventory)
+
+        # Wrong-type cargo: send home once, then return (workplace has_work stays true).
+        if not villager.inventory.is_empty:
+            self._begin_workplace_delivery(villager, building)
+            if self._update_workplace_delivery(villager, building):
+                return
+
+        recipe = building.craftable_recipe()
+        if recipe is None or villager.work_cooldown > 0:
+            return
+        if building.advance_recipe_progress(recipe):
+            apply_recipe(building, recipe)
+        villager.work_cooldown = self._villager_work_interval(villager)
+
     def _find_farm_harvest(
         self, villager: Villager, building: Building
     ) -> tuple[int, int] | None:
@@ -3718,6 +3808,8 @@ class Game:
                             FeatureType.FORAGER,
                             FeatureType.FISHER,
                             FeatureType.FARM,
+                            FeatureType.MILL,
+                            FeatureType.KITCHEN,
                             FeatureType.CONSTRUCTION_SITE,
                             FeatureType.STRUCTURE_PAD,
                         ):
@@ -4109,10 +4201,15 @@ class Game:
     def _update_hauler(self, villager: Villager) -> None:
         home = self.world.home_pos
 
-        # Carrying goods → go home.
+        # Carrying goods → processor input delivery, else home.
         if not villager.inventory.is_empty and villager.state != VillagerState.DELIVERING:
-            villager.state = VillagerState.DELIVERING
-            villager.target = home
+            sink = self._find_processor_input_sink(villager)
+            if sink is not None:
+                villager.haul_building_id = sink.id
+                villager.state = VillagerState.HAULING
+            else:
+                villager.state = VillagerState.DELIVERING
+                villager.target = home
 
         if villager.state == VillagerState.DELIVERING:
             if (villager.x, villager.y) == home:
@@ -4123,23 +4220,67 @@ class Game:
             self._step_villager_toward(villager, home)
             return
 
-        # Need a workplace with stock.
+        if villager.state == VillagerState.HAULING and villager.haul_building_id is not None:
+            sink = self.buildings.get(villager.haul_building_id)
+            if (
+                sink is not None
+                and sink.is_processor()
+                and not villager.inventory.is_empty
+                and sink.can_accept_from(villager.inventory)
+            ):
+                dest = sink.center_cell()
+                villager.target = dest
+                if (villager.x, villager.y) == dest:
+                    if villager.work_cooldown == 0:
+                        # Deposit only ingredients for enabled recipes.
+                        for key in sink.active_supply_keys():
+                            sink.deposit_key_from(villager.inventory, key)
+                        villager.work_cooldown = self._villager_work_interval(villager)
+                        if villager.inventory.is_empty:
+                            villager.haul_building_id = None
+                            villager.state = VillagerState.IDLE
+                        elif not sink.can_accept_from(villager.inventory):
+                            villager.state = VillagerState.DELIVERING
+                            villager.target = home
+                    return
+                self._step_villager_toward(villager, dest)
+                return
+            # Fall through if the claimed sink is gone / full.
+
+        # Prefer clearing processor outputs, then supplying inputs from home.
         source = self._find_haul_source(villager)
-        if source is None:
-            villager.state = VillagerState.IDLE
+        if source is not None:
+            villager.haul_building_id = source.id
+            villager.state = VillagerState.HAULING
+            if (villager.x, villager.y) == source.center_cell():
+                if villager.work_cooldown == 0:
+                    source.withdraw_to_inventory(villager.inventory)
+                    villager.work_cooldown = self._villager_work_interval(villager)
+                    if not villager.inventory.is_empty:
+                        villager.state = VillagerState.DELIVERING
+                        villager.target = home
+                return
+            self._step_villager_toward(villager, source.center_cell())
             return
 
-        villager.haul_building_id = source.id
-        villager.state = VillagerState.HAULING
-        if (villager.x, villager.y) == source.center_cell():
-            if villager.work_cooldown == 0:
-                source.withdraw_to_inventory(villager.inventory)
-                villager.work_cooldown = self._villager_work_interval(villager)
-                if not villager.inventory.is_empty:
-                    villager.state = VillagerState.DELIVERING
-                    villager.target = home
+        sink = self._find_processor_needing_supply()
+        if sink is not None:
+            villager.haul_building_id = sink.id
+            villager.state = VillagerState.HAULING
+            if (villager.x, villager.y) != home:
+                self._step_villager_toward(villager, home)
+                return
+            taken = self.home_storage.withdraw_keys_to(
+                villager.inventory, sink.active_supply_keys()
+            )
+            if taken <= 0:
+                villager.haul_building_id = None
+                villager.state = VillagerState.IDLE
+                return
+            # Next tick delivers to the processor via HAULING branch above.
             return
-        self._step_villager_toward(villager, source.center_cell())
+
+        villager.state = VillagerState.IDLE
 
     def _find_haul_source(self, villager: Villager) -> Building | None:
         stocked = [b for b in self.buildings.values() if b.haulable_total() > 0]
@@ -4147,6 +4288,43 @@ class Game:
             return None
         return min(
             stocked,
+            key=lambda b: abs(b.center_cell()[0] - villager.x)
+            + abs(b.center_cell()[1] - villager.y),
+        )
+
+    def _find_processor_needing_supply(self) -> Building | None:
+        needy: list[Building] = []
+        for building in self.buildings.values():
+            if not building.is_processor() or building.input_space_left() <= 0:
+                continue
+            supply = building.active_supply_keys()
+            if not supply:
+                continue
+            if any(getattr(self.home_storage, key, 0) > 0 for key in supply):
+                needy.append(building)
+        if not needy:
+            return None
+        return min(
+            needy,
+            key=lambda b: abs(b.center_cell()[0] - self.world.home_pos[0])
+            + abs(b.center_cell()[1] - self.world.home_pos[1]),
+        )
+
+    def _find_processor_input_sink(self, villager: Villager) -> Building | None:
+        sinks = [
+            b
+            for b in self.buildings.values()
+            if b.is_processor()
+            and b.can_accept_from(villager.inventory)
+            and any(
+                getattr(villager.inventory, key, 0) > 0
+                for key in b.active_supply_keys()
+            )
+        ]
+        if not sinks:
+            return None
+        return min(
+            sinks,
             key=lambda b: abs(b.center_cell()[0] - villager.x)
             + abs(b.center_cell()[1] - villager.y),
         )
@@ -6243,7 +6421,7 @@ class Game:
             mini_y = minimap_rect.y + int(cy * MINIMAP_HEIGHT / self.world.rows)
             
             # Color by building kind
-            from settings import COLOUR_HOME, COLOUR_WORKSTATION, COLOUR_FORESTER, COLOUR_MASON, COLOUR_HUNTER, COLOUR_FORAGER, COLOUR_FISHER, COLOUR_FARM, COLOUR_FIELD
+            from settings import COLOUR_HOME, COLOUR_WORKSTATION, COLOUR_FORESTER, COLOUR_MASON, COLOUR_HUNTER, COLOUR_FORAGER, COLOUR_FISHER, COLOUR_FARM, COLOUR_FIELD, COLOUR_MILL, COLOUR_KITCHEN
             colour_map = {
                 BuildingKind.HOME: COLOUR_HOME,
                 BuildingKind.WORKSTATION: COLOUR_WORKSTATION,
@@ -6254,6 +6432,8 @@ class Game:
                 BuildingKind.FISHER: COLOUR_FISHER,
                 BuildingKind.FARM: COLOUR_FARM,
                 BuildingKind.FIELD: COLOUR_FIELD,
+                BuildingKind.MILL: COLOUR_MILL,
+                BuildingKind.KITCHEN: COLOUR_KITCHEN,
             }
             colour = colour_map.get(building.kind, (200, 200, 200))
             pygame.draw.circle(self.screen, colour, (mini_x, mini_y), 2)

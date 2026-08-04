@@ -110,6 +110,8 @@ class FeatureType(Enum):
     FISHER = auto()
     FARM = auto()
     FIELD = auto()
+    MILL = auto()
+    KITCHEN = auto()
     CONSTRUCTION_SITE = auto()
     # Invisible reserved cells of a multi-cell building footprint (not the glyph cell).
     STRUCTURE_PAD = auto()

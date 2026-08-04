@@ -32,6 +32,90 @@ def grid_height(n_items: int, *, cols: int = GRID_COLS) -> int:
     return rows * (GRID_CELL + GRID_GAP) - GRID_GAP
 
 
+def draw_resource_cell(
+    surface: pygame.Surface,
+    *,
+    cell: pygame.Rect,
+    key: str,
+    count: int | None = None,
+    fonts: tuple[pygame.font.Font, pygame.font.Font, pygame.font.Font],
+    hovered: bool = False,
+    dimmed: bool = False,
+    active: bool = False,
+) -> None:
+    """Draw one inventory-style resource icon cell (optional count / dim)."""
+    from icons import blit_icon
+
+    _font, _font_small, font_tiny = fonts
+    if active and not dimmed:
+        bg = (55, 70, 55) if hovered else (48, 58, 48)
+        border = COLOUR_SELECTED_ENTITY
+    elif hovered:
+        bg = (55, 62, 50)
+        border = COLOUR_SELECTED_ENTITY
+    else:
+        bg = (42, 44, 52)
+        border = COLOUR_TOOLBAR_BORDER
+    pygame.draw.rect(surface, bg, cell, border_radius=4)
+    pygame.draw.rect(surface, border, cell, 1, border_radius=4)
+
+    icon_size = cell.w - 14
+    try:
+        style = resource_icon_style(key)
+        blit_icon(
+            surface,
+            style.name,
+            cell.centerx,
+            cell.centery - 4,
+            icon_size,
+            recolour=style.recolour,
+            class_scales=style.class_scales,
+            omit_classes=style.omit_classes or None,
+        )
+        if style.badge_key is not None:
+            badge = resource_icon_style(style.badge_key)
+            badge_size = max(10, icon_size // 2)
+            bx = cell.x + cell.w // 4
+            by = cell.y + cell.h // 4
+            blit_icon(
+                surface,
+                badge.name,
+                bx,
+                by,
+                badge_size,
+                recolour=badge.recolour,
+                class_scales=badge.class_scales,
+                omit_classes=badge.omit_classes or None,
+            )
+    except (FileNotFoundError, OSError, ValueError, TypeError):
+        tip = resource_label(key)[:3]
+        t = font_tiny.render(tip, True, COLOUR_TEXT)
+        surface.blit(
+            t,
+            (
+                cell.centerx - t.get_width() // 2,
+                cell.centery - t.get_height() // 2 - 4,
+            ),
+        )
+
+    if count is not None:
+        badge = font_tiny.render(str(count), True, COLOUR_TEXT)
+        bx = cell.right - badge.get_width() - 3
+        by = cell.bottom - badge.get_height() - 2
+        pygame.draw.rect(
+            surface,
+            (28, 30, 36),
+            pygame.Rect(bx - 2, by - 1, badge.get_width() + 4, badge.get_height() + 2),
+            border_radius=2,
+        )
+        surface.blit(badge, (bx, by))
+
+    if dimmed:
+        overlay = pygame.Surface((cell.w, cell.h), pygame.SRCALPHA)
+        overlay.fill((28, 30, 36, 150))
+        surface.blit(overlay, cell.topleft)
+
+
 def draw_inv_grid(
     surface: pygame.Surface,
     *,

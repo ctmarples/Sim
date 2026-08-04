@@ -47,11 +47,15 @@ RESOURCES: tuple[ResourceDef, ...] = (
     ResourceDef("berries", "Berries", "food", "berr"),
     ResourceDef("mushrooms", "Mushrooms", "food", "mush"),
     *_CROP_PRODUCE_FOOD,
+    ResourceDef("bread", "Bread", "food", "bread"),
+    ResourceDef("stew", "Stew", "food", "stew"),
     ResourceDef("wood", "Wood", "wares", "wood"),
     ResourceDef("hardwood", "Hardwood", "wares", "hwood"),
     ResourceDef("rock", "Rock", "wares", "rock"),
     ResourceDef("reeds", "Reeds", "wares", "reed"),
     *_CROP_PRODUCE_WARES,
+    ResourceDef("wheat_flour", "Wheat flour", "wares", "w.fl"),
+    ResourceDef("rye_flour", "Rye flour", "wares", "r.fl"),
     *_TREE_SAPLINGS,
     ResourceDef("berry_seeds", "Berry seeds", "agriculture", "b.sd"),
     *_CROP_SEEDS,
@@ -138,6 +142,7 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
     """Return icon style matching map feature colours (and seed composites)."""
     from icons import (
         ICON_BERRIES,
+        ICON_BREAD,
         ICON_FISH,
         ICON_FLOWER,
         ICON_HARDWOOD,
@@ -148,6 +153,7 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
         ICON_SAPLING_CONE,
         ICON_SAPLING_ROUND,
         ICON_SEEDS,
+        ICON_STEW,
         ICON_WOOD,
         crop_icon_base,
     )
@@ -192,6 +198,26 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
         )
     if key == "reeds":
         return ResourceIconStyle(ICON_REED, {"stem": COLOUR_REED})
+
+    if key == "wheat_flour":
+        return ResourceIconStyle(
+            ICON_SEEDS,
+            {"flower": (220, 200, 140)},
+            badge_key="wheat",
+        )
+    if key == "rye_flour":
+        return ResourceIconStyle(
+            ICON_SEEDS,
+            {"flower": (190, 160, 110)},
+            badge_key="rye",
+        )
+    if key == "bread":
+        return ResourceIconStyle(ICON_BREAD, {"body": (210, 170, 100)})
+    if key == "stew":
+        return ResourceIconStyle(
+            ICON_STEW,
+            {"body": (140, 100, 70), "accent": (192, 96, 48)},
+        )
 
     for tree in TREES:
         if key == f"{tree.key}_saplings":

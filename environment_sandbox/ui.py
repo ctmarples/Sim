@@ -42,10 +42,12 @@ from settings import (
     COLOUR_HOME_ROOF,
     COLOUR_HUNTER,
     COLOUR_ICE,
+    COLOUR_KITCHEN,
     COLOUR_MASON,
     COLOUR_MEADOW,
     COLOUR_MEAT,
     COLOUR_MENU_BG,
+    COLOUR_MILL,
     COLOUR_MUSHROOM,
     COLOUR_PANEL_BG,
     COLOUR_PANEL_BORDER,
@@ -743,6 +745,8 @@ class UI:
             (COLOUR_FISHER, "Fisher"),
             (COLOUR_FARM, "Farm"),
             (COLOUR_FIELD, "Field"),
+            (COLOUR_MILL, "Mill"),
+            (COLOUR_KITCHEN, "Kitchen"),
             ((90, 90, 70), "Site"),
             (COLOUR_PLAYER, "Player"),
             (COLOUR_VILLAGER, "Villager"),
@@ -1107,7 +1111,9 @@ def draw_feature(
         ICON_FORESTER,
         ICON_HOME,
         ICON_HUNTER,
+        ICON_KITCHEN,
         ICON_MASON,
+        ICON_MILL,
         ICON_MUSHROOM,
         ICON_REED,
         ICON_ROCK,
@@ -1311,6 +1317,36 @@ def draw_feature(
             recolour=_iso_building_recolour(
                 COLOUR_FIELD,
                 accent=(200, 180, 90),
+                vibrancy=vibrancy,
+            ),
+        )
+    elif feature == FeatureType.MILL:
+        blit_icon(
+            surface,
+            ICON_MILL,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour=_iso_building_recolour(
+                COLOUR_MILL,
+                roof=(106, 80, 56),
+                accent=(216, 192, 144),
+                vibrancy=vibrancy,
+            ),
+        )
+    elif feature == FeatureType.KITCHEN:
+        blit_icon(
+            surface,
+            ICON_KITCHEN,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour=_iso_building_recolour(
+                COLOUR_KITCHEN,
+                roof=(120, 50, 40),
+                accent=(220, 160, 80),
                 vibrancy=vibrancy,
             ),
         )

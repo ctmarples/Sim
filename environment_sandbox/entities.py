@@ -6,10 +6,27 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 
 from crops import PRODUCE_KEYS, SEED_KEYS
+from recipes import (
+    KITCHEN_INPUT_KEYS,
+    KITCHEN_OUTPUT_KEYS,
+    KITCHEN_RECIPES,
+    MILL_INPUT_KEYS,
+    MILL_OUTPUT_KEYS,
+    MILL_RECIPES,
+    PROCESSED_KEYS,
+    Recipe,
+    can_craft,
+    input_keys_for_recipes,
+)
 from settings import (
     BUILDING_FOOTPRINT,
     BUILDING_STORAGE_CAPACITY,
     INVENTORY_CAPACITY,
+    KITCHEN_INPUT_CAPACITY,
+    KITCHEN_OUTPUT_CAPACITY,
+    MILL_INPUT_CAPACITY,
+    MILL_OUTPUT_CAPACITY,
+    PROCESSOR_RECIPE_STEPS,
     SEED_CARRY_CAPACITY,
 )
 from trees import SAPLING_ITEM_KEYS, sapling_item_key
@@ -99,6 +116,8 @@ class BuildingKind(Enum):
     FISHER = auto()
     FARM = auto()
     FIELD = auto()
+    MILL = auto()
+    KITCHEN = auto()
 
 
 BUILDING_LABELS: dict[BuildingKind, str] = {
@@ -111,6 +130,8 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
     BuildingKind.FISHER: "Fisher",
     BuildingKind.FARM: "Farm",
     BuildingKind.FIELD: "Field",
+    BuildingKind.MILL: "Mill",
+    BuildingKind.KITCHEN: "Kitchen",
 }
 
 
@@ -120,6 +141,23 @@ def default_building_plot(kind: BuildingKind) -> tuple[int, int]:
         return 1, 1
     n = max(1, int(BUILDING_FOOTPRINT))
     return n, n
+
+
+def default_processor_capacities(kind: BuildingKind) -> tuple[int, int, int]:
+    """Return (capacity, input_capacity, output_capacity) for a new building."""
+    if kind == BuildingKind.MILL:
+        return (
+            MILL_INPUT_CAPACITY + MILL_OUTPUT_CAPACITY,
+            MILL_INPUT_CAPACITY,
+            MILL_OUTPUT_CAPACITY,
+        )
+    if kind == BuildingKind.KITCHEN:
+        return (
+            KITCHEN_INPUT_CAPACITY + KITCHEN_OUTPUT_CAPACITY,
+            KITCHEN_INPUT_CAPACITY,
+            KITCHEN_OUTPUT_CAPACITY,
+        )
+    return BUILDING_STORAGE_CAPACITY, 0, 0
 
 
 class VillagerState(Enum):
@@ -242,6 +280,10 @@ class Inventory:
     onion_seeds: int = 0
     cabbage_seeds: int = 0
     carrot_seeds: int = 0
+    wheat_flour: int = 0
+    rye_flour: int = 0
+    bread: int = 0
+    stew: int = 0
     capacity: int = INVENTORY_CAPACITY
     seed_capacity: int = SEED_CARRY_CAPACITY
 
@@ -282,6 +324,7 @@ class Inventory:
             + self.berries
             + self.reeds
             + sum(getattr(self, key) for key in PRODUCE_KEYS)
+            + sum(getattr(self, key) for key in PROCESSED_KEYS)
         )
 
     @property
@@ -379,6 +422,7 @@ class Inventory:
             **{key: getattr(self, key) for key in SAPLING_ITEM_KEYS},
             **{key: getattr(self, key) for key in PRODUCE_KEYS},
             **{key: getattr(self, key) for key in SEED_KEYS},
+            **{key: getattr(self, key) for key in PROCESSED_KEYS},
         }
         self.reset()
         return deposited
@@ -386,7 +430,7 @@ class Inventory:
     def reset(self) -> None:
         self.wood = self.hardwood = self.rock = self.meat = self.fish = 0
         self.mushrooms = self.berries = self.berry_seeds = self.reeds = 0
-        for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS:
+        for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS:
             setattr(self, key, 0)
 
 
@@ -421,6 +465,10 @@ class HomeStorage:
     onion_seeds: int = 0
     cabbage_seeds: int = 0
     carrot_seeds: int = 0
+    wheat_flour: int = 0
+    rye_flour: int = 0
+    bread: int = 0
+    stew: int = 0
 
     @property
     def saplings(self) -> int:
@@ -457,7 +505,7 @@ class HomeStorage:
     def reset(self) -> None:
         self.wood = self.hardwood = self.rock = self.meat = self.fish = 0
         self.mushrooms = self.berries = self.berry_seeds = self.reeds = 0
-        for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS:
+        for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS:
             setattr(self, key, 0)
 
     def withdraw_keys_to(self, inventory: Inventory, keys: tuple[str, ...]) -> int:
@@ -730,7 +778,17 @@ class Building:
     onion_seeds: int = 0
     cabbage_seeds: int = 0
     carrot_seeds: int = 0
+    wheat_flour: int = 0
+    rye_flour: int = 0
+    bread: int = 0
+    stew: int = 0
     capacity: int = BUILDING_STORAGE_CAPACITY
+    # Processor buildings use split pools (0 = unused / fall back to capacity).
+    input_capacity: int = 0
+    output_capacity: int = 0
+    # recipe name → enabled; progress steps toward PROCESSOR_RECIPE_STEPS.
+    recipe_enabled: dict[str, bool] = field(default_factory=dict)
+    recipe_progress: dict[str, int] = field(default_factory=dict)
     areas: list[TaskArea] = field(default_factory=list)
     fields: list[FarmField] = field(default_factory=list)  # legacy; migrated away
     # Standalone Field plot size (origin at x,y) and crop plans.
@@ -942,16 +1000,155 @@ class Building:
             + self.reeds
             + sum(getattr(self, key) for key in PRODUCE_KEYS)
             + sum(getattr(self, key) for key in SEED_KEYS)
+            + sum(getattr(self, key) for key in PROCESSED_KEYS)
         )
+
+    def is_processor(self) -> bool:
+        return self.kind in (BuildingKind.MILL, BuildingKind.KITCHEN)
+
+    def known_recipes(self) -> tuple[Recipe, ...]:
+        if self.kind == BuildingKind.MILL:
+            return MILL_RECIPES
+        if self.kind == BuildingKind.KITCHEN:
+            return KITCHEN_RECIPES
+        return ()
+
+    def ensure_recipe_state(self) -> None:
+        for recipe in self.known_recipes():
+            self.recipe_enabled.setdefault(recipe.name, True)
+            self.recipe_progress.setdefault(recipe.name, 0)
+
+    def is_recipe_enabled(self, name: str) -> bool:
+        self.ensure_recipe_state()
+        return bool(self.recipe_enabled.get(name, True))
+
+    def toggle_recipe(self, name: str) -> bool:
+        self.ensure_recipe_state()
+        if name not in self.recipe_enabled:
+            return False
+        self.recipe_enabled[name] = not self.recipe_enabled[name]
+        if not self.recipe_enabled[name]:
+            self.recipe_progress[name] = 0
+        return self.recipe_enabled[name]
+
+    def set_recipe_enabled(self, name: str, enabled: bool) -> None:
+        self.ensure_recipe_state()
+        if name not in self.recipe_enabled:
+            return
+        self.recipe_enabled[name] = bool(enabled)
+        if not enabled:
+            self.recipe_progress[name] = 0
+
+    def enabled_recipes(self) -> tuple[Recipe, ...]:
+        self.ensure_recipe_state()
+        return tuple(r for r in self.known_recipes() if self.recipe_enabled.get(r.name, True))
+
+    def recipe_progress_fraction(self, name: str) -> float:
+        self.ensure_recipe_state()
+        steps = max(1, int(PROCESSOR_RECIPE_STEPS))
+        return max(0.0, min(1.0, self.recipe_progress.get(name, 0) / steps))
+
+    def active_supply_keys(self) -> tuple[str, ...]:
+        """Ingredient keys needed by currently enabled recipes."""
+        return input_keys_for_recipes(self.enabled_recipes())
+
+    def unused_input_keys(self) -> tuple[str, ...]:
+        """Input keys stocked here that no enabled recipe uses."""
+        needed = set(self.active_supply_keys())
+        return tuple(
+            key
+            for key in self.processor_input_keys()
+            if key not in needed and int(getattr(self, key, 0)) > 0
+        )
+
+    def processor_input_keys(self) -> tuple[str, ...]:
+        if self.kind == BuildingKind.MILL:
+            return MILL_INPUT_KEYS
+        if self.kind == BuildingKind.KITCHEN:
+            return KITCHEN_INPUT_KEYS
+        return ()
+
+    def processor_output_keys(self) -> tuple[str, ...]:
+        if self.kind == BuildingKind.MILL:
+            return MILL_OUTPUT_KEYS
+        if self.kind == BuildingKind.KITCHEN:
+            return KITCHEN_OUTPUT_KEYS
+        return ()
+
+    def input_stored_total(self) -> int:
+        return sum(int(getattr(self, key, 0)) for key in self.processor_input_keys())
+
+    def output_stored_total(self) -> int:
+        return sum(int(getattr(self, key, 0)) for key in self.processor_output_keys())
+
+    def input_space_left(self) -> int:
+        if self.input_capacity <= 0:
+            return self.space_left
+        return max(0, self.input_capacity - self.input_stored_total())
+
+    def output_space_left(self) -> int:
+        if self.output_capacity <= 0:
+            return self.space_left
+        return max(0, self.output_capacity - self.output_stored_total())
+
+    def space_for_key(self, key: str) -> int:
+        if not self.is_processor() or (self.input_capacity <= 0 and self.output_capacity <= 0):
+            return self.space_left
+        if key in self.processor_input_keys():
+            return self.input_space_left()
+        if key in self.processor_output_keys():
+            return self.output_space_left()
+        return 0
 
     @property
     def space_left(self) -> int:
+        if self.is_processor() and (self.input_capacity > 0 or self.output_capacity > 0):
+            return self.input_space_left() + self.output_space_left()
         return max(0, self.capacity - self.stored_total)
+
+    def capacity_label(self) -> str:
+        if self.is_processor() and self.input_capacity > 0:
+            return (
+                f"{self.input_stored_total()}/{self.input_capacity} in  "
+                f"{self.output_stored_total()}/{self.output_capacity} out"
+            )
+        return f"{self.stored_total}/{self.capacity}"
+
+    def craftable_recipe(self) -> Recipe | None:
+        recipes = self.enabled_recipes()
+        if not recipes:
+            return None
+        if self.output_capacity > 0:
+            return can_craft(
+                self,
+                recipes,
+                output_capacity=self.output_capacity,
+                output_keys=self.processor_output_keys(),
+            )
+        return can_craft(self, recipes, capacity=self.capacity)
+
+    def advance_recipe_progress(self, recipe: Recipe) -> bool:
+        """Advance one work step. Returns True when the craft completes."""
+        self.ensure_recipe_state()
+        steps = max(1, int(PROCESSOR_RECIPE_STEPS))
+        # Clear progress on other recipes so only one bar fills at a time.
+        for other in self.known_recipes():
+            if other.name != recipe.name:
+                self.recipe_progress[other.name] = 0
+        self.recipe_progress[recipe.name] = int(self.recipe_progress.get(recipe.name, 0)) + 1
+        if self.recipe_progress[recipe.name] >= steps:
+            self.recipe_progress[recipe.name] = 0
+            return True
+        return False
 
     def deposit_from_inventory(
         self, inventory: Inventory, *, keep_plantables: bool = False
     ) -> None:
-        keys = self.depositable_keys()
+        keys = (
+            self.active_supply_keys()
+            if self.is_processor()
+            else self.depositable_keys()
+        )
         if keep_plantables:
             keys = tuple(
                 k
@@ -971,7 +1168,7 @@ class Building:
 
     def deposit_one_from(self, inventory: Inventory, key: str) -> bool:
         """Deposit a single unit of ``key`` if capacity allows."""
-        if key not in self.depositable_keys() or self.space_left <= 0:
+        if key not in self.depositable_keys() or self.space_for_key(key) <= 0:
             return False
         if getattr(inventory, key, 0) <= 0:
             return False
@@ -993,7 +1190,7 @@ class Building:
                 "berries",
                 "berry_seeds",
                 "reeds",
-            ) + PRODUCE_KEYS + SEED_KEYS
+            ) + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS
         if self.kind == BuildingKind.WORKSTATION:
             return ()
         if self.kind == BuildingKind.FORESTER:
@@ -1008,6 +1205,10 @@ class Building:
             return _FORAGE_KEYS
         if self.kind == BuildingKind.FARM:
             return PRODUCE_KEYS + SEED_KEYS
+        if self.kind == BuildingKind.MILL:
+            return MILL_INPUT_KEYS + MILL_OUTPUT_KEYS
+        if self.kind == BuildingKind.KITCHEN:
+            return KITCHEN_INPUT_KEYS + KITCHEN_OUTPUT_KEYS
         if self.kind == BuildingKind.FIELD:
             return ()
         return ()
@@ -1022,6 +1223,9 @@ class Building:
             return _FORAGE_KEYS
         if self.kind == BuildingKind.FARM:
             return PRODUCE_KEYS
+        if self.is_processor():
+            # Outputs plus ingredients for disabled recipes.
+            return self.processor_output_keys() + self.unused_input_keys()
         return self.depositable_keys()
 
     def plant_keys(self) -> tuple[str, ...]:
@@ -1036,12 +1240,18 @@ class Building:
 
     def can_accept_from(self, inventory: Inventory) -> bool:
         """True if inventory holds at least one item this building will store."""
-        if self.space_left <= 0:
-            return False
-        return any(getattr(inventory, key, 0) > 0 for key in self.depositable_keys())
+        keys = (
+            self.active_supply_keys()
+            if self.is_processor()
+            else self.depositable_keys()
+        )
+        return any(
+            getattr(inventory, key, 0) > 0 and self.space_for_key(key) > 0
+            for key in keys
+        )
 
     def _take(self, inventory: Inventory, key: str) -> None:
-        room = min(self.space_left, self.capacity - getattr(self, key))
+        room = self.space_for_key(key)
         have = getattr(inventory, key)
         take = min(have, room)
         if take <= 0:
@@ -1119,7 +1329,12 @@ class Building:
         return self.kind in (BuildingKind.FORESTER, BuildingKind.FARM)
 
     def supported_work_modes(self) -> tuple[WorkMode, ...]:
-        if self.kind in (BuildingKind.HOME, BuildingKind.WORKSTATION):
+        if self.kind in (
+            BuildingKind.HOME,
+            BuildingKind.WORKSTATION,
+            BuildingKind.MILL,
+            BuildingKind.KITCHEN,
+        ):
             return ()
         if self.kind in (BuildingKind.FORESTER, BuildingKind.FARM):
             return WORK_MODE_CYCLE_PLANTABLE

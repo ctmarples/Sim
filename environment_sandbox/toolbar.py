@@ -36,6 +36,8 @@ BUILD_ORDER: list[BuildingKind | None] = [
     BuildingKind.FISHER,
     BuildingKind.FARM,
     BuildingKind.FIELD,
+    BuildingKind.MILL,
+    BuildingKind.KITCHEN,
     None,
 ]
 
@@ -47,6 +49,8 @@ _BUILD_SHORT: dict[BuildingKind, str] = {
     BuildingKind.FISHER: "Fish",
     BuildingKind.FARM: "Farm",
     BuildingKind.FIELD: "Field",
+    BuildingKind.MILL: "Mill",
+    BuildingKind.KITCHEN: "Kit",
 }
 
 
@@ -143,7 +147,11 @@ class Toolbar:
                 self._make_btn(f"mode_{mode.name}", label, x, y, w, h, "mode")
             )
             x += w + 4
-        if building.kind != BuildingKind.FARM:
+        if building.kind not in (
+            BuildingKind.FARM,
+            BuildingKind.MILL,
+            BuildingKind.KITCHEN,
+        ):
             clear_label = "Clear"
             clear_w = max(48, 10 + self.font_small.size(clear_label)[0])
             buttons.append(
