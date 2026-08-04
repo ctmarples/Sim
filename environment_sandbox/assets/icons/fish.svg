@@ -1,13 +1,65 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg"
-     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
-     viewBox="0 0 40 40"
-     width="400"
-     height="400">
-  <title>fish</title>
-  <desc>Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
-  <g id="fish" inkscape:groupmode="layer" inkscape:label="fish">
-    <path id="body" class="body" d="M 8,20 C 8,17.7908610008 12.477152502,16 18,16 C 23.522847498,16 28,17.7908610008 28,20 C 28,22.2091389992 23.522847498,24 18,24 C 12.477152502,24 8,22.2091389992 8,20 Z" fill="#50a0c8" stroke="none"/>
-    <path id="tail" class="body" d="M 28,20 L 34,16 L 34,24 Z" fill="#50a0c8" stroke="none"/>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 40 40"
+   width="400"
+   height="400"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="fish.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1" />
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     showgrid="false"
+     inkscape:zoom="1.4448811"
+     inkscape:cx="137.38154"
+     inkscape:cy="166.10363"
+     inkscape:window-width="1470"
+     inkscape:window-height="835"
+     inkscape:window-x="0"
+     inkscape:window-y="33"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="fish" />
+  <title
+     id="title1">fish</title>
+  <desc
+     id="desc1">Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <g
+     id="fish"
+     inkscape:groupmode="layer"
+     inkscape:label="fish">
+    <path
+       id="body"
+       class="body"
+       d="m 8,20 c 0,-2.209139 4.477153,-4 10,-4 2.992129,0 5.807198,1.694481 7.639796,2.527512 C 27.189793,19.232083 28,18.987713 28,20 28,21.246199 26.899952,20.930721 24.666493,21.664316 22.940695,22.231166 20.407351,24 18,24 15.188152,24 12.972038,23.146174 11.155168,22.398888 9.40346,21.678404 8,21.0844 8,20 Z"
+       fill="#50a0c8"
+       stroke="none"
+       sodipodi:nodetypes="ssssssss" />
+    <path
+       id="tail"
+       class="body"
+       d="m 26.571429,19.935065 6,-4 v 8 z"
+       fill="#50a0c8"
+       stroke="none" />
+    <path
+       id="tail-4"
+       class="body"
+       d="m 18.168831,21.954546 c 0,0 -0.309247,-0.328164 -0.597733,-0.668095 -0.104516,-0.123154 -0.615917,-0.340782 -0.73154,-0.453573 -0.392561,-0.382944 -1.553843,-0.54067 -1.553843,-0.54067 0,0 1.139079,-0.381888 1.652987,-0.684457 0.451393,-0.265762 0.91184,-0.608742 1.230129,-0.977881"
+       fill="#50a0c8"
+       stroke="none"
+       style="fill:#8ab9cf;fill-opacity:1;stroke-width:0.446874"
+       sodipodi:nodetypes="csscac" />
   </g>
 </svg>

@@ -44,6 +44,7 @@ from seasons import (
     season_for_day,
     water_frozen,
 )
+from entities import arm_cell_step_visual, note_cell_step
 from settings import (
     ANIMAL_BREED_CHANCE,
     ANIMAL_GROWTH_INTERVAL,
@@ -673,6 +674,22 @@ class WildlifeManager:
                 return pos
         return options[-1]
 
+    @staticmethod
+    def _place_animal(
+        animal: Animal,
+        nx: int,
+        ny: int,
+        occupied: set[tuple[int, int]],
+    ) -> None:
+        occupied.discard((animal.x, animal.y))
+        note_cell_step(animal, nx, ny)
+        occupied.add((nx, ny))
+
+    @staticmethod
+    def _arm_move(animal: Animal, move_interval: int) -> None:
+        animal.move_cooldown = move_interval
+        arm_cell_step_visual(animal, move_interval)
+
     def _step_toward(
         self,
         world: World,
@@ -712,9 +729,7 @@ class WildlifeManager:
 
         if choice is None:
             return False
-        occupied.discard((animal.x, animal.y))
-        animal.x, animal.y = choice
-        occupied.add(choice)
+        self._place_animal(animal, choice[0], choice[1], occupied)
         return True
 
     def _step_along_path(
@@ -743,9 +758,7 @@ class WildlifeManager:
             if not improving:
                 return False
             nxt = self.rng.choice(improving)
-        occupied.discard((animal.x, animal.y))
-        animal.x, animal.y = nxt
-        occupied.add(nxt)
+        self._place_animal(animal, nxt[0], nxt[1], occupied)
         return True
 
     def _bfs_next_step(
@@ -928,7 +941,7 @@ class WildlifeManager:
                 animal.patch_id = mate.patch_id
                 animal.migrate_home_id = None
                 animal.migrate_target = None
-            animal.move_cooldown = move_interval
+            self._arm_move(animal, move_interval)
             moved.add(animal.id)
             return True
 
@@ -952,7 +965,7 @@ class WildlifeManager:
             occupied.add((mate.x, mate.y))
 
         settled = self._try_settle_dispersal(animal, need=need)
-        animal.move_cooldown = move_interval
+        self._arm_move(animal, move_interval)
         moved.add(animal.id)
 
         if mate is not None and mate.id not in moved:
@@ -1008,7 +1021,7 @@ class WildlifeManager:
                     mate.migrate_target = None
             else:
                 self._try_settle_dispersal(mate, need=need)
-            mate.move_cooldown = move_interval
+            self._arm_move(mate, move_interval)
             moved.add(mate.id)
         return True
 
@@ -1030,9 +1043,7 @@ class WildlifeManager:
         if not opts:
             return
         dest = self._weighted_away_choice(opts, center)
-        occupied.discard((animal.x, animal.y))
-        animal.x, animal.y = dest
-        occupied.add(dest)
+        self._place_animal(animal, dest[0], dest[1], occupied)
 
     def _move_pair_away(
         self,
@@ -1066,9 +1077,7 @@ class WildlifeManager:
                 self._step_toward(world, a, nearest[0], nearest[1], occupied)
         else:
             dest = self._weighted_away_choice(lead_opts, center)
-            occupied.discard((a.x, a.y))
-            a.x, a.y = dest
-            occupied.add(dest)
+            self._place_animal(a, dest[0], dest[1], occupied)
 
         # Mate stays adjacent: step toward leader first if separated.
         if max(abs(b.x - a.x), abs(b.y - a.y)) > 1:
@@ -1086,12 +1095,10 @@ class WildlifeManager:
             pool = in_roam or mate_opts
             if pool:
                 mdest = self._weighted_away_choice(pool, center)
-                occupied.discard((b.x, b.y))
-                b.x, b.y = mdest
-                occupied.add(mdest)
+                self._place_animal(b, mdest[0], mdest[1], occupied)
 
-        a.move_cooldown = move_interval
-        b.move_cooldown = move_interval
+        self._arm_move(a, move_interval)
+        self._arm_move(b, move_interval)
 
     def _move_animals(self, world: World, day: float, season: Season) -> None:
         slow = 1 + int(2 * freeze_amount(day)) if animals_slow(day) else 1
@@ -1135,7 +1142,7 @@ class WildlifeManager:
                             cold_n = self._cold_roaming_for(animal.kind, near)
                             if (animal.x, animal.y) in cold_n:
                                 animal.patch_id = near.id
-                    animal.move_cooldown = move_interval
+                    self._arm_move(animal, move_interval)
                     moved.add(animal.id)
                     continue
 
@@ -1152,14 +1159,14 @@ class WildlifeManager:
                     ):
                         animal.patch_id = near.id
                         animal.retreat_target = None
-                animal.move_cooldown = move_interval
+                self._arm_move(animal, move_interval)
                 moved.add(animal.id)
                 continue
 
             hab = self.habitat(animal.patch_id)
             if hab is None:
                 animal.patch_id = None
-                animal.move_cooldown = move_interval
+                self._arm_move(animal, move_interval)
                 moved.add(animal.id)
                 continue
 
@@ -1179,12 +1186,12 @@ class WildlifeManager:
                         animal.retreat_target[1],
                         occupied,
                     )
-                animal.move_cooldown = move_interval
+                self._arm_move(animal, move_interval)
                 moved.add(animal.id)
                 continue
 
             if not roam:
-                animal.move_cooldown = move_interval
+                self._arm_move(animal, move_interval)
                 moved.add(animal.id)
                 continue
 
@@ -1220,14 +1227,14 @@ class WildlifeManager:
                     else self.rng.choice(neighbours)
                 )
                 occupied.discard((animal.x, animal.y))
-                animal.x, animal.y = dest
+                note_cell_step(animal, dest[0], dest[1])
                 occupied.add(dest)
             elif (animal.x, animal.y) not in roam:
                 nearest = min(
                     roam, key=lambda p: max(abs(p[0] - animal.x), abs(p[1] - animal.y))
                 )
                 self._step_toward(world, animal, nearest[0], nearest[1], occupied)
-            animal.move_cooldown = move_interval
+            self._arm_move(animal, move_interval)
             moved.add(animal.id)
 
     def _adjacent_wild_crops(self, world: World, x: int, y: int) -> list[tuple[int, int]]:
@@ -1472,10 +1479,13 @@ class FishManager:
                 if (nx, ny) != (item.x, item.y) and (nx, ny) in water
             ]
             if neighbours:
-                item.x, item.y = self.rng.choice(neighbours)
+                nx, ny = self.rng.choice(neighbours)
+                note_cell_step(item, nx, ny)
             elif (item.x, item.y) not in water:
-                item.x, item.y = self.rng.choice(list(water))
+                nx, ny = self.rng.choice(list(water))
+                note_cell_step(item, nx, ny)
             item.move_cooldown = FISH_MOVE_INTERVAL
+            arm_cell_step_visual(item, FISH_MOVE_INTERVAL)
 
     def _fish_per_patch(self, world: World) -> list[list[Fish]]:
         patches = world.water_patches()

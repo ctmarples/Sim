@@ -43,7 +43,10 @@ from entities import (
     VillagerState,
     WorkMode,
     WorkPriority,
+    arm_cell_step_visual,
     default_building_plot,
+    entity_draw_xy,
+    note_cell_step,
 )
 from indicators import (
     BIODIVERSITY_SAMPLES_PER_YEAR,
@@ -110,6 +113,7 @@ from settings import (
     MINIMAP_HEIGHT,
     MINIMAP_WIDTH,
     OVERLAY_ALPHA,
+    PLAYER_VIS_SPEED,
     SAPLING_DROP_CHANCE,
     SIM_SPEEDS,
     STARTING_FOOD,
@@ -384,7 +388,11 @@ class Game:
     def run(self) -> None:
         pygame.key.set_repeat(180, 40)
         while self.running:
+            dt = self.clock.get_time() / 1000.0
             self._handle_events()
+            self._update_camera_input(dt)
+            self.camera.update(dt, self.world.cols, self.world.rows)
+            self.player.update_visual(dt, PLAYER_VIS_SPEED)
             if self.sim_speed > 0:
                 for _ in range(self.sim_speed):
                     self._update_simulation()
@@ -392,6 +400,24 @@ class Game:
             self._draw()
             self.clock.tick(FPS)
         pygame.quit()
+
+    def _update_camera_input(self, dt: float) -> None:
+        """Continuous WASD panning (smooth, not cell-stepped)."""
+        if self.headless:
+            return
+        if (
+            self.file_dialog.open
+            or self.field_plan_dialog.open
+            or self.building_inspect.open
+            or self.villager_inspect.open
+            or self.resource_inspect.open
+        ):
+            return
+        keys = pygame.key.get_pressed()
+        dx = float(keys[pygame.K_d]) - float(keys[pygame.K_a])
+        dy = float(keys[pygame.K_s]) - float(keys[pygame.K_w])
+        if dx or dy:
+            self.camera.pan_continuous(dx, dy, dt, self.world.cols, self.world.rows)
 
     def reset(self) -> None:
         self.world.reset()
@@ -671,14 +697,6 @@ class Game:
             self._set_overlay(OverlayMode.BIODIVERSITY)
         elif key == pygame.K_F6:
             self._toggle_autotile_diagnostic()
-        elif key == pygame.K_w:
-            self.camera.pan(0, -1, self.world.cols, self.world.rows)
-        elif key == pygame.K_s:
-            self.camera.pan(0, 1, self.world.cols, self.world.rows)
-        elif key == pygame.K_a:
-            self.camera.pan(-1, 0, self.world.cols, self.world.rows)
-        elif key == pygame.K_d:
-            self.camera.pan(1, 0, self.world.cols, self.world.rows)
         elif key == pygame.K_UP:
             self._try_move(0, -1)
         elif key == pygame.K_DOWN:
@@ -713,10 +731,9 @@ class Game:
         """Return screen rect for given world cell coordinates."""
         return self.camera.cell_rect(x, y)
 
-    def _cell_center(self, x: int, y: int) -> tuple[int, int]:
-        """Return screen center point for given world cell coordinates."""
-        rect = self.camera.cell_rect(x, y)
-        return rect.centerx, rect.centery
+    def _cell_center(self, x: float, y: float) -> tuple[int, int]:
+        """Return screen center point for given world cell coordinates (may be fractional)."""
+        return self.camera.world_to_screen(float(x) + 0.5, float(y) + 0.5)
 
     def _on_mouse_down(self, pos: tuple[int, int]) -> None:
         building = self._selected_building()
@@ -4444,8 +4461,10 @@ class Game:
             villager._path_goal = None  # type: ignore[attr-defined]
             return False
         step = cache.pop(0)
-        villager.x, villager.y = step
-        villager.move_cooldown = self._villager_move_interval(villager)
+        interval = self._villager_move_interval(villager)
+        note_cell_step(villager, step[0], step[1])
+        villager.move_cooldown = interval
+        arm_cell_step_visual(villager, interval)
         return True
 
     def _clear_villager_path(self, villager: Villager) -> None:
@@ -5665,7 +5684,7 @@ class Game:
             self._blit_camera_world_surface(ice, origin)
 
         x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
-        vc = self.camera.view_cell()
+        vc = self.camera.view_cell_px()
         # Tall / overhanging icons (trees, buildings) must paint after ground
         # features and in north→south order, or neighbour cells square-cut them.
         overhang = BUILDING_FEATURES | {
@@ -5933,9 +5952,10 @@ class Game:
             blit_icon,
         )
 
-        size = self.camera.view_cell()
+        size = self.camera.view_cell_px()
         for animal in self.wildlife.animals:
-            cx, cy = self._cell_center(animal.x, animal.y)
+            ax, ay = entity_draw_xy(animal)
+            cx, cy = self._cell_center(ax, ay)
             cy += max(1, size // 20)
             colour = COLOUR_BOAR if animal.kind == AnimalKind.BOAR else COLOUR_DEER
             if animal.sex == AnimalSex.FEMALE:
@@ -5965,17 +5985,19 @@ class Game:
             float(self.calendar_day) + (1.0 - self.day_tick / TICKS_PER_DAY)
         )
         colour = blend_colour(COLOUR_FISH, (150, 190, 210), freeze)
-        size = self.camera.view_cell()
+        size = self.camera.view_cell_px()
         for item in self.fish.fish:
-            cx, cy = self._cell_center(item.x, item.y)
+            fx, fy = entity_draw_xy(item)
+            cx, cy = self._cell_center(fx, fy)
             blit_icon(self.screen, ICON_FISH, cx, cy, size, recolour={"body": colour})
 
     def _draw_villagers(self) -> None:
         from icons import ICON_VILLAGER, blit_icon
 
-        size = self.camera.view_cell()
+        size = self.camera.view_cell_px()
         for villager in self.villagers:
-            cx, cy = self._cell_center(villager.x, villager.y)
+            vx, vy = entity_draw_xy(villager)
+            cx, cy = self._cell_center(vx, vy)
             job_colour = self._villager_job_colour(villager)
             blit_icon(
                 self.screen,
@@ -5989,13 +6011,13 @@ class Game:
     def _draw_player(self) -> None:
         from icons import ICON_PLAYER, blit_icon
 
-        cx, cy = self._cell_center(self.player.x, self.player.y)
+        cx, cy = self._cell_center(self.player.vis_x, self.player.vis_y)
         blit_icon(
             self.screen,
             ICON_PLAYER,
             cx,
             cy,
-            self.camera.view_cell(),
+            self.camera.view_cell_px(),
             recolour={"body": COLOUR_PLAYER},
         )
 

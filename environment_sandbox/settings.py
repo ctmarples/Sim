@@ -37,7 +37,11 @@ TERRAIN_FILL_MODE: str = "procedural"
 ZOOM_MIN: float = 0.35
 ZOOM_MAX: float = 2.5
 ZOOM_STEP: float = 0.12
+# Legacy discrete pan step (kept for compatibility); continuous WASD uses speed.
 CAMERA_PAN_CELLS: float = 0.55
+CAMERA_PAN_SPEED: float = 14.0  # world cells / second at zoom 1
+ZOOM_SMOOTH_RATE: float = 14.0  # higher = snappier zoom lerp
+PLAYER_VIS_SPEED: float = 10.0  # cells / second toward logical cell
 MINIMAP_WIDTH: int = 168
 MINIMAP_HEIGHT: int = 126
 

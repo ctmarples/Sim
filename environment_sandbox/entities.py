@@ -1289,6 +1289,12 @@ class Player:
     x: int
     y: int
     inventory: Inventory = field(default_factory=Inventory)
+    vis_x: float = 0.0
+    vis_y: float = 0.0
+
+    def __post_init__(self) -> None:
+        self.vis_x = float(self.x)
+        self.vis_y = float(self.y)
 
     def move_to(self, x: int, y: int) -> None:
         self.x = x
@@ -1297,4 +1303,65 @@ class Player:
     def reset(self, x: int, y: int) -> None:
         self.x = x
         self.y = y
+        self.vis_x = float(x)
+        self.vis_y = float(y)
         self.inventory.reset()
+
+    def update_visual(self, dt: float, speed: float) -> None:
+        """Lerp draw position toward the logical cell each frame."""
+        tx, ty = float(self.x), float(self.y)
+        dx = tx - self.vis_x
+        dy = ty - self.vis_y
+        dist = (dx * dx + dy * dy) ** 0.5
+        step = max(0.0, speed) * max(0.0, dt)
+        if dist <= step or dist < 1e-6:
+            self.vis_x, self.vis_y = tx, ty
+        else:
+            self.vis_x += dx / dist * step
+            self.vis_y += dy / dist * step
+
+
+def note_cell_step(entity: object, nx: int, ny: int) -> None:
+    """Record a logical cell change so drawing can interpolate from the prior cell."""
+    x = int(getattr(entity, "x"))
+    y = int(getattr(entity, "y"))
+    if (x, y) == (nx, ny):
+        return
+    setattr(entity, "_vis_from_x", float(x))
+    setattr(entity, "_vis_from_y", float(y))
+    setattr(entity, "_vis_pending", True)
+    setattr(entity, "x", nx)
+    setattr(entity, "y", ny)
+
+
+def arm_cell_step_visual(entity: object, duration: int) -> None:
+    """Bind a pending cell step to a move duration (usually ``move_cooldown``)."""
+    if getattr(entity, "_vis_pending", False):
+        setattr(entity, "_vis_duration", max(1, int(duration)))
+        setattr(entity, "_vis_pending", False)
+
+
+def snap_entity_visual(entity: object) -> None:
+    """Snap draw position to the logical cell (spawn, load, teleport)."""
+    setattr(entity, "_vis_from_x", float(getattr(entity, "x")))
+    setattr(entity, "_vis_from_y", float(getattr(entity, "y")))
+    setattr(entity, "_vis_duration", 0)
+    setattr(entity, "_vis_pending", False)
+
+
+def entity_draw_xy(entity: object) -> tuple[float, float]:
+    """Fractional cell indices for drawing (lerp between cell centres)."""
+    x = float(getattr(entity, "x"))
+    y = float(getattr(entity, "y"))
+    duration = int(getattr(entity, "_vis_duration", 0) or 0)
+    cooldown = int(getattr(entity, "move_cooldown", 0) or 0)
+    fx = getattr(entity, "_vis_from_x", None)
+    fy = getattr(entity, "_vis_from_y", None)
+    if fx is None or fy is None or duration <= 0 or cooldown <= 0:
+        return x, y
+    progress = 1.0 - (cooldown / duration)
+    if progress < 0.0:
+        progress = 0.0
+    elif progress > 1.0:
+        progress = 1.0
+    return float(fx) + (x - float(fx)) * progress, float(fy) + (y - float(fy)) * progress

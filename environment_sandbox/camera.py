@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import math
+
 from settings import (
     CAMERA_PAN_CELLS,
+    CAMERA_PAN_SPEED,
     CELL_SIZE,
     MAP_OFFSET_Y,
     ZOOM_MAX,
     ZOOM_MIN,
+    ZOOM_SMOOTH_RATE,
     map_view_height,
     map_view_width,
 )
@@ -20,9 +24,17 @@ class Camera:
         self.x: float = 0.0
         self.y: float = 0.0
         self.zoom: float = 1.0
+        self.zoom_target: float = 1.0
+        self._zoom_focus: tuple[float, float] | None = None
+        self._zoom_screen: tuple[int, int] | None = None
 
-    def view_cell(self) -> int:
-        return max(6, int(round(CELL_SIZE * self.zoom)))
+    def view_cell(self) -> float:
+        """On-screen pixels per world cell (continuous; not snapped to integers)."""
+        return max(6.0, CELL_SIZE * self.zoom)
+
+    def view_cell_px(self) -> int:
+        """Integer pixel size for icon blits / pygame drawing."""
+        return max(6, int(round(self.view_cell())))
 
     def visible_cells(self) -> tuple[float, float]:
         vc = self.view_cell()
@@ -42,6 +54,24 @@ class Camera:
         self.y += dy_cells * CAMERA_PAN_CELLS * scale
         self.clamp(world_cols, world_rows)
 
+    def pan_continuous(
+        self,
+        dx_dir: float,
+        dy_dir: float,
+        dt: float,
+        world_cols: int,
+        world_rows: int,
+    ) -> None:
+        """Pan by direction vector (typically unit) at CAMERA_PAN_SPEED cells/sec."""
+        length = math.hypot(dx_dir, dy_dir)
+        if length < 1e-6 or dt <= 0.0:
+            return
+        scale = 1.0 / max(0.25, self.zoom)
+        speed = CAMERA_PAN_SPEED * scale
+        self.x += (dx_dir / length) * speed * dt
+        self.y += (dy_dir / length) * speed * dt
+        self.clamp(world_cols, world_rows)
+
     def center_on(self, cx: float, cy: float, world_cols: int, world_rows: int) -> None:
         vis_w, vis_h = self.visible_cells()
         self.x = cx - vis_w / 2
@@ -55,19 +85,34 @@ class Camera:
         world_cols: int,
         world_rows: int,
     ) -> None:
-        """Zoom keeping the world point under screen_pos stable."""
+        """Queue a zoom toward ``zoom_target``, keeping the world point under the cursor."""
         mx, my = screen_pos
         before = self.screen_to_world_float(mx, my)
-        if before is None:
-            new_zoom = max(ZOOM_MIN, min(ZOOM_MAX, self.zoom * factor))
-            self.zoom = new_zoom
-            self.clamp(world_cols, world_rows)
+        self.zoom_target = max(ZOOM_MIN, min(ZOOM_MAX, self.zoom_target * factor))
+        if before is not None:
+            self._zoom_focus = before
+            self._zoom_screen = screen_pos
+        else:
+            self._zoom_focus = None
+            self._zoom_screen = None
+        # Apply one immediate step so wheel feels responsive, then smooth the rest.
+        self.update(1.0 / 60.0, world_cols, world_rows)
+
+    def update(self, dt: float, world_cols: int, world_rows: int) -> None:
+        """Smoothly approach zoom_target while holding the focus world point stable."""
+        if abs(self.zoom - self.zoom_target) < 1e-5:
+            self.zoom = self.zoom_target
             return
-        self.zoom = max(ZOOM_MIN, min(ZOOM_MAX, self.zoom * factor))
-        after_vc = self.view_cell()
-        # Reposition so `before` stays under the cursor.
-        self.x = before[0] - mx / after_vc
-        self.y = before[1] - (my - MAP_OFFSET_Y) / after_vc
+        alpha = 1.0 - math.exp(-ZOOM_SMOOTH_RATE * max(0.0, dt))
+        self.zoom += (self.zoom_target - self.zoom) * alpha
+        if abs(self.zoom - self.zoom_target) < 1e-4:
+            self.zoom = self.zoom_target
+        if self._zoom_focus is not None and self._zoom_screen is not None:
+            mx, my = self._zoom_screen
+            wx, wy = self._zoom_focus
+            vc = self.view_cell()
+            self.x = wx - mx / vc
+            self.y = wy - (my - MAP_OFFSET_Y) / vc
         self.clamp(world_cols, world_rows)
 
     def world_to_screen(self, wx: float, wy: float) -> tuple[int, int]:
@@ -90,12 +135,13 @@ class Camera:
         vc = self.view_cell()
         return sx / vc + self.x, (sy - MAP_OFFSET_Y) / vc + self.y
 
-    def cell_rect(self, x: int, y: int):
+    def cell_rect(self, x: int | float, y: int | float):
         import pygame
 
         vc = self.view_cell()
-        sx, sy = self.world_to_screen(x, y)
-        return pygame.Rect(sx, sy, vc, vc)
+        sx, sy = self.world_to_screen(float(x), float(y))
+        size = max(1, int(round(vc)))
+        return pygame.Rect(sx, sy, size, size)
 
     def visible_range(self, world_cols: int, world_rows: int) -> tuple[int, int, int, int]:
         vis_w, vis_h = self.visible_cells()
