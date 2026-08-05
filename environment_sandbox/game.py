@@ -32,6 +32,10 @@ from resource_balance import (
     HONEY_PER_BEE_LEVEL,
     MAX_FOOD_TYPES_PER_MEAL,
     MUSHROOM_YIELD,
+    POLLINATOR_BASE_RADIUS,
+    POLLINATOR_BASE_STRENGTH,
+    POLLINATOR_RADIUS_PER_LEVEL,
+    POLLINATOR_STRENGTH_PER_LEVEL,
     RABBIT_MEAT_PER_LEVEL,
     REED_YIELD,
     SAPLING_DROP_CHANCE,
@@ -75,13 +79,21 @@ from entities import (
     note_cell_step,
 )
 from indicators import (
-    BIODIVERSITY_SAMPLES_PER_YEAR,
     OVERLAY_LABELS,
     OverlayMode,
-    average_grids,
-    biodiversity_snapshot,
     build_overlay_grid,
+    floral_resources_snapshot,
     overlay_colour,
+    pollination_coverage_grid,
+)
+from environment import (
+    EnvLayer,
+    EnvMaps,
+    PEST_CONTROL_MULT_HIGH,
+    POLLINATION_YIELD_HIGH,
+    crop_health_cap_from_pest_control,
+    is_env_sample_day,
+    pollination_yield_multiplier,
 )
 from settings import (
     BUILDING_STORAGE_CAPACITY,
@@ -307,11 +319,11 @@ class Game:
 
         self.overlay_mode = OverlayMode.NONE
         self.overlay_values: list[list[float]] = build_overlay_grid(self.world, self.overlay_mode)
-        # Biodiversity: season start/mid samples, averaged over past year (≤8).
-        self._biodiversity_samples: list[list[list[float]]] = []
-        self._biodiversity_average: list[list[float]] = [
-            [0.0] * self.world.cols for _ in range(self.world.rows)
-        ]
+        # Cyclic env layers (8×/year): biodiversity → pest-control modifiers.
+        self.env_maps = EnvMaps.blank(self.world.rows, self.world.cols)
+        # Compat aliases used by overlay draw / older diagnostics.
+        self._biodiversity_samples = self.env_maps.biodiversity_samples
+        self._biodiversity_average = self.env_maps.biodiversity
         # Rebuilt at most once per sim tick; avoids full-map forage scans per villager.
         self._forage_cell_index: dict[str, list[tuple[int, int]]] | None = None
         self._minimap_terrain: pygame.Surface | None = None
@@ -321,7 +333,7 @@ class Game:
         self._ensure_core_buildings()
         self.wildlife.refresh_habitats(self.world)
         self.wildlife.seed_breeding_grounds(self.world)
-        self._sample_biodiversity()
+        self._sample_environment()
         self.status_message = (
             "Hire from Hiring hall popup. Toolbar builds place construction sites. "
             "Unassigned villagers build & transport by priority."
@@ -495,13 +507,15 @@ class Game:
         self._mouse_down_cell = None
         self._placing_field = False
         self.overlay_mode = OverlayMode.NONE
-        self._biodiversity_samples.clear()
+        self.env_maps.resize(self.world.rows, self.world.cols)
+        self._biodiversity_samples = self.env_maps.biodiversity_samples
+        self._biodiversity_average = self.env_maps.biodiversity
         self._give_starting_resources()
         self._ensure_core_buildings()
         self._food_rng.seed(99)
         self.wildlife.refresh_habitats(self.world)
         self.wildlife.seed_breeding_grounds(self.world)
-        self._sample_biodiversity()
+        self._sample_environment()
         self._refresh_indicators()
         self._set_status("World reset.")
 
@@ -799,6 +813,10 @@ class Game:
             self._set_overlay(OverlayMode.DISTURBANCE)
         elif key == pygame.K_6:
             self._set_overlay(OverlayMode.BIODIVERSITY)
+        elif key == pygame.K_7:
+            self._set_overlay(OverlayMode.FLORAL_RESOURCES)
+        elif key == pygame.K_8:
+            self._set_overlay(OverlayMode.POLLINATION)
         elif key == pygame.K_F6:
             self._toggle_autotile_diagnostic()
         elif key == pygame.K_UP:
@@ -1621,41 +1639,153 @@ class Game:
                 self.world.clear_mushrooms()
             self.wildlife.on_season_change(self.world, self.season)
             self._set_status(f"{format_date(self.calendar_day)} begins.")
-        # Biodiversity: sample at season start (day 0) and midpoint.
-        if self._is_biodiversity_sample_day(self.calendar_day):
-            self._sample_biodiversity()
+        # Environmental layers: sample at season start (day 0) and midpoint.
+        if is_env_sample_day(self.calendar_day):
+            self._sample_environment()
             self._sync_habitat_selection()
 
-    @staticmethod
-    def _is_biodiversity_sample_day(calendar_day: int) -> bool:
-        d = day_in_season(calendar_day)
-        return d == 0 or d == DAYS_PER_SEASON // 2
+    def _sample_environment(self) -> None:
+        """8×/year: refresh habitats/forest floor and stable env production grids."""
+        from wildlife import AnimalKind
 
-    def _sample_biodiversity(self) -> None:
-        """Record a spatial biodiversity snapshot; keep last year of samples.
-
-        Also refreshes wildlife forest-patch habitats on the same cadence.
-        """
         self.wildlife.refresh_habitats(self.world)
         self.world.update_forest_floor()
         # Seasonal overlays follow the same ≤8/year cadence (not daily).
-        # Density fields stay; remask/tint only. Refresh tree halo if trees changed.
         self._season_mask_period_key = None
         self._season_check_trees = True
-        snap = biodiversity_snapshot(
+
+        bee_nests = self._bee_nest_sites()
+        bee_pos: list[tuple[int, int]] = []
+        rabbit_pos: list[tuple[int, int]] = []
+        for colony in self.wildlife.colonies:
+            if colony.kind == AnimalKind.BEE:
+                bee_pos.append((colony.x, colony.y))
+                for m in colony.members:
+                    bee_pos.append((m.x, m.y))
+            elif colony.kind == AnimalKind.RABBIT:
+                rabbit_pos.append((colony.x, colony.y))
+                for m in colony.members:
+                    rabbit_pos.append((m.x, m.y))
+
+        self.env_maps.sample(
             self.world,
             deer_positions=((a.x, a.y) for a in self.wildlife.deer()),
             boar_positions=((a.x, a.y) for a in self.wildlife.boars()),
             fish_positions=((f.x, f.y) for f in self.fish.fish),
+            bee_positions=bee_pos,
+            rabbit_positions=rabbit_pos,
+            bee_nests=bee_nests,
         )
-        self._biodiversity_samples.append(snap)
-        while len(self._biodiversity_samples) > BIODIVERSITY_SAMPLES_PER_YEAR:
-            self._biodiversity_samples.pop(0)
-        self._biodiversity_average = average_grids(
-            self._biodiversity_samples, self.world.rows, self.world.cols
-        )
-        if self.overlay_mode == OverlayMode.BIODIVERSITY:
+        self._biodiversity_samples = self.env_maps.biodiversity_samples
+        self._biodiversity_average = self.env_maps.biodiversity
+        self._update_field_crop_health()
+        if self.overlay_mode in (
+            OverlayMode.BIODIVERSITY,
+            OverlayMode.FLORAL_RESOURCES,
+            OverlayMode.POLLINATION,
+        ):
             self._refresh_indicators()
+
+    def _update_field_crop_health(self) -> None:
+        """Ratchet each Field's crop_health down toward the pest-control target.
+
+        Health only decreases (sticky), at most CROP_HEALTH_MAX_DROP per sample,
+        and never below CROP_HEALTH_MIN. Values crushed by the old harsh curve
+        are lifted to the new floor.
+        """
+        from environment import CROP_HEALTH_MAX_DROP, CROP_HEALTH_MIN
+
+        for building in self.buildings.values():
+            if building.kind != BuildingKind.FIELD:
+                continue
+            cells = building.plot_cells()
+            if not cells:
+                continue
+            pc = self.env_maps.farm_pest_control(cells)
+            target = crop_health_cap_from_pest_control(pc)
+            current = float(getattr(building, "crop_health", 1.0))
+            # Lift out of the obsolete sub-floor range from the old formula.
+            current = max(current, CROP_HEALTH_MIN)
+            if current > target:
+                current = max(target, current - CROP_HEALTH_MAX_DROP)
+            building.crop_health = max(CROP_HEALTH_MIN, min(1.0, current))
+
+    def _field_crop_health(self, field: Building) -> float:
+        from environment import CROP_HEALTH_MIN
+
+        return max(CROP_HEALTH_MIN, min(1.0, float(getattr(field, "crop_health", 1.0))))
+
+    def _bee_nest_sites(self) -> list[tuple[int, int, int]]:
+        """Active bee nests as (x, y, level) for pollination coverage."""
+        from wildlife import AnimalKind
+
+        nests: list[tuple[int, int, int]] = []
+        for colony in self.wildlife.colonies:
+            if colony.kind == AnimalKind.BEE and colony.level >= 1:
+                nests.append((colony.x, colony.y, colony.level))
+        return nests
+
+    def _backfill_env_overlays(self) -> None:
+        """Fill floral if missing; always rebuild pollination from current nests."""
+        if not self.env_maps.floral_samples:
+            floral = floral_resources_snapshot(self.world)
+            self.env_maps.floral_samples = [floral]
+            self.env_maps.floral_resources = [row[:] for row in floral]
+        # Pollination is nest-derived (not a year average) — refresh so range
+        # / strength balance changes apply immediately on load.
+        self.env_maps.pollination = pollination_coverage_grid(
+            self.world,
+            self._bee_nest_sites(),
+            base_radius=POLLINATOR_BASE_RADIUS,
+            radius_per_level=POLLINATOR_RADIUS_PER_LEVEL,
+            base_strength=POLLINATOR_BASE_STRENGTH,
+            strength_per_level=POLLINATOR_STRENGTH_PER_LEVEL,
+        )
+
+    # Back-compat alias for save_load / diagnostics.
+    def _sample_biodiversity(self) -> None:
+        self._sample_environment()
+
+    def _is_biodiversity_sample_day(self, calendar_day: int) -> bool:
+        return is_env_sample_day(calendar_day)
+
+    def _field_env_cells(self, field: Building) -> list[tuple[int, int]]:
+        return field.plot_cells()
+
+    def _farm_pest_control_at(self, x: int, y: int) -> float:
+        """Pest-control multiplier for the Field covering (x, y), else cell value."""
+        field_b = self._field_building_at(x, y)
+        if field_b is not None:
+            return self.env_maps.farm_pest_control(field_b.plot_cells())
+        return self.env_maps.value_at(EnvLayer.PEST_CONTROL, x, y)
+
+    def _farm_pollination_at(self, x: int, y: int) -> float:
+        """Mean pollination coverage for the Field covering (x, y), else cell value."""
+        field_b = self._field_building_at(x, y)
+        if field_b is not None:
+            return self.env_maps.farm_pollination(field_b.plot_cells())
+        return self.env_maps.value_at(EnvLayer.POLLINATION, x, y)
+
+    def _farm_produce_yield_at(self, x: int, y: int) -> int:
+        """Farmed produce after pest × health × pollination (min 1)."""
+        pest = self._farm_pest_control_at(x, y)
+        poll = pollination_yield_multiplier(self._farm_pollination_at(x, y))
+        field_b = self._field_building_at(x, y)
+        health = self._field_crop_health(field_b) if field_b is not None else 1.0
+        return max(1, int(round(FARM_PRODUCE_YIELD * pest * health * poll)))
+
+    def _farm_produce_yield_budget(self) -> int:
+        """Conservative cargo budget for next farm harvest (best-case mults)."""
+        return max(
+            1,
+            int(
+                round(
+                    FARM_PRODUCE_YIELD
+                    * PEST_CONTROL_MULT_HIGH
+                    * POLLINATION_YIELD_HIGH
+                )
+            ),
+        )
 
     def _sync_habitat_selection(self) -> None:
         """Drop habitat highlight if that breeding ground vanished on refresh."""
@@ -3261,11 +3391,12 @@ class Game:
                 self._set_status("Crop not ready.")
             return False
         crop = CROP_BY_KEY.get(cell.crop_kind or "sage", CROP_BY_KEY["sage"])
-        # Capacity is 8; yield is 3 — must fit the full harvest before clearing the tile.
-        if not inventory.can_add(FARM_PRODUCE_YIELD, key=crop.produce_key):
+        yield_n = self._farm_produce_yield_at(x, y)
+        # Must fit the full harvest before clearing the tile.
+        if not inventory.can_add(yield_n, key=crop.produce_key):
             if status:
                 self._set_status(
-                    f"Need {FARM_PRODUCE_YIELD} free cargo slots to harvest "
+                    f"Need {yield_n} free cargo slots to harvest "
                     f"{crop.label.lower()}."
                 )
             return False
@@ -3275,11 +3406,11 @@ class Game:
                 self._set_status("Crop not ready.")
             return False
         crop = CROP_BY_KEY.get(crop_key, CROP_BY_KEY["sage"])
-        if not inventory.add_item(crop.produce_key, FARM_PRODUCE_YIELD):
+        if not inventory.add_item(crop.produce_key, yield_n):
             if status:
                 self._set_status("Could not store harvest.")
             return False
-        self.record_produced(crop.produce_key, FARM_PRODUCE_YIELD)
+        self.record_produced(crop.produce_key, yield_n)
         seed_msg = ""
         # Farm: always 1, 2, or 3 seeds (capped by seed carry space).
         amounts = crop.farm_seed_amounts or FARM_SEED_AMOUNTS
@@ -3296,7 +3427,7 @@ class Game:
         self.world.apply_disturbance(x, y)
         self._refresh_indicators()
         if status:
-            qty = f" ×{FARM_PRODUCE_YIELD}" if FARM_PRODUCE_YIELD != 1 else ""
+            qty = f" ×{yield_n}" if yield_n != 1 else ""
             self._set_status(f"Harvested farm {crop.label.lower()}{qty}{seed_msg}.")
         return True
 
@@ -4032,7 +4163,7 @@ class Game:
         # Farm / forager: deliver whenever the next enabled yield won't fit —
         # even if cargo is "wrong" (e.g. leftover wood), so space frees up.
         if building.kind == BuildingKind.FARM:
-            return not inv.can_add(FARM_PRODUCE_YIELD)
+            return not inv.can_add(self._farm_produce_yield_budget())
         if building.kind == BuildingKind.FORAGER:
             for recipe in building.enabled_recipes():
                 need = self._forage_yield_amount(recipe.name)
@@ -5207,7 +5338,7 @@ class Game:
         mode = building.work_mode
         if mode not in (WorkMode.COLLECT, WorkMode.ALL):
             return None
-        if not villager.inventory.can_add(FARM_PRODUCE_YIELD):
+        if not villager.inventory.can_add(self._farm_produce_yield_budget()):
             return None
         claimed = self._claimed_work_cells(villager.id)
         harvest: list[tuple[int, int]] = []
@@ -5218,7 +5349,9 @@ class Game:
                 if not self.world.is_walkable(x, y):
                     continue
                 if self.world.crop_herb_ready(x, y):
-                    harvest.append((x, y))
+                    need = self._farm_produce_yield_at(x, y)
+                    if villager.inventory.can_add(need):
+                        harvest.append((x, y))
         return self._closest_of((villager.x, villager.y), harvest)
 
     def _farm_target_still_valid(
@@ -5231,7 +5364,7 @@ class Game:
         if self.world.crop_herb_ready(x, y):
             return (
                 building.work_mode in (WorkMode.COLLECT, WorkMode.ALL)
-                and villager.inventory.can_add(FARM_PRODUCE_YIELD)
+                and villager.inventory.can_add(self._farm_produce_yield_at(x, y))
             )
         if building.work_mode not in (WorkMode.PLANT, WorkMode.ALL):
             return False
@@ -6873,9 +7006,14 @@ class Game:
 
     def _refresh_indicators(self) -> None:
         if self.overlay_mode == OverlayMode.BIODIVERSITY:
-            # Year-average of season start/mid samples — not live.
-            avg = self._biodiversity_average
+            avg = self.env_maps.biodiversity
             self.overlay_values = [row[:] for row in avg]
+            return
+        if self.overlay_mode == OverlayMode.FLORAL_RESOURCES:
+            self.overlay_values = [row[:] for row in self.env_maps.floral_resources]
+            return
+        if self.overlay_mode == OverlayMode.POLLINATION:
+            self.overlay_values = [row[:] for row in self.env_maps.pollination]
             return
         self.overlay_values = build_overlay_grid(self.world, self.overlay_mode)
 
@@ -6896,8 +7034,13 @@ class Game:
         self._update_villagers()
         self.wildlife.tick(self.world, day)
         self.fish.tick(self.world, day)
-        # Biodiversity is sample-based; skip live refresh for that mode.
-        if self.overlay_mode not in (OverlayMode.NONE, OverlayMode.BIODIVERSITY):
+        # Biodiversity is sample-based; skip live refresh for sampled modes.
+        if self.overlay_mode not in (
+            OverlayMode.NONE,
+            OverlayMode.BIODIVERSITY,
+            OverlayMode.FLORAL_RESOURCES,
+            OverlayMode.POLLINATION,
+        ):
             self._refresh_indicators()
 
     def _advance_sim_ticks(self, ticks: int) -> None:
@@ -7068,10 +7211,38 @@ class Game:
         )
         self.file_dialog.draw(self.screen)
         field_b = self._field_plan_building()
+        field_pc = None
+        field_bio = None
+        field_health = None
+        field_poll = None
+        field_harvest = None
+        if field_b is not None:
+            cells = field_b.plot_cells()
+            field_pc = self.env_maps.farm_pest_control(cells)
+            field_bio = self.env_maps.farm_biodiversity(cells)
+            field_health = self._field_crop_health(field_b)
+            field_poll = self.env_maps.farm_pollination(cells)
+            field_harvest = max(
+                1,
+                int(
+                    round(
+                        FARM_PRODUCE_YIELD
+                        * field_pc
+                        * field_health
+                        * pollination_yield_multiplier(field_poll)
+                    )
+                ),
+            )
         self.field_plan_dialog.draw(
             self.screen,
             field_b,
             crop_counts=self._field_crop_counts(field_b) if field_b else None,
+            pest_control=field_pc,
+            biodiversity=field_bio,
+            crop_health=field_health,
+            pollination=field_poll,
+            base_yield=FARM_PRODUCE_YIELD if field_b else None,
+            harvest_yield=field_harvest,
         )
         inspect_b = self._inspect_building()
         if inspect_b is None:

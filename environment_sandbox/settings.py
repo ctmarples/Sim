@@ -251,9 +251,9 @@ COLOUR_TREE_DENSITY_LOW: Colour = (20, 40, 20)
 COLOUR_TREE_DENSITY_HIGH: Colour = (40, 220, 60)
 COLOUR_SPECIES_DIVERSITY_LOW: Colour = (30, 40, 30)
 COLOUR_SPECIES_DIVERSITY_HIGH: Colour = (180, 255, 90)
-COLOUR_BIODIVERSITY_1: Colour = (220, 40, 40)    # ~1 species — red
+COLOUR_BIODIVERSITY_1: Colour = (220, 40, 40)    # 0 species — red
 COLOUR_BIODIVERSITY_5: Colour = (240, 220, 50)   # ~5 species — yellow
-COLOUR_BIODIVERSITY_10: Colour = (40, 190, 70)   # ~10 species — green
+COLOUR_BIODIVERSITY_10: Colour = (80, 255, 100)  # ~10+ species — bright green
 # Legacy aliases (unused by biodiversity colour ramp).
 COLOUR_BIODIVERSITY_LOW: Colour = COLOUR_BIODIVERSITY_1
 COLOUR_BIODIVERSITY_HIGH: Colour = COLOUR_BIODIVERSITY_10

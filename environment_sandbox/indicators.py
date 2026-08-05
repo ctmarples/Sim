@@ -1,8 +1,9 @@
 """Environmental indicator calculations and overlay colour mapping.
 
 Most overlays are derived live from world state. Biodiversity is an exception:
-it is sampled at the start and midpoint of each season, then averaged over the
-past year (up to 8 samples).
+it is sampled at the start and midpoint of each season (8×/year), then averaged
+over the past year. Production modifiers (pest control, …) are derived from
+those stable averages in ``environment.EnvMaps``.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ from world import FeatureType, World
 BIODIVERSITY_SAMPLES_PER_YEAR: int = 8
 
 # Colour ramp anchors (species count in neighbourhood).
-BIODIVERSITY_COLOUR_AT: tuple[float, float, float] = (1.0, 5.0, 10.0)
+BIODIVERSITY_COLOUR_AT: tuple[float, float, float] = (0.0, 5.0, 10.0)
 
 
 class OverlayMode(Enum):
@@ -42,6 +43,8 @@ class OverlayMode(Enum):
     SPECIES_DIVERSITY = auto()
     DISTURBANCE = auto()
     BIODIVERSITY = auto()
+    FLORAL_RESOURCES = auto()
+    POLLINATION = auto()
 
 
 OVERLAY_LABELS: dict[OverlayMode, str] = {
@@ -51,6 +54,8 @@ OVERLAY_LABELS: dict[OverlayMode, str] = {
     OverlayMode.SPECIES_DIVERSITY: "Species diversity",
     OverlayMode.DISTURBANCE: "Disturbance",
     OverlayMode.BIODIVERSITY: "Biodiversity",
+    OverlayMode.FLORAL_RESOURCES: "Floral resources",
+    OverlayMode.POLLINATION: "Pollination",
 }
 
 
@@ -120,17 +125,44 @@ def species_on_cell(cell) -> set[str]:
     if feature == FeatureType.TREE:
         found.add(f"tree:{cell.tree_species or 'oak'}")
     elif feature == FeatureType.SAPLING:
-        found.add(f"sapling:{cell.tree_species or 'oak'}")
+        # Count as the same species as the adult tree for richness.
+        found.add(f"tree:{cell.tree_species or 'oak'}")
     elif feature == FeatureType.BERRY_BUSH:
         found.add("plant:berry")
     elif feature == FeatureType.MUSHROOM:
         found.add("plant:mushroom")
     elif feature == FeatureType.REED:
         found.add("plant:reed")
+    elif feature == FeatureType.WOOD_BUSH:
+        found.add("plant:wood_bush")
     elif feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.CROP_HERB):
         kind = cell.crop_kind or "sage"
         found.add(f"crop:{kind}")
     return found
+
+
+def floral_score_on_cell(cell) -> float:
+    """Local floral resource contribution of one cell (0–1 scale pieces)."""
+    from world import TerrainType
+
+    feature = cell.feature
+    if feature == FeatureType.BERRY_BUSH and cell.deposit > 0:
+        return 1.0
+    if feature == FeatureType.BERRY_BUSH:
+        return 0.35
+    if feature in (FeatureType.HERB, FeatureType.WILD_CROP):
+        return 0.85
+    if feature == FeatureType.CROP_HERB:
+        return 0.65
+    if feature == FeatureType.REED:
+        return 0.4
+    if feature == FeatureType.WOOD_BUSH:
+        return 0.15
+    if feature == FeatureType.MUSHROOM:
+        return 0.05
+    if feature == FeatureType.NONE and cell.terrain == TerrainType.MEADOW:
+        return 0.2
+    return 0.0
 
 
 def biodiversity_snapshot(
@@ -139,13 +171,13 @@ def biodiversity_snapshot(
     deer_positions: Iterable[tuple[int, int]],
     boar_positions: Iterable[tuple[int, int]],
     fish_positions: Iterable[tuple[int, int]],
+    bee_positions: Iterable[tuple[int, int]] = (),
+    rabbit_positions: Iterable[tuple[int, int]] = (),
     radius: int = INDICATOR_RADIUS,
 ) -> list[list[float]]:
-    """Spatial richness: species count per neighbourhood (not normalised).
+    """Spatial richness: unique plant + animal species in each neighbourhood.
 
-    Wheat (farm) and wild wheat share one crop species id. Deer and boar are
-    separate animal species; all fish count as one. Colour scale uses
-    1=red, 5=yellow, 10=green.
+    Colour scale: 0=red → 5=yellow → 10+=bright green.
     """
     rows, cols = world.rows, world.cols
     plant: list[list[set[str]]] = [[set() for _ in range(cols)] for _ in range(rows)]
@@ -153,18 +185,18 @@ def biodiversity_snapshot(
         for x in range(cols):
             plant[y][x] = species_on_cell(world.cells[y][x])
 
-    has_deer = [[False] * cols for _ in range(rows)]
-    for ax, ay in deer_positions:
-        if 0 <= ax < cols and 0 <= ay < rows:
-            has_deer[ay][ax] = True
-    has_boar = [[False] * cols for _ in range(rows)]
-    for bx, by in boar_positions:
-        if 0 <= bx < cols and 0 <= by < rows:
-            has_boar[by][bx] = True
-    has_fish = [[False] * cols for _ in range(rows)]
-    for fx, fy in fish_positions:
-        if 0 <= fx < cols and 0 <= fy < rows:
-            has_fish[fy][fx] = True
+    def _mark(positions: Iterable[tuple[int, int]]) -> list[list[bool]]:
+        grid = [[False] * cols for _ in range(rows)]
+        for ax, ay in positions:
+            if 0 <= ax < cols and 0 <= ay < rows:
+                grid[ay][ax] = True
+        return grid
+
+    has_deer = _mark(deer_positions)
+    has_boar = _mark(boar_positions)
+    has_fish = _mark(fish_positions)
+    has_bee = _mark(bee_positions)
+    has_rabbit = _mark(rabbit_positions)
 
     grid: list[list[float]] = [[0.0] * cols for _ in range(rows)]
     for y in range(rows):
@@ -178,7 +210,62 @@ def biodiversity_snapshot(
                     species.add("animal:boar")
                 if has_fish[ny][nx]:
                     species.add("animal:fish")
+                if has_bee[ny][nx]:
+                    species.add("animal:bee")
+                if has_rabbit[ny][nx]:
+                    species.add("animal:rabbit")
             grid[y][x] = float(len(species))
+    return grid
+
+
+def floral_resources_snapshot(
+    world: World, *, radius: int = INDICATOR_RADIUS
+) -> list[list[float]]:
+    """Neighbourhood mean floral score (0–1-ish, can exceed 1 with dense flowers)."""
+    rows, cols = world.rows, world.cols
+    local = [
+        [floral_score_on_cell(world.cells[y][x]) for x in range(cols)]
+        for y in range(rows)
+    ]
+    grid: list[list[float]] = [[0.0] * cols for _ in range(rows)]
+    for y in range(rows):
+        for x in range(cols):
+            total = 0.0
+            n = 0
+            for ny, nx in world.neighbourhood(x, y, radius):
+                total += local[ny][nx]
+                n += 1
+            grid[y][x] = total / n if n else 0.0
+    return grid
+
+
+def pollination_coverage_grid(
+    world: World,
+    nests: Iterable[tuple[int, int, int]],
+    *,
+    base_radius: int,
+    radius_per_level: int,
+    base_strength: float = 0.85,
+    strength_per_level: float = 0.05,
+) -> list[list[float]]:
+    """0–1 pollination access from active bee nests; nest level widens reach.
+
+    ``nests`` is ``(x, y, level)`` for each bee colony.
+    """
+    rows, cols = world.rows, world.cols
+    grid: list[list[float]] = [[0.0] * cols for _ in range(rows)]
+    for nx, ny, level in nests:
+        level = max(1, int(level))
+        reach = max(1, base_radius + (level - 1) * radius_per_level)
+        strength = min(1.0, base_strength + strength_per_level * (level - 1))
+        for y in range(max(0, ny - reach), min(rows, ny + reach + 1)):
+            for x in range(max(0, nx - reach), min(cols, nx + reach + 1)):
+                dist = max(abs(x - nx), abs(y - ny))
+                if dist > reach:
+                    continue
+                # Gentler falloff so mid-range cells stay useful.
+                falloff = 1.0 - 0.65 * (dist / float(reach))
+                grid[y][x] = max(grid[y][x], strength * falloff)
     return grid
 
 
@@ -201,17 +288,28 @@ def average_grids(samples: list[list[list[float]]], rows: int, cols: int) -> lis
 
 
 def biodiversity_colour(species_count: float) -> Colour:
-    """Map average species richness to red(1) → yellow(5) → green(10)."""
+    """Map richness to red(0) → yellow(5) → bright green(10+)."""
     v = max(0.0, float(species_count))
     lo, mid, hi = BIODIVERSITY_COLOUR_AT
     if v <= lo:
-        # Fade from near-black at 0 up to red at 1.
-        return lerp_colour((40, 10, 10), COLOUR_BIODIVERSITY_1, v / lo if lo > 0 else 1.0)
+        return COLOUR_BIODIVERSITY_1
     if v <= mid:
         return lerp_colour(COLOUR_BIODIVERSITY_1, COLOUR_BIODIVERSITY_5, (v - lo) / (mid - lo))
     if v <= hi:
         return lerp_colour(COLOUR_BIODIVERSITY_5, COLOUR_BIODIVERSITY_10, (v - mid) / (hi - mid))
     return COLOUR_BIODIVERSITY_10
+
+
+def floral_colour(value: float) -> Colour:
+    """Floral density: dim magenta → bright pink/yellow."""
+    t = max(0.0, min(1.0, float(value)))
+    return lerp_colour((40, 20, 40), (255, 170, 90), t)
+
+
+def pollination_colour(value: float) -> Colour:
+    """Pollination access: dark → bright amber."""
+    t = max(0.0, min(1.0, float(value)))
+    return lerp_colour((25, 25, 20), (255, 210, 60), t)
 
 
 def indicator_value(world: World, mode: OverlayMode, x: int, y: int) -> float:
@@ -223,7 +321,7 @@ def indicator_value(world: World, mode: OverlayMode, x: int, y: int) -> float:
         return species_diversity(world, x, y)
     if mode == OverlayMode.DISTURBANCE:
         return disturbance_value(world, x, y)
-    # Biodiversity is not live-computed; Game supplies the year average.
+    # Biodiversity / floral / pollination are sample-based; Game supplies grids.
     return 0.0
 
 
@@ -240,12 +338,21 @@ def overlay_colour(mode: OverlayMode, value: float) -> Colour:
         return lerp_colour(COLOUR_DISTURBANCE_LOW, COLOUR_DISTURBANCE_HIGH, value)
     if mode == OverlayMode.BIODIVERSITY:
         return biodiversity_colour(value)
+    if mode == OverlayMode.FLORAL_RESOURCES:
+        return floral_colour(value)
+    if mode == OverlayMode.POLLINATION:
+        return pollination_colour(value)
     return (0, 0, 0)
 
 
 def build_overlay_grid(world: World, mode: OverlayMode) -> list[list[float]]:
     """Compute a full indicator grid for live overlay modes."""
-    if mode == OverlayMode.NONE or mode == OverlayMode.BIODIVERSITY:
+    if mode in (
+        OverlayMode.NONE,
+        OverlayMode.BIODIVERSITY,
+        OverlayMode.FLORAL_RESOURCES,
+        OverlayMode.POLLINATION,
+    ):
         return [[0.0] * world.cols for _ in range(world.rows)]
     return [
         [indicator_value(world, mode, x, y) for x in range(world.cols)]

@@ -6,11 +6,14 @@ The player interacts only with the cell they currently stand on (press E).
 Mouse drag draws rectangular task areas for hired villagers.
 
 Future extension points:
-- soil fertility / moisture fields
+- soil fertility / moisture fields (cyclic EnvMaps layers)
 - crop / seasonal state per cell
 - habitat connectivity graphs
 - erosion risk maps
 - GIS-derived terrain import
+
+Production modifiers from cyclic layers live in ``environment.EnvMaps``
+(sampled 8×/year with biodiversity). Disturbance remains a live per-cell field.
 """
 
 from __future__ import annotations

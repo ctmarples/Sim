@@ -293,6 +293,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
         }
         if hasattr(b, "crop_kind"):
             bdata["crop_kind"] = b.crop_kind
+        if b.kind.name == "FIELD":
+            bdata["crop_health"] = float(getattr(b, "crop_health", 1.0))
         buildings.append(bdata)
     villagers = []
     for v in game.villagers:
@@ -430,6 +432,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
         "place_kind": game.place_kind.name if game.place_kind else None,
         "overlay_mode": game.overlay_mode.name,
     }
+    if hasattr(game, "env_maps"):
+        payload["env_maps"] = game.env_maps.to_save_dict()
     if hasattr(game, "field_crop_kind"):
         payload["field_crop_kind"] = game.field_crop_kind
     if hasattr(game, "resource_history"):
@@ -784,6 +788,12 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                     )
         if kind == BuildingKind.FIELD:
             building.crop_kind = str(bdata.get("crop_kind", "sage"))
+            from environment import CROP_HEALTH_MIN
+
+            building.crop_health = max(
+                CROP_HEALTH_MIN,
+                min(1.0, float(bdata.get("crop_health", 1.0))),
+            )
             if kind == BuildingKind.FIELD and work_mode not in building.supported_work_modes():
                 building.work_mode = WorkMode.COLLECT
         building.sync_draw_task_from_mode()
@@ -1006,7 +1016,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             max((c.id for c in game.wildlife.colonies), default=0) + 1,
         )
     )
-    # Colony seeding deferred until habitats refresh (_sample_biodiversity).
+    # Colony seeding deferred until habitats refresh (_sample_environment).
     game.wildlife._colonies_need_seed = not bool(game.wildlife.colonies)
 
     fish_data = data.get("fish", {})
@@ -1095,14 +1105,30 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     if hasattr(game, "_ensure_core_buildings"):
         game._ensure_core_buildings()
 
-    # Biodiversity average is not saved; start a fresh rolling year window.
-    if hasattr(game, "_biodiversity_samples"):
+    # Restore cyclic env layers (biodiversity / floral / pollination / pest-control).
+    if hasattr(game, "env_maps"):
+        game.env_maps.resize(game.world.rows, game.world.cols)
+        saved_env = data.get("env_maps")
+        if saved_env:
+            game.env_maps.load_save_dict(saved_env)
+            game._biodiversity_samples = game.env_maps.biodiversity_samples
+            game._biodiversity_average = game.env_maps.biodiversity
+            # Older saves may lack floral/pollination — backfill without ratcheting health.
+            if hasattr(game, "_backfill_env_overlays"):
+                game._backfill_env_overlays()
+        elif hasattr(game, "_sample_environment"):
+            game._sample_environment()
+        elif hasattr(game, "_sample_biodiversity"):
+            game._sample_biodiversity()
+    elif hasattr(game, "_biodiversity_samples"):
         game._biodiversity_samples.clear()
-    if hasattr(game, "_sample_biodiversity"):
-        game._sample_biodiversity()
-    elif hasattr(game, "_refresh_indicators"):
+        if hasattr(game, "_sample_biodiversity"):
+            game._sample_biodiversity()
+    if hasattr(game, "_refresh_indicators"):
         game._refresh_indicators()
     else:
+        from indicators import build_overlay_grid
+
         game.overlay_values = build_overlay_grid(game.world, game.overlay_mode)
 
     if hasattr(game, "_invalidate_terrain_layer"):

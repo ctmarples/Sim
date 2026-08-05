@@ -1014,6 +1014,8 @@ class Building:
     plot_w: int = 1
     plot_h: int = 1
     plans: list[CropPlan] = field(default_factory=list)
+    # Field only: cumulative crop health 0–1; ratchets down on env sample ticks.
+    crop_health: float = 1.0
     draw_task_type: TaskType = TaskType.FULL_MANAGE
     work_mode: WorkMode = WorkMode.ALL
     crop_kind: str = "sage"  # legacy

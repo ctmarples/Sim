@@ -197,6 +197,13 @@ COLONY_LEVEL_MAX: int = 4
 COLONY_MEMBERS_BY_LEVEL: tuple[int, ...] = (1, 2, 4, 7)
 # How far members may wander from the nest (Chebyshev).
 COLONY_MEMBER_RADIUS: int = 2
+# Pollination overlay: hive reach grows with colony level.
+# Bee nest forage/pollination reach (Chebyshev tiles from nest).
+POLLINATOR_BASE_RADIUS: int = 8
+POLLINATOR_RADIUS_PER_LEVEL: int = 3
+# Nest coverage strength before distance falloff (level 1 → ~0.85, higher → 1.0).
+POLLINATOR_BASE_STRENGTH: float = 0.85
+POLLINATOR_STRENGTH_PER_LEVEL: float = 0.05
 # Initial colonies seeded per kind on new maps.
 COLONY_SEED_GROUNDS: int = 3
 # Per growth tick: level-up when food is available (levels 1–3 → next).

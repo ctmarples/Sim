@@ -157,9 +157,20 @@ class FieldPlanDialog:
         self._cell_px = cell
         grid_w = pw * cell
         grid_h = ph * cell
-        # Title + seasons + crops (up to 2 wrap rows) + grid + tip + crop counts + padding.
+        # Title + seasons + crops + grid + tip + crop counts + env line + padding.
         crop_rows = self._crop_row_count(max(420, grid_w + PAD * 2))
-        chrome = TITLE_BAR_H + PAD + BTN_H + 6 + crop_rows * (BTN_H + 4) + 8 + 22 + 18 + PAD
+        chrome = (
+            TITLE_BAR_H
+            + PAD
+            + BTN_H
+            + 6
+            + crop_rows * (BTN_H + 4)
+            + 8
+            + 22
+            + 18
+            + 16
+            + PAD
+        )
         self._panel_w = max(420, grid_w + PAD * 2)
         self._panel_h = chrome + grid_h
 
@@ -304,6 +315,12 @@ class FieldPlanDialog:
         building: Building | None,
         *,
         crop_counts: dict[str, int] | None = None,
+        pest_control: float | None = None,
+        biodiversity: float | None = None,
+        crop_health: float | None = None,
+        pollination: float | None = None,
+        base_yield: int | None = None,
+        harvest_yield: int | None = None,
     ) -> None:
         if not self.open or building is None or building.kind != BuildingKind.FIELD:
             return
@@ -471,9 +488,10 @@ class FieldPlanDialog:
                 else "switch season to plant"
             )
         )
+        tip_y = gy + grid_h + 6
         surface.blit(
             self.font_small.render(tip, True, COLOUR_TEXT_DIM),
-            (panel.x + PAD, gy + grid_h + 6),
+            (panel.x + PAD, tip_y),
         )
         counts = crop_counts or {}
         if counts:
@@ -487,8 +505,39 @@ class FieldPlanDialog:
             count_line = "On field: none"
         surface.blit(
             self.font_small.render(count_line, True, COLOUR_TEXT),
-            (panel.x + PAD, gy + grid_h + 22),
+            (panel.x + PAD, tip_y + 16),
         )
+
+        # Stable env modifiers (8×/year) + ratcheting crop health.
+        if pest_control is not None:
+            pc = float(pest_control)
+            bio = float(biodiversity) if biodiversity is not None else None
+            health = float(crop_health) if crop_health is not None else None
+            poll = float(pollination) if pollination is not None else None
+            base = int(base_yield) if base_yield is not None else None
+            got = int(harvest_yield) if harvest_yield is not None else None
+            from environment import pollination_yield_multiplier
+
+            poll_mult = pollination_yield_multiplier(poll if poll is not None else 0.0)
+            if got is None and base is not None:
+                h = health if health is not None else 1.0
+                got = max(1, int(round(base * pc * h * poll_mult)))
+            parts = [f"Pest control ×{pc:.2f}"]
+            if health is not None:
+                parts.append(f"health {health * 100:.0f}%")
+            if poll is not None:
+                parts.append(f"poll ×{poll_mult:.2f}")
+            if bio is not None:
+                parts.append(f"bio {bio:.1f}")
+            if base is not None and got is not None:
+                if got == base:
+                    parts.append(f"harvest {got}")
+                else:
+                    parts.append(f"harvest {base}→{got}")
+            surface.blit(
+                self.font_small.render(" · ".join(parts), True, COLOUR_TEXT),
+                (panel.x + PAD, tip_y + 32),
+            )
 
     def _paint_split_cell(
         self,
