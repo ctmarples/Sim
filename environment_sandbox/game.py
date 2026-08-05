@@ -371,7 +371,6 @@ class Game:
         self.home_storage.logs = STARTING_WOOD
         self.home_storage.rock = STARTING_ROCK
         self.home_storage.berries = STARTING_FOOD
-        self.home_storage.axe = 1
 
     def _ensure_core_buildings(self) -> None:
         """Ensure HOME and WORKSTATION buildings exist at their world positions."""
@@ -3150,20 +3149,6 @@ class Game:
         villager.work_cooldown = self._villager_work_interval(villager)
         return True
 
-    def _forester_all_has_work(self, villager: Villager, building: Building) -> bool:
-        if building.craftable_split_recipe() is not None:
-            return True
-        if villager.inventory.has_delivery_cargo():
-            return True
-        if self._find_work_in_building(villager, building) is not None:
-            return True
-        if self._forester_needs_axe(building) and not villager.inventory.has_equipped_tool(
-            "axe"
-        ):
-            if getattr(villager.inventory, "axe", 0) > 0 or self.home_storage.axe > 0:
-                return True
-        return False
-
     def _deposit_home(self, inventory: Inventory, status: bool = True) -> bool:
         items = inventory.clear()
         if sum(items.values()) == 0:
@@ -3311,7 +3296,7 @@ class Game:
             if self._construction_delivery_active(villager):
                 self._update_builder(villager)
                 continue
-            # Finish an in-progress haul before workplace can reclaim cargo.
+            # Finish an in-progress haul (general haulers only).
             if (
                 villager.state == VillagerState.HAULING
                 or (
@@ -3319,7 +3304,15 @@ class Game:
                     and villager.haul_building_id is not None
                 )
             ):
-                self._update_hauler(villager)
+                if self._is_general_hauler(villager):
+                    self._update_hauler(villager)
+                else:
+                    building = self.buildings.get(villager.building_id)
+                    if building is not None:
+                        self._update_assigned_transport(villager, building)
+                    else:
+                        villager.haul_building_id = None
+                        villager.state = VillagerState.IDLE
                 continue
             for priority in villager.priorities:
                 if priority == WorkPriority.NONE:
@@ -3335,18 +3328,27 @@ class Game:
                         acted = True
                         break
                 elif priority == WorkPriority.TRANSPORT:
-                    if self._transport_has_work(villager):
+                    if self._is_general_hauler(villager) and self._transport_has_work(
+                        villager
+                    ):
                         self._update_hauler(villager)
                         acted = True
                         break
-            if self._try_idle_transport(villager):
+            if self._is_general_hauler(villager) and self._try_idle_transport(villager):
                 acted = True
             elif not acted:
                 if self._construction_delivery_active(villager):
                     self._update_builder(villager)
-                # Finish delivering carried goods home if any.
-                elif not villager.inventory.is_empty and WorkPriority.TRANSPORT in villager.priorities:
+                elif not villager.inventory.is_empty and self._is_general_hauler(
+                    villager
+                ):
                     self._update_hauler(villager)
+                elif villager.building_id is not None:
+                    building = self.buildings.get(villager.building_id)
+                    if building is not None and self._update_assigned_transport(
+                        villager, building
+                    ):
+                        acted = True
                 elif villager.state not in (VillagerState.DELIVERING, VillagerState.HAULING, VillagerState.BUILDING):
                     villager.state = VillagerState.IDLE
                     villager.target = None
@@ -3503,6 +3505,8 @@ class Game:
 
     def _try_idle_transport(self, villager: Villager) -> bool:
         """Run transport when a higher priority left the worker idle but haul work exists."""
+        if not self._is_general_hauler(villager):
+            return False
         if WorkPriority.TRANSPORT not in villager.priorities:
             return False
         if villager.state != VillagerState.IDLE:
@@ -3512,9 +3516,9 @@ class Game:
         self._update_hauler(villager)
         return True
 
-    def _is_production_station(self, building: Building) -> bool:
-        """Workplaces that craft or split goods on-site."""
-        return building.is_processor() or building.is_splitter()
+    def _is_general_hauler(self, villager: Villager) -> bool:
+        """Unassigned / home haulers — handle all village transport."""
+        return villager.building_id is None
 
     def _building_can_produce(self, building: Building) -> bool:
         """True while the station can still run a recipe from current stock."""
@@ -3527,18 +3531,338 @@ class Game:
             return building.craftable_split_recipe() is not None
         return False
 
-    def _production_worker_may_deliver(
+    def _claimed_haul_targets(self, exclude_id: int) -> set[int]:
+        """Buildings already reserved by another hauler / assigned transporter."""
+        claimed: set[int] = set()
+        for other in self.villagers:
+            if other.id == exclude_id:
+                continue
+            if other.haul_building_id is not None:
+                claimed.add(other.haul_building_id)
+        return claimed
+
+    def _owns_haul_claim(self, villager: Villager, building_id: int) -> bool:
+        """True if this villager keeps the haul claim (lowest id wins)."""
+        for other in self.villagers:
+            if other.id == villager.id:
+                continue
+            if other.haul_building_id != building_id:
+                continue
+            if other.id < villager.id:
+                return False
+        return True
+
+    def _claimed_work_cells(self, exclude_id: int) -> set[tuple[int, int]]:
+        """Map cells already targeted by another villager's primary work."""
+        # Stations are shared workplaces — don't treat them as exclusive tiles.
+        stations = {b.center_cell() for b in self.buildings.values()}
+        stations.add(self.world.home_pos)
+        claimed: set[tuple[int, int]] = set()
+        for other in self.villagers:
+            if other.id == exclude_id:
+                continue
+            if (
+                other.target is not None
+                and other.state == VillagerState.WORKING
+                and other.target not in stations
+            ):
+                claimed.add(other.target)
+            if other.hunt_meat_pos is not None:
+                claimed.add(other.hunt_meat_pos)
+            if other.fish_catch_pos is not None:
+                claimed.add(other.fish_catch_pos)
+        return claimed
+
+    def _claimed_animal_ids(self, exclude_id: int) -> set[int]:
+        return {
+            other.hunt_animal_id
+            for other in self.villagers
+            if other.id != exclude_id and other.hunt_animal_id is not None
+        }
+
+    def _claimed_fish_ids(self, exclude_id: int) -> set[int]:
+        return {
+            other.fish_target_id
+            for other in self.villagers
+            if other.id != exclude_id and other.fish_target_id is not None
+        }
+
+    def _workplace_recipe_keys(self, building: Building) -> frozenset[str]:
+        """Resource keys tied to this workplace's recipes and gather outputs."""
+        from recipes import KITCHEN_FUEL_KEY
+
+        keys: set[str] = set()
+        if building.is_processor():
+            keys.update(building.processor_input_keys())
+            keys.update(building.processor_output_keys())
+            if building.kind == BuildingKind.KITCHEN:
+                keys.add(KITCHEN_FUEL_KEY)
+        elif building.is_splitter():
+            keys.update(("logs", "hardwood_logs", "wood"))
+        elif building.kind == BuildingKind.FARM:
+            keys.update(building.gather_deposit_keys())
+            keys.update(SEED_KEYS)
+        elif building.kind == BuildingKind.HUNTER:
+            keys.add("meat")
+        elif building.kind == BuildingKind.FISHER:
+            keys.add("fish")
+        elif building.kind == BuildingKind.FORAGER:
+            keys.update(building.gather_deposit_keys())
+        elif building.kind == BuildingKind.FORESTER:
+            keys.update(building.gather_deposit_keys())
+        return frozenset(keys)
+
+    def _inventory_has_workplace_keys(
+        self, inventory: Inventory, building: Building
+    ) -> bool:
+        return any(
+            int(getattr(inventory, key, 0)) > 0
+            for key in self._workplace_recipe_keys(building)
+        )
+
+    def _workplace_recipe_haulable(self, building: Building) -> int:
+        recipe_keys = self._workplace_recipe_keys(building)
+        return sum(
+            building.haulable_amount(key)
+            for key in building.haul_keys()
+            if key in recipe_keys
+        )
+
+    def _workplace_needs_home_supply(self, building: Building) -> bool:
+        if not building.needs_supplied():
+            return False
+        demand = building.supply_demand()
+        if not demand:
+            return False
+        return any(int(getattr(self.home_storage, key, 0)) > 0 for key in demand)
+
+    def _workplace_primary_available(
         self, villager: Villager, building: Building
     ) -> bool:
-        """Production staff should not haul output home while the station can still craft."""
-        if not self._is_production_station(building):
-            return True
-        if not villager.inventory.has_delivery_cargo():
+        """True when the worker can perform their main job this tick (not transport)."""
+        if building.kind in (
+            BuildingKind.MILL,
+            BuildingKind.KITCHEN,
+            BuildingKind.CRAFT_BENCH,
+        ):
+            tool = WORKPLACE_TOOL.get(building.kind)
+            if tool and not villager.inventory.has_equipped_tool(tool):
+                return getattr(villager.inventory, tool, 0) > 0 or int(
+                    getattr(self.home_storage, tool, 0)
+                ) > 0
+            station = building.center_cell()
+            if (villager.x, villager.y) != station:
+                return True
+            return (
+                building.craftable_recipe() is not None and villager.work_cooldown == 0
+            )
+
+        if building.kind == BuildingKind.FORESTER and building.work_mode == WorkMode.SPLIT:
+            if not villager.inventory.has_equipped_tool("axe"):
+                return villager.inventory.axe > 0 or self.home_storage.axe > 0
+            station = building.center_cell()
+            if (villager.x, villager.y) != station:
+                return True
+            return (
+                building.craftable_split_recipe() is not None
+                and villager.work_cooldown == 0
+            )
+
+        if building.kind == BuildingKind.FORESTER:
+            if self._forester_needs_axe(building) and not villager.inventory.has_equipped_tool(
+                "axe"
+            ):
+                return villager.inventory.axe > 0 or self.home_storage.axe > 0
+            if (
+                villager.inventory.is_full
+                and building.has_gather_cargo(villager.inventory)
+            ):
+                return False
+            if building.work_mode == WorkMode.ALL:
+                station = building.center_cell()
+                if (villager.x, villager.y) == station:
+                    if (
+                        building.craftable_split_recipe() is not None
+                        and villager.work_cooldown == 0
+                    ):
+                        return True
+            return self._find_work_in_building(villager, building) is not None
+
+        if building.kind == BuildingKind.HUNTER:
+            if not villager.inventory.has_equipped_tool("spear"):
+                return getattr(villager.inventory, "spear", 0) > 0 or int(
+                    getattr(self.home_storage, "spear", 0)
+                ) > 0
+            if villager.hunt_animal_id is not None or villager.hunt_meat_pos is not None:
+                return True
+            if villager.inventory.is_full:
+                return False
+            return (
+                self._find_hunt_target(villager, building) is not None
+                or self._find_meat_in_hunt_areas(building, villager.id) is not None
+            )
+
+        if building.kind == BuildingKind.FISHER:
+            if not fishing_allowed(self.calendar_day):
+                return False
+            if not villager.inventory.has_equipped_tool("fishing_rod"):
+                return getattr(villager.inventory, "fishing_rod", 0) > 0 or int(
+                    getattr(self.home_storage, "fishing_rod", 0)
+                ) > 0
+            if villager.fish_target_id is not None or villager.fish_catch_pos is not None:
+                return True
+            if villager.inventory.is_full:
+                return False
+            return (
+                self._find_fish_target(villager, building) is not None
+                or self._find_fish_in_fish_areas(building, villager.id) is not None
+            )
+
+        if building.kind == BuildingKind.FARM:
+            if (
+                villager.inventory.is_full
+                and building.has_gather_cargo(villager.inventory)
+            ):
+                return False
+            return self._find_farm_work(villager, building) is not None
+
+        if building.kind == BuildingKind.FORAGER:
+            if (
+                villager.inventory.is_full
+                and building.has_gather_cargo(villager.inventory)
+            ):
+                return False
+            return self._find_work_in_building(villager, building) is not None
+
+        return self._find_work_in_building(villager, building) is not None
+
+    def _assigned_transport_has_work(
+        self, villager: Villager, building: Building
+    ) -> bool:
+        """Recipe-related supply/pickup for an assigned worker when primary work is blocked."""
+        if self._workplace_primary_available(villager, building):
             return False
+        if not villager.inventory.is_empty:
+            return True
+        # Only one coworker handles shared supply / output pickup.
+        if not self._owns_haul_claim(villager, building.id):
+            return False
+        if self._workplace_needs_home_supply(building):
+            return True
+        if self._workplace_recipe_haulable(building) > 0:
+            return True
+        return False
+
+    def _assigned_transport_destination(
+        self, villager: Villager, building: Building
+    ) -> tuple[int, int]:
         if building.can_accept_from(villager.inventory):
-            return True
-        if self._building_can_produce(building):
+            return building.center_cell()
+        return self.world.home_pos
+
+    def _withdraw_workplace_recipe_output(
+        self, villager: Villager, building: Building
+    ) -> None:
+        recipe_keys = self._workplace_recipe_keys(building)
+        for key in building.haul_keys():
+            if key not in recipe_keys:
+                continue
+            while (
+                building.haulable_amount(key) > 0
+                and villager.inventory.can_add(1, key=key)
+            ):
+                setattr(building, key, int(getattr(building, key)) - 1)
+                setattr(
+                    villager.inventory,
+                    key,
+                    int(getattr(villager.inventory, key)) + 1,
+                )
+
+    def _update_assigned_transport(
+        self, villager: Villager, building: Building
+    ) -> bool:
+        """Supply own workplace or clear recipe output when primary task is blocked."""
+        if not self._assigned_transport_has_work(villager, building):
+            villager.haul_building_id = None
+            if villager.state in (VillagerState.HAULING, VillagerState.DELIVERING):
+                villager.state = VillagerState.IDLE
+                villager.target = None
             return False
+
+        home = self.world.home_pos
+        station = building.center_cell()
+
+        if not villager.inventory.is_empty:
+            # Personal cargo — no exclusive building claim (coworkers may also deliver).
+            villager.haul_building_id = None
+            dest = self._assigned_transport_destination(villager, building)
+            villager.state = VillagerState.DELIVERING
+            villager.target = dest
+            if (villager.x, villager.y) == dest:
+                if villager.work_cooldown == 0:
+                    if dest == home:
+                        self._deposit_home(villager.inventory, status=False)
+                    else:
+                        building.deposit_from_inventory(villager.inventory)
+                    villager.work_cooldown = self._villager_work_interval(villager)
+                    villager.state = VillagerState.IDLE
+                    villager.target = None
+                return True
+            self._step_villager_toward(villager, dest)
+            return True
+
+        villager.haul_building_id = building.id
+
+        if self._workplace_needs_home_supply(building):
+            if not self._owns_haul_claim(villager, building.id):
+                villager.haul_building_id = None
+                return False
+            villager.state = VillagerState.HAULING
+            if (villager.x, villager.y) != home:
+                self._step_villager_toward(villager, home)
+                return True
+            if villager.work_cooldown > 0:
+                return True
+            taken = self._withdraw_processor_supply(villager, building)
+            villager.work_cooldown = self._villager_work_interval(villager)
+            if taken <= 0:
+                villager.haul_building_id = None
+                villager.state = VillagerState.IDLE
+            return True
+
+        if self._workplace_recipe_haulable(building) > 0:
+            if not self._owns_haul_claim(villager, building.id):
+                villager.haul_building_id = None
+                return False
+            villager.state = VillagerState.HAULING
+            if (villager.x, villager.y) != station:
+                self._step_villager_toward(villager, station)
+                return True
+            if villager.work_cooldown > 0:
+                return True
+            self._withdraw_workplace_recipe_output(villager, building)
+            villager.work_cooldown = self._villager_work_interval(villager)
+            if not villager.inventory.is_empty:
+                villager.state = VillagerState.DELIVERING
+                villager.target = home
+            else:
+                villager.haul_building_id = None
+                villager.state = VillagerState.IDLE
+            return True
+
+        villager.haul_building_id = None
+        return False
+
+    def _maybe_assigned_transport(
+        self, villager: Villager, building: Building
+    ) -> bool:
+        """When primary work is blocked, run recipe-related transport only."""
+        if self._workplace_primary_available(villager, building):
+            return False
+        if self._update_assigned_transport(villager, building):
+            return True
+        villager.state = VillagerState.IDLE
+        villager.target = None
         return True
 
     def _hauler_pickup_from_building(
@@ -3557,97 +3881,27 @@ class Game:
         building = self.buildings.get(villager.building_id) if villager.building_id else None
         if building is None:
             return False
-        # Split forester stays on station (do not yield to haulers).
-        if building.kind == BuildingKind.FORESTER and building.work_mode == WorkMode.SPLIT:
-            return self._forester_split_has_work(villager, building)
-        can_produce = self._building_can_produce(building)
-        # While recipes can run, stay on station — haulers clear surplus / resupply.
-        if not can_produce:
-            if (
-                villager.inventory.is_empty
-                and building.haulable_total() > 0
-                and WorkPriority.TRANSPORT in villager.priorities
-            ):
-                return False
-            if (
-                self._is_production_station(building)
-                and self._processor_can_be_supplied(building)
-                and villager.inventory.is_empty
-                and WorkPriority.TRANSPORT in villager.priorities
-            ):
-                return False
-        # Don't steal cargo from an in-progress haul (farm workers at home were
-        # dumping kitchen supplies back into the storehouse every tick).
-        if villager.state == VillagerState.HAULING:
-            return False
         if (
-            villager.state == VillagerState.DELIVERING
-            and villager.haul_building_id is not None
+            villager.haul_building_id == building.id
+            and villager.state in (VillagerState.HAULING, VillagerState.DELIVERING)
         ):
-            return False
-        # Already committed — do not re-scan the map.
-        if villager.state == VillagerState.DELIVERING:
             return True
-        if villager.target is not None:
+        if self._workplace_primary_available(villager, building):
             return True
-        if villager.hunt_animal_id is not None or villager.hunt_meat_pos is not None:
-            return True
-        if villager.fish_target_id is not None or villager.fish_catch_pos is not None:
-            # Off-season: keep the catch sticky for later, but don't block other work.
-            if fishing_allowed(self.calendar_day):
-                return True
-        # Only treat cargo as workplace work if this building can store it.
-        if building.can_accept_from(villager.inventory):
-            return True
-        # Wrong-type cargo — deliver home unless production staff should keep crafting.
-        villager.inventory.try_equip_work_tools()
-        if (
-            villager.inventory.has_delivery_cargo()
-            and not building.can_accept_from(villager.inventory)
-        ):
-            if not self._is_production_station(building):
-                return True
-            if self._production_worker_may_deliver(villager, building):
-                return True
-            return can_produce
-        if building.kind == BuildingKind.HUNTER:
-            return (
-                self._find_hunt_target(villager, building) is not None
-                or self._find_meat_in_hunt_areas(building) is not None
-            )
-        if building.kind == BuildingKind.FISHER:
-            if not fishing_allowed(self.calendar_day):
-                return False
-            return (
-                self._find_fish_target(villager, building) is not None
-                or self._find_fish_in_fish_areas(building) is not None
-            )
-        if building.kind == BuildingKind.FARM:
-            return self._find_farm_work(villager, building) is not None
-        if building.kind == BuildingKind.FORESTER and building.work_mode == WorkMode.ALL:
-            return self._forester_all_has_work(villager, building)
-        if building.kind in (BuildingKind.MILL, BuildingKind.KITCHEN, BuildingKind.CRAFT_BENCH):
-            return self._processor_has_work(villager, building)
-        target = self._find_work_in_building(villager, building)
-        if target is not None:
-            villager.target = target
-            return True
-        return False
+        return self._assigned_transport_has_work(villager, building)
 
     def _processor_has_work(self, villager: Villager, building: Building) -> bool:
-        # Stay at the mill/kitchen/craft bench — man the station even while waiting.
-        return True
+        return self._workplace_has_work(villager)
 
     def _forester_split_has_work(self, villager: Villager, building: Building) -> bool:
-        return True
+        return self._workplace_has_work(villager)
 
     def _update_forester_split(self, villager: Villager, building: Building) -> None:
         """Forester split mode: stay on-site and process logs into wood."""
         if not self._ensure_forester_axe(villager, building):
             return
-        if villager.state == VillagerState.DELIVERING:
-            if self._update_workplace_delivery(villager, building):
-                return
+        if self._maybe_assigned_transport(villager, building):
+            return
 
         bx, by = building.center_cell()
         villager.target = (bx, by)
@@ -3660,14 +3914,6 @@ class Game:
             return
 
         building.deposit_from_inventory(villager.inventory)
-
-        if villager.inventory.has_delivery_cargo():
-            if not self._production_worker_may_deliver(villager, building):
-                pass
-            else:
-                self._begin_workplace_delivery(villager, building)
-                if self._update_workplace_delivery(villager, building):
-                    return
 
         if not villager.inventory.has_equipped_tool("axe"):
             return
@@ -3722,120 +3968,6 @@ class Game:
             can_plant_berry=False,
             can_plant_herb=False,
         ) and self._building_allows_cell(building, cell)
-
-    def _delivery_destination(
-        self, villager: Villager, building: Building
-    ) -> tuple[int, int]:
-        """Workplace if it can take cargo; otherwise home for the rest."""
-        if building.can_accept_from(villager.inventory):
-            return building.center_cell()
-        return self.world.home_pos
-
-    def _update_workplace_delivery(self, villager: Villager, building: Building) -> bool:
-        """Handle DELIVERING for workplace workers. Returns True if delivery consumed the turn."""
-        if villager.state != VillagerState.DELIVERING:
-            return False
-        # Reserved plant stock alone is not delivery cargo.
-        # Farm stores crop seeds at the farmhouse (do not reserve them in-hand).
-        keep = building.work_mode in (WorkMode.PLANT, WorkMode.ALL)
-        if building.kind == BuildingKind.FARM:
-            keep = False
-        if keep and building.holding_only_plantables(villager.inventory):
-            villager.state = VillagerState.WORKING
-            villager.target = None
-            return False
-
-        dest = self._delivery_destination(villager, building)
-        if dest == self.world.home_pos and not self._production_worker_may_deliver(
-            villager, building
-        ):
-            villager.state = VillagerState.WORKING
-            villager.target = None
-            return False
-        villager.target = dest
-        if (villager.x, villager.y) == dest:
-            if dest == self.world.home_pos:
-                self._deposit_home(villager.inventory, status=False)
-            else:
-                building.deposit_from_inventory(
-                    villager.inventory, keep_plantables=keep
-                )
-                # Only plantables left (reserved) → resume planting/collecting.
-                if keep and building.holding_only_plantables(villager.inventory):
-                    villager.state = VillagerState.WORKING
-                    villager.target = None
-                    return True
-                # Leftover wrong-type goods → send home next (tools stay equipped).
-                if (
-                    villager.inventory.has_delivery_cargo()
-                    and not building.can_accept_from(villager.inventory)
-                ):
-                    villager.inventory.try_equip_work_tools()
-                    if not villager.inventory.has_delivery_cargo():
-                        villager.state = VillagerState.WORKING
-                        villager.target = None
-                        return True
-                    villager.target = self.world.home_pos
-                    return True
-            if villager.inventory.is_empty or (
-                dest != self.world.home_pos and building.space_left == 0
-            ):
-                villager.state = VillagerState.WORKING
-                villager.target = None
-            # Still holding only reserved plantables after a full storehouse.
-            elif keep and building.holding_only_plantables(villager.inventory):
-                villager.state = VillagerState.WORKING
-                villager.target = None
-            return True
-        self._step_villager_toward(villager, dest)
-        return True
-
-    def _begin_workplace_delivery(self, villager: Villager, building: Building) -> None:
-        villager.inventory.try_equip_work_tools()
-        if not villager.inventory.has_delivery_cargo():
-            return
-        if not self._production_worker_may_deliver(villager, building):
-            return
-        if building.kind == BuildingKind.FARM:
-            has_farm_cargo = (
-                building.has_gather_cargo(villager.inventory)
-                or any(getattr(villager.inventory, k, 0) > 0 for k in SEED_KEYS)
-            )
-            if not has_farm_cargo and building.can_accept_from(villager.inventory):
-                return
-            # has farm cargo, or wrong-type cargo that must go home
-        elif building.work_mode in (WorkMode.PLANT, WorkMode.ALL):
-            if not building.has_gather_cargo(villager.inventory) and building.can_accept_from(
-                villager.inventory
-            ):
-                return
-        villager.state = VillagerState.DELIVERING
-        villager.target = self._delivery_destination(villager, building)
-
-    def _should_deliver_workplace(
-        self, villager: Villager, building: Building
-    ) -> bool:
-        """True when carrying gather goods that should go to storage."""
-        villager.inventory.try_equip_work_tools()
-        if not villager.inventory.has_delivery_cargo():
-            return False
-        if not self._production_worker_may_deliver(villager, building):
-            return False
-        if building.kind == BuildingKind.FARM:
-            has_farm_cargo = (
-                building.has_gather_cargo(villager.inventory)
-                or any(getattr(villager.inventory, k, 0) > 0 for k in SEED_KEYS)
-            )
-            if not has_farm_cargo:
-                # Wood/rock/etc. — clear via home; do not idle with a full wrong pack.
-                return True
-            return villager.inventory.is_full
-        if building.work_mode in (WorkMode.PLANT, WorkMode.ALL):
-            if not building.has_gather_cargo(villager.inventory):
-                return not building.can_accept_from(villager.inventory)
-            # Deliver when pack is full, or when gather goods present and no work left.
-            return villager.inventory.is_full
-        return villager.inventory.is_full
 
     def _transport_has_work(self, villager: Villager) -> bool:
         if not villager.inventory.is_empty:
@@ -4133,15 +4265,7 @@ class Game:
             self._update_processor(villager, building)
             return
 
-        # Full gather cargo → deliver to workplace or home.
-        if (
-            self._should_deliver_workplace(villager, building)
-            and villager.state != VillagerState.DELIVERING
-        ):
-            villager.target = None
-            self._begin_workplace_delivery(villager, building)
-
-        if self._update_workplace_delivery(villager, building):
+        if self._maybe_assigned_transport(villager, building):
             return
 
         # Collect plant stock from workplace / home before planting.
@@ -4158,13 +4282,6 @@ class Game:
 
         target = villager.target
         if target is None:
-            # Partial gather load with nowhere left to work → deliver acceptables.
-            if building.has_gather_cargo(villager.inventory):
-                if self._find_work_in_building(villager, building) is None:
-                    self._begin_workplace_delivery(villager, building)
-                    self._update_workplace_delivery(villager, building)
-                    return
-
             target = self._find_work_in_building(villager, building)
             if target is None:
                 if (
@@ -4173,17 +4290,14 @@ class Game:
                     and building.craftable_split_recipe() is not None
                 ):
                     target = building.center_cell()
-                elif building.has_gather_cargo(villager.inventory):
-                    self._begin_workplace_delivery(villager, building)
-                    self._update_workplace_delivery(villager, building)
                 else:
-                    villager.state = VillagerState.IDLE
-                    villager.target = None
-                return
+                    self._maybe_assigned_transport(villager, building)
+                    return
             villager.target = target
 
         villager.state = VillagerState.WORKING
         if villager.inventory.is_full and building.has_gather_cargo(villager.inventory):
+            self._maybe_assigned_transport(villager, building)
             return
 
         if (villager.x, villager.y) == target:
@@ -4211,77 +4325,57 @@ class Game:
 
     def _update_farmer(self, villager: Villager, building: Building) -> None:
         """Plough, sow, and harvest according to each field plan's seasonal calendar."""
-        if (
-            self._should_deliver_workplace(villager, building)
-            and villager.state != VillagerState.DELIVERING
-        ):
-            self._begin_workplace_delivery(villager, building)
-
-        if self._update_workplace_delivery(villager, building):
-            return
-
         if not self._ensure_work_tool(villager, "hoe"):
             return
 
+        if self._maybe_assigned_transport(villager, building):
+            return
+
         if not self._fields_near_farm(building):
-            if building.has_gather_cargo(villager.inventory):
-                self._begin_workplace_delivery(villager, building)
-                self._update_workplace_delivery(villager, building)
-            else:
-                villager.state = VillagerState.IDLE
-                villager.target = None
+            villager.state = VillagerState.IDLE
+            villager.target = None
             return
 
-        # Harvest / plough before seed runs — never park at home for seeds while
-        # field work is available (sowing can pull seeds from home remotely).
-        harvest_first = self._find_farm_harvest(villager, building)
-        plough_or_sow = None if harvest_first is not None else self._find_farm_plant_work(
-            villager, building
-        )
-        if (
-            harvest_first is None
-            and plough_or_sow is None
-            and self._update_plant_stock_withdraw(villager, building)
-        ):
-            return
-
-        if building.has_gather_cargo(villager.inventory):
-            if self._find_farm_work(villager, building) is None:
-                self._begin_workplace_delivery(villager, building)
-                self._update_workplace_delivery(villager, building)
-                return
-
-        target = harvest_first or plough_or_sow or self._find_farm_work(villager, building)
-        if target is None:
+        # Keep sticky field target so coworkers don't all pile onto the same tile.
+        if villager.target is not None:
+            claimed = self._claimed_work_cells(villager.id)
             if (
-                building.has_gather_cargo(villager.inventory)
-                or (
-                    not villager.inventory.is_empty
-                    and not building.can_accept_from(villager.inventory)
-                )
+                villager.target in claimed
+                or not self._farm_target_still_valid(villager, building, villager.target)
             ):
-                self._begin_workplace_delivery(villager, building)
-                self._update_workplace_delivery(villager, building)
-            elif building.can_accept_from(villager.inventory):
-                # Seeds with no seasonal field work — store at the farmhouse.
-                self._begin_workplace_delivery(villager, building)
-                self._update_workplace_delivery(villager, building)
-            else:
-                villager.state = VillagerState.IDLE
                 villager.target = None
-            return
+                self._clear_villager_path(villager)
 
+        if villager.target is None:
+            harvest_first = self._find_farm_harvest(villager, building)
+            plough_or_sow = (
+                None
+                if harvest_first is not None
+                else self._find_farm_plant_work(villager, building)
+            )
+            if (
+                harvest_first is None
+                and plough_or_sow is None
+                and self._update_plant_stock_withdraw(villager, building)
+            ):
+                return
+            target = harvest_first or plough_or_sow or self._find_farm_work(
+                villager, building
+            )
+            if target is None:
+                self._maybe_assigned_transport(villager, building)
+                return
+            villager.target = target
+
+        target = villager.target
         villager.state = VillagerState.WORKING
-        villager.target = None
-        if villager.inventory.is_full and building.has_gather_cargo(villager.inventory):
-            self._begin_workplace_delivery(villager, building)
-            self._update_workplace_delivery(villager, building)
-            return
 
         if (villager.x, villager.y) == target:
             if villager.work_cooldown == 0:
                 self._villager_perform_farm(villager, building, target)
                 villager.work_cooldown = self._villager_work_interval(villager)
+                villager.target = None
+                self._clear_villager_path(villager)
         else:
             self._step_villager_toward(villager, target)
 
@@ -4290,33 +4384,20 @@ class Game:
         required = WORKPLACE_TOOL.get(building.kind)
         if required is not None and not self._ensure_work_tool(villager, required):
             return
-        # Finish dumping non-input cargo home, then return to the station.
-        if villager.state == VillagerState.DELIVERING:
-            if self._update_workplace_delivery(villager, building):
-                return
+        if self._maybe_assigned_transport(villager, building):
+            return
 
         bx, by = building.center_cell()
         villager.target = (bx, by)
         villager.state = VillagerState.WORKING
 
-        # Walk back to the building if away (e.g. after eating).
         if (villager.x, villager.y) != (bx, by):
             if villager.move_cooldown > 0:
                 return
             self._step_villager_toward(villager, (bx, by))
             return
 
-        # Deposit any carried inputs while standing at the workplace.
-        if building.can_accept_from(villager.inventory):
-            building.deposit_from_inventory(villager.inventory)
-
-        # Wrong-type cargo: send home once, then return (workplace has_work stays true).
-        if not villager.inventory.is_empty:
-            if not self._production_worker_may_deliver(villager, building):
-                return
-            self._begin_workplace_delivery(villager, building)
-            if self._update_workplace_delivery(villager, building):
-                return
+        building.deposit_from_inventory(villager.inventory)
 
         recipe = building.craftable_recipe()
         if recipe is None or villager.work_cooldown > 0:
@@ -4336,14 +4417,44 @@ class Game:
             return None
         if villager.inventory.is_full:
             return None
+        claimed = self._claimed_work_cells(villager.id)
         harvest: list[tuple[int, int]] = []
         for field_b in self._fields_near_farm(building):
             for x, y in field_b.plot_cells():
+                if (x, y) in claimed:
+                    continue
                 if not self.world.is_walkable(x, y):
                     continue
                 if self.world.crop_herb_ready(x, y):
                     harvest.append((x, y))
         return self._closest_of((villager.x, villager.y), harvest)
+
+    def _farm_target_still_valid(
+        self, villager: Villager, building: Building, pos: tuple[int, int]
+    ) -> bool:
+        """True if a sticky farm tile is still worth working."""
+        x, y = pos
+        if not self.world.is_walkable(x, y):
+            return False
+        if self.world.crop_herb_ready(x, y):
+            return building.work_mode in (WorkMode.COLLECT, WorkMode.ALL)
+        if building.work_mode not in (WorkMode.PLANT, WorkMode.ALL):
+            return False
+        cell = self.world.get_cell(x, y)
+        if cell is None or cell.feature == FeatureType.CROP_HERB:
+            return False
+        plan = self._plan_at_cell(building, x, y)
+        if plan is None:
+            return False
+        crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
+        phase = phase_for_crop(crop, self.season)
+        if not phase_allows_plough_plant(phase):
+            return False
+        if cell.terrain in SOIL_LIKE and cell.feature == FeatureType.NONE:
+            return True
+        if cell.terrain not in (TerrainType.WATER, TerrainType.ROCK):
+            return True
+        return False
 
     def _find_farm_plant_work(
         self, villager: Villager, building: Building
@@ -4352,6 +4463,7 @@ class Game:
         mode = building.work_mode
         if mode not in (WorkMode.PLANT, WorkMode.ALL):
             return None
+        claimed = self._claimed_work_cells(villager.id)
         plough: list[tuple[int, int]] = []
         sow: list[tuple[int, int]] = []
         season = self.season
@@ -4368,6 +4480,8 @@ class Game:
                     or getattr(self.home_storage, seed_key, 0) > 0
                 )
                 for x, y in plan.cells():
+                    if (x, y) in claimed:
+                        continue
                     if not self.world.is_walkable(x, y):
                         continue
                     cell = self.world.get_cell(x, y)
@@ -4390,6 +4504,7 @@ class Game:
                             FeatureType.FORAGER,
                             FeatureType.FISHER,
                             FeatureType.FARM,
+                            FeatureType.FIELD,
                             FeatureType.MILL,
                             FeatureType.KITCHEN,
                             FeatureType.CRAFT_BENCH,
@@ -4512,22 +4627,9 @@ class Game:
 
     def _update_hunter(self, villager: Villager, building: Building) -> None:
         """Hunt in areas, or nearest animal if no area is drawn."""
-        if villager.inventory.is_full and villager.state != VillagerState.DELIVERING:
-            villager.hunt_animal_id = None
-            self._begin_workplace_delivery(villager, building)
-
-        if self._update_workplace_delivery(villager, building):
-            return
-
-        if building.has_gather_cargo(villager.inventory) or (
-            villager.inventory.has_delivery_cargo()
-            and not building.can_accept_from(villager.inventory)
-        ):
-            self._begin_workplace_delivery(villager, building)
-            if self._update_workplace_delivery(villager, building):
-                return
-
         if not self._ensure_work_tool(villager, "spear"):
+            return
+        if self._maybe_assigned_transport(villager, building):
             return
 
         meat_pos = villager.hunt_meat_pos
@@ -4537,7 +4639,7 @@ class Game:
                 villager.hunt_meat_pos = None
                 meat_pos = None
         if meat_pos is None:
-            meat_pos = self._find_meat_in_hunt_areas(building)
+            meat_pos = self._find_meat_in_hunt_areas(building, villager.id)
             if meat_pos is not None:
                 villager.hunt_meat_pos = meat_pos
 
@@ -4562,15 +4664,12 @@ class Game:
             return
 
         if villager.inventory.is_full:
+            self._maybe_assigned_transport(villager, building)
             return
 
         animal = self._resolve_hunt_animal(villager, building)
         if animal is None:
-            if not villager.inventory.is_empty:
-                self._begin_workplace_delivery(villager, building)
-                self._update_workplace_delivery(villager, building)
-            else:
-                villager.state = VillagerState.IDLE
+            self._maybe_assigned_transport(villager, building)
             return
 
         villager.state = VillagerState.WORKING
@@ -4608,10 +4707,11 @@ class Game:
         else:
             animals = list(self.wildlife.animals)
             ox, oy = building.center_cell()
+        taken = self._claimed_animal_ids(villager.id)
         animals = [
             a
             for a in animals
-            if building.allows_hunt_kind(a.kind.name)
+            if building.allows_hunt_kind(a.kind.name) and a.id not in taken
         ]
         if not animals:
             return None
@@ -4628,12 +4728,17 @@ class Game:
             villager.hunt_animal_id = animal.id
         return animal
 
-    def _find_meat_in_hunt_areas(self, building: Building) -> tuple[int, int] | None:
+    def _find_meat_in_hunt_areas(
+        self, building: Building, exclude_villager_id: int = -1
+    ) -> tuple[int, int] | None:
+        claimed = self._claimed_work_cells(exclude_villager_id)
         if building.areas:
             for area in building.areas:
                 if area.task_type != TaskType.HUNT:
                     continue
                 for x, y in area.cells():
+                    if (x, y) in claimed:
+                        continue
                     cell = self.world.get_cell(x, y)
                     if cell is not None and cell.meat_deposit > 0:
                         return (x, y)
@@ -4642,6 +4747,8 @@ class Game:
         best_d = 10**9
         for y in range(self.world.rows):
             for x in range(self.world.cols):
+                if (x, y) in claimed:
+                    continue
                 cell = self.world.cells[y][x]
                 if cell.meat_deposit <= 0:
                     continue
@@ -4654,22 +4761,13 @@ class Game:
     def _update_fisher(self, villager: Villager, building: Building) -> None:
         """Fish in areas, or nearest fish if no area is drawn."""
         if not fishing_allowed(self.calendar_day):
-            if not villager.inventory.is_empty:
-                self._begin_workplace_delivery(villager, building)
-                self._update_workplace_delivery(villager, building)
-            else:
-                villager.state = VillagerState.IDLE
-                villager.fish_target_id = None
-            return
-
-        if villager.inventory.is_full and villager.state != VillagerState.DELIVERING:
+            self._maybe_assigned_transport(villager, building)
             villager.fish_target_id = None
-            self._begin_workplace_delivery(villager, building)
-
-        if self._update_workplace_delivery(villager, building):
             return
 
         if not self._ensure_work_tool(villager, "fishing_rod"):
+            return
+        if self._maybe_assigned_transport(villager, building):
             return
 
         catch_pos = villager.fish_catch_pos
@@ -4679,7 +4777,7 @@ class Game:
                 villager.fish_catch_pos = None
                 catch_pos = None
         if catch_pos is None:
-            catch_pos = self._find_fish_in_fish_areas(building)
+            catch_pos = self._find_fish_in_fish_areas(building, villager.id)
             if catch_pos is not None:
                 villager.fish_catch_pos = catch_pos
 
@@ -4703,15 +4801,12 @@ class Game:
             return
 
         if villager.inventory.is_full:
+            self._maybe_assigned_transport(villager, building)
             return
 
         target = self._resolve_fish_target(villager, building)
         if target is None:
-            if not villager.inventory.is_empty:
-                self._begin_workplace_delivery(villager, building)
-                self._update_workplace_delivery(villager, building)
-            else:
-                villager.state = VillagerState.IDLE
+            self._maybe_assigned_transport(villager, building)
             return
 
         villager.state = VillagerState.WORKING
@@ -4734,7 +4829,7 @@ class Game:
                 villager.fish_target_id = None
                 if pos is not None:
                     deposit_at = self.world.add_fish_deposit(pos[0], pos[1], FISH_YIELD)
-                    shore = self._find_fish_in_fish_areas(building)
+                    shore = self._find_fish_in_fish_areas(building, villager.id)
                     villager.fish_catch_pos = (
                         shore if shore is not None else deposit_at if deposit_at is not None else pos
                     )
@@ -4754,6 +4849,8 @@ class Game:
         else:
             found = list(self.fish.fish)
             ox, oy = building.center_cell()
+        taken = self._claimed_fish_ids(villager.id)
+        found = [f for f in found if f.id not in taken]
         if not found:
             return None
         return min(found, key=lambda f: abs(f.x - ox) + abs(f.y - oy))
@@ -4769,12 +4866,17 @@ class Game:
             villager.fish_target_id = item.id
         return item
 
-    def _find_fish_in_fish_areas(self, building: Building) -> tuple[int, int] | None:
+    def _find_fish_in_fish_areas(
+        self, building: Building, exclude_villager_id: int = -1
+    ) -> tuple[int, int] | None:
+        claimed = self._claimed_work_cells(exclude_villager_id)
         if building.areas:
             for area in building.areas:
                 if area.task_type != TaskType.FISH:
                     continue
                 for x, y in area.cells():
+                    if (x, y) in claimed:
+                        continue
                     cell = self.world.get_cell(x, y)
                     if cell is not None and cell.fish_deposit > 0:
                         return (x, y)
@@ -4783,6 +4885,8 @@ class Game:
                     if cell is None or cell.terrain != TerrainType.WATER:
                         continue
                     for ny, nx in self.world.neighbourhood(x, y, radius=1):
+                        if (nx, ny) in claimed:
+                            continue
                         ncell = self.world.get_cell(nx, ny)
                         if ncell is not None and ncell.fish_deposit > 0:
                             return (nx, ny)
@@ -4791,6 +4895,8 @@ class Game:
         best_d = 10**9
         for y in range(self.world.rows):
             for x in range(self.world.cols):
+                if (x, y) in claimed:
+                    continue
                 cell = self.world.cells[y][x]
                 if cell.fish_deposit <= 0:
                     continue
@@ -4962,33 +5068,6 @@ class Game:
         if not amounts:
             return 0
         return self.home_storage.withdraw_amounts_to(villager.inventory, amounts)
-
-    def _claimed_haul_targets(self, exclude_id: int) -> set[int]:
-        """Buildings already reserved by empty haulers walking to pick up stock."""
-        claimed: set[int] = set()
-        for other in self.villagers:
-            if other.id == exclude_id:
-                continue
-            if other.haul_building_id is None:
-                continue
-            if other.inventory.is_empty and other.state == VillagerState.HAULING:
-                claimed.add(other.haul_building_id)
-        return claimed
-
-    def _owns_haul_claim(self, villager: Villager, building_id: int) -> bool:
-        """True if this villager should keep the empty-pickup claim (lowest id wins)."""
-        for other in self.villagers:
-            if other.id == villager.id:
-                continue
-            if other.haul_building_id != building_id:
-                continue
-            if (
-                other.inventory.is_empty
-                and other.state == VillagerState.HAULING
-                and other.id < villager.id
-            ):
-                return False
-        return True
 
     def _find_haul_source(self, villager: Villager) -> Building | None:
         claimed = self._claimed_haul_targets(villager.id)
@@ -5190,6 +5269,7 @@ class Game:
         if not allow_plant:
             can_plant_sapling = can_plant_berry = can_plant_herb = False
         origin = (villager.x, villager.y)
+        claimed = self._claimed_work_cells(villager.id)
 
         def match(cell, task_type: TaskType, *, plant_ok: bool) -> bool:
             if not self._cell_matches_task(
@@ -5207,6 +5287,8 @@ class Game:
             plant: list[tuple[int, int]] = []
             for area in building.areas:
                 for x, y in area.cells():
+                    if (x, y) in claimed:
+                        continue
                     cell = self.world.get_cell(x, y)
                     if cell is None or not self.world.is_walkable(x, y):
                         continue
@@ -5253,7 +5335,7 @@ class Game:
                 return None
             if allow_plant and can_plant_sapling:
                 planted = self._find_closest_manage_plant_cell(
-                    ox, oy, can_plant_sapling=True
+                    ox, oy, can_plant_sapling=True, exclude_cells=claimed
                 )
                 if planted is not None:
                     return planted
@@ -5266,6 +5348,7 @@ class Game:
                     can_plant_berry=False,
                     can_plant_herb=False,
                     building=building,
+                    exclude_cells=claimed,
                 )
             return None
 
@@ -5279,6 +5362,7 @@ class Game:
                     can_plant_berry=False,
                     can_plant_herb=False,
                     building=building,
+                    exclude_cells=claimed,
                 )
             return None
 
@@ -5298,6 +5382,7 @@ class Game:
             can_plant_berry=False,
             can_plant_herb=False,
             building=building,
+            exclude_cells=claimed,
         )
 
     def _find_closest_task_cell(
@@ -5310,6 +5395,7 @@ class Game:
         can_plant_berry: bool,
         can_plant_herb: bool,
         building: Building | None = None,
+        exclude_cells: set[tuple[int, int]] | None = None,
     ) -> tuple[int, int] | None:
         best: tuple[int, int] | None = None
         best_d = 10**9
@@ -5319,6 +5405,8 @@ class Game:
         for y in range(rows):
             row = cells[y]
             for x in range(cols):
+                if exclude_cells and (x, y) in exclude_cells:
+                    continue
                 cell = row[x]
                 if cell.terrain == TerrainType.WATER:
                     continue
@@ -5375,6 +5463,7 @@ class Game:
         oy: int,
         *,
         can_plant_sapling: bool,
+        exclude_cells: set[tuple[int, int]] | None = None,
     ) -> tuple[int, int] | None:
         best: tuple[int, int] | None = None
         best_d = 10**9
@@ -5382,6 +5471,8 @@ class Game:
         for y in range(self.world.rows):
             row = cells[y]
             for x in range(self.world.cols):
+                if exclude_cells and (x, y) in exclude_cells:
+                    continue
                 cell = row[x]
                 if cell.terrain == TerrainType.WATER:
                     continue

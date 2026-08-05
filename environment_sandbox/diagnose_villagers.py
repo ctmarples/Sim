@@ -111,7 +111,7 @@ def diagnose_villager(game: Game, v) -> list[str]:
                 reasons.append("kitchen: missing recipe inputs")
 
         if v.inventory.has_delivery_cargo() and v.state == VillagerState.DELIVERING:
-            dest = game._delivery_destination(v, b)
+            dest = game._assigned_transport_destination(v, b)
             if dest == game.world.home_pos:
                 reasons.append("delivering cargo to home (workplace full or wrong type)")
             else:
