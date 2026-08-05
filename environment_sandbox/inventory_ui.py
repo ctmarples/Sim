@@ -296,3 +296,52 @@ def draw_item_tooltip(
     pygame.draw.rect(surface, (28, 30, 36), tip, border_radius=3)
     pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, tip, 1, border_radius=3)
     surface.blit(text, (tip.x + pad, tip.y + pad))
+
+
+def draw_tool_slot(
+    surface: pygame.Surface,
+    *,
+    origin: tuple[int, int],
+    equipped_tool: str | None,
+    mouse_pos: tuple[int, int] | None,
+    fonts: tuple[pygame.font.Font, pygame.font.Font, pygame.font.Font],
+    interactive: bool = True,
+) -> tuple[int, list[tuple[pygame.Rect, str]], str | None]:
+    """Draw the single tool slot. Returns (height, click_hits, hovered_tool_key)."""
+    font, font_small, _font_tiny = fonts
+    x0, y0 = origin
+    y = y0
+    surface.blit(font.render("Tool", True, COLOUR_TEXT), (x0, y))
+    y += 18
+    cell = pygame.Rect(x0, y, GRID_CELL, GRID_CELL)
+    hovered = mouse_pos is not None and cell.collidepoint(mouse_pos)
+    if equipped_tool:
+        draw_resource_cell(
+            surface,
+            cell=cell,
+            key=equipped_tool,
+            fonts=fonts,
+            hovered=hovered,
+            active=True,
+        )
+    else:
+        bg = (55, 62, 50) if hovered else (36, 38, 44)
+        border = COLOUR_SELECTED_ENTITY if hovered else COLOUR_TOOLBAR_BORDER
+        pygame.draw.rect(surface, bg, cell, border_radius=4)
+        pygame.draw.rect(surface, border, cell, 1, border_radius=4)
+        dash = font_small.render("—", True, COLOUR_TEXT_DIM)
+        surface.blit(
+            dash,
+            (
+                cell.centerx - dash.get_width() // 2,
+                cell.centery - dash.get_height() // 2,
+            ),
+        )
+    hits: list[tuple[pygame.Rect, str]] = []
+    if interactive:
+        if equipped_tool:
+            hits.append((cell, "tool_unequip"))
+        else:
+            hits.append((cell, "tool_equip"))
+    tip_key = equipped_tool if hovered else None
+    return y + GRID_CELL + 8 - y0, hits, tip_key

@@ -21,6 +21,7 @@ from inventory_ui import (
     INV_PANEL_GAP,
     draw_inv_grid,
     draw_item_tooltip,
+    draw_tool_slot,
     grid_height,
     present_keys,
 )
@@ -59,6 +60,7 @@ class VillagerInspectDialog:
         self.show_player: bool = False
         self._buttons: list[tuple[str, pygame.Rect]] = []
         self._inv_hits: list[tuple[pygame.Rect, str, str]] = []
+        self._tool_hits: list[tuple[pygame.Rect, str]] = []
         self._inv_tip_hits: list[tuple[pygame.Rect, str, str]] = []
         self._pending_action: str | None = None
         self._panel_x = 80
@@ -148,6 +150,10 @@ class VillagerInspectDialog:
             self._move_offset = (pos[0] - self._panel_x, pos[1] - self._panel_y)
             return True
         for action, rect in self._buttons:
+            if rect.collidepoint(pos):
+                self._pending_action = action
+                return True
+        for rect, action in self._tool_hits:
             if rect.collidepoint(pos):
                 self._pending_action = action
                 return True
@@ -279,6 +285,10 @@ class VillagerInspectDialog:
             + BTN_H
             + 6
             + SECTION_GAP
+            + 18
+            + GRID_CELL
+            + 26
+            + SECTION_GAP
             + grid_h
             + PAD
         )
@@ -313,6 +323,7 @@ class VillagerInspectDialog:
 
         self._buttons = []
         self._inv_hits = []
+        self._tool_hits = []
         self._inv_tip_hits = []
         x = panel.x + PAD
         y = panel.y + TITLE_BAR_H + PAD
@@ -411,7 +422,26 @@ class VillagerInspectDialog:
             bx += w + 4
         y += BTN_H + SECTION_GAP
 
-        tip_key: str | None = None
+        tool_h, tool_hits, tool_tip = draw_tool_slot(
+            surface,
+            origin=(x, y),
+            equipped_tool=villager.inventory.equipped_tool,
+            mouse_pos=mouse_pos,
+            fonts=self._fonts(),
+            interactive=True,
+        )
+        self._tool_hits = tool_hits
+        y += tool_h + SECTION_GAP
+        surface.blit(
+            self.font_small.render(
+                "Click slot to equip or unequip.",
+                True,
+                COLOUR_TEXT_DIM,
+            ),
+            (x, y - 6),
+        )
+
+        tip_key: str | None = tool_tip
         if dual:
             col_w = (inner_w - INV_PANEL_GAP) // 2
             left_h, left_hits, left_tips, left_hov, *_ = draw_inv_grid(

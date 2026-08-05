@@ -1140,6 +1140,7 @@ ICON_FARM = "farm"
 ICON_FIELD = "field"
 ICON_MILL = "mill"
 ICON_KITCHEN = "kitchen"
+ICON_CRAFT_BENCH = "craft_bench"
 ICON_CONSTRUCTION = "construction_site"
 ICON_DEER_MALE = "deer_male"
 ICON_DEER_FEMALE = "deer_female"
@@ -1152,7 +1153,15 @@ ICON_MEAT_MARKER = "meat_marker"
 ICON_FISH_MARKER = "fish_marker"
 ICON_SEEDS = "seeds"
 ICON_WOOD = "wood"
-ICON_HARDWOOD = "hardwood"
+ICON_HARDWOOD = "log_hardwood"
+ICON_LOG_WOOD = "log_wood"
+ICON_LOG_HARDWOOD = "log_hardwood"
+ICON_AXE = "axe"
+ICON_SPEAR = "wooden_spear"
+ICON_KNIFE = "knife"
+ICON_HOE = "hoe"
+ICON_FISHING_ROD = "fishing_rod"
+ICON_TWINE = "twine"
 ICON_BERRIES = "berries"
 ICON_BREAD = "bread"
 ICON_STEW = "stew"
@@ -1183,6 +1192,7 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_FIELD,
     ICON_MILL,
     ICON_KITCHEN,
+    ICON_CRAFT_BENCH,
     ICON_CONSTRUCTION,
     ICON_DEER_MALE,
     ICON_DEER_FEMALE,
@@ -1196,6 +1206,14 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_SEEDS,
     ICON_WOOD,
     ICON_HARDWOOD,
+    ICON_LOG_WOOD,
+    ICON_LOG_HARDWOOD,
+    ICON_AXE,
+    ICON_SPEAR,
+    ICON_KNIFE,
+    ICON_HOE,
+    ICON_FISHING_ROD,
+    ICON_TWINE,
     ICON_BERRIES,
     ICON_BREAD,
     ICON_STEW,
@@ -1249,8 +1267,10 @@ def icon_base_for_feature(
         FeatureType.FIELD: ICON_FIELD,
         FeatureType.MILL: ICON_MILL,
         FeatureType.KITCHEN: ICON_KITCHEN,
+        FeatureType.CRAFT_BENCH: ICON_CRAFT_BENCH,
         FeatureType.CONSTRUCTION_SITE: ICON_CONSTRUCTION,
         FeatureType.MUSHROOM: ICON_MUSHROOM,
+        FeatureType.WOOD_BUSH: ICON_WOOD,
         FeatureType.BERRY_BUSH: ICON_BERRY_BUSH,
         FeatureType.REED: ICON_REED,
     }

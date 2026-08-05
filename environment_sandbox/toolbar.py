@@ -38,6 +38,7 @@ BUILD_ORDER: list[BuildingKind | None] = [
     BuildingKind.FIELD,
     BuildingKind.MILL,
     BuildingKind.KITCHEN,
+    BuildingKind.CRAFT_BENCH,
     None,
 ]
 
@@ -51,6 +52,7 @@ _BUILD_SHORT: dict[BuildingKind, str] = {
     BuildingKind.FIELD: "Field",
     BuildingKind.MILL: "Mill",
     BuildingKind.KITCHEN: "Kit",
+    BuildingKind.CRAFT_BENCH: "Crft",
 }
 
 
@@ -151,6 +153,7 @@ class Toolbar:
             BuildingKind.FARM,
             BuildingKind.MILL,
             BuildingKind.KITCHEN,
+            BuildingKind.CRAFT_BENCH,
         ):
             clear_label = "Clear"
             clear_w = max(48, 10 + self.font_small.size(clear_label)[0])

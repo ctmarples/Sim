@@ -114,10 +114,12 @@ class FeatureType(Enum):
     FIELD = auto()
     MILL = auto()
     KITCHEN = auto()
+    CRAFT_BENCH = auto()
     CONSTRUCTION_SITE = auto()
     # Invisible reserved cells of a multi-cell building footprint (not the glyph cell).
     STRUCTURE_PAD = auto()
     MUSHROOM = auto()
+    WOOD_BUSH = auto()
     BERRY_BUSH = auto()
     HERB = auto()  # legacy; migrated to WILD_CROP on load
     WILD_CROP = auto()  # wild crop patches (any CropDef key)
@@ -1159,13 +1161,23 @@ class World:
                         and self._forage_rng.random() < mushroom_spawn_rate(day, nx, ny)
                     ):
                         cell.feature = FeatureType.MUSHROOM
+                    elif (
+                        cell.feature == FeatureType.NONE
+                        and cell.terrain in SOIL_LIKE
+                        and self._forage_rng.random()
+                        < mushroom_spawn_rate(day, nx, ny) * 0.85
+                    ):
+                        from resource_balance import WOOD_BUSH_YIELD
+
+                        cell.feature = FeatureType.WOOD_BUSH
+                        cell.deposit = WOOD_BUSH_YIELD
 
     def clear_mushrooms(self) -> None:
         """Remove every mushroom tile (called at winter onset)."""
         for y in range(self.rows):
             for x in range(self.cols):
                 cell = self.cells[y][x]
-                if cell.feature == FeatureType.MUSHROOM:
+                if cell.feature in (FeatureType.MUSHROOM, FeatureType.WOOD_BUSH):
                     cell.feature = FeatureType.NONE
                     cell.deposit = 0
 
@@ -1382,6 +1394,16 @@ class World:
             return False
         cell.feature = FeatureType.NONE
         return True
+
+    def harvest_wood_bush(self, x: int, y: int) -> int:
+        cell = self.get_cell(x, y)
+        if cell is None or cell.feature != FeatureType.WOOD_BUSH or cell.deposit <= 0:
+            return 0
+        taken = min(1, cell.deposit)
+        cell.deposit -= taken
+        if cell.deposit <= 0:
+            cell.feature = FeatureType.NONE
+        return taken
 
     def harvest_berries(self, x: int, y: int, amount: int = 1) -> int:
         cell = self.get_cell(x, y)

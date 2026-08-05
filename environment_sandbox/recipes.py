@@ -35,7 +35,7 @@ MILL_RECIPES: tuple[Recipe, ...] = (
     Recipe("rye_flour", {"rye": 10}, {"rye_flour": 1}),
 )
 
-# Prefer meat stew, fish stew, grilled, then breads.
+# Prefer meat stew, fish stew, grilled, then breads. Fuel wood consumed separately.
 KITCHEN_RECIPES: tuple[Recipe, ...] = (
     Recipe(
         "stew",
@@ -53,10 +53,25 @@ KITCHEN_RECIPES: tuple[Recipe, ...] = (
     Recipe("bread_rye", {"rye_flour": 4}, {"bread": 1}),
 )
 
-# Gather toggles (no crafting inputs) — enable which goods workers pursue.
+CRAFT_BENCH_RECIPES: tuple[Recipe, ...] = (
+    Recipe("twine", {"hemp": 1, "flax": 1}, {"twine": 1}),
+    Recipe("axe", {"wood": 1, "rock": 1, "twine": 1}, {"axe": 1}),
+    Recipe("spear", {"wood": 1}, {"spear": 1}),
+    Recipe("fishing_rod", {"wood": 1, "twine": 2}, {"fishing_rod": 1}),
+    Recipe("hoe", {"wood": 1, "rock": 1, "twine": 1}, {"hoe": 1}),
+    Recipe("knife", {"wood": 1, "rock": 1, "twine": 1}, {"knife": 1}),
+)
+
+# Gather toggles (chop trees → logs / hardwood logs).
 FORESTER_RECIPES: tuple[Recipe, ...] = (
-    Recipe("wood", {}, {"wood": 1}),
-    Recipe("hardwood", {}, {"hardwood": 1}),
+    Recipe("logs", {}, {"logs": 1}),
+    Recipe("hardwood_logs", {}, {"hardwood_logs": 1}),
+)
+
+# Split logs at the forester building (work mode Split).
+FORESTER_SPLIT_RECIPES: tuple[Recipe, ...] = (
+    Recipe("split_log", {"logs": 1}, {"wood": 7}),
+    Recipe("split_hardwood", {"hardwood_logs": 1}, {"wood": 10}),
 )
 
 HUNTER_RECIPES: tuple[Recipe, ...] = (
@@ -73,6 +88,21 @@ FORAGER_RECIPES: tuple[Recipe, ...] = (
 
 MILL_INPUT_KEYS: tuple[str, ...] = ("wheat", "rye")
 MILL_OUTPUT_KEYS: tuple[str, ...] = ("wheat_flour", "rye_flour")
+CRAFT_BENCH_INPUT_KEYS: tuple[str, ...] = (
+    "hemp",
+    "flax",
+    "wood",
+    "rock",
+    "twine",
+)
+CRAFT_BENCH_OUTPUT_KEYS: tuple[str, ...] = (
+    "twine",
+    "axe",
+    "spear",
+    "fishing_rod",
+    "hoe",
+    "knife",
+)
 KITCHEN_INPUT_KEYS: tuple[str, ...] = (
     "wheat_flour",
     "rye_flour",
@@ -90,6 +120,7 @@ KITCHEN_OUTPUT_KEYS: tuple[str, ...] = (
     "grilled_meat",
     "grilled_fish",
 )
+KITCHEN_FUEL_KEY: str = "wood"
 
 # All crafted / milled goods stored as cargo.
 PROCESSED_KEYS: tuple[str, ...] = (
@@ -100,6 +131,12 @@ PROCESSED_KEYS: tuple[str, ...] = (
     "fish_stew",
     "grilled_meat",
     "grilled_fish",
+    "twine",
+    "axe",
+    "spear",
+    "fishing_rod",
+    "hoe",
+    "knife",
 )
 
 RECIPE_LABELS: dict[str, str] = {
@@ -111,8 +148,17 @@ RECIPE_LABELS: dict[str, str] = {
     "grilled_fish": "Grilled fish",
     "bread_wheat": "Bread (wheat)",
     "bread_rye": "Bread (rye)",
+    "twine": "Twine",
+    "axe": "Axe",
+    "spear": "Spear",
+    "fishing_rod": "Fishing rod",
+    "hoe": "Hoe",
+    "knife": "Knife",
+    "split_log": "Split log",
+    "split_hardwood": "Split hardwood log",
+    "logs": "Logs",
+    "hardwood_logs": "Hardwood logs",
     "wood": "Wood",
-    "hardwood": "Hardwood",
     "deer": "Deer",
     "boar": "Boar",
     "berries": "Berries",
@@ -155,9 +201,9 @@ def recipe_output_fits(
             return False
     elif capacity is not None:
         stored = int(getattr(storage, "stored_total", 0))
-        if stored + out_total > capacity:
-            return False
         in_total = sum(recipe.inputs.values())
+        # Net change after consuming inputs — gross ``stored + out_total`` wrongly
+        # blocks crafts when the building is nearly full (e.g. forester split).
         if stored - in_total + out_total > capacity:
             return False
     # Per-item caps (Building.item_caps).

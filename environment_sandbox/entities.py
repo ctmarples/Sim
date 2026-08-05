@@ -7,9 +7,14 @@ from enum import Enum, auto
 
 from crops import PRODUCE_KEYS, SEED_KEYS
 from recipes import (
+    CRAFT_BENCH_INPUT_KEYS,
+    CRAFT_BENCH_OUTPUT_KEYS,
+    CRAFT_BENCH_RECIPES,
     FORESTER_RECIPES,
+    FORESTER_SPLIT_RECIPES,
     FORAGER_RECIPES,
     HUNTER_RECIPES,
+    KITCHEN_FUEL_KEY,
     KITCHEN_INPUT_KEYS,
     KITCHEN_OUTPUT_KEYS,
     KITCHEN_RECIPES,
@@ -18,13 +23,19 @@ from recipes import (
     MILL_RECIPES,
     PROCESSED_KEYS,
     Recipe,
+    apply_recipe,
     can_craft,
     input_keys_for_recipes,
 )
 from settings import (
     BUILDING_FOOTPRINT,
     BUILDING_STORAGE_CAPACITY,
+    CRAFT_BENCH_INPUT_CAPACITY,
+    CRAFT_BENCH_OUTPUT_CAPACITY,
+    FORESTER_DEFAULT_HARDWOOD_LOGS_MIN,
+    FORESTER_DEFAULT_LOGS_MIN,
     INVENTORY_CAPACITY,
+    KITCHEN_FUEL_CAPACITY,
     KITCHEN_INPUT_CAPACITY,
     KITCHEN_OUTPUT_CAPACITY,
     MILL_INPUT_CAPACITY,
@@ -36,6 +47,9 @@ from trees import SAPLING_ITEM_KEYS, sapling_item_key
 
 # Seeds share a dedicated carry pool (separate from wood/food/etc.).
 SEED_ITEM_KEYS: tuple[str, ...] = ("berry_seeds", *SEED_KEYS)
+
+# Tools carried in the dedicated tool slot (not general cargo stacks).
+TOOL_KEYS: tuple[str, ...] = ("axe", "spear", "fishing_rod", "hoe", "knife")
 
 
 class TaskType(Enum):
@@ -52,12 +66,13 @@ class TaskType(Enum):
     PLANT_HERB_SEEDS = auto()
     FULL_FORAGE = auto()
     FARM_FIELD = auto()
+    SPLIT_LOGS = auto()
 
 
 TASK_LABELS: dict[TaskType, str] = {
     TaskType.CHOP_TREES: "Chop area",
     TaskType.PLANT_SAPLINGS: "Plant saplings",
-    TaskType.FULL_MANAGE: "Full manage",
+    TaskType.FULL_MANAGE: "All",
     TaskType.COLLECT_ROCKS: "Collect rocks",
     TaskType.HUNT: "Hunt area",
     TaskType.FISH: "Fish area",
@@ -68,40 +83,52 @@ TASK_LABELS: dict[TaskType, str] = {
     TaskType.PLANT_HERB_SEEDS: "Plant herb seeds",
     TaskType.FULL_FORAGE: "Full forage",
     TaskType.FARM_FIELD: "Farm field",
+    TaskType.SPLIT_LOGS: "Split logs",
 }
 
 
 class WorkMode(Enum):
-    """Workplace behaviour: gather resources, plant, or both."""
+    """Workplace behaviour: gather resources, plant, split, or all three."""
 
     COLLECT = auto()
     PLANT = auto()
-    BOTH = auto()
+    SPLIT = auto()
+    ALL = auto()
 
 
 WORK_MODE_LABELS: dict[WorkMode, str] = {
     WorkMode.COLLECT: "Collect",
     WorkMode.PLANT: "Plant",
-    WorkMode.BOTH: "Both",
+    WorkMode.SPLIT: "Split",
+    WorkMode.ALL: "All",
 }
 
 WORK_MODE_SHORT: dict[WorkMode, str] = {
     WorkMode.COLLECT: "C",
     WorkMode.PLANT: "P",
-    WorkMode.BOTH: "B",
+    WorkMode.SPLIT: "S",
+    WorkMode.ALL: "A",
 }
 
 # Order used when cycling the behaviour toggle.
 WORK_MODE_CYCLE_PLANTABLE: tuple[WorkMode, ...] = (
     WorkMode.COLLECT,
     WorkMode.PLANT,
-    WorkMode.BOTH,
+    WorkMode.ALL,
+)
+
+WORK_MODE_CYCLE_FORESTER: tuple[WorkMode, ...] = (
+    WorkMode.COLLECT,
+    WorkMode.PLANT,
+    WorkMode.SPLIT,
+    WorkMode.ALL,
 )
 
 FORESTER_TASK_CYCLE: tuple[TaskType, ...] = (
     TaskType.CHOP_TREES,
     TaskType.PLANT_SAPLINGS,
     TaskType.FULL_MANAGE,
+    TaskType.SPLIT_LOGS,
 )
 
 FORAGER_TASK_CYCLE: tuple[TaskType, ...] = (
@@ -121,6 +148,17 @@ class BuildingKind(Enum):
     FIELD = auto()
     MILL = auto()
     KITCHEN = auto()
+    CRAFT_BENCH = auto()
+
+
+# Tool required in the equipped slot for workplace actions.
+WORKPLACE_TOOL: dict[BuildingKind, str] = {
+    BuildingKind.FORESTER: "axe",
+    BuildingKind.HUNTER: "spear",
+    BuildingKind.FISHER: "fishing_rod",
+    BuildingKind.FARM: "hoe",
+    BuildingKind.KITCHEN: "knife",
+}
 
 
 BUILDING_LABELS: dict[BuildingKind, str] = {
@@ -135,6 +173,7 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
     BuildingKind.FIELD: "Field",
     BuildingKind.MILL: "Mill",
     BuildingKind.KITCHEN: "Kitchen",
+    BuildingKind.CRAFT_BENCH: "Craft bench",
 }
 
 
@@ -160,7 +199,22 @@ def default_processor_capacities(kind: BuildingKind) -> tuple[int, int, int]:
             KITCHEN_INPUT_CAPACITY,
             KITCHEN_OUTPUT_CAPACITY,
         )
+    if kind == BuildingKind.CRAFT_BENCH:
+        return (
+            CRAFT_BENCH_INPUT_CAPACITY + CRAFT_BENCH_OUTPUT_CAPACITY,
+            CRAFT_BENCH_INPUT_CAPACITY,
+            CRAFT_BENCH_OUTPUT_CAPACITY,
+        )
     return BUILDING_STORAGE_CAPACITY, 0, 0
+
+
+def default_item_mins(kind: BuildingKind) -> dict[str, int]:
+    if kind == BuildingKind.FORESTER:
+        return {
+            "logs": FORESTER_DEFAULT_LOGS_MIN,
+            "hardwood_logs": FORESTER_DEFAULT_HARDWOOD_LOGS_MIN,
+        }
+    return {}
 
 
 class VillagerState(Enum):
@@ -254,8 +308,9 @@ DEFAULT_PRIORITIES_HOME: tuple[WorkPriority, ...] = (
 
 @dataclass
 class Inventory:
+    logs: int = 0
+    hardwood_logs: int = 0
     wood: int = 0
-    hardwood: int = 0
     rock: int = 0
     meat: int = 0
     fish: int = 0
@@ -292,6 +347,13 @@ class Inventory:
     fish_stew: int = 0
     grilled_meat: int = 0
     grilled_fish: int = 0
+    twine: int = 0
+    axe: int = 0
+    spear: int = 0
+    fishing_rod: int = 0
+    hoe: int = 0
+    knife: int = 0
+    equipped_tool: str | None = None
     capacity: int = INVENTORY_CAPACITY
     seed_capacity: int = SEED_CARRY_CAPACITY
 
@@ -322,8 +384,9 @@ class Inventory:
     def cargo_total(self) -> int:
         """Non-seed items (wood, food, saplings, produce, …)."""
         return (
-            self.wood
-            + self.hardwood
+            self.logs
+            + self.hardwood_logs
+            + self.wood
             + self.rock
             + self.meat
             + self.fish
@@ -331,6 +394,8 @@ class Inventory:
             + self.mushrooms
             + self.berries
             + self.reeds
+            + self.twine
+            + self.axe
             + sum(getattr(self, key) for key in PRODUCE_KEYS)
             + sum(getattr(self, key) for key in PROCESSED_KEYS)
         )
@@ -369,11 +434,14 @@ class Inventory:
         setattr(self, key, getattr(self, key) - n)
         return True
 
+    def add_logs(self, n: int = 1) -> bool:
+        return self.add_item("logs", n)
+
+    def add_hardwood_logs(self, n: int = 1) -> bool:
+        return self.add_item("hardwood_logs", n)
+
     def add_wood(self, n: int = 1) -> bool:
         return self.add_item("wood", n)
-
-    def add_hardwood(self, n: int = 1) -> bool:
-        return self.add_item("hardwood", n)
 
     def add_rock(self, n: int = 1) -> bool:
         return self.add_item("rock", n)
@@ -416,10 +484,72 @@ class Inventory:
     def consume_herb_seed(self) -> bool:
         return self.consume_item("sage_seeds", 1)
 
+    def has_equipped_tool(self, key: str) -> bool:
+        return self.equipped_tool == key
+
+    def can_equip_tool(self, key: str) -> bool:
+        return (
+            key in TOOL_KEYS
+            and self.equipped_tool is None
+            and int(getattr(self, key, 0)) > 0
+        )
+
+    def equip_tool(self, key: str) -> bool:
+        if not self.can_equip_tool(key):
+            return False
+        setattr(self, key, getattr(self, key) - 1)
+        self.equipped_tool = key
+        return True
+
+    def unequip_tool(self) -> bool:
+        if self.equipped_tool is None:
+            return False
+        key = self.equipped_tool
+        if not self.can_add(1, key=key):
+            return False
+        self.equipped_tool = None
+        setattr(self, key, getattr(self, key) + 1)
+        return True
+
+    def equip_tool_from_transfer(self, key: str) -> bool:
+        """Equip a tool moved directly into the slot (e.g. from the player)."""
+        if key not in TOOL_KEYS or self.equipped_tool is not None:
+            return False
+        self.equipped_tool = key
+        return True
+
+    def transfer_equipped_tool_to(self, other: Inventory) -> bool:
+        if self.equipped_tool is None:
+            return False
+        key = self.equipped_tool
+        if not other.can_add(1, key=key):
+            return False
+        self.equipped_tool = None
+        other.add_item(key, 1)
+        return True
+
+    def try_equip_work_tools(self) -> bool:
+        """Move a tool from cargo into the tool slot when empty."""
+        if self.equipped_tool is not None:
+            return False
+        for key in TOOL_KEYS:
+            if self.equip_tool(key):
+                return True
+        return False
+
+    def has_delivery_cargo(self) -> bool:
+        """Cargo worth delivering — loose tools stay on the worker."""
+        cargo = self.cargo_total
+        for key in TOOL_KEYS:
+            cargo -= int(getattr(self, key, 0))
+        return cargo > 0 or self.seed_total > 0
+
     def clear(self) -> dict[str, int]:
+        saved_tool = self.equipped_tool
         deposited = {
+            "logs": self.logs,
+            "hardwood_logs": self.hardwood_logs,
             "wood": self.wood,
-            "hardwood": self.hardwood,
             "rock": self.rock,
             "meat": self.meat,
             "fish": self.fish,
@@ -427,25 +557,31 @@ class Inventory:
             "berries": self.berries,
             "berry_seeds": self.berry_seeds,
             "reeds": self.reeds,
+            "twine": self.twine,
+            "axe": self.axe,
             **{key: getattr(self, key) for key in SAPLING_ITEM_KEYS},
             **{key: getattr(self, key) for key in PRODUCE_KEYS},
             **{key: getattr(self, key) for key in SEED_KEYS},
             **{key: getattr(self, key) for key in PROCESSED_KEYS},
         }
         self.reset()
+        self.equipped_tool = saved_tool
         return deposited
 
     def reset(self) -> None:
-        self.wood = self.hardwood = self.rock = self.meat = self.fish = 0
+        self.logs = self.hardwood_logs = self.wood = self.rock = self.meat = self.fish = 0
         self.mushrooms = self.berries = self.berry_seeds = self.reeds = 0
+        self.twine = self.axe = self.spear = self.fishing_rod = self.hoe = self.knife = 0
+        self.equipped_tool = None
         for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS:
             setattr(self, key, 0)
 
 
 @dataclass
 class HomeStorage:
+    logs: int = 0
+    hardwood_logs: int = 0
     wood: int = 0
-    hardwood: int = 0
     rock: int = 0
     meat: int = 0
     fish: int = 0
@@ -482,6 +618,12 @@ class HomeStorage:
     fish_stew: int = 0
     grilled_meat: int = 0
     grilled_fish: int = 0
+    twine: int = 0
+    axe: int = 0
+    spear: int = 0
+    fishing_rod: int = 0
+    hoe: int = 0
+    knife: int = 0
 
     @property
     def saplings(self) -> int:
@@ -497,7 +639,7 @@ class HomeStorage:
                 setattr(self, key, getattr(self, key) + value)
 
     def deposit(self, wood: int = 0, rock: int = 0, meat: int = 0, saplings: int = 0, **extra) -> None:
-        self.wood += wood
+        self.logs += wood
         self.rock += rock
         self.meat += meat
         if saplings:
@@ -509,15 +651,19 @@ class HomeStorage:
                 setattr(self, key, getattr(self, key) + value)
 
     def try_spend(self, wood: int, rock: int) -> bool:
-        if self.wood < wood or self.rock < rock:
+        if self.logs < wood or self.rock < rock:
             return False
-        self.wood -= wood
+        self.logs -= wood
         self.rock -= rock
         return True
 
     def reset(self) -> None:
-        self.wood = self.hardwood = self.rock = self.meat = self.fish = 0
+        self.logs = self.hardwood_logs = self.wood = self.rock = self.meat = self.fish = 0
         self.mushrooms = self.berries = self.berry_seeds = self.reeds = 0
+        self.twine = self.axe = self.spear = self.fishing_rod = self.hoe = self.knife = 0
+        for key in TOOL_KEYS:
+            if key not in ("axe",):
+                setattr(self, key, 0)
         for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS:
             setattr(self, key, 0)
 
@@ -789,8 +935,9 @@ class Building:
     kind: BuildingKind
     x: int
     y: int
+    logs: int = 0
+    hardwood_logs: int = 0
     wood: int = 0
-    hardwood: int = 0
     rock: int = 0
     meat: int = 0
     fish: int = 0
@@ -827,12 +974,22 @@ class Building:
     fish_stew: int = 0
     grilled_meat: int = 0
     grilled_fish: int = 0
+    twine: int = 0
+    axe: int = 0
+    spear: int = 0
+    fishing_rod: int = 0
+    hoe: int = 0
+    knife: int = 0
     capacity: int = BUILDING_STORAGE_CAPACITY
     # Processor buildings use split pools (0 = unused / fall back to capacity).
     input_capacity: int = 0
     output_capacity: int = 0
+    fuel_capacity: int = 0
+    fuel_wood: int = 0
     # Per-resource stock limits (omit key = unlimited within the pool).
     item_caps: dict[str, int] = field(default_factory=dict)
+    # Minimum stock haulers must leave for recipes / splitting.
+    item_mins: dict[str, int] = field(default_factory=dict)
     # recipe name → enabled; progress steps toward PROCESSOR_RECIPE_STEPS.
     recipe_enabled: dict[str, bool] = field(default_factory=dict)
     recipe_progress: dict[str, int] = field(default_factory=dict)
@@ -843,7 +1000,7 @@ class Building:
     plot_h: int = 1
     plans: list[CropPlan] = field(default_factory=list)
     draw_task_type: TaskType = TaskType.FULL_MANAGE
-    work_mode: WorkMode = WorkMode.BOTH
+    work_mode: WorkMode = WorkMode.ALL
     crop_kind: str = "sage"  # legacy
     next_field_id: int = 1
     next_plan_id: int = 1
@@ -1035,8 +1192,9 @@ class Building:
     @property
     def stored_total(self) -> int:
         return (
-            self.wood
-            + self.hardwood
+            self.logs
+            + self.hardwood_logs
+            + self.wood
             + self.rock
             + self.meat
             + self.fish
@@ -1045,13 +1203,21 @@ class Building:
             + self.berries
             + self.berry_seeds
             + self.reeds
+            + self.twine
+            + self.axe
             + sum(getattr(self, key) for key in PRODUCE_KEYS)
             + sum(getattr(self, key) for key in SEED_KEYS)
             + sum(getattr(self, key) for key in PROCESSED_KEYS)
         )
 
     def is_processor(self) -> bool:
-        return self.kind in (BuildingKind.MILL, BuildingKind.KITCHEN)
+        return self.kind in (BuildingKind.MILL, BuildingKind.KITCHEN, BuildingKind.CRAFT_BENCH)
+
+    def is_splitter(self) -> bool:
+        return self.kind == BuildingKind.FORESTER and self.work_mode in (
+            WorkMode.SPLIT,
+            WorkMode.ALL,
+        )
 
     def has_recipes(self) -> bool:
         return bool(self.known_recipes())
@@ -1068,12 +1234,19 @@ class Building:
             return MILL_RECIPES
         if self.kind == BuildingKind.KITCHEN:
             return KITCHEN_RECIPES
+        if self.kind == BuildingKind.CRAFT_BENCH:
+            return CRAFT_BENCH_RECIPES
         if self.kind == BuildingKind.FORESTER:
             return FORESTER_RECIPES
         if self.kind == BuildingKind.HUNTER:
             return HUNTER_RECIPES
         if self.kind == BuildingKind.FORAGER:
             return FORAGER_RECIPES
+        return ()
+
+    def split_recipes(self) -> tuple[Recipe, ...]:
+        if self.kind == BuildingKind.FORESTER:
+            return FORESTER_SPLIT_RECIPES
         return ()
 
     def enabled_output_keys(self) -> frozenset[str]:
@@ -1103,6 +1276,9 @@ class Building:
 
     def ensure_recipe_state(self) -> None:
         for recipe in self.known_recipes():
+            self.recipe_enabled.setdefault(recipe.name, True)
+            self.recipe_progress.setdefault(recipe.name, 0)
+        for recipe in self.split_recipes():
             self.recipe_enabled.setdefault(recipe.name, True)
             self.recipe_progress.setdefault(recipe.name, 0)
 
@@ -1146,7 +1322,7 @@ class Building:
         Prefer recipe gaps over blind top-ups so haulers fetch vegetables when
         meat is already stocked (instead of filling packs with meat first).
         """
-        from recipes import missing_inputs
+        from recipes import input_keys_for_recipes, missing_inputs
 
         demand: dict[str, int] = {}
         for recipe in self.enabled_recipes():
@@ -1159,7 +1335,45 @@ class Building:
                 want = min(int(need), room)
                 if want > 0:
                     demand[key] = max(demand.get(key, 0), want)
+        if self.is_splitter():
+            for recipe in self.enabled_split_recipes():
+                if not recipe.inputs:
+                    continue
+                for key, need in missing_inputs(self, recipe).items():
+                    room = self.space_for_key(key)
+                    if room <= 0:
+                        continue
+                    want = min(int(need), room)
+                    if want > 0:
+                        demand[key] = max(demand.get(key, 0), want)
+            for key in input_keys_for_recipes(self.enabled_split_recipes()):
+                target = self.reserve_amount(key)
+                if target <= 0:
+                    continue
+                have = int(getattr(self, key, 0))
+                if have >= target:
+                    continue
+                room = self.space_for_key(key)
+                if room <= 0:
+                    continue
+                want = min(target - have, room)
+                if want > 0:
+                    demand[key] = max(demand.get(key, 0), want)
+        if self.kind == BuildingKind.KITCHEN:
+            fuel_want = self.fuel_space_left()
+            if fuel_want > 0:
+                demand[KITCHEN_FUEL_KEY] = max(
+                    demand.get(KITCHEN_FUEL_KEY, 0), fuel_want
+                )
         return demand
+
+    def fuel_space_left(self) -> int:
+        if self.fuel_capacity <= 0:
+            return 0
+        return max(0, self.fuel_capacity - self.fuel_wood)
+
+    def has_cooking_fuel(self) -> bool:
+        return self.fuel_wood > 0
 
     def input_keep_amount(self, key: str) -> int:
         """How many of ``key`` to retain for enabled recipes (2 crafts of buffer)."""
@@ -1168,7 +1382,15 @@ class Building:
             n = int(recipe.inputs.get(key, 0))
             if n > 0:
                 keep = max(keep, n * 2)
+        for recipe in self.enabled_split_recipes():
+            n = int(recipe.inputs.get(key, 0))
+            if n > 0:
+                keep = max(keep, n * 2)
         return keep
+
+    def reserve_amount(self, key: str) -> int:
+        """Units haulers must not remove (min reserve + recipe buffer)."""
+        return max(int(self.item_mins.get(key, 0)), self.input_keep_amount(key))
 
     def excess_input_amounts(self) -> dict[str, int]:
         """Input stock beyond recipe needs — haulers should clear this to free room."""
@@ -1194,7 +1416,7 @@ class Building:
                 return have
             return int(self.excess_input_amounts().get(key, 0))
         if key in self.haul_keys():
-            return have
+            return max(0, have - self.reserve_amount(key))
         return 0
 
     def unused_input_keys(self) -> tuple[str, ...]:
@@ -1211,6 +1433,8 @@ class Building:
             return MILL_INPUT_KEYS
         if self.kind == BuildingKind.KITCHEN:
             return KITCHEN_INPUT_KEYS
+        if self.kind == BuildingKind.CRAFT_BENCH:
+            return CRAFT_BENCH_INPUT_KEYS
         return ()
 
     def processor_output_keys(self) -> tuple[str, ...]:
@@ -1218,6 +1442,8 @@ class Building:
             return MILL_OUTPUT_KEYS
         if self.kind == BuildingKind.KITCHEN:
             return KITCHEN_OUTPUT_KEYS
+        if self.kind == BuildingKind.CRAFT_BENCH:
+            return CRAFT_BENCH_OUTPUT_KEYS
         return ()
 
     def input_stored_total(self) -> int:
@@ -1237,6 +1463,8 @@ class Building:
         return max(0, self.output_capacity - self.output_stored_total())
 
     def space_for_key(self, key: str) -> int:
+        if self.kind == BuildingKind.KITCHEN and key == KITCHEN_FUEL_KEY:
+            return self.fuel_space_left()
         if self.is_processor() and (self.input_capacity > 0 or self.output_capacity > 0):
             if key in self.processor_input_keys():
                 room = self.input_space_left()
@@ -1293,6 +1521,34 @@ class Building:
         self.set_item_cap(key, nxt)
         return self.item_cap(key)
 
+    def item_min(self, key: str) -> int | None:
+        val = self.item_mins.get(key)
+        return int(val) if val is not None and int(val) > 0 else None
+
+    def set_item_min(self, key: str, minimum: int | None) -> None:
+        if key not in self.depositable_keys():
+            return
+        if minimum is None or int(minimum) <= 0:
+            self.item_mins.pop(key, None)
+            return
+        self.item_mins[key] = min(int(minimum), self.max_item_cap(key))
+
+    def adjust_item_min(self, key: str, delta: int) -> int | None:
+        if key not in self.depositable_keys():
+            return None
+        current = self.item_min(key)
+        if current is None:
+            if delta <= 0:
+                return None
+            self.set_item_min(key, delta)
+            return self.item_min(key)
+        nxt = current + delta
+        if nxt <= 0:
+            self.set_item_min(key, None)
+            return None
+        self.set_item_min(key, nxt)
+        return self.item_min(key)
+
     @property
     def space_left(self) -> int:
         if self.is_processor() and (self.input_capacity > 0 or self.output_capacity > 0):
@@ -1311,6 +1567,8 @@ class Building:
         recipes = self.enabled_recipes()
         if not recipes:
             return None
+        if self.kind == BuildingKind.KITCHEN and not self.has_cooking_fuel():
+            return None
         if self.output_capacity > 0:
             return can_craft(
                 self,
@@ -1320,14 +1578,29 @@ class Building:
             )
         return can_craft(self, recipes, capacity=self.capacity)
 
-    def advance_recipe_progress(self, recipe: Recipe) -> bool:
+    def enabled_split_recipes(self) -> tuple[Recipe, ...]:
+        self.ensure_recipe_state()
+        return tuple(
+            r for r in self.split_recipes() if self.recipe_enabled.get(r.name, True)
+        )
+
+    def craftable_split_recipe(self) -> Recipe | None:
+        recipes = self.enabled_split_recipes()
+        if not recipes:
+            return None
+        return can_craft(self, recipes, capacity=self.capacity)
+
+    def advance_recipe_progress(self, recipe: Recipe, *, split: bool = False) -> bool:
         """Advance one work step. Returns True when the craft completes."""
         self.ensure_recipe_state()
         steps = max(1, int(PROCESSOR_RECIPE_STEPS))
-        # Clear progress on other recipes so only one bar fills at a time.
-        for other in self.known_recipes():
+        primary = self.split_recipes() if split else self.known_recipes()
+        secondary = self.known_recipes() if split else self.split_recipes()
+        for other in primary:
             if other.name != recipe.name:
                 self.recipe_progress[other.name] = 0
+        for other in secondary:
+            self.recipe_progress[other.name] = 0
         self.recipe_progress[recipe.name] = int(self.recipe_progress.get(recipe.name, 0)) + 1
         if self.recipe_progress[recipe.name] >= steps:
             self.recipe_progress[recipe.name] = 0
@@ -1339,6 +1612,11 @@ class Building:
     ) -> None:
         if self.is_processor():
             self.deposit_needed_from(inventory)
+            return
+        if self.is_splitter():
+            for key in ("logs", "hardwood_logs"):
+                while self.deposit_one_from(inventory, key):
+                    pass
             return
         keys = self.depositable_keys()
         if keep_plantables:
@@ -1371,6 +1649,15 @@ class Building:
 
     def deposit_one_from(self, inventory: Inventory, key: str) -> bool:
         """Deposit a single unit of ``key`` if capacity allows."""
+        if (
+            self.kind == BuildingKind.KITCHEN
+            and key == KITCHEN_FUEL_KEY
+            and self.fuel_space_left() > 0
+            and inventory.wood > 0
+        ):
+            inventory.wood -= 1
+            self.fuel_wood += 1
+            return True
         if key not in self.depositable_keys() or self.space_for_key(key) <= 0:
             return False
         if getattr(inventory, key, 0) <= 0:
@@ -1383,8 +1670,9 @@ class Building:
         if self.kind == BuildingKind.HOME:
             # Display-only; actual stock lives on Game.home_storage.
             return (
+                "logs",
+                "hardwood_logs",
                 "wood",
-                "hardwood",
                 "rock",
                 "meat",
                 "fish",
@@ -1393,11 +1681,13 @@ class Building:
                 "berries",
                 "berry_seeds",
                 "reeds",
+                "twine",
+                "axe",
             ) + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS
         if self.kind == BuildingKind.WORKSTATION:
             return ()
         if self.kind == BuildingKind.FORESTER:
-            return ("wood", "hardwood", *SAPLING_ITEM_KEYS)
+            return ("logs", "hardwood_logs", "wood", *SAPLING_ITEM_KEYS)
         if self.kind == BuildingKind.MASON:
             return ("rock",)
         if self.kind == BuildingKind.HUNTER:
@@ -1411,7 +1701,9 @@ class Building:
         if self.kind == BuildingKind.MILL:
             return MILL_INPUT_KEYS + MILL_OUTPUT_KEYS
         if self.kind == BuildingKind.KITCHEN:
-            return KITCHEN_INPUT_KEYS + KITCHEN_OUTPUT_KEYS
+            return KITCHEN_INPUT_KEYS + KITCHEN_OUTPUT_KEYS + (KITCHEN_FUEL_KEY,)
+        if self.kind == BuildingKind.CRAFT_BENCH:
+            return CRAFT_BENCH_INPUT_KEYS + CRAFT_BENCH_OUTPUT_KEYS
         if self.kind == BuildingKind.FIELD:
             return ()
         return ()
@@ -1420,8 +1712,10 @@ class Building:
         """Items home haulers may remove. Plant stock is reserved while planting."""
         if self.kind == BuildingKind.FORESTER:
             if self.work_mode == WorkMode.COLLECT:
-                return ("wood", "hardwood", *SAPLING_ITEM_KEYS)
-            return ("wood", "hardwood")
+                return ("logs", "hardwood_logs", *SAPLING_ITEM_KEYS)
+            if self.work_mode == WorkMode.SPLIT:
+                return ("wood",)
+            return ("logs", "hardwood_logs", "wood")
         if self.kind == BuildingKind.FORAGER:
             return ("wood", *_FORAGE_KEYS)
         if self.kind == BuildingKind.FARM:
@@ -1452,8 +1746,12 @@ class Building:
         return sum(self.haulable_amount(key) for key in self.haul_keys())
 
     def can_accept_from(self, inventory: Inventory) -> bool:
-        """True if inventory holds something this building still needs for recipes."""
-        if self.is_processor():
+        """True if inventory holds something this building can take right now."""
+        if self.is_splitter():
+            for key in ("logs", "hardwood_logs"):
+                if int(getattr(inventory, key, 0)) > 0 and self.space_for_key(key) > 0:
+                    return True
+        if self.is_processor() or self.is_splitter():
             demand = self.supply_demand()
             return any(
                 int(getattr(inventory, key, 0)) > 0 and demand.get(key, 0) > 0
@@ -1461,9 +1759,12 @@ class Building:
             )
         keys = self.depositable_keys()
         return any(
-            getattr(inventory, key, 0) > 0 and self.space_for_key(key) > 0
+            int(getattr(inventory, key, 0)) > 0 and self.space_for_key(key) > 0
             for key in keys
         )
+
+    def needs_supplied(self) -> bool:
+        return self.is_processor() or self.is_splitter()
 
     def _take(self, inventory: Inventory, key: str) -> None:
         room = self.space_for_key(key)
@@ -1560,9 +1861,12 @@ class Building:
             BuildingKind.WORKSTATION,
             BuildingKind.MILL,
             BuildingKind.KITCHEN,
+            BuildingKind.CRAFT_BENCH,
         ):
             return ()
-        if self.kind in (BuildingKind.FORESTER, BuildingKind.FARM):
+        if self.kind == BuildingKind.FORESTER:
+            return WORK_MODE_CYCLE_FORESTER
+        if self.kind == BuildingKind.FARM:
             return WORK_MODE_CYCLE_PLANTABLE
         if self.kind == BuildingKind.FIELD:
             return (WorkMode.COLLECT,)  # unused; Farm workers manage Fields
@@ -1577,7 +1881,8 @@ class Building:
             self.draw_task_type = {
                 WorkMode.COLLECT: TaskType.CHOP_TREES,
                 WorkMode.PLANT: TaskType.PLANT_SAPLINGS,
-                WorkMode.BOTH: TaskType.FULL_MANAGE,
+                WorkMode.SPLIT: TaskType.SPLIT_LOGS,
+                WorkMode.ALL: TaskType.FULL_MANAGE,
             }[self.work_mode]
         elif self.kind == BuildingKind.FORAGER:
             self.draw_task_type = TaskType.FULL_FORAGE
@@ -1640,16 +1945,18 @@ class Building:
                 return WorkMode.COLLECT
             if task == TaskType.PLANT_SAPLINGS:
                 return WorkMode.PLANT
-            return WorkMode.BOTH
+            if task == TaskType.SPLIT_LOGS:
+                return WorkMode.SPLIT
+            return WorkMode.ALL
         if kind == BuildingKind.FARM:
-            return WorkMode.BOTH
+            return WorkMode.ALL
         return WorkMode.COLLECT
 
     def default_work_mode(self) -> WorkMode:
         if self.kind == BuildingKind.FORESTER:
-            return WorkMode.BOTH
+            return WorkMode.ALL
         if self.kind == BuildingKind.FARM:
-            return WorkMode.BOTH
+            return WorkMode.ALL
         return WorkMode.COLLECT
 
 

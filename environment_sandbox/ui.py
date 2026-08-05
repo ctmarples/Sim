@@ -43,6 +43,7 @@ from settings import (
     COLOUR_HUNTER,
     COLOUR_ICE,
     COLOUR_KITCHEN,
+    COLOUR_CRAFT_BENCH,
     COLOUR_MASON,
     COLOUR_MEADOW,
     COLOUR_MEAT,
@@ -756,6 +757,7 @@ class UI:
             (COLOUR_FIELD, "Field"),
             (COLOUR_MILL, "Mill"),
             (COLOUR_KITCHEN, "Kitchen"),
+            (COLOUR_CRAFT_BENCH, "Craft bench"),
             ((90, 90, 70), "Site"),
             (COLOUR_PLAYER, "Player"),
             (COLOUR_VILLAGER, "Villager"),
@@ -1121,6 +1123,7 @@ def draw_feature(
         ICON_HOME,
         ICON_HUNTER,
         ICON_KITCHEN,
+        ICON_CRAFT_BENCH,
         ICON_MASON,
         ICON_MILL,
         ICON_MUSHROOM,
@@ -1131,6 +1134,7 @@ def draw_feature(
         ICON_SAPLING_ROUND,
         ICON_TREE_CONE,
         ICON_TREE_ROUND,
+        ICON_WOOD,
         ICON_WORKSTATION,
         blit_icon,
     )
@@ -1359,6 +1363,21 @@ def draw_feature(
                 vibrancy=vibrancy,
             ),
         )
+    elif feature == FeatureType.CRAFT_BENCH:
+        blit_icon(
+            surface,
+            ICON_CRAFT_BENCH,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour=_iso_building_recolour(
+                COLOUR_CRAFT_BENCH,
+                roof=(100, 70, 45),
+                accent=(200, 170, 110),
+                vibrancy=vibrancy,
+            ),
+        )
     elif feature == FeatureType.MUSHROOM:
         blit_icon(
             surface,
@@ -1370,6 +1389,19 @@ def draw_feature(
             recolour={
                 "cap": adjust_colour(COLOUR_MUSHROOM, vibrancy),
                 "stem": (210, 200, 180),
+            },
+        )
+    elif feature == FeatureType.WOOD_BUSH:
+        blit_icon(
+            surface,
+            ICON_WOOD,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour={
+                "body": adjust_colour((120, 90, 50), vibrancy),
+                "leaf": adjust_colour((70, 130, 55), vibrancy),
             },
         )
     elif feature == FeatureType.BERRY_BUSH:

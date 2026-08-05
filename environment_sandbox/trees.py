@@ -19,7 +19,7 @@ class TreeDef:
     # Years from sapling to mature tree (base ticks; seasonal grow may stretch).
     growth_years: float
     yield_amount: int
-    yield_key: str  # "wood" or "hardwood"
+    yield_key: str  # "logs" or "hardwood_logs"
     canopy: tuple[int, int, int]
     sapling_colour: tuple[int, int, int]
     shape: str  # "round" | "cone"
@@ -37,7 +37,7 @@ TREES: tuple[TreeDef, ...] = (
         short="oak",
         growth_years=3.0,
         yield_amount=4,
-        yield_key="hardwood",
+        yield_key="hardwood_logs",
         canopy=(34, 120, 45),
         sapling_colour=(140, 210, 90),
         shape="round",
@@ -48,7 +48,7 @@ TREES: tuple[TreeDef, ...] = (
         short="mpl",
         growth_years=2.0,
         yield_amount=2,
-        yield_key="hardwood",
+        yield_key="hardwood_logs",
         canopy=(90, 170, 70),  # lighter green
         sapling_colour=(160, 220, 110),
         shape="round",
@@ -59,7 +59,7 @@ TREES: tuple[TreeDef, ...] = (
         short="pine",
         growth_years=1.0,
         yield_amount=2,
-        yield_key="wood",
+        yield_key="logs",
         canopy=(20, 90, 45),  # dark green
         sapling_colour=(60, 140, 70),
         shape="cone",
@@ -71,7 +71,7 @@ TREES: tuple[TreeDef, ...] = (
         short="cdr",
         growth_years=2.0,
         yield_amount=3,
-        yield_key="wood",
+        yield_key="logs",
         canopy=(30, 110, 55),
         sapling_colour=(80, 160, 90),
         shape="cone",

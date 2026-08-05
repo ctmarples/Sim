@@ -138,6 +138,7 @@ BERRY_SEED_DROP_CHANCE: float = 0.08
 
 MUSHROOM_YIELD: int = 5  # per mushroom tile foraged
 REED_YIELD: int = 3
+WOOD_BUSH_YIELD: int = 1  # processed wood from bush tiles
 WILD_PRODUCE_YIELD: int = 1  # wild crop / herb produce per harvest
 FARM_PRODUCE_YIELD: int = 3  # farmed crop produce per harvest
 

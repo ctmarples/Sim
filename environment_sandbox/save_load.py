@@ -19,6 +19,7 @@ from entities import (
     RationMode,
     TaskArea,
     TaskType,
+    TOOL_KEYS,
     Villager,
     VillagerState,
     WorkMode,
@@ -33,8 +34,9 @@ if TYPE_CHECKING:
 SAVE_VERSION = 1
 
 _BASE_STORAGE_KEYS = (
+    "logs",
+    "hardwood_logs",
     "wood",
-    "hardwood",
     "rock",
     "meat",
     "fish",
@@ -43,9 +45,48 @@ _BASE_STORAGE_KEYS = (
     "berries",
     "berry_seeds",
     "reeds",
+    "twine",
+    "axe",
+    "spear",
+    "fishing_rod",
+    "hoe",
+    "knife",
 )
 _CROP_STORAGE_KEYS = PRODUCE_KEYS + SEED_KEYS
 _STORAGE_KEYS = _BASE_STORAGE_KEYS + _CROP_STORAGE_KEYS + PROCESSED_KEYS
+
+# Pre-rename gather recipe keys → current recipe names.
+_LEGACY_RECIPE_KEYS: dict[str, str] = {
+    "wood": "logs",
+    "hardwood": "hardwood_logs",
+}
+
+
+def _normalize_legacy_storage(data: dict[str, Any]) -> dict[str, Any]:
+    """Map old save storage keys (wood/hardwood = tree products) to logs/hardwood_logs."""
+    if not data:
+        return data
+    out = dict(data)
+    if "logs" not in out and "wood" in out:
+        out["logs"] = int(out.get("wood", 0))
+        out["wood"] = 0
+    if "hardwood_logs" not in out and "hardwood" in out:
+        out["hardwood_logs"] = int(out.get("hardwood", 0))
+    return out
+
+
+def _migrate_recipe_state(
+    raw_enabled: dict[str, Any] | None,
+    raw_progress: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    enabled = dict(raw_enabled or {})
+    progress = dict(raw_progress or {})
+    for old, new in _LEGACY_RECIPE_KEYS.items():
+        if old in enabled and new not in enabled:
+            enabled[new] = enabled.pop(old)
+        if old in progress and new not in progress:
+            progress[new] = progress.pop(old)
+    return enabled, progress
 
 
 def saves_dir() -> Path:
@@ -62,10 +103,13 @@ def list_save_files() -> list[str]:
 def _inv_to_dict(inv: Inventory) -> dict[str, int]:
     data = {key: int(getattr(inv, key, 0)) for key in _STORAGE_KEYS}
     data["capacity"] = inv.capacity
+    if inv.equipped_tool:
+        data["equipped_tool"] = inv.equipped_tool
     return data
 
 
 def _inv_from_dict(data: dict[str, Any]) -> Inventory:
+    data = _normalize_legacy_storage(data)
     inv = Inventory(capacity=int(data.get("capacity", Inventory().capacity)))
     for key in _STORAGE_KEYS:
         setattr(inv, key, int(data.get(key, 0)))
@@ -73,6 +117,9 @@ def _inv_from_dict(data: dict[str, Any]) -> Inventory:
     inv.sage += int(data.get("herbs", 0))
     inv.sage_seeds += int(data.get("herb_seeds", 0))
     inv.oak_saplings += int(data.get("saplings", 0))
+    tool = data.get("equipped_tool")
+    if tool in TOOL_KEYS:
+        inv.equipped_tool = str(tool)
     return inv
 
 
@@ -81,6 +128,7 @@ def _storage_to_dict(obj: Any) -> dict[str, int]:
 
 
 def _apply_storage(obj: Any, data: dict[str, Any]) -> None:
+    data = _normalize_legacy_storage(data)
     for key in _STORAGE_KEYS:
         setattr(obj, key, int(data.get(key, 0)))
     # Legacy migration.
@@ -177,7 +225,10 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "capacity": b.capacity,
             "input_capacity": b.input_capacity,
             "output_capacity": b.output_capacity,
+            "fuel_capacity": b.fuel_capacity,
+            "fuel_wood": b.fuel_wood,
             "item_caps": {k: int(v) for k, v in b.item_caps.items()},
+            "item_mins": {k: int(v) for k, v in b.item_mins.items()},
             "recipe_enabled": dict(b.recipe_enabled),
             "recipe_progress": dict(b.recipe_progress),
             "draw_task_type": b.draw_task_type.name,
@@ -445,6 +496,7 @@ def _migrate_building_footprints(game: Game) -> None:
         BuildingKind.FARM: FeatureType.FARM,
         BuildingKind.MILL: FeatureType.MILL,
         BuildingKind.KITCHEN: FeatureType.KITCHEN,
+        BuildingKind.CRAFT_BENCH: FeatureType.CRAFT_BENCH,
     }
 
     for building in list(game.buildings.values()):
@@ -599,6 +651,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             BuildingKind.FIELD: TaskType.FARM_FIELD,
             BuildingKind.MILL: TaskType.FULL_FORAGE,
             BuildingKind.KITCHEN: TaskType.FULL_FORAGE,
+            BuildingKind.CRAFT_BENCH: TaskType.FULL_FORAGE,
         }.get(kind, TaskType.FULL_MANAGE)
         raw_task = bdata.get("draw_task_type")
         if raw_task is None:
@@ -613,7 +666,9 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             ):
                 draw_task = TaskType.FULL_MANAGE
         raw_mode = bdata.get("work_mode")
-        if raw_mode is not None:
+        if raw_mode == "BOTH":
+            work_mode = WorkMode.ALL
+        elif raw_mode is not None:
             try:
                 work_mode = WorkMode[str(raw_mode)]
             except KeyError:
@@ -622,7 +677,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             work_mode = Building.work_mode_from_task(kind, draw_task)
         if kind == BuildingKind.FARM:
             if raw_mode is None:
-                work_mode = WorkMode.BOTH
+                work_mode = WorkMode.ALL
             # else keep loaded Collect / Plant / Both
         elif kind not in (BuildingKind.FORESTER, BuildingKind.FORAGER, BuildingKind.FIELD):
             work_mode = WorkMode.COLLECT
@@ -634,6 +689,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             capacity=int(bdata.get("capacity", BUILDING_STORAGE_CAPACITY)),
             input_capacity=int(bdata.get("input_capacity", 0)),
             output_capacity=int(bdata.get("output_capacity", 0)),
+            fuel_capacity=int(bdata.get("fuel_capacity", 0)),
+            fuel_wood=int(bdata.get("fuel_wood", 0)),
             draw_task_type=draw_task,
             work_mode=work_mode,
             plot_w=max(1, int(bdata.get("plot_w", 1))),
@@ -647,6 +704,10 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             building.capacity = cap
             building.input_capacity = in_cap
             building.output_capacity = out_cap
+        if building.kind == BuildingKind.KITCHEN and building.fuel_capacity <= 0:
+            from settings import KITCHEN_FUEL_CAPACITY
+
+            building.fuel_capacity = KITCHEN_FUEL_CAPACITY
         raw_caps = bdata.get("item_caps") or {}
         if isinstance(raw_caps, dict):
             building.item_caps = {
@@ -654,15 +715,32 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                 for k, v in raw_caps.items()
                 if v is not None and int(v) > 0
             }
+        raw_mins = bdata.get("item_mins") or {}
+        if isinstance(raw_mins, dict):
+            building.item_mins = {
+                str(k): max(1, int(v))
+                for k, v in raw_mins.items()
+                if v is not None and int(v) > 0
+            }
+        if kind == BuildingKind.FORESTER and not building.item_mins:
+            from entities import default_item_mins
+
+            building.item_mins = dict(default_item_mins(kind))
         raw_enabled = bdata.get("recipe_enabled") or {}
         raw_progress = bdata.get("recipe_progress") or {}
-        if building.is_processor():
+        raw_enabled, raw_progress = _migrate_recipe_state(raw_enabled, raw_progress)
+        if building.has_recipes() or building.split_recipes():
             building.ensure_recipe_state()
             for name in list(building.recipe_enabled):
                 if name in raw_enabled:
                     building.recipe_enabled[name] = bool(raw_enabled[name])
                 if name in raw_progress:
                     building.recipe_progress[name] = max(0, int(raw_progress[name]))
+            for recipe in building.split_recipes():
+                if recipe.name in raw_enabled:
+                    building.recipe_enabled[recipe.name] = bool(raw_enabled[recipe.name])
+                if recipe.name in raw_progress:
+                    building.recipe_progress[recipe.name] = max(0, int(raw_progress[recipe.name]))
         if kind == BuildingKind.FIELD:
             building.crop_kind = str(bdata.get("crop_kind", "sage"))
             if kind == BuildingKind.FIELD and work_mode not in building.supported_work_modes():

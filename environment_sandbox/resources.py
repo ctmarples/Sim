@@ -53,8 +53,15 @@ RESOURCES: tuple[ResourceDef, ...] = (
     ResourceDef("fish_stew", "Fish stew", "food", "f.stw"),
     ResourceDef("grilled_meat", "Grilled meat", "food", "g.mt"),
     ResourceDef("grilled_fish", "Grilled fish", "food", "g.fh"),
+    ResourceDef("logs", "Logs", "wares", "logs"),
+    ResourceDef("hardwood_logs", "Hardwood logs", "wares", "hlogs"),
     ResourceDef("wood", "Wood", "wares", "wood"),
-    ResourceDef("hardwood", "Hardwood", "wares", "hwood"),
+    ResourceDef("twine", "Twine", "wares", "twine"),
+    ResourceDef("axe", "Axe", "wares", "axe"),
+    ResourceDef("spear", "Spear", "wares", "spr"),
+    ResourceDef("fishing_rod", "Fishing rod", "wares", "rod"),
+    ResourceDef("hoe", "Hoe", "wares", "hoe"),
+    ResourceDef("knife", "Knife", "wares", "knf"),
     ResourceDef("rock", "Rock", "wares", "rock"),
     ResourceDef("reeds", "Reeds", "wares", "reed"),
     *_CROP_PRODUCE_WARES,
@@ -145,11 +152,17 @@ def _crop_plant_style(crop, *, dense: bool) -> ResourceIconStyle:
 def resource_icon_style(key: str) -> ResourceIconStyle:
     """Return icon style matching map feature colours (and seed composites)."""
     from icons import (
+        ICON_AXE,
         ICON_BERRIES,
         ICON_BREAD,
         ICON_FISH,
+        ICON_FISHING_ROD,
         ICON_FLOWER,
-        ICON_HARDWOOD,
+
+        ICON_HOE,
+        ICON_KNIFE,
+        ICON_LOG_HARDWOOD,
+        ICON_LOG_WOOD,
         ICON_MEAT_MARKER,
         ICON_MUSHROOM,
         ICON_REED,
@@ -157,8 +170,10 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
         ICON_SAPLING_CONE,
         ICON_SAPLING_ROUND,
         ICON_SEEDS,
+        ICON_SPEAR,
         ICON_STEW,
         ICON_FISH_STEW,
+        ICON_TWINE,
         ICON_WOOD,
         crop_icon_base,
     )
@@ -176,12 +191,32 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
 
     trunk = COLOUR_TREE_TRUNK
 
+    if key == "logs":
+        return ResourceIconStyle(ICON_LOG_WOOD, {})
+
+    if key == "hardwood_logs":
+        return ResourceIconStyle(ICON_LOG_HARDWOOD, {})
+
     if key == "wood":
-        # Dedicated log icon (baked SVG colours; no class recolour needed).
         return ResourceIconStyle(ICON_WOOD, {})
 
-    if key == "hardwood":
-        return ResourceIconStyle(ICON_HARDWOOD, {})
+    if key == "twine":
+        return ResourceIconStyle(ICON_TWINE, {})
+
+    if key == "axe":
+        return ResourceIconStyle(ICON_AXE, {})
+
+    if key == "spear":
+        return ResourceIconStyle(ICON_SPEAR, {})
+
+    if key == "fishing_rod":
+        return ResourceIconStyle(ICON_FISHING_ROD, {})
+
+    if key == "hoe":
+        return ResourceIconStyle(ICON_HOE, {})
+
+    if key == "knife":
+        return ResourceIconStyle(ICON_KNIFE, {})
 
     if key == "rock":
         return ResourceIconStyle(ICON_ROCK, {"body": COLOUR_ROCK_FEATURE})
