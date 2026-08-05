@@ -42,6 +42,7 @@ _BASE_STORAGE_KEYS = (
     "fish",
     *SAPLING_ITEM_KEYS,
     "mushrooms",
+    "honey",
     "berries",
     "berry_seeds",
     "reeds",
@@ -304,9 +305,11 @@ def serialize_game(game: Game) -> dict[str, Any]:
                 "target": list(v.target) if v.target else None,
                 "haul_building_id": v.haul_building_id,
                 "hunt_animal_id": v.hunt_animal_id,
+                "hunt_colony_id": v.hunt_colony_id,
                 "hunt_meat_pos": list(v.hunt_meat_pos) if v.hunt_meat_pos else None,
                 "fish_target_id": v.fish_target_id,
                 "fish_catch_pos": list(v.fish_catch_pos) if v.fish_catch_pos else None,
+                "forage_colony_id": v.forage_colony_id,
                 "construction_id": v.construction_id,
                 "priorities": [p.name for p in v.priorities],
                 "satiation": round(v.satiation, 4),
@@ -334,6 +337,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
         }
         for s in game.construction_sites.values()
     ]
+    from wildlife import AnimalKind
+
     animals = [
         {
             "id": a.id,
@@ -349,6 +354,19 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "migrated_this_year": a.migrated_this_year,
         }
         for a in game.wildlife.animals
+        if a.kind in (AnimalKind.DEER, AnimalKind.BOAR)
+    ]
+    colonies = [
+        {
+            "id": c.id,
+            "kind": c.kind.name,
+            "x": c.x,
+            "y": c.y,
+            "level": c.level,
+            "habitat_id": c.habitat_id,
+            "harvest_cooldown": c.harvest_cooldown,
+        }
+        for c in game.wildlife.colonies
     ]
     fish = [
         {
@@ -391,7 +409,9 @@ def serialize_game(game: Game) -> dict[str, Any]:
         "villagers": villagers,
         "wildlife": {
             "animals": animals,
+            "colonies": colonies,
             "next_id": game.wildlife.next_id,
+            "next_colony_id": game.wildlife.next_colony_id,
             "growth_timer": game.wildlife.growth_timer,
         },
         "fish": {
@@ -857,9 +877,11 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             target=tuple(target) if target else None,  # type: ignore[arg-type]
             haul_building_id=vdata.get("haul_building_id"),
             hunt_animal_id=vdata.get("hunt_animal_id"),
+            hunt_colony_id=vdata.get("hunt_colony_id"),
             hunt_meat_pos=tuple(meat_pos) if meat_pos else None,  # type: ignore[arg-type]
             fish_target_id=vdata.get("fish_target_id"),
             fish_catch_pos=tuple(catch_pos) if catch_pos else None,  # type: ignore[arg-type]
+            forage_colony_id=vdata.get("forage_colony_id"),
             construction_id=vdata.get("construction_id"),
         )
         raw_prio = vdata.get("priorities")
@@ -907,7 +929,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         )
         game.construction_sites[site.id] = site
 
-    from wildlife import Animal, AnimalKind, AnimalSex, Fish
+    from wildlife import Animal, AnimalKind, AnimalSex, Colony, Fish
 
     wild = data.get("wildlife", {})
     game.wildlife.animals = []
@@ -917,6 +939,9 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             kind = AnimalKind[kind_name]
         except KeyError:
             kind = AnimalKind.DEER
+        # Legacy bee/rabbit individuals → drop (colonies handle those now).
+        if kind in (AnimalKind.BEE, AnimalKind.RABBIT):
+            continue
         sex_name = a.get("sex", "MALE")
         try:
             sex = AnimalSex[sex_name]
@@ -949,6 +974,35 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     game.wildlife._seeded = True
     game.wildlife._index_animals()
     game.wildlife._form_mating_pairs()
+
+    game.wildlife.colonies = []
+    for c in wild.get("colonies", []):
+        kind_name = c.get("kind", "BEE")
+        try:
+            kind = AnimalKind[kind_name]
+        except KeyError:
+            continue
+        if kind not in (AnimalKind.BEE, AnimalKind.RABBIT):
+            continue
+        colony = Colony(
+            id=int(c["id"]),
+            kind=kind,
+            x=int(c["x"]),
+            y=int(c["y"]),
+            level=int(c.get("level", 1)),
+            habitat_id=int(c["habitat_id"]) if c.get("habitat_id") is not None else None,
+            harvest_cooldown=int(c.get("harvest_cooldown", 0)),
+        )
+        colony.clamp_level()
+        game.wildlife.colonies.append(colony)
+    game.wildlife.next_colony_id = int(
+        wild.get(
+            "next_colony_id",
+            max((c.id for c in game.wildlife.colonies), default=0) + 1,
+        )
+    )
+    # Colony seeding deferred until habitats refresh (_sample_biodiversity).
+    game.wildlife._colonies_need_seed = not bool(game.wildlife.colonies)
 
     fish_data = data.get("fish", {})
     game.fish.fish = [

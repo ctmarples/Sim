@@ -104,10 +104,10 @@ def configure_for_display(screen_w: int, screen_h: int) -> None:
 # Simulation
 # ---------------------------------------------------------------------------
 RANDOM_SEED: int = 42
-INVENTORY_CAPACITY: int = 8
+INVENTORY_CAPACITY: int = 20
 SEED_CARRY_CAPACITY: int = 20  # berry + crop seeds (separate from general cargo)
 MAX_VILLAGERS: int = 20
-BUILDING_STORAGE_CAPACITY: int = 20
+BUILDING_STORAGE_CAPACITY: int = 40
 FORESTER_COST_WOOD: int = 2
 FORESTER_COST_ROCK: int = 2
 FORESTER_DEFAULT_LOGS_MIN: int = 5
@@ -188,8 +188,8 @@ COLOUR_VILLAGER: Colour = (220, 140, 50)
 COLOUR_ANIMAL: Colour = (160, 100, 60)  # deer (legacy)
 COLOUR_DEER: Colour = (160, 100, 60)
 COLOUR_BOAR: Colour = (90, 70, 55)
-COLOUR_BEE: Colour = (240, 190, 40)
-COLOUR_RABBIT: Colour = (200, 180, 150)
+COLOUR_BEE: Colour = (110, 89, 56)  # match bee / hive SVG browns
+COLOUR_RABBIT: Colour = (110, 89, 56)  # match rabbit / burrow SVG browns
 COLOUR_REED: Colour = (70, 120, 80)
 COLOUR_WORKSTATION: Colour = (90, 90, 140)
 COLOUR_FORESTER: Colour = (40, 110, 55)

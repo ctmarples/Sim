@@ -47,6 +47,7 @@ RESOURCES: list[ResourceDef] = [
     ResourceDef("fish", "Fish", "food", "fish"),
     ResourceDef("berries", "Berries", "food", "berr"),
     ResourceDef("mushrooms", "Mushrooms", "food", "mush"),
+    ResourceDef("honey", "Honey", "food", "hone"),
     *_CROP_PRODUCE_FOOD,
     ResourceDef("bread", "Bread", "food", "bread"),
     ResourceDef("stew", "Stew", "food", "stew"),
@@ -265,6 +266,14 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
         return ResourceIconStyle(
             ICON_MUSHROOM, {"cap": COLOUR_MUSHROOM, "stem": (210, 200, 180)}
         )
+    if key == "honey":
+        from icons import ICON_HONEY
+
+        return ResourceIconStyle(ICON_HONEY, {})
+    if key == "rabbit":
+        from icons import ICON_RABBIT
+
+        return ResourceIconStyle(ICON_RABBIT, {})
     if key == "berries":
         return ResourceIconStyle(ICON_BERRIES, {"berry": COLOUR_BERRY})
     if key == "berry_seeds":

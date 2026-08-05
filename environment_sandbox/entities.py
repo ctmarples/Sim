@@ -319,6 +319,7 @@ class Inventory:
     pine_saplings: int = 0
     cedar_saplings: int = 0
     mushrooms: int = 0
+    honey: int = 0
     berries: int = 0
     berry_seeds: int = 0
     reeds: int = 0
@@ -393,6 +394,7 @@ class Inventory:
             + self.fish
             + self.saplings
             + self.mushrooms
+            + self.honey
             + self.berries
             + self.reeds
             + self.twine
@@ -555,6 +557,7 @@ class Inventory:
             "meat": self.meat,
             "fish": self.fish,
             "mushrooms": self.mushrooms,
+            "honey": self.honey,
             "berries": self.berries,
             "berry_seeds": self.berry_seeds,
             "reeds": self.reeds,
@@ -571,7 +574,7 @@ class Inventory:
 
     def reset(self) -> None:
         self.logs = self.hardwood_logs = self.wood = self.rock = self.meat = self.fish = 0
-        self.mushrooms = self.berries = self.berry_seeds = self.reeds = 0
+        self.mushrooms = self.honey = self.berries = self.berry_seeds = self.reeds = 0
         self.twine = self.axe = self.spear = self.fishing_rod = self.hoe = self.knife = 0
         self.equipped_tool = None
         for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS:
@@ -591,6 +594,7 @@ class HomeStorage:
     pine_saplings: int = 0
     cedar_saplings: int = 0
     mushrooms: int = 0
+    honey: int = 0
     berries: int = 0
     berry_seeds: int = 0
     reeds: int = 0
@@ -661,7 +665,7 @@ class HomeStorage:
 
     def reset(self) -> None:
         self.logs = self.hardwood_logs = self.wood = self.rock = self.meat = self.fish = 0
-        self.mushrooms = self.berries = self.berry_seeds = self.reeds = 0
+        self.mushrooms = self.honey = self.berries = self.berry_seeds = self.reeds = 0
         self.twine = self.axe = self.spear = self.fishing_rod = self.hoe = self.knife = 0
         for key in TOOL_KEYS:
             if key not in ("axe",):
@@ -928,7 +932,7 @@ class FarmField:
         return hit
 
 
-_FORAGE_KEYS = ("mushrooms", "berries", "berry_seeds", "reeds") + PRODUCE_KEYS + SEED_KEYS
+_FORAGE_KEYS = ("mushrooms", "berries", "berry_seeds", "reeds", "honey") + PRODUCE_KEYS + SEED_KEYS
 
 
 RECIPE_PRIORITY_MIN = 1
@@ -953,6 +957,7 @@ class Building:
     pine_saplings: int = 0
     cedar_saplings: int = 0
     mushrooms: int = 0
+    honey: int = 0
     berries: int = 0
     berry_seeds: int = 0
     reeds: int = 0
@@ -1210,6 +1215,7 @@ class Building:
             + self.fish
             + self.saplings
             + self.mushrooms
+            + self.honey
             + self.berries
             + self.berry_seeds
             + self.reeds
@@ -1272,7 +1278,7 @@ class Building:
         return self.is_recipe_enabled(yield_key)
 
     def allows_hunt_kind(self, kind_name: str) -> bool:
-        """``kind_name`` is ``deer`` or ``boar``."""
+        """``kind_name`` is ``deer``, ``boar``, or ``rabbit``."""
         if self.kind != BuildingKind.HUNTER:
             return True
         return self.is_recipe_enabled(kind_name.lower())
@@ -2083,9 +2089,11 @@ class Villager:
     target: tuple[int, int] | None = None
     haul_building_id: int | None = None
     hunt_animal_id: int | None = None
+    hunt_colony_id: int | None = None
     hunt_meat_pos: tuple[int, int] | None = None
     fish_target_id: int | None = None
     fish_catch_pos: tuple[int, int] | None = None
+    forage_colony_id: int | None = None
     construction_id: int | None = None
     priorities: list[WorkPriority] = field(
         default_factory=lambda: list(DEFAULT_PRIORITIES_UNASSIGNED)
@@ -2105,9 +2113,11 @@ class Villager:
         self.assigned_to_home = False
         self.haul_building_id = None
         self.hunt_animal_id = None
+        self.hunt_colony_id = None
         self.hunt_meat_pos = None
         self.fish_target_id = None
         self.fish_catch_pos = None
+        self.forage_colony_id = None
         self.construction_id = None
         self.state = VillagerState.IDLE
         self.target = None

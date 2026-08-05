@@ -28,8 +28,11 @@ from resource_balance import (
     FARM_PRODUCE_YIELD,
     FARM_SEED_AMOUNTS,
     FISH_YIELD,
+    FORAGER_PRIORITY_BAND,
+    HONEY_PER_BEE_LEVEL,
     MAX_FOOD_TYPES_PER_MEAL,
     MUSHROOM_YIELD,
+    RABBIT_MEAT_PER_LEVEL,
     REED_YIELD,
     SAPLING_DROP_CHANCE,
     STARTING_FOOD,
@@ -308,6 +311,10 @@ class Game:
         self._biodiversity_average: list[list[float]] = [
             [0.0] * self.world.cols for _ in range(self.world.rows)
         ]
+        # Rebuilt at most once per sim tick; avoids full-map forage scans per villager.
+        self._forage_cell_index: dict[str, list[tuple[int, int]]] | None = None
+        self._minimap_terrain: pygame.Surface | None = None
+        self._minimap_terrain_key: tuple[int, int, int] | None = None
 
         self._give_starting_resources()
         self._ensure_core_buildings()
@@ -729,6 +736,9 @@ class Game:
         elif action == "load":
             try:
                 load_from_path(self, path)
+                self._invalidate_forage_index()
+                self._minimap_terrain = None
+                self._minimap_terrain_key = None
                 self._set_status(f"Loaded {path.name} (speed x{self.sim_speed})")
             except Exception as exc:
                 self._set_status(f"Load failed: {exc}")
@@ -1121,6 +1131,16 @@ class Game:
             AnimalKind.BEE: "Bee",
             AnimalKind.RABBIT: "Rabbit",
         }.get(kind, kind.name.title())
+        if kind in (AnimalKind.BEE, AnimalKind.RABBIT):
+            colony = self.wildlife._colony_on_habitat(kind, patch_id)
+            if colony is None:
+                self._set_status(f"{label} nest #{patch_id}: empty")
+            else:
+                self._set_status(
+                    f"{label} nest #{patch_id}: level {colony.level} · "
+                    f"{colony.target_members()} visible"
+                )
+            return
         _present, migrating, total, pairs = self.wildlife.patch_occupancy(
             kind, patch_id
         )
@@ -3079,6 +3099,12 @@ class Game:
             if status:
                 self._set_status("Inventory is full.")
             return False
+        if not inventory.can_add(MUSHROOM_YIELD, key="mushrooms"):
+            if status:
+                self._set_status(
+                    f"Need {MUSHROOM_YIELD} free cargo slots for mushrooms."
+                )
+            return False
         if not self.world.harvest_mushroom(x, y):
             if status:
                 self._set_status("No mushroom here.")
@@ -3144,6 +3170,31 @@ class Game:
             if status:
                 self._set_status("Inventory is full.")
             return False
+        cell = self.world.get_cell(x, y)
+        if cell is None:
+            if status:
+                self._set_status("No wild plants here.")
+            return False
+        # Check cargo room before clearing the tile (seeds use a separate bag).
+        if cell.feature == FeatureType.REED:
+            produce_key, need = "reeds", REED_YIELD
+        elif cell.feature == FeatureType.HERB:
+            crop = CROP_BY_KEY["sage"]
+            produce_key, need = crop.produce_key, WILD_PRODUCE_YIELD
+        elif cell.feature == FeatureType.WILD_CROP:
+            crop = CROP_BY_KEY.get(cell.crop_kind or "sage", CROP_BY_KEY["sage"])
+            produce_key, need = crop.produce_key, WILD_PRODUCE_YIELD
+        else:
+            if status:
+                self._set_status("No wild plants here.")
+            return False
+        if not inventory.can_add(need, key=produce_key):
+            if status:
+                self._set_status(
+                    f"Need {need} free cargo slots to harvest {produce_key.replace('_', ' ')}."
+                )
+            return False
+
         crop_key = self.world.harvest_herb(x, y)
         if crop_key is None:
             if status:
@@ -3164,7 +3215,9 @@ class Game:
         self.record_produced(crop.produce_key, WILD_PRODUCE_YIELD)
         seed_msg = ""
         # Forage: flat chance of a single seed (see resource_balance.WILD_SEED_CHANCE).
-        if self._drop_rng.random() < crop.wild_seed_chance and inventory.can_add(1, key=crop.seed_key):
+        if self._drop_rng.random() < crop.wild_seed_chance and inventory.can_add(
+            1, key=crop.seed_key
+        ):
             inventory.add_item(crop.seed_key, 1)
             self.record_produced(crop.seed_key, 1)
             seed_msg = f" +1 {crop.label.lower()} seed"
@@ -3388,6 +3441,7 @@ class Game:
         self._tick_claim_stations.add(self.world.home_pos)
         self._tick_claim_cells: set[tuple[int, int]] = set()
         self._tick_claim_animals: set[int] = set()
+        self._tick_claim_colonies: set[int] = set()
         self._tick_claim_fish: set[int] = set()
         self._tick_claim_by_villager: dict[int, set[tuple[int, int]]] = {}
         self._tick_has_general_hauler = False
@@ -3410,6 +3464,10 @@ class Game:
                 self._tick_claim_cells |= cells
             if other.hunt_animal_id is not None:
                 self._tick_claim_animals.add(other.hunt_animal_id)
+            if other.hunt_colony_id is not None:
+                self._tick_claim_colonies.add(other.hunt_colony_id)
+            if other.forage_colony_id is not None:
+                self._tick_claim_colonies.add(other.forage_colony_id)
             if other.fish_target_id is not None:
                 self._tick_claim_fish.add(other.fish_target_id)
 
@@ -3753,6 +3811,27 @@ class Game:
             out.discard(v.hunt_animal_id)
         return out
 
+    def _claimed_colony_ids(self, exclude_id: int) -> set[int]:
+        claimed = getattr(self, "_tick_claim_colonies", None)
+        if claimed is None:
+            ids: set[int] = set()
+            for other in self.villagers:
+                if other.id == exclude_id:
+                    continue
+                if other.hunt_colony_id is not None:
+                    ids.add(other.hunt_colony_id)
+                if other.forage_colony_id is not None:
+                    ids.add(other.forage_colony_id)
+            return ids
+        out = set(claimed)
+        v = next((x for x in self.villagers if x.id == exclude_id), None)
+        if v is not None:
+            if v.hunt_colony_id is not None:
+                out.discard(v.hunt_colony_id)
+            if v.forage_colony_id is not None:
+                out.discard(v.forage_colony_id)
+        return out
+
     def _claimed_fish_ids(self, exclude_id: int) -> set[int]:
         claimed = getattr(self, "_tick_claim_fish", None)
         if claimed is None:
@@ -3825,18 +3904,41 @@ class Game:
             return False
         if inv.is_full:
             return True
-        # Farm yield is 3; near-full cargo blocks harvest and must deliver.
+        # Farm / forager multi-unit yields: deliver before the next harvest won't fit
+        # (otherwise the tile is cleared and produce is lost; seeds still land).
         if building.kind == BuildingKind.FARM and building.has_gather_cargo(inv):
             return not inv.can_add(FARM_PRODUCE_YIELD)
+        if building.kind == BuildingKind.FORAGER and building.has_gather_cargo(inv):
+            for recipe in building.enabled_recipes():
+                need = self._forage_yield_amount(recipe.name)
+                if inv.can_add(need, key=recipe.name if recipe.name != "wood" else "wood"):
+                    return False
+            return True
         return False
+
+    def _forage_yield_amount(self, key: str) -> int:
+        """Cargo units one collect of this forager recipe needs."""
+        if key == "mushrooms":
+            return MUSHROOM_YIELD
+        if key == "honey":
+            return HONEY_PER_BEE_LEVEL
+        if key == "reeds":
+            return REED_YIELD
+        if key == "berries":
+            return 1
+        if key == "wood":
+            return 1
+        return WILD_PRODUCE_YIELD
 
     def _clear_gather_stickies(self, villager: Villager) -> None:
         """Drop mid-task sticky targets so full inventory can deliver."""
         villager.target = None
         villager.hunt_animal_id = None
+        villager.hunt_colony_id = None
         villager.hunt_meat_pos = None
         villager.fish_target_id = None
         villager.fish_catch_pos = None
+        villager.forage_colony_id = None
         self._clear_villager_path(villager)
 
     def _force_assigned_delivery(
@@ -3890,6 +3992,10 @@ class Game:
             return True
         if villager.hunt_animal_id is not None or villager.hunt_meat_pos is not None:
             return True
+        if villager.hunt_colony_id is not None:
+            return True
+        if villager.forage_colony_id is not None:
+            return True
         if villager.fish_target_id is not None or villager.fish_catch_pos is not None:
             if fishing_allowed(self.calendar_day):
                 return True
@@ -3919,6 +4025,7 @@ class Game:
                 return False
             return (
                 self._find_hunt_target(villager, building) is not None
+                or self._find_hunt_colony(villager, building) is not None
                 or self._find_meat_in_hunt_areas(building, villager.id) is not None
             )
 
@@ -4157,6 +4264,17 @@ class Game:
         cell = self.world.get_cell(x, y)
         if cell is None or not self.world.is_walkable(x, y):
             return False
+        if building.kind == BuildingKind.FORAGER and building.allows_forage_key("honey"):
+            from wildlife import AnimalKind
+
+            colony = self.wildlife.colony_at(x, y)
+            if (
+                colony is not None
+                and colony.kind == AnimalKind.BEE
+                and colony.can_harvest()
+                and colony.id not in self._claimed_colony_ids(villager.id)
+            ):
+                return True
         can_plant_sapling, can_plant_berry, can_plant_herb = self._can_plant_from(
             villager, building
         )
@@ -4511,6 +4629,7 @@ class Game:
             villager, building, villager.target
         ):
             villager.target = None
+            villager.forage_colony_id = None
             villager._path_cache = None  # type: ignore[attr-defined]
             villager._path_goal = None  # type: ignore[attr-defined]
 
@@ -4532,6 +4651,10 @@ class Game:
                 return
             self._villager_perform(villager, building, target)
             villager.work_cooldown = self._villager_work_interval(villager)
+            if getattr(villager, "_return_after_harvest", False):
+                villager._return_after_harvest = False  # type: ignore[attr-defined]
+                self._force_assigned_delivery(villager, building)
+                return
             # Resource may be gone — refresh next tick.
             if not self._work_target_valid(villager, building, target):
                 villager.target = None
@@ -5095,6 +5218,42 @@ class Game:
             self._force_assigned_delivery(villager, building)
             return
 
+        # Rabbit colonies: one level → 3 meat, then return.
+        colony = self._resolve_hunt_colony(villager, building)
+        if colony is not None:
+            villager.state = VillagerState.WORKING
+            dist = max(abs(colony.x - villager.x), abs(colony.y - villager.y))
+            if dist <= 1:
+                if villager.work_cooldown == 0:
+                    if not villager.inventory.can_add(RABBIT_MEAT_PER_LEVEL, key="meat"):
+                        villager.hunt_colony_id = None
+                        self._force_assigned_delivery(villager, building)
+                        return
+                    result = self.wildlife.harvest_colony(
+                        colony.id, kind=colony.kind
+                    )
+                    villager.hunt_colony_id = None
+                    if result is not None:
+                        _kind, amount = result
+                        villager.inventory.add_item("meat", amount)
+                        self.record_produced("meat", amount)
+                        self._refresh_indicators()
+                        villager.work_cooldown = self._villager_work_interval(villager)
+                        self._force_assigned_delivery(villager, building)
+                        return
+                    villager.work_cooldown = self._villager_work_interval(villager)
+                return
+            approach = (colony.x, colony.y)
+            if not self.world.is_walkable(*approach):
+                for ny, nx in self.world.neighbourhood(colony.x, colony.y, radius=1):
+                    if self.world.is_walkable(nx, ny):
+                        approach = (nx, ny)
+                        break
+            if not self._step_villager_toward(villager, approach):
+                villager.hunt_colony_id = None
+                self._clear_villager_path(villager)
+            return
+
         animal = self._resolve_hunt_animal(villager, building)
         if animal is None:
             self._maybe_assigned_transport(villager, building)
@@ -5123,6 +5282,48 @@ class Game:
                     approach = (nx, ny)
                     break
         self._step_villager_toward(villager, approach)
+
+    def _find_hunt_colony(self, villager: Villager, building: Building):
+        from wildlife import AnimalKind
+
+        if not building.allows_hunt_kind("rabbit"):
+            return None
+        if not villager.inventory.can_add(RABBIT_MEAT_PER_LEVEL, key="meat"):
+            return None
+        taken = self._claimed_colony_ids(villager.id)
+        colonies = [
+            c
+            for c in self.wildlife.colonies
+            if c.kind == AnimalKind.RABBIT
+            and c.can_harvest()
+            and c.id not in taken
+        ]
+        if building.areas:
+            filtered = []
+            for area in building.areas:
+                if area.task_type != TaskType.HUNT:
+                    continue
+                for c in colonies:
+                    if area.contains(c.x, c.y):
+                        filtered.append(c)
+            colonies = filtered
+            ox, oy = villager.x, villager.y
+        else:
+            ox, oy = building.center_cell()
+        if not colonies:
+            return None
+        return min(colonies, key=lambda c: abs(c.x - ox) + abs(c.y - oy))
+
+    def _resolve_hunt_colony(self, villager: Villager, building: Building):
+        if villager.hunt_colony_id is not None:
+            colony = self.wildlife.colony_by_id(villager.hunt_colony_id)
+            if colony is not None and colony.can_harvest():
+                return colony
+            villager.hunt_colony_id = None
+        colony = self._find_hunt_colony(villager, building)
+        if colony is not None:
+            villager.hunt_colony_id = colony.id
+        return colony
 
     def _find_hunt_target(self, villager: Villager, building: Building):
         animals = []
@@ -5772,18 +5973,13 @@ class Game:
                 if chosen is not None:
                     return chosen
             if allow_collect and building.kind == BuildingKind.FORAGER:
-                for recipe in building.enabled_recipes():
-                    target = self._find_closest_forage_key(
-                        origin[0],
-                        origin[1],
-                        recipe.name,
-                        building=building,
-                        exclude_cells=claimed,
-                        areas=building.areas,
-                    )
-                    if target is not None:
-                        return target
-                return None
+                return self._pick_forager_target(
+                    villager,
+                    building,
+                    origin=origin,
+                    claimed=claimed,
+                    areas=building.areas,
+                )
             if allow_collect:
                 return self._closest_of(origin, gather)
             return self._closest_of(origin, plant)
@@ -5815,18 +6011,13 @@ class Game:
         if building.kind == BuildingKind.FORAGER:
             if allow_collect:
                 claimed = self._claimed_work_cells(villager.id)
-                for recipe in building.enabled_recipes():
-                    target = self._find_closest_forage_key(
-                        building.center_cell()[0],
-                        building.center_cell()[1],
-                        recipe.name,
-                        building=building,
-                        exclude_cells=claimed,
-                        areas=building.areas,
-                    )
-                    if target is not None:
-                        return target
-                return None
+                return self._pick_forager_target(
+                    villager,
+                    building,
+                    origin=(villager.x, villager.y),
+                    claimed=claimed,
+                    areas=building.areas,
+                )
             return None
 
         if building.kind == BuildingKind.MASON:
@@ -5902,6 +6093,8 @@ class Game:
         areas: list | None = None,
     ) -> tuple[int, int] | None:
         """Closest cell yielding forage ``key`` (respects drawn areas when present)."""
+        if key == "honey":
+            return None
         best: tuple[int, int] | None = None
         best_d = 10**9
 
@@ -5934,12 +6127,152 @@ class Game:
                     consider(x, y)
             return best
 
-        for y in range(self.world.rows):
-            for x in range(self.world.cols):
-                consider(x, y)
+        # Whole-map forager: use the per-tick index instead of scanning every cell
+        # for every recipe / availability check.
+        for x, y in self._forage_cells_for_key(key):
+            if exclude_cells and (x, y) in exclude_cells:
+                continue
+            cell = self.world.cells[y][x]
+            if not self.world.is_walkable(x, y):
+                continue
+            if not self._building_allows_cell(building, cell):
+                continue
+            d = abs(x - ox) + abs(y - oy)
+            if d < best_d:
+                best_d = d
+                best = (x, y)
                 if best_d == 0:
                     return best
         return best
+
+    def _pick_forager_target(
+        self,
+        villager: Villager,
+        building: Building,
+        *,
+        origin: tuple[int, int],
+        claimed: set[tuple[int, int]],
+        areas: list | None,
+    ) -> tuple[int, int] | None:
+        """Pick forage work: nearby first, then priority within each distance band.
+
+        For each enabled recipe, find the closest matching cell (or honey colony).
+        Sort by distance band → recipe priority (1 best) → exact distance, so a
+        forager clears local forage before crossing the map for a higher priority.
+        """
+        ox, oy = origin
+        band = max(1, int(FORAGER_PRIORITY_BAND))
+        # (band, priority, distance, target, colony_id|None)
+        candidates: list[tuple[int, int, int, tuple[int, int], int | None]] = []
+
+        for recipe in building.enabled_recipes():
+            priority = building.get_recipe_priority(recipe.name)
+            need = self._forage_yield_amount(recipe.name)
+            cargo_key = "wood" if recipe.name == "wood" else recipe.name
+            # Produce recipes output the produce key (same as recipe name for forager).
+            if recipe.outputs:
+                cargo_key = next(iter(recipe.outputs))
+            if not villager.inventory.can_add(need, key=cargo_key):
+                continue
+            if recipe.name == "honey":
+                colony = self._find_honey_colony(
+                    villager, building, origin=origin
+                )
+                if colony is None:
+                    continue
+                target = (colony.x, colony.y)
+                dist = abs(colony.x - ox) + abs(colony.y - oy)
+                candidates.append(
+                    (dist // band, priority, dist, target, colony.id)
+                )
+                continue
+            target = self._find_closest_forage_key(
+                ox,
+                oy,
+                recipe.name,
+                building=building,
+                exclude_cells=claimed,
+                areas=areas,
+            )
+            if target is None:
+                continue
+            dist = abs(target[0] - ox) + abs(target[1] - oy)
+            candidates.append((dist // band, priority, dist, target, None))
+
+        if not candidates:
+            villager.forage_colony_id = None
+            return None
+        candidates.sort()
+        _band, _prio, _dist, target, colony_id = candidates[0]
+        villager.forage_colony_id = colony_id
+        return target
+
+    def _find_honey_colony(
+        self,
+        villager: Villager,
+        building: Building,
+        *,
+        origin: tuple[int, int] | None = None,
+    ):
+        from wildlife import AnimalKind
+
+        if not building.allows_forage_key("honey"):
+            return None
+        if not villager.inventory.can_add(HONEY_PER_BEE_LEVEL, key="honey"):
+            return None
+        taken = self._claimed_colony_ids(villager.id)
+        colonies = [
+            c
+            for c in self.wildlife.colonies
+            if c.kind == AnimalKind.BEE and c.can_harvest() and c.id not in taken
+        ]
+        if building.areas:
+            filtered = []
+            for area in building.areas:
+                if area.task_type not in (
+                    TaskType.FULL_FORAGE,
+                    TaskType.FORAGE_BERRIES,
+                    TaskType.FORAGE_MUSHROOMS,
+                    TaskType.FORAGE_HERBS,
+                ):
+                    continue
+                for c in colonies:
+                    if area.contains(c.x, c.y):
+                        filtered.append(c)
+            colonies = filtered
+        if not colonies:
+            return None
+        ox, oy = origin if origin is not None else building.center_cell()
+        return min(colonies, key=lambda c: abs(c.x - ox) + abs(c.y - oy))
+
+    def _invalidate_forage_index(self) -> None:
+        self._forage_cell_index = None
+
+    def _forage_cells_for_key(self, key: str) -> list[tuple[int, int]]:
+        return self._ensure_forage_cell_index().get(key, [])
+
+    def _ensure_forage_cell_index(self) -> dict[str, list[tuple[int, int]]]:
+        """Map forage inventory key → cells (one full scan per sim tick)."""
+        if self._forage_cell_index is not None:
+            return self._forage_cell_index
+        index: dict[str, list[tuple[int, int]]] = {}
+        cells = self.world.cells
+        for y in range(self.world.rows):
+            row = cells[y]
+            for x in range(self.world.cols):
+                cell = row[x]
+                if cell.terrain == TerrainType.WATER:
+                    continue
+                key = self._forage_key_for_cell(cell)
+                if key is None:
+                    continue
+                bucket = index.get(key)
+                if bucket is None:
+                    index[key] = [(x, y)]
+                else:
+                    bucket.append((x, y))
+        self._forage_cell_index = index
+        return index
 
     def _find_closest_forage_plant_cell(
         self,
@@ -5978,26 +6311,30 @@ class Game:
         can_plant_sapling: bool,
         exclude_cells: set[tuple[int, int]] | None = None,
     ) -> tuple[int, int] | None:
-        best: tuple[int, int] | None = None
-        best_d = 10**9
+        if not can_plant_sapling:
+            return None
         cells = self.world.cells
-        for y in range(self.world.rows):
-            row = cells[y]
-            for x in range(self.world.cols):
-                if exclude_cells and (x, y) in exclude_cells:
-                    continue
-                cell = row[x]
-                if cell.terrain == TerrainType.WATER:
-                    continue
-                if not self._cell_matches_manage_plant(
-                    cell, can_plant_sapling=can_plant_sapling
-                ):
-                    continue
-                d = abs(x - ox) + abs(y - oy)
-                if d < best_d:
-                    best_d = d
-                    best = (x, y)
-        return best
+        rows = self.world.rows
+        cols = self.world.cols
+        max_d = max(ox + oy, ox + (rows - 1 - oy), (cols - 1 - ox) + oy, (cols - 1 - ox) + (rows - 1 - oy))
+        for dist in range(0, max_d + 1):
+            for dx in range(-dist, dist + 1):
+                dy = dist - abs(dx)
+                for sy in ((oy - dy, oy + dy) if dy else (oy,)):
+                    x = ox + dx
+                    y = sy
+                    if not (0 <= x < cols and 0 <= y < rows):
+                        continue
+                    if exclude_cells and (x, y) in exclude_cells:
+                        continue
+                    cell = cells[y][x]
+                    if cell.terrain == TerrainType.WATER:
+                        continue
+                    if self._cell_matches_manage_plant(
+                        cell, can_plant_sapling=True
+                    ):
+                        return (x, y)
+        return None
 
     def _forage_key_for_cell(self, cell) -> str | None:
         """Inventory key a forager would collect from this cell, if any."""
@@ -6122,6 +6459,36 @@ class Game:
 
         if (
             allow_collect
+            and building.kind == BuildingKind.FORAGER
+            and building.allows_forage_key("honey")
+        ):
+            from wildlife import AnimalKind
+
+            colony = None
+            if villager.forage_colony_id is not None:
+                colony = self.wildlife.colony_by_id(villager.forage_colony_id)
+            if colony is None:
+                colony = self.wildlife.colony_at(x, y)
+            if (
+                colony is not None
+                and colony.kind == AnimalKind.BEE
+                and colony.x == x
+                and colony.y == y
+                and colony.can_harvest()
+            ):
+                if not inv.can_add(HONEY_PER_BEE_LEVEL, key="honey"):
+                    villager.forage_colony_id = None
+                    return
+                result = self.wildlife.harvest_colony(colony.id, kind=AnimalKind.BEE)
+                villager.forage_colony_id = None
+                if result is not None:
+                    inv.add_item("honey", result[1])
+                    self.record_produced("honey", result[1])
+                    villager._return_after_harvest = True  # type: ignore[attr-defined]
+                return
+
+        if (
+            allow_collect
             and cell.feature == FeatureType.TREE
             and (TaskType.CHOP_TREES in tasks or TaskType.FULL_MANAGE in tasks)
             and self._building_allows_cell(building, cell)
@@ -6243,6 +6610,7 @@ class Game:
                 self.status_message = ""
 
     def _update_simulation(self) -> None:
+        self._invalidate_forage_index()
         self.day_tick -= 1
         if self.day_tick <= 0:
             self.day_tick = TICKS_PER_DAY
@@ -6315,6 +6683,7 @@ class Game:
                 continue
 
             # Single active tick (someone can act).
+            self._invalidate_forage_index()
             self.day_tick -= 1
             if self.day_tick <= 0:
                 flush_eco(day)
@@ -7736,17 +8105,21 @@ class Game:
         from wildlife import AnimalKind, AnimalSex
         from icons import (
             ICON_BEE,
+            ICON_BEE_HIVE,
             ICON_BOAR_FEMALE,
             ICON_BOAR_MALE,
+            ICON_BURROW,
             ICON_DEER_FEMALE,
             ICON_DEER_MALE,
             ICON_RABBIT,
             blit_icon,
         )
-        from settings import COLOUR_BEE, COLOUR_BOAR, COLOUR_DEER, COLOUR_RABBIT
+        from settings import COLOUR_BOAR, COLOUR_DEER
 
         size = self.camera.view_cell_px()
         for animal in self.wildlife.animals:
+            if animal.kind not in (AnimalKind.DEER, AnimalKind.BOAR):
+                continue
             ax, ay = entity_draw_xy(animal)
             cx, cy = self._cell_center(ax, ay)
             cy += max(1, size // 20)
@@ -7757,12 +8130,6 @@ class Game:
                     if animal.sex == AnimalSex.FEMALE
                     else ICON_BOAR_MALE
                 )
-            elif animal.kind == AnimalKind.BEE:
-                colour = COLOUR_BEE
-                name = ICON_BEE
-            elif animal.kind == AnimalKind.RABBIT:
-                colour = COLOUR_RABBIT
-                name = ICON_RABBIT
             else:
                 colour = COLOUR_DEER
                 name = (
@@ -7770,17 +8137,29 @@ class Game:
                     if animal.sex == AnimalSex.FEMALE
                     else ICON_DEER_MALE
                 )
-            if animal.sex == AnimalSex.FEMALE and animal.kind in (
-                AnimalKind.DEER,
-                AnimalKind.BOAR,
-                AnimalKind.RABBIT,
-            ):
+            if animal.sex == AnimalSex.FEMALE:
                 colour = (
                     min(255, colour[0] + 28),
                     min(255, colour[1] + 18),
                     min(255, colour[2] + 22),
                 )
             blit_icon(self.screen, name, cx, cy, size, recolour={"body": colour})
+
+        # Colony nests + members — use SVG colours (no body wash).
+        member_size = max(8, size * 2 // 3)
+        for colony in self.wildlife.colonies:
+            nest_name = (
+                ICON_BEE_HIVE if colony.kind == AnimalKind.BEE else ICON_BURROW
+            )
+            member_name = ICON_BEE if colony.kind == AnimalKind.BEE else ICON_RABBIT
+            nx, ny = entity_draw_xy(colony)
+            cx, cy = self._cell_center(nx, ny)
+            blit_icon(self.screen, nest_name, cx, cy, size)
+            for member in colony.members:
+                mx, my = entity_draw_xy(member)
+                cx, cy = self._cell_center(mx, my)
+                cy += max(1, size // 20)
+                blit_icon(self.screen, member_name, cx, cy, member_size)
 
     def _draw_fish(self) -> None:
         from icons import ICON_FISH, blit_icon
@@ -7858,70 +8237,87 @@ class Game:
     def _draw_minimap(self) -> None:
         """Draw minimap showing terrain, buildings, and camera viewport."""
         minimap_rect = self._minimap_rect()
-        
-        # Dark background
         pygame.draw.rect(self.screen, (20, 20, 25), minimap_rect)
-        
-        # Sample terrain colors (every N cells to fit in minimap)
-        sample_step = max(1, max(self.world.cols // MINIMAP_WIDTH, self.world.rows // MINIMAP_HEIGHT))
-        
-        for wy in range(0, self.world.rows, sample_step):
-            for wx in range(0, self.world.cols, sample_step):
-                cell = self.world.get_cell(wx, wy)
-                if cell is None:
-                    continue
-                
-                # Map world coordinates to minimap pixel
-                mini_x = minimap_rect.x + int(wx * MINIMAP_WIDTH / self.world.cols)
-                mini_y = minimap_rect.y + int(wy * MINIMAP_HEIGHT / self.world.rows)
-                pixel_w = max(1, int(sample_step * MINIMAP_WIDTH / self.world.cols))
-                pixel_h = max(1, int(sample_step * MINIMAP_HEIGHT / self.world.rows))
-                
-                # Simple terrain colors
-                from ui import terrain_colour
-                colour = terrain_colour(cell.terrain)
-                # Darken for minimap
-                colour = (colour[0] // 3, colour[1] // 3, colour[2] // 3)
-                pygame.draw.rect(self.screen, colour, pygame.Rect(mini_x, mini_y, pixel_w, pixel_h))
-        
-        # Draw buildings as dots
+
+        sample_step = max(
+            1, max(self.world.cols // MINIMAP_WIDTH, self.world.rows // MINIMAP_HEIGHT)
+        )
+        terrain_key = (self.world.cols, self.world.rows, sample_step)
+        if (
+            self._minimap_terrain is None
+            or self._minimap_terrain_key != terrain_key
+            or self._minimap_terrain.get_size() != (MINIMAP_WIDTH, MINIMAP_HEIGHT)
+        ):
+            from ui import terrain_colour
+
+            surf = pygame.Surface((MINIMAP_WIDTH, MINIMAP_HEIGHT))
+            surf.fill((20, 20, 25))
+            for wy in range(0, self.world.rows, sample_step):
+                row = self.world.cells[wy]
+                for wx in range(0, self.world.cols, sample_step):
+                    cell = row[wx]
+                    mini_x = int(wx * MINIMAP_WIDTH / self.world.cols)
+                    mini_y = int(wy * MINIMAP_HEIGHT / self.world.rows)
+                    pixel_w = max(1, int(sample_step * MINIMAP_WIDTH / self.world.cols))
+                    pixel_h = max(1, int(sample_step * MINIMAP_HEIGHT / self.world.rows))
+                    colour = terrain_colour(cell.terrain)
+                    colour = (colour[0] // 3, colour[1] // 3, colour[2] // 3)
+                    surf.fill(colour, pygame.Rect(mini_x, mini_y, pixel_w, pixel_h))
+            self._minimap_terrain = surf
+            self._minimap_terrain_key = terrain_key
+
+        self.screen.blit(self._minimap_terrain, minimap_rect.topleft)
+
+        from settings import (
+            COLOUR_CRAFT_BENCH,
+            COLOUR_FARM,
+            COLOUR_FIELD,
+            COLOUR_FISHER,
+            COLOUR_FORAGER,
+            COLOUR_FORESTER,
+            COLOUR_HOME,
+            COLOUR_HUNTER,
+            COLOUR_KITCHEN,
+            COLOUR_MASON,
+            COLOUR_MILL,
+            COLOUR_WORKSTATION,
+        )
+
+        colour_map = {
+            BuildingKind.HOME: COLOUR_HOME,
+            BuildingKind.WORKSTATION: COLOUR_WORKSTATION,
+            BuildingKind.FORESTER: COLOUR_FORESTER,
+            BuildingKind.MASON: COLOUR_MASON,
+            BuildingKind.HUNTER: COLOUR_HUNTER,
+            BuildingKind.FORAGER: COLOUR_FORAGER,
+            BuildingKind.FISHER: COLOUR_FISHER,
+            BuildingKind.FARM: COLOUR_FARM,
+            BuildingKind.FIELD: COLOUR_FIELD,
+            BuildingKind.MILL: COLOUR_MILL,
+            BuildingKind.KITCHEN: COLOUR_KITCHEN,
+            BuildingKind.CRAFT_BENCH: COLOUR_CRAFT_BENCH,
+        }
         for building in self.buildings.values():
             cx, cy = building.center_cell()
             mini_x = minimap_rect.x + int(cx * MINIMAP_WIDTH / self.world.cols)
             mini_y = minimap_rect.y + int(cy * MINIMAP_HEIGHT / self.world.rows)
-            
-            # Color by building kind
-            from settings import COLOUR_HOME, COLOUR_WORKSTATION, COLOUR_FORESTER, COLOUR_MASON, COLOUR_HUNTER, COLOUR_FORAGER, COLOUR_FISHER, COLOUR_FARM, COLOUR_FIELD, COLOUR_MILL, COLOUR_KITCHEN, COLOUR_CRAFT_BENCH
-            colour_map = {
-                BuildingKind.HOME: COLOUR_HOME,
-                BuildingKind.WORKSTATION: COLOUR_WORKSTATION,
-                BuildingKind.FORESTER: COLOUR_FORESTER,
-                BuildingKind.MASON: COLOUR_MASON,
-                BuildingKind.HUNTER: COLOUR_HUNTER,
-                BuildingKind.FORAGER: COLOUR_FORAGER,
-                BuildingKind.FISHER: COLOUR_FISHER,
-                BuildingKind.FARM: COLOUR_FARM,
-                BuildingKind.FIELD: COLOUR_FIELD,
-                BuildingKind.MILL: COLOUR_MILL,
-                BuildingKind.KITCHEN: COLOUR_KITCHEN,
-                BuildingKind.CRAFT_BENCH: COLOUR_CRAFT_BENCH,
-            }
             colour = colour_map.get(building.kind, (200, 200, 200))
             pygame.draw.circle(self.screen, colour, (mini_x, mini_y), 2)
-        
-        # Draw player as a dot
+
         player_x = minimap_rect.x + int(self.player.x * MINIMAP_WIDTH / self.world.cols)
         player_y = minimap_rect.y + int(self.player.y * MINIMAP_HEIGHT / self.world.rows)
         pygame.draw.circle(self.screen, COLOUR_PLAYER, (player_x, player_y), 2)
-        
-        # Draw camera viewport rectangle
+
         x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
         viewport_x = minimap_rect.x + int(x0 * MINIMAP_WIDTH / self.world.cols)
         viewport_y = minimap_rect.y + int(y0 * MINIMAP_HEIGHT / self.world.rows)
-        viewport_w = int((x1 - x0) * MINIMAP_WIDTH / self.world.cols)
-        viewport_h = int((y1 - y0) * MINIMAP_HEIGHT / self.world.rows)
-        pygame.draw.rect(self.screen, (255, 255, 255), pygame.Rect(viewport_x, viewport_y, viewport_w, viewport_h), 1)
-        
-        # Border
+        viewport_w = max(1, int((x1 - x0) * MINIMAP_WIDTH / self.world.cols))
+        viewport_h = max(1, int((y1 - y0) * MINIMAP_HEIGHT / self.world.rows))
+        pygame.draw.rect(
+            self.screen,
+            (255, 255, 255),
+            pygame.Rect(viewport_x, viewport_y, viewport_w, viewport_h),
+            1,
+        )
         pygame.draw.rect(self.screen, (100, 100, 110), minimap_rect, 2)
 

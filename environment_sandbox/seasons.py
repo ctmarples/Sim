@@ -12,6 +12,7 @@ from resource_balance import (
     HERB_DESPAWN_LEFTOVER,
     HERB_SPAWN_RATE_PEAK,
     MUSHROOM_SPAWN_RATE_PEAK,
+    WOOD_BUSH_SPAWN_RATE_PEAK,
 )
 from settings import FPS
 
@@ -161,6 +162,13 @@ def mushroom_spawn_rate(day: float, x: int, y: int) -> float:
     return MUSHROOM_SPAWN_RATE_PEAK * rise
 
 
+def wood_bush_spawn_rate(day: float, x: int, y: int) -> float:
+    """Fallen wood near trees — peaks through autumn, gone by winter."""
+    d = local_day(day, x, y)
+    rise = _smoothstep(54.0, 62.0, d) * (1.0 - _smoothstep(78.0, 84.0, d))
+    return WOOD_BUSH_SPAWN_RATE_PEAK * rise
+
+
 def mushroom_despawn_rate(day: float, x: int, y: int) -> float:
     """Clear as winter begins; no lingering mushrooms in winter."""
     d = local_day(day, x, y)
@@ -295,6 +303,10 @@ def berries_active(season: Season) -> bool:
 
 
 def mushrooms_active(season: Season) -> bool:
+    return season == Season.AUTUMN
+
+
+def wood_bushes_active(season: Season) -> bool:
     return season == Season.AUTUMN
 
 

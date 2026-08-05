@@ -30,6 +30,7 @@ VILLAGER_SATIATION_DECAY_PER_TICK: float = 1.0 / (FPS * VILLAGER_SATIATION_SECON
 VILLAGER_FOOD_KEYS: list[str] = [
     "berries",
     "mushrooms",
+    "honey",
     "fish",
     "meat",
     "onion",
@@ -64,6 +65,7 @@ class FoodDef:
 FOODS: list[FoodDef] = [
     FoodDef("berries", satiation=1.0),
     FoodDef("mushrooms", satiation=1.0),
+    FoodDef("honey", satiation=1.5, hunger_rate=0.8, walk_speed=1.5),
     FoodDef("onion", satiation=1.0),
     FoodDef("cabbage", satiation=1.0),
     FoodDef("carrot", satiation=1.0),
@@ -170,15 +172,12 @@ FISH_YIELD: int = 2
 # Patch capacity from breeding-ground size.
 ANIMAL_TREES_PER_CAP: int = 3  # deer: 1 per 3 deer-breeding tiles
 BOAR_CELLS_PER_CAP: int = 6  # boar: 1 per 6 forest/breeding tiles in patch
-BEE_CELLS_PER_CAP: int = 4  # bees: 1 per 4 nest tiles
-RABBIT_CELLS_PER_CAP: int = 3  # rabbits: 1 per 3 meadow nest tiles
-# Forage flood-fill radius from nest (Chebyshev).
+# Forage flood-fill radius from nest (Chebyshev) for bee/rabbit colonies.
 SMALL_GAME_FORAGE_RADIUS: int = 2
 # Usable breeding habitats must hold at least a mating pair.
 MIN_BREEDING_CAPACITY: int = 2
 DEER_CROP_EAT_CHANCE: float = 0.50
 BOAR_CROP_EAT_CHANCE: float = 0.25
-RABBIT_CROP_EAT_CHANCE: float = 0.35
 # Chance per growth tick that a pair starts its once-per-year migration.
 ANIMAL_MIGRATION_CHANCE: float = 0.18
 # Chance a mating pair produces one offspring per growth tick (if under cap).
@@ -190,6 +189,33 @@ WILDLIFE_SEED_COUNT: int = 2
 WILDLIFE_RESEED_PAIR: int = 2
 FISH_WATER_PER_CAP: int = 4
 
+# ---------------------------------------------------------------------------
+# Bee / rabbit colonies (not individual animals)
+# ---------------------------------------------------------------------------
+COLONY_LEVEL_MAX: int = 4
+# Visible individuals around the nest for levels 1..4.
+COLONY_MEMBERS_BY_LEVEL: tuple[int, ...] = (1, 2, 4, 7)
+# How far members may wander from the nest (Chebyshev).
+COLONY_MEMBER_RADIUS: int = 2
+# Initial colonies seeded per kind on new maps.
+COLONY_SEED_GROUNDS: int = 3
+# Per growth tick: level-up when food is available (levels 1–3 → next).
+COLONY_GROW_CHANCE: float = 0.20
+# Per growth tick: a level-3 colony with food may found a new level-1 colony.
+COLONY_SPLIT_LEVEL: int = 3
+COLONY_SPLIT_CHANCE: float = 0.12
+# Rabbits nibble crops near the nest; bees do not.
+COLONY_RABBIT_CROP_EAT_CHANCE: float = 0.30
+# After a hunt/honey collect: growth ticks before the colony can be harvested again.
+COLONY_HARVEST_COOLDOWN: int = 8
+# Hunter: one level drop yields this much meat (one hunt = one level).
+RABBIT_MEAT_PER_LEVEL: int = 3
+# Forager: one level drop yields this much honey (one collect = one level).
+HONEY_PER_BEE_LEVEL: int = 5
+# Rabbit members: pause this many ticks after each one-tile hop.
+RABBIT_MOVE_PAUSE: int = 120
+
+
 BERRY_BUSH_YIELD: int = 5
 BERRY_REGEN_TICKS: int = 2400
 BERRY_SEED_DROP_CHANCE: float = 0.08
@@ -197,8 +223,17 @@ BERRY_SEED_DROP_CHANCE: float = 0.08
 MUSHROOM_YIELD: int = 5  # per mushroom tile foraged
 REED_YIELD: int = 3
 WOOD_BUSH_YIELD: int = 1  # processed wood from bush tiles
-WILD_PRODUCE_YIELD: int = 1  # wild crop / herb produce per harvest
-FARM_PRODUCE_YIELD: int = 6  # farmed crop produce per harvest
+# Chance an empty neighbour of a tree gets fallen wood when forests are seeded.
+WOOD_BUSH_SEED_CHANCE: float = 0.28
+# Peak chance per mushroom-tick for fallen wood to appear next to a tree (autumn).
+WOOD_BUSH_SPAWN_RATE_PEAK: float = 0.022
+
+# Forager target pick: within each N-tile band, prefer recipe priority 1→3;
+# only look further out when nothing nearer is available.
+FORAGER_PRIORITY_BAND: int = 8
+
+WILD_PRODUCE_YIELD: int = 3  # wild crop / herb produce per harvest
+FARM_PRODUCE_YIELD: int = 9  # farmed crop produce per harvest
 
 # Crop seed drops (defaults applied on every CropDef in crops.py).
 WILD_SEED_CHANCE: float = 1.0 / 3.0  # forage: chance of 1 seed

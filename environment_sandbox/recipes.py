@@ -97,12 +97,14 @@ FORESTER_SPLIT_RECIPES: tuple[Recipe, ...] = (
 HUNTER_RECIPES: tuple[Recipe, ...] = (
     Recipe("deer", {}, {"meat": 1}, icon_key="deer"),
     Recipe("boar", {}, {"meat": 1}, icon_key="boar"),
+    Recipe("rabbit", {}, {"meat": 1}, icon_key="rabbit"),
 )
 
 FORAGER_RECIPES: tuple[Recipe, ...] = (
     Recipe("wood", {}, {"wood": 1}),
     Recipe("berries", {}, {"berries": 1}),
     Recipe("mushrooms", {}, {"mushrooms": 1}),
+    Recipe("honey", {}, {"honey": 1}),
     *(Recipe(key, {}, {key: 1}) for key in PRODUCE_KEYS),
 )
 
@@ -128,8 +130,10 @@ RECIPE_LABELS: dict[str, str] = {
     "wood": "Wood",
     "deer": "Deer",
     "boar": "Boar",
+    "rabbit": "Rabbit",
     "berries": "Berries",
     "mushrooms": "Mushrooms",
+    "honey": "Honey",
 }
 
 KITCHEN_FUEL_KEY: str = "wood"

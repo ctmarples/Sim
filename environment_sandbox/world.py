@@ -40,6 +40,7 @@ from seasons import (
     season_for_day,
     trees_grow_factor,
     trees_spread_factor,
+    wood_bush_spawn_rate,
 )
 from resource_balance import (
     BERRY_BUSH_YIELD,
@@ -56,6 +57,8 @@ from resource_balance import (
     ROCK_SMALL_MAX,
     ROCK_SMALL_MIN,
     WILD_PLANT_MAX_FRACTION,
+    WOOD_BUSH_SEED_CHANCE,
+    WOOD_BUSH_YIELD,
 )
 from settings import (
     DISTURBANCE_INTERACTION_BOOST,
@@ -295,6 +298,9 @@ class World:
                     cell.tree_species = species
                     cell.deposit = tree.yield_amount
 
+        # Fallen wood on empty tiles beside trees (forest floor litter).
+        self._seed_wood_near_trees(rng)
+
         # More scattered small rock deposits on soil/grass/meadow.
         placed_small = 0
         attempts = 0
@@ -391,6 +397,7 @@ class World:
                         FeatureType.ROCK,
                         FeatureType.SAPLING,
                         FeatureType.MUSHROOM,
+                        FeatureType.WOOD_BUSH,
                         FeatureType.BERRY_BUSH,
                         FeatureType.HERB,
                         FeatureType.WILD_CROP,
@@ -426,6 +433,27 @@ class World:
         self.update_forest_floor()
         self._paint_terrain_subclusters(rng)
         self.bump_terrain()
+
+    def _seed_wood_near_trees(self, rng: random.Random) -> None:
+        """Place fallen wood on empty soil-like tiles adjacent to trees."""
+        tree_tiles = [
+            (x, y)
+            for y in range(self.rows)
+            for x in range(self.cols)
+            if self.cells[y][x].feature == FeatureType.TREE
+        ]
+        for tx, ty in tree_tiles:
+            for ny, nx in self.neighbourhood(tx, ty, radius=1):
+                if (nx, ny) == (tx, ty):
+                    continue
+                cell = self.cells[ny][nx]
+                if (
+                    cell.feature == FeatureType.NONE
+                    and cell.terrain in SOIL_LIKE
+                    and rng.random() < WOOD_BUSH_SEED_CHANCE
+                ):
+                    cell.feature = FeatureType.WOOD_BUSH
+                    cell.deposit = WOOD_BUSH_YIELD
 
     def _paint_terrain_subclusters(self, rng: random.Random) -> None:
         """Carve small shade clusters inside each grass / meadow / soil patch.
@@ -1161,19 +1189,26 @@ class World:
                         and self._forage_rng.random() < mushroom_spawn_rate(day, nx, ny)
                     ):
                         cell.feature = FeatureType.MUSHROOM
-                    elif (
+
+        # Autumn fallen wood beside trees (independent of mushrooms).
+        for y in range(self.rows):
+            for x in range(self.cols):
+                if self.cells[y][x].feature != FeatureType.TREE:
+                    continue
+                for ny, nx in self.neighbourhood(x, y, radius=1):
+                    if (nx, ny) == (x, y):
+                        continue
+                    cell = self.cells[ny][nx]
+                    if (
                         cell.feature == FeatureType.NONE
                         and cell.terrain in SOIL_LIKE
-                        and self._forage_rng.random()
-                        < mushroom_spawn_rate(day, nx, ny) * 0.85
+                        and self._forage_rng.random() < wood_bush_spawn_rate(day, nx, ny)
                     ):
-                        from resource_balance import WOOD_BUSH_YIELD
-
                         cell.feature = FeatureType.WOOD_BUSH
                         cell.deposit = WOOD_BUSH_YIELD
 
     def clear_mushrooms(self) -> None:
-        """Remove every mushroom tile (called at winter onset)."""
+        """Remove mushrooms and fallen wood (called at winter onset)."""
         for y in range(self.rows):
             for x in range(self.cols):
                 cell = self.cells[y][x]

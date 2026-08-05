@@ -584,7 +584,10 @@ class UI:
         y = _blit_text(content, self.font_title, "World", (x, y))
         wild_line = (
             f"Deer {len(wildlife.deer())}  Boar {len(wildlife.boars())}  "
-            f"Bee {len(wildlife.bees())}  Rabbit {len(wildlife.rabbits())}"
+            f"Bee {len(wildlife.bee_colonies())}c/"
+            f"{wildlife.colony_members_total(AnimalKind.BEE)}  "
+            f"Rabbit {len(wildlife.rabbit_colonies())}c/"
+            f"{wildlife.colony_members_total(AnimalKind.RABBIT)}"
         )
         if fish_manager is not None:
             wild_line += (
@@ -607,21 +610,31 @@ class UI:
                     content, self.font_small, "  none", (x, y), COLOUR_TEXT_DIM
                 )
             for hab in grounds:
-                _present, migrating, total, pairs = wildlife.patch_occupancy(
-                    kind, hab.id
-                )
                 selected = (
                     selected_habitat_kind == kind and selected_habitat_id == hab.id
                 )
-                pair_txt = f"{pairs} pair" if pairs == 1 else f"{pairs} pairs"
-                cap = getattr(hab, cap_attr)
-                if migrating:
-                    label = (
-                        f"  #{hab.id}  {total}/{cap}  "
-                        f"{pair_txt}  {migrating} migrating"
-                    )
+                if kind in (AnimalKind.BEE, AnimalKind.RABBIT):
+                    colony = wildlife._colony_on_habitat(kind, hab.id)
+                    if colony is None:
+                        label = f"  #{hab.id}  empty"
+                    else:
+                        label = (
+                            f"  #{hab.id}  L{colony.level}  "
+                            f"{colony.target_members()} visible"
+                        )
                 else:
-                    label = f"  #{hab.id}  {total}/{cap}  {pair_txt}"
+                    _present, migrating, total, pairs = wildlife.patch_occupancy(
+                        kind, hab.id
+                    )
+                    pair_txt = f"{pairs} pair" if pairs == 1 else f"{pairs} pairs"
+                    cap = getattr(hab, cap_attr)
+                    if migrating:
+                        label = (
+                            f"  #{hab.id}  {total}/{cap}  "
+                            f"{pair_txt}  {migrating} migrating"
+                        )
+                    else:
+                        label = f"  #{hab.id}  {total}/{cap}  {pair_txt}"
                 y = self._draw_list_row(
                     content,
                     label,
