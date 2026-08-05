@@ -15,12 +15,30 @@ import pygame
 
 from crops import (
     CROP_BY_KEY,
-    FARM_SEED_AMOUNTS,
     SEED_KEYS,
     SeasonPhase,
     growth_ticks_for,
     phase_allows_plough_plant,
     phase_for_crop,
+)
+from resource_balance import (
+    BERRY_SEED_DROP_CHANCE,
+    BOAR_MEAT_YIELD,
+    DEER_MEAT_YIELD,
+    FARM_PRODUCE_YIELD,
+    FARM_SEED_AMOUNTS,
+    FISH_YIELD,
+    MAX_FOOD_TYPES_PER_MEAL,
+    MUSHROOM_YIELD,
+    REED_YIELD,
+    SAPLING_DROP_CHANCE,
+    STARTING_FOOD,
+    VILLAGER_FOOD_KEYS,
+    VILLAGER_SATIATION_DECAY_PER_TICK,
+    WILD_PRODUCE_YIELD,
+    combine_meal_buffs,
+    food_def,
+    satiation_from_points,
 )
 from entities import (
     BUILDING_LABELS,
@@ -59,8 +77,6 @@ from indicators import (
     overlay_colour,
 )
 from settings import (
-    BOAR_MEAT_YIELD,
-    DEER_MEAT_YIELD,
     BUILDING_STORAGE_CAPACITY,
     BUILDING_FOOTPRINT,
     CELL_SIZE,
@@ -99,7 +115,6 @@ from settings import (
     FIELD_COST_WOOD,
     FISHER_COST_ROCK,
     FISHER_COST_WOOD,
-    FISH_YIELD,
     FORESTER_COST_ROCK,
     FORESTER_COST_WOOD,
     FORAGER_COST_ROCK,
@@ -109,7 +124,6 @@ from settings import (
     GRID_ROWS,
     HUNTER_COST_ROCK,
     HUNTER_COST_WOOD,
-    BERRY_SEED_DROP_CHANCE,
     KITCHEN_COST_ROCK,
     KITCHEN_COST_WOOD,
     MASON_COST_ROCK,
@@ -121,15 +135,11 @@ from settings import (
     MINIMAP_WIDTH,
     OVERLAY_ALPHA,
     PLAYER_VIS_SPEED,
-    SAPLING_DROP_CHANCE,
     SIM_SPEEDS,
-    STARTING_FOOD,
     STARTING_ROCK,
     STARTING_WOOD,
     STATUS_MESSAGE_FRAMES,
-    VILLAGER_FOOD_KEYS,
     VILLAGER_MOVE_INTERVAL,
-    VILLAGER_SATIATION_DECAY_PER_TICK,
     VILLAGER_WORK_INTERVAL,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
@@ -2834,11 +2844,14 @@ class Game:
             if status:
                 self._set_status("No mushroom here.")
             return False
-        inventory.add_mushrooms(1)
+        inventory.add_mushrooms(MUSHROOM_YIELD)
         self.world.apply_disturbance(x, y)
         self._refresh_indicators()
         if status:
-            self._set_status("Collected 1 mushroom.")
+            self._set_status(
+                f"Collected {MUSHROOM_YIELD} mushroom"
+                f"{'' if MUSHROOM_YIELD == 1 else 's'}."
+            )
         return True
 
     def _collect_berries(self, x: int, y: int, inventory: Inventory, status: bool = False) -> bool:
@@ -2875,23 +2888,27 @@ class Game:
                 self._set_status("No wild plants here.")
             return False
         if crop_key == "reeds":
-            inventory.add_item("reeds", 1)
+            inventory.add_item("reeds", REED_YIELD)
             self.world.apply_disturbance(x, y)
             self._refresh_indicators()
             if status:
-                self._set_status("Collected 1 reed.")
+                self._set_status(
+                    f"Collected {REED_YIELD} reed{'' if REED_YIELD == 1 else 's'}."
+                )
             return True
         crop = CROP_BY_KEY.get(crop_key, CROP_BY_KEY["sage"])
-        inventory.add_item(crop.produce_key, 1)
+        inventory.add_item(crop.produce_key, WILD_PRODUCE_YIELD)
         seed_msg = ""
-        # Forage: flat 1/3 chance of a single seed.
+        # Forage: flat chance of a single seed (see resource_balance.WILD_SEED_CHANCE).
         if self._drop_rng.random() < crop.wild_seed_chance and inventory.can_add(1, key=crop.seed_key):
             inventory.add_item(crop.seed_key, 1)
             seed_msg = f" +1 {crop.label.lower()} seed"
         self.world.apply_disturbance(x, y)
         self._refresh_indicators()
         if status:
-            self._set_status(f"Collected 1 {crop.label.lower()}{seed_msg}.")
+            self._set_status(
+                f"Collected {WILD_PRODUCE_YIELD} {crop.label.lower()}{seed_msg}."
+            )
         return True
 
     def _harvest_farm_herb(
@@ -2907,7 +2924,7 @@ class Game:
                 self._set_status("Crop not ready.")
             return False
         crop = CROP_BY_KEY.get(crop_key, CROP_BY_KEY["sage"])
-        inventory.add_item(crop.produce_key, 1)
+        inventory.add_item(crop.produce_key, FARM_PRODUCE_YIELD)
         seed_msg = ""
         # Farm: always 1, 2, or 3 seeds (capped by seed carry space).
         amounts = crop.farm_seed_amounts or FARM_SEED_AMOUNTS
@@ -2923,7 +2940,8 @@ class Game:
         self.world.apply_disturbance(x, y)
         self._refresh_indicators()
         if status:
-            self._set_status(f"Harvested farm {crop.label.lower()}{seed_msg}.")
+            qty = f" ×{FARM_PRODUCE_YIELD}" if FARM_PRODUCE_YIELD != 1 else ""
+            self._set_status(f"Harvested farm {crop.label.lower()}{qty}{seed_msg}.")
         return True
 
     def _deposit_home(self, inventory: Inventory, status: bool = True) -> bool:
@@ -3068,6 +3086,11 @@ class Game:
                     villager.seeking_food = False
 
             acted = False
+            # Construction wood/rock must not go through the general hauler — it
+            # would deposit them back at home instead of at the build site.
+            if self._construction_delivery_active(villager):
+                self._update_builder(villager)
+                continue
             # Finish an in-progress haul before workplace can reclaim cargo.
             if (
                 villager.state == VillagerState.HAULING
@@ -3096,9 +3119,13 @@ class Game:
                         self._update_hauler(villager)
                         acted = True
                         break
-            if not acted:
+            if self._try_idle_transport(villager):
+                acted = True
+            elif not acted:
+                if self._construction_delivery_active(villager):
+                    self._update_builder(villager)
                 # Finish delivering carried goods home if any.
-                if not villager.inventory.is_empty and WorkPriority.TRANSPORT in villager.priorities:
+                elif not villager.inventory.is_empty and WorkPriority.TRANSPORT in villager.priorities:
                     self._update_hauler(villager)
                 elif villager.state not in (VillagerState.DELIVERING, VillagerState.HAULING, VillagerState.BUILDING):
                     villager.state = VillagerState.IDLE
@@ -3169,13 +3196,6 @@ class Game:
         preferring highest-satiation foods first. Stops early once the villager
         reaches their ration refill target (or a full meal for non-villager calls).
         """
-        from foods import (
-            MAX_FOOD_TYPES_PER_MEAL,
-            combine_meal_buffs,
-            food_def,
-            satiation_from_points,
-        )
-
         target = (
             villager.ration_refill()
             if villager is not None
@@ -3261,9 +3281,34 @@ class Game:
             return
         self._step_villager_toward(villager, dest)
 
+    def _try_idle_transport(self, villager: Villager) -> bool:
+        """Run transport when a higher priority left the worker idle but haul work exists."""
+        if WorkPriority.TRANSPORT not in villager.priorities:
+            return False
+        if villager.state != VillagerState.IDLE:
+            return False
+        if not self._transport_has_work(villager):
+            return False
+        self._update_hauler(villager)
+        return True
+
     def _workplace_has_work(self, villager: Villager) -> bool:
         building = self.buildings.get(villager.building_id) if villager.building_id else None
         if building is None:
+            return False
+        # Stocked workplace + empty hands → let TRANSPORT clear outputs / supply inputs.
+        if (
+            villager.inventory.is_empty
+            and building.haulable_total() > 0
+            and WorkPriority.TRANSPORT in villager.priorities
+        ):
+            return False
+        if (
+            building.is_processor()
+            and self._processor_can_be_supplied(building)
+            and villager.inventory.is_empty
+            and WorkPriority.TRANSPORT in villager.priorities
+        ):
             return False
         # Don't steal cargo from an in-progress haul (farm workers at home were
         # dumping kitchen supplies back into the storehouse every tick).
@@ -3469,6 +3514,12 @@ class Game:
             return True
         return self._find_processor_needing_supply_for(villager) is not None
 
+    def _construction_delivery_active(self, villager: Villager) -> bool:
+        """True while this villager should fetch/deliver construction materials."""
+        if villager.construction_id is None:
+            return False
+        return self._construction_has_work(villager)
+
     def _construction_has_work(self, villager: Villager) -> bool:
         if not self.construction_sites:
             if villager.construction_id is not None:
@@ -3607,16 +3658,15 @@ class Game:
         sx, sy, _kind = source
         if (villager.x, villager.y) != (sx, sy):
             self._step_villager_toward(villager, (sx, sy))
-            villager.state = VillagerState.HAULING
+            villager.state = VillagerState.BUILDING
             return
-        if villager.work_cooldown == 0:
-            self._withdraw_build_materials(villager, site, source)
-            villager.work_cooldown = self._villager_work_interval(villager)
-            villager.state = VillagerState.HAULING
-            # Nothing withdrawn (empty stock race) — drop claim next tick via has_work.
-            if villager.inventory.wood <= 0 and villager.inventory.rock <= 0:
-                villager.construction_id = None
-                villager.state = VillagerState.IDLE
+        self._withdraw_build_materials(villager, site, source)
+        if villager.inventory.wood > 0 or villager.inventory.rock > 0:
+            villager.state = VillagerState.DELIVERING
+            villager.target = site.center_cell()
+        else:
+            villager.construction_id = None
+            villager.state = VillagerState.IDLE
 
     def _find_site_needing_materials(self, villager: Villager) -> ConstructionSite | None:
         candidates = [
@@ -3857,6 +3907,10 @@ class Game:
                     and not building.can_accept_from(villager.inventory)
                 )
             ):
+                self._begin_workplace_delivery(villager, building)
+                self._update_workplace_delivery(villager, building)
+            elif building.can_accept_from(villager.inventory):
+                # Seeds with no seasonal field work — store at the farmhouse.
                 self._begin_workplace_delivery(villager, building)
                 self._update_workplace_delivery(villager, building)
             else:
@@ -4372,6 +4426,10 @@ class Game:
         return best
 
     def _update_hauler(self, villager: Villager) -> None:
+        if self._construction_delivery_active(villager):
+            self._update_builder(villager)
+            return
+
         home = self.world.home_pos
 
         # Carrying goods → processor input delivery, else home.

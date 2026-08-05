@@ -4,6 +4,15 @@ from __future__ import annotations
 
 from enum import Enum, auto
 
+from resource_balance import (
+    BERRY_DESPAWN_FADE,
+    BERRY_DESPAWN_LEFTOVER,
+    BERRY_SPAWN_RATE_PEAK,
+    HERB_DESPAWN_FADE,
+    HERB_DESPAWN_LEFTOVER,
+    HERB_SPAWN_RATE_PEAK,
+    MUSHROOM_SPAWN_RATE_PEAK,
+)
 from settings import FPS
 
 
@@ -119,7 +128,7 @@ def herb_spawn_rate(day: float, x: int, y: int) -> float:
     d = local_day(day, x, y)
     # Rise through early spring, peak mid-spring, taper late spring.
     rise = _smoothstep(0.0, 8.0, d) * (1.0 - _smoothstep(18.0, 30.0, d))
-    return 0.045 * rise
+    return HERB_SPAWN_RATE_PEAK * rise
 
 
 def herb_despawn_rate(day: float, x: int, y: int) -> float:
@@ -129,27 +138,27 @@ def herb_despawn_rate(day: float, x: int, y: int) -> float:
     fade = _smoothstep(48.0, 58.0, d) * (1.0 - _smoothstep(72.0, 82.0, d))
     # Also clear any leftovers deep into autumn/winter.
     leftover = _smoothstep(70.0, 78.0, d)
-    return min(1.0, 0.08 * fade + 0.15 * leftover)
+    return min(1.0, HERB_DESPAWN_FADE * fade + HERB_DESPAWN_LEFTOVER * leftover)
 
 
 def berry_spawn_rate(day: float, x: int, y: int) -> float:
     d = local_day(day, x, y)
     rise = _smoothstep(26.0, 36.0, d) * (1.0 - _smoothstep(48.0, 58.0, d))
-    return 0.025 * rise
+    return BERRY_SPAWN_RATE_PEAK * rise
 
 
 def berry_despawn_rate(day: float, x: int, y: int) -> float:
     d = local_day(day, x, y)
     fade = _smoothstep(54.0, 64.0, d) * (1.0 - _smoothstep(78.0, 88.0, d))
     leftover = _smoothstep(76.0, 84.0, d)
-    return min(1.0, 0.07 * fade + 0.18 * leftover)
+    return min(1.0, BERRY_DESPAWN_FADE * fade + BERRY_DESPAWN_LEFTOVER * leftover)
 
 
 def mushroom_spawn_rate(day: float, x: int, y: int) -> float:
     """Autumn only — stop before winter (day 84)."""
     d = local_day(day, x, y)
     rise = _smoothstep(56.0, 64.0, d) * (1.0 - _smoothstep(78.0, 84.0, d))
-    return 0.03 * rise
+    return MUSHROOM_SPAWN_RATE_PEAK * rise
 
 
 def mushroom_despawn_rate(day: float, x: int, y: int) -> float:

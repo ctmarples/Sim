@@ -1,4 +1,8 @@
-"""Crop catalogue: wild & farmed plants, seasons, and seed rates."""
+"""Crop catalogue: wild & farmed plants, seasons, and growth.
+
+Seed drop defaults (``WILD_SEED_CHANCE``, ``FARM_SEED_AMOUNTS``) live in
+``resource_balance`` and are re-exported here for convenience.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +11,7 @@ from enum import Enum, auto
 
 from seasons import SEASON_ORDER, Season
 from settings import Colour
+from resource_balance import FARM_SEED_AMOUNTS, WILD_SEED_CHANCE
 
 
 class SeasonPhase(Enum):
@@ -67,8 +72,7 @@ class CropDef:
         return f"{self.icon_base}_dense" if dense else self.icon_base
 
 
-WILD_SEED_CHANCE: float = 1.0 / 3.0
-FARM_SEED_AMOUNTS: tuple[int, ...] = (1, 2, 3)
+# Seed drop defaults: imported from resource_balance (re-exported for callers).
 
 
 def _phases(

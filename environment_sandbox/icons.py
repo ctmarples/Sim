@@ -1221,7 +1221,7 @@ def icon_base_for_feature(
     """Logical icon base for a map ``FeatureType``, or None if none/unknown."""
     # Local import avoids a hard cycle with world.py at module load.
     from trees import resolve_tree
-    from settings import ROCK_LARGE_MIN
+    from resource_balance import ROCK_LARGE_MIN
     from world import FeatureType
 
     if not isinstance(feature, FeatureType) or feature == FeatureType.NONE:

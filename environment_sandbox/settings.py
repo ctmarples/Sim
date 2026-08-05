@@ -136,74 +136,15 @@ FARM_FIELD_RADIUS: int = 20
 
 STARTING_WOOD: int = 2
 STARTING_ROCK: int = 2
-STARTING_FOOD: int = 12  # berries at home so early hires can eat
 BUILD_SECONDS_PER_ITEM: float = 2.0
 # Ticks of construction work required per wood/rock unit (at simulation ×1).
 BUILD_TICKS_PER_ITEM: int = int(FPS * BUILD_SECONDS_PER_ITEM)
 # Square footprint (cells) for storehouse, hiring hall, and production buildings.
 BUILDING_FOOTPRINT: int = 3
 
-# Satiation 1.0 → 0.0 over this many seconds at ×1 (75%→50% ≈ 45s, matching old meal pace).
-VILLAGER_SATIATION_SECONDS: float = 180.0
-VILLAGER_SATIATION_DECAY_PER_TICK: float = 1.0 / (FPS * VILLAGER_SATIATION_SECONDS)
-
-# Prefer these HomeStorage / inventory food keys when eating at random.
-VILLAGER_FOOD_KEYS: tuple[str, ...] = (
-    "berries",
-    "mushrooms",
-    "fish",
-    "meat",
-    "onion",
-    "cabbage",
-    "carrot",
-    "garlic",
-    "bread",
-    "stew",
-    "fish_stew",
-    "grilled_meat",
-    "grilled_fish",
-)
-
 INDICATOR_RADIUS: int = 2
 
-SAPLING_GROWTH_TICKS: int = 3840
-SAPLING_DROP_CHANCE: float = 0.25
-
-NATURAL_SPROUT_MIN_PATCH: int = 4
-NATURAL_SPROUT_CHANCE: float = 1.0 / 8.0
-NATURAL_SPROUT_INTERVAL: int = 180
-
-TREE_WOOD_DEPOSIT: int = 2  # legacy default; species yields override
-ROCK_DEPOSIT: int = 10  # legacy default
-ROCK_SMALL_MIN: int = 2
-ROCK_SMALL_MAX: int = 5
-ROCK_LARGE_MIN: int = 20
-ROCK_LARGE_MAX: int = 28
-ANIMAL_MEAT_YIELD: int = 3  # deer (legacy alias)
-DEER_MEAT_YIELD: int = 3
-BOAR_MEAT_YIELD: int = 5
-FISH_YIELD: int = 2
-
-# Forage resources
-BERRY_BUSH_YIELD: int = 5
-BERRY_REGEN_TICKS: int = 2400
-BERRY_SEED_DROP_CHANCE: float = 0.08
-BERRY_SPREAD_CHANCE: float = 0.02  # per bush per forage tick
-BERRY_SPREAD_INTERVAL: int = 600
-
-MUSHROOM_SPAWN_CHANCE: float = 0.012  # soil next to tree, per forage tick
-MUSHROOM_SPREAD_CHANCE: float = 0.02  # into neighbouring soil
-MUSHROOM_TICK_INTERVAL: int = 360
-
-# Wild crops / berry bushes may cover at most this fraction of each terrain type.
-WILD_PLANT_MAX_FRACTION: float = 0.30
-
-HERB_SPAWN_CHANCE: float = 0.03  # empty grass per forage tick (legacy name)
-HERB_SEED_DROP_CHANCE: float = 1.0 / 3.0  # forage fallback
-HERB_TICK_INTERVAL: int = 150
-# Farm crop growth fallback (~32 in-game days at TICKS_PER_DAY = FPS*4).
-FARM_CROP_GROWTH_TICKS: int = FPS * 4 * 32
-FARM_HERB_SEED_DROP_CHANCE: float = 1.0  # farm always yields 1–3 seeds (see crops.py)
+# Resource yields, food effects, forage spawn rates: edit resource_balance.py
 
 VILLAGER_MOVE_INTERVAL: int = 48
 VILLAGER_WORK_INTERVAL: int = 72

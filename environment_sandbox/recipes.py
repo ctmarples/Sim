@@ -1,4 +1,8 @@
-"""Crafting and gather recipes for workplaces."""
+"""Crafting and gather recipes for workplaces.
+
+Input/output ratios for mill and kitchen crafts live here.
+Harvest yields and food satiation/buffs: ``resource_balance.py``.
+"""
 
 from __future__ import annotations
 

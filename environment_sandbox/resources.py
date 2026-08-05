@@ -1,6 +1,7 @@
 """Resource catalogue: keys, labels, and display groups.
 
 Add new resources here so inventory UI and totals stay consistent.
+Yields, drops, and food effects: ``resource_balance.py``.
 """
 
 from __future__ import annotations

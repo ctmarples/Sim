@@ -1,4 +1,8 @@
-"""Tree species catalogue: growth, yields, and drawing hints."""
+"""Tree species catalogue: growth, yields, and drawing hints.
+
+Per-species ``yield_amount`` / ``yield_key`` are the wood harvest amounts.
+Other resource yields and food effects: ``resource_balance.py``.
+"""
 
 from __future__ import annotations
 

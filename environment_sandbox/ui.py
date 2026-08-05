@@ -75,12 +75,12 @@ from settings import (
     MAP_OFFSET_Y,
     MAX_VILLAGERS,
     PANEL_WIDTH,
-    ROCK_LARGE_MIN,
     TERRAIN_SUBDIV,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
     map_view_width,
 )
+from resource_balance import ROCK_LARGE_MIN
 from wildlife import AnimalKind, FishManager, WildlifeManager
 from world import FeatureType, TerrainType, World
 
