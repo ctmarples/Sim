@@ -1246,6 +1246,7 @@ def icon_base_for_feature(
     tree_species: str | None = None,
     crop_kind: str | None = None,
     deposit: int = 0,
+    growth_ticks: int = 0,
 ) -> str | None:
     """Logical icon base for a map ``FeatureType``, or None if none/unknown."""
     # Local import avoids a hard cycle with world.py at module load.
@@ -1264,7 +1265,7 @@ def icon_base_for_feature(
     if feature in (FeatureType.HERB, FeatureType.WILD_CROP):
         return crop_icon_base(crop_kind, dense=False)
     if feature == FeatureType.CROP_HERB:
-        return crop_icon_base(crop_kind, dense=True)
+        return crop_icon_base(crop_kind, dense=growth_ticks <= 0)
     mapping = {
         FeatureType.ROCK: ICON_ROCK_BIG if deposit >= ROCK_LARGE_MIN else ICON_ROCK,
         FeatureType.HOME: ICON_HOME,

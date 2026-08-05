@@ -111,7 +111,12 @@ def _inv_to_dict(inv: Inventory) -> dict[str, int]:
 
 def _inv_from_dict(data: dict[str, Any]) -> Inventory:
     data = _normalize_legacy_storage(data)
-    inv = Inventory(capacity=int(data.get("capacity", Inventory().capacity)))
+    from settings import INVENTORY_CAPACITY
+
+    # Prefer current settings capacity so old saves (e.g. cap 8) aren't stuck
+    # unable to carry FARM_PRODUCE_YIELD / other multi-unit harvests.
+    saved_cap = int(data.get("capacity", INVENTORY_CAPACITY))
+    inv = Inventory(capacity=max(saved_cap, INVENTORY_CAPACITY))
     for key in _STORAGE_KEYS:
         setattr(inv, key, int(data.get(key, 0)))
     # Legacy: generic herbs → sage; generic saplings → oak.
@@ -1106,6 +1111,10 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         game.camera.center_on(
             game.player.x, game.player.y, game.world.cols, game.world.rows
         )
+    # Mid-season loads: snap harvest-season crops so workers aren't idle on
+    # visually mature but still-growing tiles (e.g. after TICKS_PER_DAY changes).
+    if hasattr(game, "_ripen_crops_for_harvest_season"):
+        game._ripen_crops_for_harvest_season()
 
 
 def save_to_path(game: Game, path: Path | str) -> None:

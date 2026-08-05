@@ -1615,6 +1615,7 @@ class Game:
         self.resource_history.advance_day()
         if self.season != prev:
             self._expire_unharvested_crops(prev)
+            self._ripen_crops_for_harvest_season()
             if self.season == Season.WINTER:
                 self.world.clear_mushrooms()
             self.wildlife.on_season_change(self.world, self.season)
@@ -1672,11 +1673,11 @@ class Game:
             self.selected_habitat_id = None
 
     def _expire_unharvested_crops(self, ended_season: Season) -> None:
-        """Clear crops that missed their harvest window so the tile can be replanted.
+        """Clear ripe crops that missed their harvest window so the tile can be replanted.
 
-        Ripe leftovers clear when their harvest season ends. Crops still immature at
-        the end of their harvest season also clear (except newly sown plantings in a
-        harvest/plant season, e.g. autumn wheat re-sow).
+        Only ripe (``growth_ticks <= 0``) leftovers are cleared. Still-growing
+        plantings are left alone so a late crop can finish and be picked after
+        the calendar harvest window (farm harvest ignores phase).
         """
         cleared = False
         for y in range(self.world.rows):
@@ -1691,19 +1692,10 @@ class Game:
                 crop = CROP_BY_KEY.get(cell.crop_kind or "sage")
                 if crop is None:
                     continue
-
-                newly_sown_in_ended = (
-                    cell.feature == FeatureType.CROP_HERB
-                    and cell.growth_ticks > 0
-                    and crop.plant_season == ended_season
-                )
-                # Clear only when a harvest window ends without collection.
-                # Ripe crops outside the calendar window stay until workers pick
-                # them (or the next harvest season ends).
-                missed_harvest = (
-                    ended_season in crop.harvest_seasons and not newly_sown_in_ended
-                )
-                if not missed_harvest:
+                if ended_season not in crop.harvest_seasons:
+                    continue
+                # Still growing — keep it; workers can pick once ripe.
+                if cell.feature == FeatureType.CROP_HERB and cell.growth_ticks > 0:
                     continue
 
                 cell.feature = FeatureType.NONE
@@ -1713,6 +1705,28 @@ class Game:
                 cleared = True
 
         if cleared:
+            self._wake_all_farm_workers()
+            self._refresh_indicators()
+
+    def _ripen_crops_for_harvest_season(self) -> None:
+        """At season start, snap in-season farm crops to harvestable.
+
+        Lets workers collect during the harvest window even if growth ticks
+        (e.g. after changing ``TICKS_PER_DAY``) would otherwise finish late.
+        """
+        ripened = False
+        season = self.season
+        for y in range(self.world.rows):
+            for x in range(self.world.cols):
+                cell = self.world.cells[y][x]
+                if cell.feature != FeatureType.CROP_HERB or cell.growth_ticks <= 0:
+                    continue
+                crop = CROP_BY_KEY.get(cell.crop_kind or "sage")
+                if crop is None or season not in crop.harvest_seasons:
+                    continue
+                cell.growth_ticks = 0
+                ripened = True
+        if ripened:
             self._wake_all_farm_workers()
             self._refresh_indicators()
 
@@ -7837,6 +7851,7 @@ class Game:
                     tree_species=cell.tree_species,
                     crop_kind=cell.crop_kind,
                     deposit=cell.deposit,
+                    growth_ticks=cell.growth_ticks,
                 )
                 if base is not None:
                     cell.icon_variant = ensure_icon_variant(
@@ -7859,6 +7874,7 @@ class Game:
                 tree_species=cell.tree_species,
                 icon_variant=cell.icon_variant,
                 deposit=cell.deposit,
+                growth_ticks=cell.growth_ticks,
             )
             if cell.feature == FeatureType.CONSTRUCTION_SITE:
                 site = self._construction_at(x, y)

@@ -1109,6 +1109,7 @@ def draw_feature(
     tree_species: str | None = None,
     icon_variant: int | None = None,
     deposit: int = 0,
+    growth_ticks: int = 0,
 ) -> None:
     if feature == FeatureType.NONE:
         return
@@ -1433,7 +1434,9 @@ def draw_feature(
     elif feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.CROP_HERB):
         crop = CROP_BY_KEY.get(crop_kind or "sage") or CROP_BY_KEY["sage"]
         stem = adjust_colour(crop.stem_colour, vibrancy)
-        name = crop.plant_icon(dense=feature == FeatureType.CROP_HERB)
+        # Farm crops look sparse while growing; dense only when ready to harvest.
+        ripe = feature != FeatureType.CROP_HERB or growth_ticks <= 0
+        name = crop.plant_icon(dense=ripe and feature == FeatureType.CROP_HERB)
         recolour = {"stem": stem}
         omit: tuple[str, ...] = ()
         if crop.flower_colour is not None:
