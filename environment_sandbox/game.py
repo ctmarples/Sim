@@ -132,6 +132,7 @@ from settings import (
     GRID_ROWS,
     HUNTER_COST_ROCK,
     HUNTER_COST_WOOD,
+    INVENTORY_CAPACITY,
     KITCHEN_COST_ROCK,
     KITCHEN_COST_WOOD,
     KITCHEN_FUEL_CAPACITY,
@@ -3555,11 +3556,17 @@ class Game:
                     villager.seeking_food = False
 
             acted = False
-            # Construction wood/rock must not go through the general hauler — it
-            # would deposit them back at home instead of at the build site.
+            # Mid-build / carrying mats always finishes. Otherwise only preempt the
+            # priority loop when BUILD is actually on this villager's list (S7).
             if self._construction_delivery_active(villager):
-                self._update_builder(villager)
-                continue
+                if (
+                    self._carrying_build_mats(villager)
+                    or villager.state == VillagerState.BUILDING
+                    or WorkPriority.BUILD in villager.priorities
+                ):
+                    self._update_builder(villager)
+                    continue
+                villager.construction_id = None
             # Finish leftover construction mats (no site needs them anymore).
             if (
                 villager.state == VillagerState.DELIVERING
@@ -3622,7 +3629,10 @@ class Game:
             if self._is_general_hauler(villager) and self._try_idle_transport(villager):
                 acted = True
             elif not acted:
-                if self._construction_delivery_active(villager):
+                if self._construction_delivery_active(villager) and (
+                    self._carrying_build_mats(villager)
+                    or WorkPriority.BUILD in villager.priorities
+                ):
                     self._update_builder(villager)
                 elif self._leftover_build_mats_need_home(villager):
                     self._update_leftover_build_mats(villager)
@@ -3830,15 +3840,60 @@ class Game:
         return claimed
 
     def _owns_haul_claim(self, villager: Villager, building_id: int) -> bool:
-        """True if this villager keeps the haul claim (lowest id wins)."""
+        """True if this villager may keep/take the haul claim.
+
+        Lowest id among *active* haulers (HAULING/DELIVERING) wins. Idle or
+        working-elsewhere claims are treated as stale so coworkers can take over (S8).
+        """
         for other in self.villagers:
             if other.id == villager.id:
                 continue
             if other.haul_building_id != building_id:
                 continue
+            if other.state not in (VillagerState.HAULING, VillagerState.DELIVERING):
+                continue
             if other.id < villager.id:
                 return False
         return True
+
+    def _register_field_claim(
+        self, villager: Villager, cell: tuple[int, int] | None
+    ) -> None:
+        """Add a field work cell to this tick's live claim set (S12)."""
+        if cell is None:
+            return
+        tick_cells = getattr(self, "_tick_claim_cells", None)
+        if tick_cells is None:
+            return
+        if self._is_station_or_home_cell(cell):
+            return
+        by_v = getattr(self, "_tick_claim_by_villager", None)
+        if by_v is None:
+            return
+        cells = by_v.setdefault(villager.id, set())
+        cells.add(cell)
+        tick_cells.add(cell)
+
+    def _register_animal_claim(self, animal_id: int | None) -> None:
+        if animal_id is None:
+            return
+        claimed = getattr(self, "_tick_claim_animals", None)
+        if claimed is not None:
+            claimed.add(animal_id)
+
+    def _register_colony_claim(self, colony_id: int | None) -> None:
+        if colony_id is None:
+            return
+        claimed = getattr(self, "_tick_claim_colonies", None)
+        if claimed is not None:
+            claimed.add(colony_id)
+
+    def _register_fish_claim(self, fish_id: int | None) -> None:
+        if fish_id is None:
+            return
+        claimed = getattr(self, "_tick_claim_fish", None)
+        if claimed is not None:
+            claimed.add(fish_id)
 
     def _claimed_work_cells(self, exclude_id: int) -> set[tuple[int, int]]:
         """Map cells already targeted by another villager's primary work."""
@@ -4143,10 +4198,34 @@ class Game:
             return False
         if self._workplace_needs_home_supply(building):
             return True
-        # Leave produce for general haulers when any exist.
-        if self._workplace_recipe_haulable(building) > 0 and not self._has_general_hauler():
+        # Leave produce for general haulers unless none exist, none are serving
+        # this building, or the output bay is backing up (S9).
+        if self._workplace_recipe_haulable(building) > 0 and (
+            not self._has_general_hauler()
+            or self._workplace_output_backed_up(building)
+            or not self._general_hauler_serving(building.id)
+        ):
             return True
         return False
+
+    def _general_hauler_serving(self, building_id: int) -> bool:
+        return any(
+            self._is_general_hauler(v)
+            and v.haul_building_id == building_id
+            and v.state in (VillagerState.HAULING, VillagerState.DELIVERING)
+            for v in self.villagers
+        )
+
+    def _workplace_output_backed_up(self, building: Building) -> bool:
+        """True when output stock is high enough that assigned workers should clear it."""
+        haulable = self._workplace_recipe_haulable(building)
+        if haulable <= 0:
+            return False
+        if building.output_capacity > 0:
+            return building.output_stored_total() >= max(
+                1, (building.output_capacity * 3) // 4
+            )
+        return haulable >= max(4, INVENTORY_CAPACITY // 2)
 
     def _has_general_hauler(self) -> bool:
         cached = getattr(self, "_tick_has_general_hauler", None)
@@ -4240,9 +4319,10 @@ class Game:
                 villager.target = None
             return True
 
-        if (
-            self._workplace_recipe_haulable(building) > 0
-            and not self._has_general_hauler()
+        if self._workplace_recipe_haulable(building) > 0 and (
+            not self._has_general_hauler()
+            or self._workplace_output_backed_up(building)
+            or not self._general_hauler_serving(building.id)
         ):
             if not self._owns_haul_claim(villager, building.id):
                 villager.haul_building_id = None
@@ -4781,6 +4861,7 @@ class Game:
                 self._maybe_assigned_transport(villager, building)
                 return
             villager.target = target
+            self._register_field_claim(villager, target)
 
         villager.state = VillagerState.WORKING
         if self._gather_cargo_needs_delivery(villager, building):
@@ -4837,6 +4918,8 @@ class Game:
             self._clear_villager_path(villager)
         villager.target = target
         villager.state = VillagerState.WORKING
+        if kind != "split":
+            self._register_field_claim(villager, target)
 
         if (villager.x, villager.y) == target:
             if villager.work_cooldown > 0:
@@ -5062,6 +5145,7 @@ class Game:
                 self._maybe_assigned_transport(villager, building)
                 return
             villager.target = target
+            self._register_field_claim(villager, target)
 
         target = villager.target
         villager.state = VillagerState.WORKING
@@ -5360,6 +5444,7 @@ class Game:
             meat_pos = self._find_meat_in_hunt_areas(building, villager.id)
             if meat_pos is not None:
                 villager.hunt_meat_pos = meat_pos
+                self._register_field_claim(villager, meat_pos)
 
         if meat_pos is not None and not villager.inventory.is_full:
             villager.state = VillagerState.WORKING
@@ -5435,6 +5520,7 @@ class Game:
                     self.world.apply_disturbance(x, y)
                     self._refresh_indicators()
                     villager.hunt_meat_pos = (x, y)
+                    self._register_field_claim(villager, (x, y))
                 villager.work_cooldown = self._villager_work_interval(villager)
             return
 
@@ -5488,6 +5574,7 @@ class Game:
         colony = self._find_hunt_colony(villager, building)
         if colony is not None:
             villager.hunt_colony_id = colony.id
+            self._register_colony_claim(colony.id)
         return colony
 
     def _find_hunt_target(self, villager: Villager, building: Building):
@@ -5520,6 +5607,7 @@ class Game:
         animal = self._find_hunt_target(villager, building)
         if animal is not None:
             villager.hunt_animal_id = animal.id
+            self._register_animal_claim(animal.id)
         return animal
 
     def _find_meat_in_hunt_areas(
@@ -5581,6 +5669,7 @@ class Game:
             catch_pos = self._find_fish_in_fish_areas(building, villager.id)
             if catch_pos is not None:
                 villager.fish_catch_pos = catch_pos
+                self._register_field_claim(villager, catch_pos)
 
         if catch_pos is not None and not villager.inventory.is_full:
             villager.state = VillagerState.WORKING
@@ -5630,6 +5719,7 @@ class Game:
                     villager.fish_catch_pos = (
                         shore if shore is not None else deposit_at if deposit_at is not None else pos
                     )
+                    self._register_field_claim(villager, villager.fish_catch_pos)
                 villager.work_cooldown = self._villager_work_interval(villager)
             return
 
@@ -5663,6 +5753,7 @@ class Game:
         item = self._find_fish_target(villager, building)
         if item is not None:
             villager.fish_target_id = item.id
+            self._register_fish_claim(item.id)
         return item
 
     def _find_fish_in_fish_areas(
@@ -6388,6 +6479,8 @@ class Game:
         candidates.sort()
         _band, _prio, _dist, target, colony_id = candidates[0]
         villager.forage_colony_id = colony_id
+        self._register_colony_claim(colony_id)
+        self._register_field_claim(villager, target)
         return target
 
     def _find_honey_colony(
