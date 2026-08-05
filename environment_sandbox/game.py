@@ -3302,6 +3302,15 @@ class Game:
     def _forester_needs_axe(self, building: Building) -> bool:
         return building.work_mode in (WorkMode.COLLECT, WorkMode.ALL, WorkMode.SPLIT)
 
+    def _tool_fetchable(self, villager: Villager, tool_key: str) -> bool:
+        """True if the tool is equipped, in cargo, or stocked at home."""
+        inv = villager.inventory
+        if inv.has_equipped_tool(tool_key):
+            return True
+        if inv.can_equip_tool(tool_key) or int(getattr(inv, tool_key, 0)) > 0:
+            return True
+        return int(getattr(self.home_storage, tool_key, 0)) > 0
+
     def _ensure_work_tool(self, villager: Villager, tool_key: str) -> bool:
         """Fetch and equip a workplace tool from cargo or home storage."""
         inv = villager.inventory
@@ -3311,6 +3320,10 @@ class Game:
             inv.equip_tool(tool_key)
             return True
         if int(getattr(self.home_storage, tool_key, 0)) <= 0:
+            # Don't leave WORKING+target=home as a fake sticky primary.
+            if villager.target == self.world.home_pos:
+                villager.target = None
+                self._clear_villager_path(villager)
             return False
         home = self.world.home_pos
         if (villager.x, villager.y) != home:
@@ -3324,6 +3337,26 @@ class Game:
             inv.equip_tool_from_transfer(tool_key)
             villager.target = None
         return inv.has_equipped_tool(tool_key)
+
+    def _is_station_or_home_cell(self, pos: tuple[int, int]) -> bool:
+        """True for home or any building centre (not field gather cells)."""
+        stations = getattr(self, "_tick_claim_stations", None)
+        if stations is not None:
+            return pos in stations
+        if pos == self.world.home_pos:
+            return True
+        return any(b.center_cell() == pos for b in self.buildings.values())
+
+    def _step_or_clear_field_target(
+        self, villager: Villager, goal: tuple[int, int]
+    ) -> bool:
+        """Walk to a field work cell; clear sticky target if unreachable."""
+        if self._step_villager_toward(villager, goal):
+            return True
+        if villager.target == goal:
+            villager.target = None
+        self._clear_villager_path(villager)
+        return False
 
     def _ensure_forester_axe(self, villager: Villager, building: Building) -> bool:
         """Fetch and equip an axe when chopping or splitting. Returns True when ready."""
@@ -3973,9 +4006,7 @@ class Game:
         ):
             tool = WORKPLACE_TOOL.get(building.kind)
             if tool and not villager.inventory.has_equipped_tool(tool):
-                return getattr(villager.inventory, tool, 0) > 0 or int(
-                    getattr(self.home_storage, tool, 0)
-                ) > 0
+                return self._tool_fetchable(villager, tool)
             # Stay on craft cooldown / keep crafting — never bounce to home mid-cycle.
             if villager.work_cooldown > 0:
                 return True
@@ -3988,7 +4019,7 @@ class Game:
 
         if building.kind == BuildingKind.FORESTER and building.work_mode == WorkMode.SPLIT:
             if not villager.inventory.has_equipped_tool("axe"):
-                return villager.inventory.axe > 0 or self.home_storage.axe > 0
+                return self._tool_fetchable(villager, "axe")
             if villager.work_cooldown > 0:
                 return True
             if building.craftable_split_recipe() is not None:
@@ -4001,8 +4032,13 @@ class Game:
         if self._gather_cargo_needs_delivery(villager, building):
             return False
 
-        # Sticky primary targets — skip expensive map scans.
-        if villager.target is not None and villager.state == VillagerState.WORKING:
+        # Sticky field targets only — home/station centres are tool-fetch or craft walks,
+        # not primary gather work (those must not block delivery / idle).
+        if (
+            villager.target is not None
+            and villager.state == VillagerState.WORKING
+            and not self._is_station_or_home_cell(villager.target)
+        ):
             return True
         if villager.hunt_animal_id is not None or villager.hunt_meat_pos is not None:
             return True
@@ -4018,7 +4054,7 @@ class Game:
             if self._forester_needs_axe(building) and not villager.inventory.has_equipped_tool(
                 "axe"
             ):
-                return villager.inventory.axe > 0 or self.home_storage.axe > 0
+                return self._tool_fetchable(villager, "axe")
             if (
                 villager.inventory.is_full
                 and building.has_gather_cargo(villager.inventory)
@@ -4032,9 +4068,7 @@ class Game:
 
         if building.kind == BuildingKind.HUNTER:
             if not villager.inventory.has_equipped_tool("spear"):
-                return getattr(villager.inventory, "spear", 0) > 0 or int(
-                    getattr(self.home_storage, "spear", 0)
-                ) > 0
+                return self._tool_fetchable(villager, "spear")
             if villager.inventory.is_full:
                 return False
             return (
@@ -4047,9 +4081,7 @@ class Game:
             if not fishing_allowed(self.calendar_day):
                 return False
             if not villager.inventory.has_equipped_tool("fishing_rod"):
-                return getattr(villager.inventory, "fishing_rod", 0) > 0 or int(
-                    getattr(self.home_storage, "fishing_rod", 0)
-                ) > 0
+                return self._tool_fetchable(villager, "fishing_rod")
             if villager.inventory.is_full:
                 return False
             return (
@@ -4058,6 +4090,8 @@ class Game:
             )
 
         if building.kind == BuildingKind.FARM:
+            if not villager.inventory.has_equipped_tool("hoe"):
+                return self._tool_fetchable(villager, "hoe")
             if self._gather_cargo_needs_delivery(villager, building):
                 return False
             return self._find_farm_work(villager, building) is not None
@@ -4248,7 +4282,15 @@ class Game:
 
     def _update_forester_split(self, villager: Villager, building: Building) -> None:
         """Forester split mode: stay on-site and process logs into wood."""
+        # Deposit / haul before tool fetch so full packs aren't stuck without an axe.
+        if not villager.inventory.is_empty and not building.can_accept_from(
+            villager.inventory
+        ):
+            if self._force_assigned_delivery(villager, building):
+                return
         if not self._ensure_forester_axe(villager, building):
+            if self._maybe_assigned_transport(villager, building):
+                return
             return
         if self._maybe_assigned_transport(villager, building):
             return
@@ -4260,7 +4302,8 @@ class Game:
         if (villager.x, villager.y) != (bx, by):
             if villager.move_cooldown > 0:
                 return
-            self._step_villager_toward(villager, (bx, by))
+            if not self._step_villager_toward(villager, (bx, by)):
+                self._clear_villager_path(villager)
             return
 
         building.deposit_from_inventory(villager.inventory)
@@ -4625,7 +4668,11 @@ class Game:
             self._update_forester_all(villager, building)
             return
         if building.kind == BuildingKind.FORESTER and self._forester_needs_axe(building):
+            if self._gather_cargo_needs_delivery(villager, building):
+                self._force_assigned_delivery(villager, building)
+                return
             if not self._ensure_forester_axe(villager, building):
+                self._maybe_assigned_transport(villager, building)
                 return
         if building.kind in (BuildingKind.MILL, BuildingKind.KITCHEN, BuildingKind.CRAFT_BENCH):
             self._update_processor(villager, building)
@@ -4677,16 +4724,17 @@ class Game:
         else:
             if villager.move_cooldown > 0:
                 return
-            self._step_villager_toward(villager, target)
+            self._step_or_clear_field_target(villager, target)
 
     def _update_forester_all(self, villager: Villager, building: Building) -> None:
         """ALL mode: choose collect / split / plant by recipe priority (1 highest)."""
+        if self._gather_cargo_needs_delivery(villager, building):
+            self._force_assigned_delivery(villager, building)
+            return
         if self._forester_needs_axe(building) and not self._ensure_forester_axe(
             villager, building
         ):
-            return
-        if self._gather_cargo_needs_delivery(villager, building):
-            self._force_assigned_delivery(villager, building)
+            self._maybe_assigned_transport(villager, building)
             return
         if self._maybe_assigned_transport(villager, building):
             return
@@ -4724,7 +4772,7 @@ class Game:
         else:
             if villager.move_cooldown > 0:
                 return
-            self._step_villager_toward(villager, target)
+            self._step_or_clear_field_target(villager, target)
 
     def _pick_forester_all_work(
         self, villager: Villager, building: Building
@@ -4881,11 +4929,12 @@ class Game:
 
     def _update_farmer(self, villager: Villager, building: Building) -> None:
         """Plough, sow, and harvest according to each field plan's seasonal calendar."""
-        if not self._ensure_work_tool(villager, "hoe"):
-            return
-
         if self._gather_cargo_needs_delivery(villager, building):
             self._force_assigned_delivery(villager, building)
+            return
+
+        if not self._ensure_work_tool(villager, "hoe"):
+            self._maybe_assigned_transport(villager, building)
             return
 
         if self._maybe_assigned_transport(villager, building):
@@ -4937,12 +4986,20 @@ class Game:
                 villager.target = None
                 self._clear_villager_path(villager)
         else:
-            self._step_villager_toward(villager, target)
+            self._step_or_clear_field_target(villager, target)
 
     def _update_processor(self, villager: Villager, building: Building) -> None:
         """Mill / Kitchen / Craft bench: stay on-site and craft from building stock."""
+        # Cargo the station won't take must deliver before tool-fetch can strand the worker.
+        if not villager.inventory.is_empty and not building.can_accept_from(
+            villager.inventory
+        ):
+            if self._force_assigned_delivery(villager, building):
+                return
         required = WORKPLACE_TOOL.get(building.kind)
         if required is not None and not self._ensure_work_tool(villager, required):
+            if self._maybe_assigned_transport(villager, building):
+                return
             return
         if self._maybe_assigned_transport(villager, building):
             return
@@ -4954,7 +5011,8 @@ class Game:
         if (villager.x, villager.y) != (bx, by):
             if villager.move_cooldown > 0:
                 return
-            self._step_villager_toward(villager, (bx, by))
+            if not self._step_villager_toward(villager, (bx, by)):
+                self._clear_villager_path(villager)
             return
 
         building.deposit_from_inventory(villager.inventory)
@@ -5192,7 +5250,13 @@ class Game:
 
     def _update_hunter(self, villager: Villager, building: Building) -> None:
         """Hunt in areas, or nearest animal if no area is drawn."""
+        if villager.inventory.is_full or self._gather_cargo_needs_delivery(
+            villager, building
+        ):
+            self._force_assigned_delivery(villager, building)
+            return
         if not self._ensure_work_tool(villager, "spear"):
+            self._maybe_assigned_transport(villager, building)
             return
         if self._maybe_assigned_transport(villager, building):
             return
@@ -5226,10 +5290,6 @@ class Game:
                 # Unreachable pile — drop sticky target so hunting can continue.
                 villager.hunt_meat_pos = None
                 self._clear_villager_path(villager)
-            return
-
-        if villager.inventory.is_full:
-            self._force_assigned_delivery(villager, building)
             return
 
         # Rabbit colonies: one level → 3 meat, then return.
@@ -5295,7 +5355,9 @@ class Game:
                 if self.world.is_walkable(nx, ny):
                     approach = (nx, ny)
                     break
-        self._step_villager_toward(villager, approach)
+        if not self._step_villager_toward(villager, approach):
+            villager.hunt_animal_id = None
+            self._clear_villager_path(villager)
 
     def _find_hunt_colony(self, villager: Villager, building: Building):
         from wildlife import AnimalKind
@@ -5408,7 +5470,14 @@ class Game:
             villager.fish_target_id = None
             return
 
+        if villager.inventory.is_full or self._gather_cargo_needs_delivery(
+            villager, building
+        ):
+            self._force_assigned_delivery(villager, building)
+            return
+
         if not self._ensure_work_tool(villager, "fishing_rod"):
+            self._maybe_assigned_transport(villager, building)
             return
         if self._maybe_assigned_transport(villager, building):
             return
@@ -5443,10 +5512,6 @@ class Game:
                 villager.fish_catch_pos = recovered
             return
 
-        if villager.inventory.is_full:
-            self._force_assigned_delivery(villager, building)
-            return
-
         target = self._resolve_fish_target(villager, building)
         if target is None:
             self._maybe_assigned_transport(villager, building)
@@ -5479,7 +5544,9 @@ class Game:
                 villager.work_cooldown = self._villager_work_interval(villager)
             return
 
-        self._step_villager_toward(villager, approach)
+        if not self._step_villager_toward(villager, approach):
+            villager.fish_target_id = None
+            self._clear_villager_path(villager)
 
     def _find_fish_target(self, villager: Villager, building: Building):
         found = []
