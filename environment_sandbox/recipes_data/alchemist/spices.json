@@ -1,0 +1,12 @@
+{
+  "name": "spices",
+  "label": "Spices",
+  "inputs": {"garlic": 1, "sage": 1},
+  "outputs": {"spices": 1},
+  "icon_key": "spices",
+  "resource": {
+    "label": "Spices",
+    "group": "wares",
+    "short": "spc"
+  }
+}

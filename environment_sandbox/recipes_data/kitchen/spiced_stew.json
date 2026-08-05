@@ -1,0 +1,17 @@
+{
+  "name": "spiced_stew",
+  "label": "Spiced stew",
+  "inputs": {"meat": 2, "onion": 1, "carrot": 1, "spices": 1},
+  "outputs": {"spiced_stew": 1},
+  "icon_key": "spiced_stew",
+  "resource": {
+    "label": "Spiced stew",
+    "group": "food",
+    "short": "s.stw"
+  },
+  "food": {
+    "satiation": 5.0,
+    "walk_speed": 1.75,
+    "work_efficiency": 1.75
+  }
+}

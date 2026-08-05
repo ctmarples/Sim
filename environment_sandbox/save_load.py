@@ -295,6 +295,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
             bdata["crop_kind"] = b.crop_kind
         if b.kind.name == "FIELD":
             bdata["crop_health"] = float(getattr(b, "crop_health", 1.0))
+            bdata["pest_boost"] = float(getattr(b, "pest_boost", 0.0))
         buildings.append(bdata)
     villagers = []
     for v in game.villagers:
@@ -529,6 +530,7 @@ def _migrate_building_footprints(game: Game) -> None:
         BuildingKind.MILL: FeatureType.MILL,
         BuildingKind.KITCHEN: FeatureType.KITCHEN,
         BuildingKind.CRAFT_BENCH: FeatureType.CRAFT_BENCH,
+        BuildingKind.ALCHEMIST: FeatureType.ALCHEMIST,
     }
 
     for building in list(game.buildings.values()):
@@ -684,6 +686,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             BuildingKind.MILL: TaskType.FULL_FORAGE,
             BuildingKind.KITCHEN: TaskType.FULL_FORAGE,
             BuildingKind.CRAFT_BENCH: TaskType.FULL_FORAGE,
+            BuildingKind.ALCHEMIST: TaskType.FULL_FORAGE,
         }.get(kind, TaskType.FULL_MANAGE)
         raw_task = bdata.get("draw_task_type")
         if raw_task is None:
@@ -793,6 +796,12 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             building.crop_health = max(
                 CROP_HEALTH_MIN,
                 min(1.0, float(bdata.get("crop_health", 1.0))),
+            )
+            from resource_balance import FIELD_PEST_BOOST_MAX
+
+            building.pest_boost = max(
+                0.0,
+                min(FIELD_PEST_BOOST_MAX, float(bdata.get("pest_boost", 0.0))),
             )
             if kind == BuildingKind.FIELD and work_mode not in building.supported_work_modes():
                 building.work_mode = WorkMode.COLLECT

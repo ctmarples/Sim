@@ -36,6 +36,9 @@ from resource_balance import (
     POLLINATOR_BASE_STRENGTH,
     POLLINATOR_RADIUS_PER_LEVEL,
     POLLINATOR_STRENGTH_PER_LEVEL,
+    FIELD_PEST_BOOST_MAX,
+    INSECT_REPELLANT_PEST_BOOST,
+    MINERAL_POWDER_PEST_BOOST,
     RABBIT_MEAT_PER_LEVEL,
     REED_YIELD,
     SAPLING_DROP_CHANCE,
@@ -111,6 +114,7 @@ from settings import (
     COLOUR_HUNTER,
     COLOUR_KITCHEN,
     COLOUR_CRAFT_BENCH,
+    COLOUR_ALCHEMIST,
     COLOUR_MASON,
     COLOUR_MEAT,
     COLOUR_MILL,
@@ -149,6 +153,8 @@ from settings import (
     KITCHEN_COST_WOOD,
     KITCHEN_FUEL_CAPACITY,
     CRAFT_BENCH_COST_ROCK,
+    ALCHEMIST_COST_WOOD,
+    ALCHEMIST_COST_ROCK,
     CRAFT_BENCH_COST_WOOD,
     MASON_COST_ROCK,
     MASON_COST_WOOD,
@@ -244,6 +250,7 @@ FEATURE_FOR_BUILDING = {
     BuildingKind.MILL: FeatureType.MILL,
     BuildingKind.KITCHEN: FeatureType.KITCHEN,
     BuildingKind.CRAFT_BENCH: FeatureType.CRAFT_BENCH,
+    BuildingKind.ALCHEMIST: FeatureType.ALCHEMIST,
 }
 
 BUILDING_FEATURES = frozenset(FEATURE_FOR_BUILDING.values()) | {
@@ -1328,6 +1335,7 @@ class Game:
             BuildingKind.MILL,
             BuildingKind.KITCHEN,
             BuildingKind.CRAFT_BENCH,
+            BuildingKind.ALCHEMIST,
             None,
         ]
         if self.place_kind not in order:
@@ -1356,6 +1364,11 @@ class Game:
                 CRAFT_BENCH_COST_WOOD,
                 CRAFT_BENCH_COST_ROCK,
                 "Craft bench",
+            ),
+            BuildingKind.ALCHEMIST: (
+                ALCHEMIST_COST_WOOD,
+                ALCHEMIST_COST_ROCK,
+                "Alchemist",
             ),
         }
         if self.place_kind is None:
@@ -1753,11 +1766,74 @@ class Game:
         return field.plot_cells()
 
     def _farm_pest_control_at(self, x: int, y: int) -> float:
-        """Pest-control multiplier for the Field covering (x, y), else cell value."""
+        """Pest-control multiplier for the Field covering (x, y), else cell value.
+
+        Includes alchemist ``pest_boost`` on fields (insect repellant / mineral powder).
+        """
         field_b = self._field_building_at(x, y)
         if field_b is not None:
-            return self.env_maps.farm_pest_control(field_b.plot_cells())
+            base = self.env_maps.farm_pest_control(field_b.plot_cells())
+            boost = max(0.0, float(getattr(field_b, "pest_boost", 0.0)))
+            return base + boost
         return self.env_maps.value_at(EnvLayer.PEST_CONTROL, x, y)
+
+    def _apply_field_pest_boost(self, field: Building, amount: float) -> float:
+        """Add pest boost to a field; returns the applied amount (after cap)."""
+        before = max(0.0, float(getattr(field, "pest_boost", 0.0)))
+        after = min(FIELD_PEST_BOOST_MAX, before + max(0.0, amount))
+        field.pest_boost = after
+        return after - before
+
+    def _try_apply_alchemist_treatment(self, x: int, y: int) -> bool:
+        """Apply insect repellant / mineral powder from player inventory. True if used."""
+        from world import PLANTABLE_LAND, TerrainType
+
+        inv = self.player.inventory
+        cell = self.world.get_cell(x, y)
+        if cell is None:
+            return False
+        field_b = self._field_building_at(x, y)
+
+        # Insect repellant: field tiles only.
+        if int(getattr(inv, "insect_repellant", 0)) > 0 and field_b is not None:
+            if not inv.consume_item("insect_repellant", 1):
+                return False
+            added = self._apply_field_pest_boost(field_b, INSECT_REPELLANT_PEST_BOOST)
+            self.world.apply_disturbance(x, y)
+            self.record_consumed("insect_repellant", 1)
+            self._set_status(
+                f"Applied insect repellant (+{added:.2f} pest control, "
+                f"field now +{field_b.pest_boost:.2f})."
+            )
+            return True
+
+        # Mineral powder: convert grass/meadow → soil; small field pest boost.
+        if int(getattr(inv, "mineral_powder", 0)) > 0:
+            changed_soil = False
+            if cell.terrain in (TerrainType.GRASS, TerrainType.MEADOW):
+                cell.terrain = TerrainType.SOIL
+                self.world.mark_terrain_dirty(x, y)
+                changed_soil = True
+            elif cell.terrain not in PLANTABLE_LAND and field_b is None:
+                return False
+            if not inv.consume_item("mineral_powder", 1):
+                return False
+            added = 0.0
+            if field_b is not None:
+                added = self._apply_field_pest_boost(field_b, MINERAL_POWDER_PEST_BOOST)
+            self.world.apply_disturbance(x, y)
+            self.record_consumed("mineral_powder", 1)
+            bits = []
+            if changed_soil:
+                bits.append("soil amended")
+            if added > 0:
+                bits.append(f"+{added:.2f} pest control")
+            if not bits:
+                bits.append("minerals worked in")
+            self._set_status(f"Applied mineral powder ({', '.join(bits)}).")
+            return True
+
+        return False
 
     def _farm_pollination_at(self, x: int, y: int) -> float:
         """Mean pollination coverage for the Field covering (x, y), else cell value."""
@@ -2664,6 +2740,7 @@ class Game:
                     BuildingKind.MILL: COLOUR_MILL,
                     BuildingKind.KITCHEN: COLOUR_KITCHEN,
                     BuildingKind.CRAFT_BENCH: COLOUR_CRAFT_BENCH,
+                    BuildingKind.ALCHEMIST: COLOUR_ALCHEMIST,
                 }.get(building.kind, COLOUR_VILLAGER)
         return COLOUR_VILLAGER
 
@@ -2710,9 +2787,16 @@ class Game:
             FeatureType.MILL,
             FeatureType.KITCHEN,
             FeatureType.CRAFT_BENCH,
+            FeatureType.ALCHEMIST,
             FeatureType.WORKSTATION,
             FeatureType.STRUCTURE_PAD,
         ):
+            # Alchemist treatments on field tiles before opening the inspect panel.
+            if (
+                cell.feature in (FeatureType.FIELD, FeatureType.STRUCTURE_PAD)
+                or self._field_building_at(x, y) is not None
+            ) and self._try_apply_alchemist_treatment(x, y):
+                return
             building = self._building_at(x, y)
             if building is not None:
                 self._select_building(building, show_player=True)
@@ -2798,6 +2882,8 @@ class Game:
         if cell.feature == FeatureType.CROP_HERB:
             if self.world.crop_herb_ready(x, y):
                 self._harvest_farm_herb(x, y, self.player.inventory, status=True)
+            elif self._try_apply_alchemist_treatment(x, y):
+                return
             else:
                 self._set_status("Crop still growing.")
             return
@@ -2811,6 +2897,8 @@ class Game:
             return
 
         if cell.feature == FeatureType.NONE and cell.terrain in PLANTABLE_LAND:
+            if self._try_apply_alchemist_treatment(x, y):
+                return
             if self.place_kind is not None:
                 self._try_build(self.place_kind, x, y)
             else:
@@ -2871,6 +2959,8 @@ class Game:
             return KITCHEN_COST_WOOD, KITCHEN_COST_ROCK, TaskType.FULL_FORAGE
         if kind == BuildingKind.CRAFT_BENCH:
             return CRAFT_BENCH_COST_WOOD, CRAFT_BENCH_COST_ROCK, TaskType.FULL_FORAGE
+        if kind == BuildingKind.ALCHEMIST:
+            return ALCHEMIST_COST_WOOD, ALCHEMIST_COST_ROCK, TaskType.FULL_FORAGE
         return FORAGER_COST_WOOD, FORAGER_COST_ROCK, TaskType.FULL_FORAGE
 
     def _place_field_site(
@@ -2894,6 +2984,7 @@ class Game:
             FeatureType.MILL,
             FeatureType.KITCHEN,
             FeatureType.CRAFT_BENCH,
+            FeatureType.ALCHEMIST,
             FeatureType.CONSTRUCTION_SITE,
             FeatureType.STRUCTURE_PAD,
             FeatureType.TREE,
@@ -4213,6 +4304,7 @@ class Game:
             BuildingKind.MILL,
             BuildingKind.KITCHEN,
             BuildingKind.CRAFT_BENCH,
+            BuildingKind.ALCHEMIST,
         ):
             tool = WORKPLACE_TOOL.get(building.kind)
             if tool and not villager.inventory.has_equipped_tool(tool):
@@ -4965,7 +5057,12 @@ class Game:
             if not self._ensure_forester_axe(villager, building):
                 self._maybe_assigned_transport(villager, building)
                 return
-        if building.kind in (BuildingKind.MILL, BuildingKind.KITCHEN, BuildingKind.CRAFT_BENCH):
+        if building.kind in (
+            BuildingKind.MILL,
+            BuildingKind.KITCHEN,
+            BuildingKind.CRAFT_BENCH,
+            BuildingKind.ALCHEMIST,
+        ):
             self._update_processor(villager, building)
             return
 
@@ -5436,6 +5533,7 @@ class Game:
                             FeatureType.MILL,
                             FeatureType.KITCHEN,
                             FeatureType.CRAFT_BENCH,
+                            FeatureType.ALCHEMIST,
                             FeatureType.CONSTRUCTION_SITE,
                             FeatureType.STRUCTURE_PAD,
                         ):
@@ -6609,7 +6707,9 @@ class Game:
         if not candidates:
             villager.forage_colony_id = None
             return None
-        candidates.sort()
+        # Sort by band → priority → distance → cell; omit colony_id (None vs int
+        # breaks ordering when a plant and honey target tie on the other keys).
+        candidates.sort(key=lambda c: (c[0], c[1], c[2], c[3]))
         _band, _prio, _dist, target, colony_id = candidates[0]
         villager.forage_colony_id = colony_id
         self._register_colony_claim(colony_id)
@@ -7218,7 +7318,8 @@ class Game:
         field_harvest = None
         if field_b is not None:
             cells = field_b.plot_cells()
-            field_pc = self.env_maps.farm_pest_control(cells)
+            boost = max(0.0, float(getattr(field_b, "pest_boost", 0.0)))
+            field_pc = self.env_maps.farm_pest_control(cells) + boost
             field_bio = self.env_maps.farm_biodiversity(cells)
             field_health = self._field_crop_health(field_b)
             field_poll = self.env_maps.farm_pollination(cells)
@@ -8719,6 +8820,7 @@ class Game:
 
         from settings import (
             COLOUR_CRAFT_BENCH,
+            COLOUR_ALCHEMIST,
             COLOUR_FARM,
             COLOUR_FIELD,
             COLOUR_FISHER,
@@ -8745,6 +8847,7 @@ class Game:
             BuildingKind.MILL: COLOUR_MILL,
             BuildingKind.KITCHEN: COLOUR_KITCHEN,
             BuildingKind.CRAFT_BENCH: COLOUR_CRAFT_BENCH,
+            BuildingKind.ALCHEMIST: COLOUR_ALCHEMIST,
         }
         for building in self.buildings.values():
             cx, cy = building.center_cell()

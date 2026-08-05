@@ -23,6 +23,7 @@ _BUILDING_RECIPE_ATTR: dict[str, str] = {
     "kitchen": "KITCHEN_RECIPES",
     "mill": "MILL_RECIPES",
     "craft_bench": "CRAFT_BENCH_RECIPES",
+    "alchemist": "ALCHEMIST_RECIPES",
     "forester": "FORESTER_RECIPES",
     "forester_split": "FORESTER_SPLIT_RECIPES",
     "hunter": "HUNTER_RECIPES",
@@ -82,6 +83,8 @@ CRAFT_BENCH_RECIPES: tuple[Recipe, ...] = (
     Recipe("knife", {"wood": 1, "rock": 1, "twine": 1}, {"knife": 1}),
 )
 
+ALCHEMIST_RECIPES: tuple[Recipe, ...] = ()
+
 # Gather toggles (chop trees → logs / hardwood logs).
 FORESTER_RECIPES: tuple[Recipe, ...] = (
     Recipe("logs", {}, {"logs": 1}),
@@ -123,6 +126,10 @@ RECIPE_LABELS: dict[str, str] = {
     "fishing_rod": "Fishing rod",
     "hoe": "Hoe",
     "knife": "Knife",
+    "insect_repellant": "Insect repellant",
+    "mineral_powder": "Mineral powder",
+    "spices": "Spices",
+    "spiced_stew": "Spiced stew",
     "split_log": "Split log",
     "split_hardwood": "Split hardwood log",
     "logs": "Logs",
@@ -184,7 +191,7 @@ def _apply_recipe_metadata(data: dict, recipe: Recipe) -> None:
 
 def _load_directory_recipes() -> None:
     """Merge ``recipes_data/<building>/*.json`` into the matching recipe tuples."""
-    global MILL_RECIPES, KITCHEN_RECIPES, CRAFT_BENCH_RECIPES
+    global MILL_RECIPES, KITCHEN_RECIPES, CRAFT_BENCH_RECIPES, ALCHEMIST_RECIPES
     global FORESTER_RECIPES, FORESTER_SPLIT_RECIPES, HUNTER_RECIPES, FORAGER_RECIPES
 
     if not _RECIPES_DATA_DIR.is_dir():
@@ -239,6 +246,8 @@ MILL_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(MILL_RECIPES)
 MILL_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(MILL_RECIPES)
 CRAFT_BENCH_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(CRAFT_BENCH_RECIPES)
 CRAFT_BENCH_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(CRAFT_BENCH_RECIPES)
+ALCHEMIST_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(ALCHEMIST_RECIPES)
+ALCHEMIST_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(ALCHEMIST_RECIPES)
 KITCHEN_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(KITCHEN_RECIPES)
 KITCHEN_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(KITCHEN_RECIPES)
 
@@ -249,6 +258,7 @@ PROCESSED_KEYS: tuple[str, ...] = tuple(
             *MILL_OUTPUT_KEYS,
             *KITCHEN_OUTPUT_KEYS,
             *CRAFT_BENCH_OUTPUT_KEYS,
+            *ALCHEMIST_OUTPUT_KEYS,
         )
     )
 )

@@ -40,6 +40,8 @@ VILLAGER_FOOD_KEYS: list[str] = [
     "bread",
     "stew",
     "fish_stew",
+    "mushroom_stew",
+    "spiced_stew",
     "grilled_meat",
     "grilled_fish",
 ]
@@ -88,6 +90,12 @@ FOODS: list[FoodDef] = [
         work_efficiency=2.0,
     ),
     FoodDef("mushroom_stew", satiation=MEAL_POINTS_FULL, walk_speed=1.5, work_efficiency=1.5),
+    FoodDef(
+        "spiced_stew",
+        satiation=MEAL_POINTS_FULL,
+        walk_speed=1.75,
+        work_efficiency=1.75,
+    ),
 ]
 
 FOOD_BY_KEY: dict[str, FoodDef] = {f.key: f for f in FOODS}
@@ -204,6 +212,11 @@ POLLINATOR_RADIUS_PER_LEVEL: int = 3
 # Nest coverage strength before distance falloff (level 1 → ~0.85, higher → 1.0).
 POLLINATOR_BASE_STRENGTH: float = 0.85
 POLLINATOR_STRENGTH_PER_LEVEL: float = 0.05
+
+# Alchemist field treatments (player applies with Enter on a field / soil).
+INSECT_REPELLANT_PEST_BOOST: float = 0.12
+MINERAL_POWDER_PEST_BOOST: float = 0.04
+FIELD_PEST_BOOST_MAX: float = 0.30
 # Initial colonies seeded per kind on new maps.
 COLONY_SEED_GROUNDS: int = 3
 # Per growth tick: level-up when food is available (levels 1–3 → next).

@@ -1,0 +1,12 @@
+{
+  "name": "insect_repellant",
+  "label": "Insect repellant",
+  "inputs": {"mint": 2, "garlic": 2},
+  "outputs": {"insect_repellant": 1},
+  "icon_key": "insect_repellant",
+  "resource": {
+    "label": "Insect repellant",
+    "group": "wares",
+    "short": "rep"
+  }
+}

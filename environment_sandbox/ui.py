@@ -45,6 +45,7 @@ from settings import (
     COLOUR_ICE,
     COLOUR_KITCHEN,
     COLOUR_CRAFT_BENCH,
+    COLOUR_ALCHEMIST,
     COLOUR_MASON,
     COLOUR_MEADOW,
     COLOUR_MEAT,
@@ -759,6 +760,7 @@ class UI:
             (COLOUR_MILL, "Mill"),
             (COLOUR_KITCHEN, "Kitchen"),
             (COLOUR_CRAFT_BENCH, "Craft bench"),
+            (COLOUR_ALCHEMIST, "Alchemist"),
             ((90, 90, 70), "Site"),
             (COLOUR_PLAYER, "Player"),
             (COLOUR_VILLAGER, "Villager"),
@@ -1128,6 +1130,7 @@ def draw_feature(
         ICON_HUNTER,
         ICON_KITCHEN,
         ICON_CRAFT_BENCH,
+        ICON_ALCHEMIST,
         ICON_MASON,
         ICON_MILL,
         ICON_MUSHROOM,
@@ -1379,6 +1382,21 @@ def draw_feature(
                 COLOUR_CRAFT_BENCH,
                 roof=(100, 70, 45),
                 accent=(200, 170, 110),
+                vibrancy=vibrancy,
+            ),
+        )
+    elif feature == FeatureType.ALCHEMIST:
+        blit_icon(
+            surface,
+            ICON_ALCHEMIST,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour=_iso_building_recolour(
+                COLOUR_ALCHEMIST,
+                roof=(70, 40, 100),
+                accent=(200, 160, 230),
                 vibrancy=vibrancy,
             ),
         )

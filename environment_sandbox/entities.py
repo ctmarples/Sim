@@ -7,6 +7,9 @@ from enum import Enum, auto
 
 from crops import PRODUCE_KEYS, SEED_KEYS
 from recipes import (
+    ALCHEMIST_INPUT_KEYS,
+    ALCHEMIST_OUTPUT_KEYS,
+    ALCHEMIST_RECIPES,
     CRAFT_BENCH_INPUT_KEYS,
     CRAFT_BENCH_OUTPUT_KEYS,
     CRAFT_BENCH_RECIPES,
@@ -28,6 +31,8 @@ from recipes import (
     input_keys_for_recipes,
 )
 from settings import (
+    ALCHEMIST_INPUT_CAPACITY,
+    ALCHEMIST_OUTPUT_CAPACITY,
     BUILDING_FOOTPRINT,
     BUILDING_STORAGE_CAPACITY,
     CRAFT_BENCH_INPUT_CAPACITY,
@@ -149,6 +154,7 @@ class BuildingKind(Enum):
     MILL = auto()
     KITCHEN = auto()
     CRAFT_BENCH = auto()
+    ALCHEMIST = auto()
 
 
 # Tool required in the equipped slot for workplace actions.
@@ -174,6 +180,7 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
     BuildingKind.MILL: "Mill",
     BuildingKind.KITCHEN: "Kitchen",
     BuildingKind.CRAFT_BENCH: "Craft bench",
+    BuildingKind.ALCHEMIST: "Alchemist",
 }
 
 
@@ -204,6 +211,12 @@ def default_processor_capacities(kind: BuildingKind) -> tuple[int, int, int]:
             CRAFT_BENCH_INPUT_CAPACITY + CRAFT_BENCH_OUTPUT_CAPACITY,
             CRAFT_BENCH_INPUT_CAPACITY,
             CRAFT_BENCH_OUTPUT_CAPACITY,
+        )
+    if kind == BuildingKind.ALCHEMIST:
+        return (
+            ALCHEMIST_INPUT_CAPACITY + ALCHEMIST_OUTPUT_CAPACITY,
+            ALCHEMIST_INPUT_CAPACITY,
+            ALCHEMIST_OUTPUT_CAPACITY,
         )
     return BUILDING_STORAGE_CAPACITY, 0, 0
 
@@ -326,6 +339,7 @@ class Inventory:
     wheat: int = 0
     flax: int = 0
     sage: int = 0
+    mint: int = 0
     hemp: int = 0
     rye: int = 0
     onion: int = 0
@@ -335,6 +349,7 @@ class Inventory:
     wheat_seeds: int = 0
     flax_seeds: int = 0
     sage_seeds: int = 0
+    mint_seeds: int = 0
     hemp_seeds: int = 0
     rye_seeds: int = 0
     onion_seeds: int = 0
@@ -601,6 +616,7 @@ class HomeStorage:
     wheat: int = 0
     flax: int = 0
     sage: int = 0
+    mint: int = 0
     hemp: int = 0
     rye: int = 0
     onion: int = 0
@@ -610,6 +626,7 @@ class HomeStorage:
     wheat_seeds: int = 0
     flax_seeds: int = 0
     sage_seeds: int = 0
+    mint_seeds: int = 0
     hemp_seeds: int = 0
     rye_seeds: int = 0
     onion_seeds: int = 0
@@ -964,6 +981,7 @@ class Building:
     wheat: int = 0
     flax: int = 0
     sage: int = 0
+    mint: int = 0
     hemp: int = 0
     rye: int = 0
     onion: int = 0
@@ -973,6 +991,7 @@ class Building:
     wheat_seeds: int = 0
     flax_seeds: int = 0
     sage_seeds: int = 0
+    mint_seeds: int = 0
     hemp_seeds: int = 0
     rye_seeds: int = 0
     onion_seeds: int = 0
@@ -1016,6 +1035,8 @@ class Building:
     plans: list[CropPlan] = field(default_factory=list)
     # Field only: cumulative crop health 0–1; ratchets down on env sample ticks.
     crop_health: float = 1.0
+    # Field only: additive pest-control boost from alchemist treatments.
+    pest_boost: float = 0.0
     draw_task_type: TaskType = TaskType.FULL_MANAGE
     work_mode: WorkMode = WorkMode.ALL
     crop_kind: str = "sage"  # legacy
@@ -1229,7 +1250,12 @@ class Building:
         )
 
     def is_processor(self) -> bool:
-        return self.kind in (BuildingKind.MILL, BuildingKind.KITCHEN, BuildingKind.CRAFT_BENCH)
+        return self.kind in (
+            BuildingKind.MILL,
+            BuildingKind.KITCHEN,
+            BuildingKind.CRAFT_BENCH,
+            BuildingKind.ALCHEMIST,
+        )
 
     def is_splitter(self) -> bool:
         return self.kind == BuildingKind.FORESTER and self.work_mode in (
@@ -1254,6 +1280,8 @@ class Building:
             return KITCHEN_RECIPES
         if self.kind == BuildingKind.CRAFT_BENCH:
             return CRAFT_BENCH_RECIPES
+        if self.kind == BuildingKind.ALCHEMIST:
+            return ALCHEMIST_RECIPES
         if self.kind == BuildingKind.FORESTER:
             return FORESTER_RECIPES
         if self.kind == BuildingKind.HUNTER:
@@ -1494,6 +1522,8 @@ class Building:
             return KITCHEN_INPUT_KEYS
         if self.kind == BuildingKind.CRAFT_BENCH:
             return CRAFT_BENCH_INPUT_KEYS
+        if self.kind == BuildingKind.ALCHEMIST:
+            return ALCHEMIST_INPUT_KEYS
         return ()
 
     def processor_output_keys(self) -> tuple[str, ...]:
@@ -1503,6 +1533,8 @@ class Building:
             return KITCHEN_OUTPUT_KEYS
         if self.kind == BuildingKind.CRAFT_BENCH:
             return CRAFT_BENCH_OUTPUT_KEYS
+        if self.kind == BuildingKind.ALCHEMIST:
+            return ALCHEMIST_OUTPUT_KEYS
         return ()
 
     def input_stored_total(self) -> int:
@@ -1623,19 +1655,44 @@ class Building:
         return f"{self.stored_total}/{self.capacity}"
 
     def craftable_recipe(self) -> Recipe | None:
+        """Pick an enabled recipe that can run now.
+
+        Respects recipe priority (1 before 2 before 3). At the same priority,
+        prefer richer recipes (more input units) so e.g. spiced stew beats
+        grilled meat when both are stocked.
+        """
+        from recipes import recipe_output_fits, recipe_ready
+
         recipes = self.enabled_recipes()
         if not recipes:
             return None
         if self.kind == BuildingKind.KITCHEN and not self.has_cooking_fuel():
             return None
-        if self.output_capacity > 0:
-            return can_craft(
-                self,
-                recipes,
-                output_capacity=self.output_capacity,
-                output_keys=self.processor_output_keys(),
-            )
-        return can_craft(self, recipes, capacity=self.capacity)
+        use_split_out = self.output_capacity > 0
+        best: Recipe | None = None
+        best_key: tuple[int, int, int] | None = None
+        for recipe in recipes:
+            if not recipe.inputs:
+                continue
+            if not recipe_ready(self, recipe):
+                continue
+            if use_split_out:
+                fits = recipe_output_fits(
+                    self,
+                    recipe,
+                    output_capacity=self.output_capacity,
+                    output_keys=self.processor_output_keys(),
+                )
+            else:
+                fits = recipe_output_fits(self, recipe, capacity=self.capacity)
+            if not fits:
+                continue
+            prio = self.get_recipe_priority(recipe.name)
+            key = (prio, -sum(recipe.inputs.values()), -len(recipe.inputs))
+            if best_key is None or key < best_key:
+                best_key = key
+                best = recipe
+        return best
 
     def enabled_split_recipes(self) -> tuple[Recipe, ...]:
         self.ensure_recipe_state()
@@ -1783,6 +1840,8 @@ class Building:
             return KITCHEN_INPUT_KEYS + KITCHEN_OUTPUT_KEYS + (KITCHEN_FUEL_KEY,)
         if self.kind == BuildingKind.CRAFT_BENCH:
             return CRAFT_BENCH_INPUT_KEYS + CRAFT_BENCH_OUTPUT_KEYS
+        if self.kind == BuildingKind.ALCHEMIST:
+            return ALCHEMIST_INPUT_KEYS + ALCHEMIST_OUTPUT_KEYS
         if self.kind == BuildingKind.FIELD:
             return ()
         return ()
@@ -1947,6 +2006,7 @@ class Building:
             BuildingKind.MILL,
             BuildingKind.KITCHEN,
             BuildingKind.CRAFT_BENCH,
+            BuildingKind.ALCHEMIST,
         ):
             return ()
         if self.kind == BuildingKind.FORESTER:

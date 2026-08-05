@@ -804,6 +804,7 @@ class BuildingInspectDialog:
                 BuildingKind.MILL,
                 BuildingKind.KITCHEN,
                 BuildingKind.CRAFT_BENCH,
+                BuildingKind.ALCHEMIST,
             ):
                 clear_w = max(48, 10 + self.font_small.size("Clear")[0])
                 if bx + clear_w > x + inner_w and bx > x:

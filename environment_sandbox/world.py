@@ -89,7 +89,7 @@ SOIL_LIKE: tuple[TerrainType, ...] = (
 
 # Wild forage plants by preferred terrain (farm crops may still grow on fields).
 WILD_CROPS_BY_TERRAIN: dict[TerrainType, tuple[str, ...]] = {
-    TerrainType.MEADOW: ("flax", "hemp", "sage"),
+    TerrainType.MEADOW: ("flax", "hemp", "sage", "mint"),
     TerrainType.GRASS: ("wheat", "rye"),
     TerrainType.SOIL: ("onion", "cabbage", "carrot", "garlic"),
     TerrainType.FOREST_FLOOR: ("onion", "cabbage", "carrot", "garlic"),
@@ -121,6 +121,7 @@ class FeatureType(Enum):
     MILL = auto()
     KITCHEN = auto()
     CRAFT_BENCH = auto()
+    ALCHEMIST = auto()
     CONSTRUCTION_SITE = auto()
     # Invisible reserved cells of a multi-cell building footprint (not the glyph cell).
     STRUCTURE_PAD = auto()
