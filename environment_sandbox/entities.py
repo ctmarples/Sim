@@ -1668,13 +1668,8 @@ class Building:
     def deposit_from_inventory(
         self, inventory: Inventory, *, keep_plantables: bool = False
     ) -> None:
-        if self.is_processor():
-            self.deposit_needed_from(inventory)
-            return
-        if self.is_splitter():
-            for key in ("logs", "hardwood_logs"):
-                while self.deposit_one_from(inventory, key):
-                    pass
+        if self.is_processor() or self.is_splitter():
+            self.deposit_supply_from(inventory)
             return
         keys = self.depositable_keys()
         if keep_plantables:
@@ -1697,8 +1692,32 @@ class Building:
                 moved += 1
         return moved
 
+    def deposit_supply_from(self, inventory: Inventory) -> int:
+        """Fill input / fuel stock from inventory up to capacity and caps."""
+        moved = 0
+        if self.is_processor():
+            for key in self.processor_input_keys():
+                moved += self.deposit_key_from(inventory, key)
+            if self.kind == BuildingKind.KITCHEN:
+                while self.deposit_one_from(inventory, KITCHEN_FUEL_KEY):
+                    moved += 1
+            return moved
+        if self.is_splitter():
+            for key in ("logs", "hardwood_logs"):
+                moved += self.deposit_key_from(inventory, key)
+            return moved
+        return 0
+
     def deposit_key_from(self, inventory: Inventory, key: str) -> int:
         """Deposit as much of one key as capacity allows. Returns amount moved."""
+        if (
+            self.kind == BuildingKind.KITCHEN
+            and key == KITCHEN_FUEL_KEY
+        ):
+            moved = 0
+            while self.deposit_one_from(inventory, key):
+                moved += 1
+            return moved
         if key not in self.depositable_keys():
             return 0
         before = int(getattr(inventory, key, 0))
@@ -1779,13 +1798,13 @@ class Building:
         if self.kind == BuildingKind.FARM:
             return PRODUCE_KEYS
         if self.is_processor():
-            # Outputs, unused inputs, and excess stock of still-needed inputs.
+            # Produce first, then inputs no enabled recipe uses. Do NOT haul excess
+            # stock of active ingredients — that fights supply stockpiling.
             keys: list[str] = []
             seen: set[str] = set()
             for key in (
                 *self.processor_output_keys(),
                 *self.unused_input_keys(),
-                *self.excess_input_amounts().keys(),
             ):
                 if key not in seen and self.haulable_amount(key) > 0:
                     seen.add(key)
@@ -1809,12 +1828,18 @@ class Building:
             for key in ("logs", "hardwood_logs"):
                 if int(getattr(inventory, key, 0)) > 0 and self.space_for_key(key) > 0:
                     return True
-        if self.is_processor() or self.is_splitter():
-            demand = self.supply_demand()
-            return any(
-                int(getattr(inventory, key, 0)) > 0 and demand.get(key, 0) > 0
-                for key in demand
-            )
+            return False
+        if self.is_processor():
+            for key in self.processor_input_keys():
+                if int(getattr(inventory, key, 0)) > 0 and self.space_for_key(key) > 0:
+                    return True
+            if (
+                self.kind == BuildingKind.KITCHEN
+                and int(getattr(inventory, KITCHEN_FUEL_KEY, 0)) > 0
+                and self.fuel_space_left() > 0
+            ):
+                return True
+            return False
         keys = self.depositable_keys()
         return any(
             int(getattr(inventory, key, 0)) > 0 and self.space_for_key(key) > 0

@@ -3560,6 +3560,15 @@ class Game:
             if self._construction_delivery_active(villager):
                 self._update_builder(villager)
                 continue
+            # Finish leftover construction mats (no site needs them anymore).
+            if (
+                villager.state == VillagerState.DELIVERING
+                and villager.haul_building_id is None
+                and villager.construction_id is None
+                and self._leftover_build_mats_need_home(villager)
+            ):
+                self._update_leftover_build_mats(villager)
+                continue
             # Finish an in-progress haul (general haulers only).
             if (
                 villager.state == VillagerState.HAULING
@@ -3592,27 +3601,41 @@ class Game:
                         acted = True
                         break
                 elif priority == WorkPriority.TRANSPORT:
-                    if self._is_general_hauler(villager) and self._transport_has_work(
-                        villager
-                    ):
-                        self._update_hauler(villager)
-                        acted = True
-                        break
+                    if self._is_general_hauler(villager):
+                        if self._transport_has_work(villager):
+                            self._update_hauler(villager)
+                            acted = True
+                            break
+                    else:
+                        building = (
+                            self.buildings.get(villager.building_id)
+                            if villager.building_id
+                            else None
+                        )
+                        if (
+                            building is not None
+                            and self._assigned_transport_has_work(villager, building)
+                        ):
+                            self._update_assigned_transport(villager, building)
+                            acted = True
+                            break
             if self._is_general_hauler(villager) and self._try_idle_transport(villager):
                 acted = True
             elif not acted:
                 if self._construction_delivery_active(villager):
                     self._update_builder(villager)
+                elif self._leftover_build_mats_need_home(villager):
+                    self._update_leftover_build_mats(villager)
                 elif not villager.inventory.is_empty and self._is_general_hauler(
                     villager
                 ):
                     self._update_hauler(villager)
                 elif villager.building_id is not None:
-                    building = self.buildings.get(villager.building_id)
-                    if building is not None and self._update_assigned_transport(
-                        villager, building
-                    ):
+                    if self._workplace_has_work(villager):
+                        self._update_workplace_worker(villager)
                         acted = True
+                    else:
+                        self._set_workplace_idle(villager)
                 elif villager.state not in (VillagerState.DELIVERING, VillagerState.HAULING, VillagerState.BUILDING):
                     villager.state = VillagerState.IDLE
                     villager.target = None
@@ -3949,16 +3972,17 @@ class Game:
         inv = villager.inventory
         if inv.is_empty:
             return False
-        if inv.is_full:
+        if inv.is_full or not inv.can_add(1):
             return True
-        # Farm / forager multi-unit yields: deliver before the next harvest won't fit
-        # (otherwise the tile is cleared and produce is lost; seeds still land).
-        if building.kind == BuildingKind.FARM and building.has_gather_cargo(inv):
+        # Farm / forager: deliver whenever the next enabled yield won't fit —
+        # even if cargo is "wrong" (e.g. leftover wood), so space frees up.
+        if building.kind == BuildingKind.FARM:
             return not inv.can_add(FARM_PRODUCE_YIELD)
-        if building.kind == BuildingKind.FORAGER and building.has_gather_cargo(inv):
+        if building.kind == BuildingKind.FORAGER:
             for recipe in building.enabled_recipes():
                 need = self._forage_yield_amount(recipe.name)
-                if inv.can_add(need, key=recipe.name if recipe.name != "wood" else "wood"):
+                key = "wood" if recipe.name == "wood" else recipe.name
+                if inv.can_add(need, key=key):
                     return False
             return True
         return False
@@ -4155,6 +4179,13 @@ class Game:
                     int(getattr(villager.inventory, key)) + 1,
                 )
 
+    def _set_workplace_idle(self, villager: Villager) -> None:
+        """Clear stickies / haul claim and park the worker as IDLE."""
+        self._clear_gather_stickies(villager)
+        villager.haul_building_id = None
+        villager.state = VillagerState.IDLE
+        villager.target = None
+
     def _update_assigned_transport(
         self, villager: Villager, building: Building
     ) -> bool:
@@ -4240,13 +4271,16 @@ class Game:
     def _maybe_assigned_transport(
         self, villager: Villager, building: Building
     ) -> bool:
-        """When primary work is blocked, run recipe-related transport only."""
+        """When primary work is blocked, run recipe-related transport only.
+
+        Returns True when the tick is handled (transport ran, or worker idled).
+        Returns False when primary work is still available.
+        """
         if self._workplace_primary_available(villager, building):
             return False
         if self._update_assigned_transport(villager, building):
             return True
-        villager.state = VillagerState.IDLE
-        villager.target = None
+        self._set_workplace_idle(villager)
         return True
 
     def _hauler_pickup_from_building(
@@ -4256,10 +4290,22 @@ class Game:
         if building.haulable_total() <= 0:
             return False
         if villager.work_cooldown > 0:
-            return True
+            return not villager.inventory.is_empty
         building.withdraw_to_inventory(villager.inventory)
         villager.work_cooldown = self._villager_work_interval(villager)
-        return not villager.inventory.is_empty()
+        return not villager.inventory.is_empty
+
+    def _hauler_exchange_at_processor(
+        self, villager: Villager, building: Building
+    ) -> None:
+        """One work tick: drop off inputs, then fill remaining space with produce."""
+        building.deposit_supply_from(villager.inventory)
+        # Only outputs (not excess ingredients we may have just stocked).
+        out_keys = building.processor_output_keys()
+        if out_keys and not villager.inventory.is_full:
+            if any(building.haulable_amount(k) > 0 for k in out_keys):
+                building.withdraw_to_inventory(villager.inventory, keys=out_keys)
+        villager.work_cooldown = self._villager_work_interval(villager)
 
     def _workplace_has_work(self, villager: Villager) -> bool:
         building = self.buildings.get(villager.building_id) if villager.building_id else None
@@ -4434,6 +4480,42 @@ class Game:
                 return True
         return False
 
+    def _carrying_build_mats(self, villager: Villager) -> bool:
+        return villager.inventory.logs > 0 or villager.inventory.rock > 0
+
+    def _leftover_build_mats_need_home(self, villager: Villager) -> bool:
+        """True when carrying construction mats no site can still accept."""
+        if not self._carrying_build_mats(villager):
+            return False
+        return self._find_site_needing_materials(villager) is None
+
+    def _update_leftover_build_mats(self, villager: Villager) -> None:
+        """Deposit leftover wood/rock at workplace (if accepted) or home."""
+        if not self._leftover_build_mats_need_home(villager):
+            return
+        villager.construction_id = None
+        villager.haul_building_id = None
+        dest = self.world.home_pos
+        building = (
+            self.buildings.get(villager.building_id) if villager.building_id else None
+        )
+        if building is not None and building.can_accept_from(villager.inventory):
+            dest = building.center_cell()
+        villager.state = VillagerState.DELIVERING
+        villager.target = dest
+        if (villager.x, villager.y) == dest:
+            if villager.work_cooldown > 0:
+                return
+            if dest == self.world.home_pos:
+                self._deposit_home(villager.inventory, status=False)
+            elif building is not None:
+                building.deposit_from_inventory(villager.inventory)
+            villager.work_cooldown = self._villager_work_interval(villager)
+            villager.state = VillagerState.IDLE
+            villager.target = None
+            return
+        self._step_villager_toward(villager, dest)
+
     def _update_builder(self, villager: Villager) -> None:
         site = None
         if villager.construction_id is not None:
@@ -4442,15 +4524,14 @@ class Game:
                 villager.construction_id = None
                 site = None
 
-        carrying = villager.inventory.logs > 0 or villager.inventory.rock > 0
+        carrying = self._carrying_build_mats(villager)
 
         # Deliver carried wood/rock to a needing site.
         if carrying:
             useful = self._find_site_needing_materials(villager)
             if useful is None:
-                # Leftover mats no site needs — release claim so transport can haul home.
-                villager.construction_id = None
-                villager.state = VillagerState.IDLE
+                # Leftover mats no site needs — send to workplace/home.
+                self._update_leftover_build_mats(villager)
                 return
             # Prefer current site only if it can still take what we carry.
             if site is None or not (
@@ -4470,7 +4551,7 @@ class Game:
                         return
                 # After a partial drop, keep going (fetch remainder / other site)
                 # instead of parking on the scaffold with useless leftover cargo.
-                if villager.inventory.logs > 0 or villager.inventory.rock > 0:
+                if self._carrying_build_mats(villager):
                     if (site.wood_needed > 0 and villager.inventory.logs > 0) or (
                         site.rock_needed > 0 and villager.inventory.rock > 0
                     ):
@@ -4481,8 +4562,7 @@ class Game:
                         self._step_villager_toward(villager, other.center_cell())
                         villager.state = VillagerState.DELIVERING
                         return
-                    villager.construction_id = None
-                    villager.state = VillagerState.IDLE
+                    self._update_leftover_build_mats(villager)
                     return
                 # Empty hands — fall through to build or fetch more.
             else:
@@ -4716,6 +4796,10 @@ class Game:
                 villager._return_after_harvest = False  # type: ignore[attr-defined]
                 self._force_assigned_delivery(villager, building)
                 return
+            # Became full / next yield won't fit — don't keep sticky standing.
+            if self._gather_cargo_needs_delivery(villager, building):
+                self._force_assigned_delivery(villager, building)
+                return
             # Resource may be gone — refresh next tick.
             if not self._work_target_valid(villager, building, target):
                 villager.target = None
@@ -4766,6 +4850,9 @@ class Game:
                 return
             self._villager_perform(villager, building, target)
             villager.work_cooldown = self._villager_work_interval(villager)
+            if self._gather_cargo_needs_delivery(villager, building):
+                self._force_assigned_delivery(villager, building)
+                return
             if not self._work_target_valid(villager, building, target):
                 villager.target = None
                 self._clear_villager_path(villager)
@@ -4985,6 +5072,8 @@ class Game:
                 villager.work_cooldown = self._villager_work_interval(villager)
                 villager.target = None
                 self._clear_villager_path(villager)
+                if self._gather_cargo_needs_delivery(villager, building):
+                    self._force_assigned_delivery(villager, building)
         else:
             self._step_or_clear_field_target(villager, target)
 
@@ -5658,26 +5747,32 @@ class Game:
                     villager.target = dest
                     if (villager.x, villager.y) == dest:
                         if villager.work_cooldown == 0:
-                            claimed.deposit_needed_from(villager.inventory)
-                            villager.work_cooldown = self._villager_work_interval(
-                                villager
-                            )
-                            if villager.inventory.is_empty:
-                                if self._hauler_pickup_from_building(villager, claimed):
-                                    villager.haul_building_id = None
-                                    villager.state = VillagerState.DELIVERING
-                                    villager.target = home
-                                else:
-                                    villager.haul_building_id = None
-                                    villager.state = VillagerState.IDLE
-                            elif not claimed.can_accept_from(villager.inventory):
+                            self._hauler_exchange_at_processor(villager, claimed)
+                            if not villager.inventory.is_empty:
+                                # Leftover inputs and/or picked-up produce → home.
+                                villager.haul_building_id = None
                                 villager.state = VillagerState.DELIVERING
                                 villager.target = home
+                            # else empty: keep claim so sticky supply can fetch more,
+                            # or fall through next tick to clear/idle.
                         return
                     self._step_villager_toward(villager, dest)
                     return
                 if not villager.inventory.is_empty:
-                    # Cargo left that this sink will not take — return home.
+                    # Cargo left that this sink will not take — grab produce first
+                    # if standing at the station, then return home.
+                    dest = claimed.center_cell()
+                    out_keys = claimed.processor_output_keys()
+                    if (
+                        (villager.x, villager.y) == dest
+                        and villager.work_cooldown == 0
+                        and out_keys
+                        and not villager.inventory.is_full
+                        and any(claimed.haulable_amount(k) > 0 for k in out_keys)
+                    ):
+                        claimed.withdraw_to_inventory(villager.inventory, keys=out_keys)
+                        villager.work_cooldown = self._villager_work_interval(villager)
+                    villager.haul_building_id = None
                     villager.state = VillagerState.DELIVERING
                     villager.target = home
                     return
@@ -5763,37 +5858,44 @@ class Game:
         return any(getattr(self.home_storage, key, 0) > 0 for key in demand)
 
     def _withdraw_processor_supply(self, villager: Villager, sink: Building) -> int:
-        """Pack ingredients the processor still needs (fill the pack when possible)."""
+        """Pack ingredients for a processor; fill remaining cargo when the sink has room."""
         demand = sink.supply_demand()
         if not demand:
             return 0
         amounts: dict[str, int] = {}
         room_left = villager.inventory.capacity - villager.inventory.cargo_total
-        # First pass: exact demand gaps.
-        for key, want in demand.items():
-            if room_left <= 0:
-                break
-            have = int(getattr(self.home_storage, key, 0))
-            room = sink.space_for_key(key)
+
+        def _take_key(key: str, want: int) -> None:
+            nonlocal room_left
+            if room_left <= 0 or want <= 0:
+                return
+            already = amounts.get(key, 0)
+            have = int(getattr(self.home_storage, key, 0)) - already
+            room = sink.space_for_key(key) - already
             n = min(want, have, room, room_left)
             if n > 0:
-                amounts[key] = n
+                amounts[key] = already + n
                 room_left -= n
-        # Second pass: top up remaining pack space toward remaining demand/reserve.
+
+        # Pass 1: recipe gaps + reserve targets from supply_demand.
+        for key, want in demand.items():
+            _take_key(key, want)
+
+        # Pass 2: fill remaining pack space with the same supply keys (stockpile
+        # up to building room / caps), round-robin so one input doesn't starve others.
         if room_left > 0:
-            demand = sink.supply_demand()
-            for key in demand:
-                if room_left <= 0:
-                    break
-                still_want = int(demand.get(key, 0)) - amounts.get(key, 0)
-                if still_want <= 0:
-                    continue
-                have = int(getattr(self.home_storage, key, 0)) - amounts.get(key, 0)
-                room = sink.space_for_key(key) - amounts.get(key, 0)
-                n = min(still_want, have, room, room_left)
-                if n > 0:
-                    amounts[key] = amounts.get(key, 0) + n
-                    room_left -= n
+            fill_keys = list(demand.keys())
+            progressed = True
+            while room_left > 0 and progressed:
+                progressed = False
+                for key in fill_keys:
+                    before = room_left
+                    _take_key(key, 1)
+                    if room_left < before:
+                        progressed = True
+                    if room_left <= 0:
+                        break
+
         if not amounts:
             return 0
         return self.home_storage.withdraw_amounts_to(villager.inventory, amounts)
