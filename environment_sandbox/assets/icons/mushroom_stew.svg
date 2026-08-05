@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="400" height="400">
+  <title>mushroom_stew</title>
+  <desc>Inventory mushroom stew bowl. classes: body (bowl), accent (stew)</desc>
+  <ellipse class="body" cx="20" cy="26" rx="13" ry="7" fill="#8a6a50"/>
+  <ellipse class="body" cx="20" cy="22" rx="12" ry="6" fill="#a88868"/>
+  <ellipse class="accent" cx="20" cy="21" rx="9" ry="4.5" fill="#6b4a2e"/>
+  <ellipse class="accent" cx="17" cy="20" rx="2" ry="1.2" fill="#c08050"/>
+  <ellipse class="accent" cx="22" cy="19.5" rx="1.8" ry="1.1" fill="#a06040"/>
+  <ellipse class="accent" cx="20" cy="21.5" rx="1.4" ry="0.9" fill="#d0a070"/>
+</svg>

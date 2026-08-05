@@ -26,6 +26,7 @@ from seasons import Season, adjust_colour, blend_colour, format_date
 from settings import (
     CELL_SIZE,
     COLOUR_ANIMAL,
+    COLOUR_BEE,
     COLOUR_BERRY,
     COLOUR_BOAR,
     COLOUR_CROP,
@@ -53,6 +54,7 @@ from settings import (
     COLOUR_PANEL_BG,
     COLOUR_PANEL_BORDER,
     COLOUR_PLAYER,
+    COLOUR_RABBIT,
     COLOUR_REED,
     COLOUR_RIPARIAN,
     COLOUR_ROCK_FEATURE,
@@ -581,7 +583,8 @@ class UI:
 
         y = _blit_text(content, self.font_title, "World", (x, y))
         wild_line = (
-            f"Deer {len(wildlife.deer())}  Boar {len(wildlife.boars())}"
+            f"Deer {len(wildlife.deer())}  Boar {len(wildlife.boars())}  "
+            f"Bee {len(wildlife.bees())}  Rabbit {len(wildlife.rabbits())}"
         )
         if fish_manager is not None:
             wild_line += (
@@ -590,67 +593,52 @@ class UI:
             )
         y = _blit_text(content, self.font_small, wild_line, (x, y), COLOUR_TEXT_DIM)
 
-        y = _blit_text(content, self.font_small, "Deer grounds", (x, y), COLOUR_TEXT_DIM)
-        deer_grounds = wildlife.breeding_grounds(AnimalKind.DEER)
-        if not deer_grounds:
-            y = _blit_text(content, self.font_small, "  none", (x, y), COLOUR_TEXT_DIM)
-        else:
-            for hab in deer_grounds:
+        def _draw_grounds(
+            title: str,
+            kind: AnimalKind,
+            hit_kind: str,
+            cap_attr: str,
+            y: int,
+        ) -> int:
+            y = _blit_text(content, self.font_small, title, (x, y), COLOUR_TEXT_DIM)
+            grounds = wildlife.breeding_grounds(kind)
+            if not grounds:
+                return _blit_text(
+                    content, self.font_small, "  none", (x, y), COLOUR_TEXT_DIM
+                )
+            for hab in grounds:
                 _present, migrating, total, pairs = wildlife.patch_occupancy(
-                    AnimalKind.DEER, hab.id
+                    kind, hab.id
                 )
                 selected = (
-                    selected_habitat_kind == AnimalKind.DEER
-                    and selected_habitat_id == hab.id
+                    selected_habitat_kind == kind and selected_habitat_id == hab.id
                 )
                 pair_txt = f"{pairs} pair" if pairs == 1 else f"{pairs} pairs"
+                cap = getattr(hab, cap_attr)
                 if migrating:
                     label = (
-                        f"  #{hab.id}  {total}/{hab.deer_cap}  "
+                        f"  #{hab.id}  {total}/{cap}  "
                         f"{pair_txt}  {migrating} migrating"
                     )
                 else:
-                    label = f"  #{hab.id}  {total}/{hab.deer_cap}  {pair_txt}"
+                    label = f"  #{hab.id}  {total}/{cap}  {pair_txt}"
                 y = self._draw_list_row(
                     content,
                     label,
                     x,
                     y,
                     selected=selected,
-                    hit_kind="deer_ground",
+                    hit_kind=hit_kind,
                     hit_id=hab.id,
                 )
+            return y
 
-        y = _blit_text(content, self.font_small, "Boar grounds", (x, y), COLOUR_TEXT_DIM)
-        boar_grounds = wildlife.breeding_grounds(AnimalKind.BOAR)
-        if not boar_grounds:
-            y = _blit_text(content, self.font_small, "  none", (x, y), COLOUR_TEXT_DIM)
-        else:
-            for hab in boar_grounds:
-                _present, migrating, total, pairs = wildlife.patch_occupancy(
-                    AnimalKind.BOAR, hab.id
-                )
-                selected = (
-                    selected_habitat_kind == AnimalKind.BOAR
-                    and selected_habitat_id == hab.id
-                )
-                pair_txt = f"{pairs} pair" if pairs == 1 else f"{pairs} pairs"
-                if migrating:
-                    label = (
-                        f"  #{hab.id}  {total}/{hab.boar_cap}  "
-                        f"{pair_txt}  {migrating} migrating"
-                    )
-                else:
-                    label = f"  #{hab.id}  {total}/{hab.boar_cap}  {pair_txt}"
-                y = self._draw_list_row(
-                    content,
-                    label,
-                    x,
-                    y,
-                    selected=selected,
-                    hit_kind="boar_ground",
-                    hit_id=hab.id,
-                )
+        y = _draw_grounds("Deer grounds", AnimalKind.DEER, "deer_ground", "deer_cap", y)
+        y = _draw_grounds("Boar grounds", AnimalKind.BOAR, "boar_ground", "boar_cap", y)
+        y = _draw_grounds("Bee nests", AnimalKind.BEE, "bee_ground", "bee_cap", y)
+        y = _draw_grounds(
+            "Rabbit nests", AnimalKind.RABBIT, "rabbit_ground", "rabbit_cap", y
+        )
 
         y = _blit_text(
             content,
@@ -763,6 +751,8 @@ class UI:
             (COLOUR_VILLAGER, "Villager"),
             (COLOUR_ANIMAL, "Deer"),
             (COLOUR_BOAR, "Boar"),
+            (COLOUR_BEE, "Bee"),
+            (COLOUR_RABBIT, "Rabbit"),
             (COLOUR_FISH, "Fish"),
         ]
         for colour, label in entries:

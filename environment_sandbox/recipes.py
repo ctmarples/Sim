@@ -1,14 +1,33 @@
 """Crafting and gather recipes for workplaces.
 
-Input/output ratios for mill and kitchen crafts live here.
+Builtin recipes live in this module. Additional recipes are loaded from
+``recipes_data/<building>/*.json`` (building folder → workplace recipe list).
+Each JSON may declare ``resource`` / ``food`` metadata so new outputs get
+catalogue entries and use ``assets/icons/<icon_key>.svg`` automatically.
+
 Harvest yields and food satiation/buffs: ``resource_balance.py``.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 from crops import PRODUCE_KEYS
+
+_RECIPES_DATA_DIR = Path(__file__).resolve().parent / "recipes_data"
+
+# Folder name under recipes_data → attribute holding that building's recipes.
+_BUILDING_RECIPE_ATTR: dict[str, str] = {
+    "kitchen": "KITCHEN_RECIPES",
+    "mill": "MILL_RECIPES",
+    "craft_bench": "CRAFT_BENCH_RECIPES",
+    "forester": "FORESTER_RECIPES",
+    "forester_split": "FORESTER_SPLIT_RECIPES",
+    "hunter": "HUNTER_RECIPES",
+    "forager": "FORAGER_RECIPES",
+}
 
 
 @dataclass(frozen=True)
@@ -36,6 +55,7 @@ MILL_RECIPES: tuple[Recipe, ...] = (
 )
 
 # Prefer meat stew, fish stew, grilled, then breads. Fuel wood consumed separately.
+# Extra kitchen recipes (e.g. mushroom_stew) load from recipes_data/kitchen/.
 KITCHEN_RECIPES: tuple[Recipe, ...] = (
     Recipe(
         "stew",
@@ -86,59 +106,6 @@ FORAGER_RECIPES: tuple[Recipe, ...] = (
     *(Recipe(key, {}, {key: 1}) for key in PRODUCE_KEYS),
 )
 
-MILL_INPUT_KEYS: tuple[str, ...] = ("wheat", "rye")
-MILL_OUTPUT_KEYS: tuple[str, ...] = ("wheat_flour", "rye_flour")
-CRAFT_BENCH_INPUT_KEYS: tuple[str, ...] = (
-    "hemp",
-    "flax",
-    "wood",
-    "rock",
-    "twine",
-)
-CRAFT_BENCH_OUTPUT_KEYS: tuple[str, ...] = (
-    "twine",
-    "axe",
-    "spear",
-    "fishing_rod",
-    "hoe",
-    "knife",
-)
-KITCHEN_INPUT_KEYS: tuple[str, ...] = (
-    "wheat_flour",
-    "rye_flour",
-    "meat",
-    "fish",
-    "onion",
-    "cabbage",
-    "carrot",
-    "garlic",
-)
-KITCHEN_OUTPUT_KEYS: tuple[str, ...] = (
-    "bread",
-    "stew",
-    "fish_stew",
-    "grilled_meat",
-    "grilled_fish",
-)
-KITCHEN_FUEL_KEY: str = "wood"
-
-# All crafted / milled goods stored as cargo.
-PROCESSED_KEYS: tuple[str, ...] = (
-    "wheat_flour",
-    "rye_flour",
-    "bread",
-    "stew",
-    "fish_stew",
-    "grilled_meat",
-    "grilled_fish",
-    "twine",
-    "axe",
-    "spear",
-    "fishing_rod",
-    "hoe",
-    "knife",
-)
-
 RECIPE_LABELS: dict[str, str] = {
     "wheat_flour": "Wheat flour",
     "rye_flour": "Rye flour",
@@ -164,6 +131,123 @@ RECIPE_LABELS: dict[str, str] = {
     "berries": "Berries",
     "mushrooms": "Mushrooms",
 }
+
+KITCHEN_FUEL_KEY: str = "wood"
+
+
+def _recipe_from_json(data: dict) -> Recipe:
+    name = str(data["name"])
+    inputs = {str(k): int(v) for k, v in dict(data.get("inputs") or {}).items()}
+    outputs = {str(k): int(v) for k, v in dict(data.get("outputs") or {}).items()}
+    icon_key = data.get("icon_key")
+    if icon_key is not None:
+        icon_key = str(icon_key)
+    return Recipe(name, inputs, outputs, icon_key=icon_key)
+
+
+def _apply_recipe_metadata(data: dict, recipe: Recipe) -> None:
+    """Register labels, resource catalogue, and food defs from optional JSON fields."""
+    label = data.get("label")
+    if label:
+        RECIPE_LABELS[recipe.name] = str(label)
+
+    resource = data.get("resource")
+    if isinstance(resource, dict) and recipe.outputs:
+        from resources import register_resource
+
+        out_key = next(iter(recipe.outputs))
+        register_resource(
+            out_key,
+            label=str(resource.get("label") or RECIPE_LABELS.get(recipe.name) or out_key),
+            group=str(resource.get("group") or "food"),
+            short=str(resource.get("short") or out_key[:4]),
+        )
+
+    food = data.get("food")
+    if isinstance(food, dict) and recipe.outputs:
+        from resource_balance import MEAL_POINTS_FULL, register_food
+
+        out_key = next(iter(recipe.outputs))
+        register_food(
+            out_key,
+            satiation=float(food.get("satiation", MEAL_POINTS_FULL)),
+            walk_speed=float(food.get("walk_speed", 1.0)),
+            work_efficiency=float(food.get("work_efficiency", 1.0)),
+            hunger_rate=float(food.get("hunger_rate", 1.0)),
+            edible=bool(food.get("edible", True)),
+        )
+
+
+def _load_directory_recipes() -> None:
+    """Merge ``recipes_data/<building>/*.json`` into the matching recipe tuples."""
+    global MILL_RECIPES, KITCHEN_RECIPES, CRAFT_BENCH_RECIPES
+    global FORESTER_RECIPES, FORESTER_SPLIT_RECIPES, HUNTER_RECIPES, FORAGER_RECIPES
+
+    if not _RECIPES_DATA_DIR.is_dir():
+        return
+
+    g = globals()
+    for building, attr in _BUILDING_RECIPE_ATTR.items():
+        folder = _RECIPES_DATA_DIR / building
+        if not folder.is_dir():
+            continue
+        existing: list[Recipe] = list(g[attr])
+        seen = {r.name for r in existing}
+        for path in sorted(folder.glob("*.json")):
+            with path.open(encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict) or "name" not in data:
+                continue
+            recipe = _recipe_from_json(data)
+            if recipe.name in seen:
+                continue
+            existing.append(recipe)
+            seen.add(recipe.name)
+            _apply_recipe_metadata(data, recipe)
+        g[attr] = tuple(existing)
+
+
+def output_keys_for_recipes(recipes: tuple[Recipe, ...] | list[Recipe]) -> tuple[str, ...]:
+    keys: list[str] = []
+    seen: set[str] = set()
+    for recipe in recipes:
+        for key in recipe.outputs:
+            if key not in seen:
+                seen.add(key)
+                keys.append(key)
+    return tuple(keys)
+
+
+def input_keys_for_recipes(recipes: tuple[Recipe, ...] | list[Recipe]) -> tuple[str, ...]:
+    keys: list[str] = []
+    seen: set[str] = set()
+    for recipe in recipes:
+        for key in recipe.inputs:
+            if key not in seen:
+                seen.add(key)
+                keys.append(key)
+    return tuple(keys)
+
+
+_load_directory_recipes()
+
+MILL_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(MILL_RECIPES)
+MILL_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(MILL_RECIPES)
+CRAFT_BENCH_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(CRAFT_BENCH_RECIPES)
+CRAFT_BENCH_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(CRAFT_BENCH_RECIPES)
+KITCHEN_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(KITCHEN_RECIPES)
+KITCHEN_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(KITCHEN_RECIPES)
+
+# All crafted / milled goods stored as cargo.
+PROCESSED_KEYS: tuple[str, ...] = tuple(
+    dict.fromkeys(
+        (
+            *MILL_OUTPUT_KEYS,
+            *KITCHEN_OUTPUT_KEYS,
+            *CRAFT_BENCH_OUTPUT_KEYS,
+        )
+    )
+)
 
 
 def recipe_label(recipe: Recipe) -> str:
@@ -252,14 +336,3 @@ def missing_inputs(storage: object, recipe: Recipe) -> dict[str, int]:
         if have < n:
             need[key] = n - have
     return need
-
-
-def input_keys_for_recipes(recipes: tuple[Recipe, ...] | list[Recipe]) -> tuple[str, ...]:
-    keys: list[str] = []
-    seen: set[str] = set()
-    for recipe in recipes:
-        for key in recipe.inputs:
-            if key not in seen:
-                seen.add(key)
-                keys.append(key)
-    return tuple(keys)

@@ -231,6 +231,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "item_mins": {k: int(v) for k, v in b.item_mins.items()},
             "recipe_enabled": dict(b.recipe_enabled),
             "recipe_progress": dict(b.recipe_progress),
+            "recipe_priority": {k: int(v) for k, v in b.recipe_priority.items()},
             "draw_task_type": b.draw_task_type.name,
             "work_mode": b.work_mode.name,
             "areas": [
@@ -406,6 +407,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
     }
     if hasattr(game, "field_crop_kind"):
         payload["field_crop_kind"] = game.field_crop_kind
+    if hasattr(game, "resource_history"):
+        payload["resource_history"] = game.resource_history.to_dict()
     return payload
 
 
@@ -728,19 +731,32 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             building.item_mins = dict(default_item_mins(kind))
         raw_enabled = bdata.get("recipe_enabled") or {}
         raw_progress = bdata.get("recipe_progress") or {}
+        raw_priority = bdata.get("recipe_priority") or {}
         raw_enabled, raw_progress = _migrate_recipe_state(raw_enabled, raw_progress)
         if building.has_recipes() or building.split_recipes():
             building.ensure_recipe_state()
+            from entities import RECIPE_PRIORITY_DEFAULT, RECIPE_PRIORITY_MAX, RECIPE_PRIORITY_MIN
+
             for name in list(building.recipe_enabled):
                 if name in raw_enabled:
                     building.recipe_enabled[name] = bool(raw_enabled[name])
                 if name in raw_progress:
                     building.recipe_progress[name] = max(0, int(raw_progress[name]))
+                if name in raw_priority:
+                    building.recipe_priority[name] = max(
+                        RECIPE_PRIORITY_MIN,
+                        min(RECIPE_PRIORITY_MAX, int(raw_priority[name])),
+                    )
             for recipe in building.split_recipes():
                 if recipe.name in raw_enabled:
                     building.recipe_enabled[recipe.name] = bool(raw_enabled[recipe.name])
                 if recipe.name in raw_progress:
                     building.recipe_progress[recipe.name] = max(0, int(raw_progress[recipe.name]))
+                if recipe.name in raw_priority:
+                    building.recipe_priority[recipe.name] = max(
+                        RECIPE_PRIORITY_MIN,
+                        min(RECIPE_PRIORITY_MAX, int(raw_priority[recipe.name])),
+                    )
         if kind == BuildingKind.FIELD:
             building.crop_kind = str(bdata.get("crop_kind", "sage"))
             if kind == BuildingKind.FIELD and work_mode not in building.supported_work_modes():
@@ -1010,6 +1026,11 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
 
     if hasattr(game, "field_crop_kind") and "field_crop_kind" in data:
         game.field_crop_kind = str(data["field_crop_kind"])
+
+    if hasattr(game, "resource_history"):
+        game.resource_history.load_dict(data.get("resource_history"))
+    if hasattr(game, "resource_tracker"):
+        game.resource_tracker.close()
     
     # Ensure core buildings exist (HOME, WORKSTATION)
     if hasattr(game, "_ensure_core_buildings"):

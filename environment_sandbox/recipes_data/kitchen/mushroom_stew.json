@@ -1,0 +1,17 @@
+{
+  "name": "mushroom_stew",
+  "label": "Mushroom stew",
+  "inputs": {"mushrooms": 2, "sage": 1},
+  "outputs": {"mushroom_stew": 1},
+  "icon_key": "mushroom_stew",
+  "resource": {
+    "label": "Mushroom stew",
+    "group": "food",
+    "short": "m.stw"
+  },
+  "food": {
+    "satiation": 5.0,
+    "walk_speed": 2.0,
+    "work_efficiency": 2.0
+  }
+}

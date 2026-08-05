@@ -158,26 +158,12 @@ VILLAGER_WORK_INTERVAL: int = 72
 # Work actions (each spaced by villager work interval) to finish one mill/kitchen craft.
 PROCESSOR_RECIPE_STEPS: int = 3
 
+# Wildlife tick cadence (ecology amounts live in resource_balance.py).
 ANIMAL_MOVE_INTERVAL: int = 80
 ANIMAL_GROWTH_INTERVAL: int = 480
-# Patch capacity from breeding-ground size.
-ANIMAL_TREES_PER_CAP: int = 3  # deer: 1 per 3 deer-breeding tiles
-BOAR_CELLS_PER_CAP: int = 6  # boar: 1 per 6 forest/breeding tiles in patch
-# Usable breeding habitats must hold at least a mating pair.
-MIN_BREEDING_CAPACITY: int = 2
-DEER_CROP_EAT_CHANCE: float = 0.50
-BOAR_CROP_EAT_CHANCE: float = 0.25
-# Chance per growth tick that a pair starts its once-per-year migration.
-ANIMAL_MIGRATION_CHANCE: float = 0.18
-# Chance a mating pair produces one offspring per growth tick (if under cap).
-ANIMAL_BREED_CHANCE: float = 0.55
-# Initial seed: number of deer / boar breeding grounds to seed, and animals each.
-WILDLIFE_SEED_GROUNDS: int = 1
-WILDLIFE_SEED_COUNT: int = 2
 
 FISH_MOVE_INTERVAL: int = 80
 FISH_GROWTH_INTERVAL: int = 480
-FISH_WATER_PER_CAP: int = 4
 
 DISTURBANCE_DECAY_PER_TICK: float = 0.002
 DISTURBANCE_INTERACTION_BOOST: float = 0.25
@@ -202,6 +188,8 @@ COLOUR_VILLAGER: Colour = (220, 140, 50)
 COLOUR_ANIMAL: Colour = (160, 100, 60)  # deer (legacy)
 COLOUR_DEER: Colour = (160, 100, 60)
 COLOUR_BOAR: Colour = (90, 70, 55)
+COLOUR_BEE: Colour = (240, 190, 40)
+COLOUR_RABBIT: Colour = (200, 180, 150)
 COLOUR_REED: Colour = (70, 120, 80)
 COLOUR_WORKSTATION: Colour = (90, 90, 140)
 COLOUR_FORESTER: Colour = (40, 110, 55)

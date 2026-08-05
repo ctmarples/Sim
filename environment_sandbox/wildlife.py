@@ -1,4 +1,4 @@
-"""Wildlife: deer and boars on contiguous forest patches.
+"""Wildlife: deer, boars, bees, and rabbits.
 
 Forest patches = connected tree/sapling tiles. Habitats are rebuilt on the same
 season start/mid sample window as biodiversity (≤8 updates per year).
@@ -13,6 +13,16 @@ Boar
 Breeding: internal forest (all tree/sapling tiles in the patch).
 Capacity: forest tiles // 6.
 
+Bees
+----
+Nest: forest edge (same as deer breeding) or meadow patches.
+Forage: contiguous meadow / grass / farm fields within 2 of the nest.
+
+Rabbits
+-------
+Nest: meadow patches.
+Forage: same as bees.
+
 Sexes & mating
 --------------
 Each animal is male or female (50%). A male and female in the same patch form a
@@ -21,13 +31,16 @@ under capacity — never into empty / foreign habitats.
 
 Seasonal roaming
 ----------------
-Autumn/Winter: within 1 of breeding tiles.
+Autumn/Winter: within 1 of breeding tiles (forest game); small game stays on
+forage tiles year-round.
 Spring/Summer: cold roam plus nearby grass/meadow; mating pairs roam together
 weighted away from their breeding ground.
 
 Empty patches are only populated when a mating pair disperses from home —
 exploring away (warm seasons) or walking to the nearest patch with space
-(autumn/winter) — then claims it on arrival.
+(autumn/winter) — then claims it on arrival. If a species reaches population
+zero at the start of a new year (spring), a random breeding ground is seeded
+with a mating pair.
 """
 
 from __future__ import annotations
@@ -45,22 +58,29 @@ from seasons import (
     water_frozen,
 )
 from entities import arm_cell_step_visual, note_cell_step
-from settings import (
+from resource_balance import (
     ANIMAL_BREED_CHANCE,
-    ANIMAL_GROWTH_INTERVAL,
     ANIMAL_MIGRATION_CHANCE,
-    ANIMAL_MOVE_INTERVAL,
     ANIMAL_TREES_PER_CAP,
+    BEE_CELLS_PER_CAP,
     BOAR_CELLS_PER_CAP,
-    MIN_BREEDING_CAPACITY,
     BOAR_CROP_EAT_CHANCE,
     DEER_CROP_EAT_CHANCE,
-    FISH_GROWTH_INTERVAL,
-    FISH_MOVE_INTERVAL,
     FISH_WATER_PER_CAP,
-    RANDOM_SEED,
+    MIN_BREEDING_CAPACITY,
+    RABBIT_CELLS_PER_CAP,
+    RABBIT_CROP_EAT_CHANCE,
+    SMALL_GAME_FORAGE_RADIUS,
+    WILDLIFE_RESEED_PAIR,
     WILDLIFE_SEED_COUNT,
     WILDLIFE_SEED_GROUNDS,
+)
+from settings import (
+    ANIMAL_GROWTH_INTERVAL,
+    ANIMAL_MOVE_INTERVAL,
+    FISH_GROWTH_INTERVAL,
+    FISH_MOVE_INTERVAL,
+    RANDOM_SEED,
 )
 from world import FeatureType, TerrainType, World
 
@@ -68,6 +88,13 @@ from world import FeatureType, TerrainType, World
 class AnimalKind(Enum):
     DEER = auto()
     BOAR = auto()
+    BEE = auto()
+    RABBIT = auto()
+
+
+FOREST_KINDS: tuple[AnimalKind, ...] = (AnimalKind.DEER, AnimalKind.BOAR)
+OPEN_KINDS: tuple[AnimalKind, ...] = (AnimalKind.BEE, AnimalKind.RABBIT)
+ALL_ANIMAL_KINDS: tuple[AnimalKind, ...] = FOREST_KINDS + OPEN_KINDS
 
 
 class AnimalSex(Enum):
@@ -117,8 +144,34 @@ class ForestHabitat:
         return len(self.boar_breeding) // BOAR_CELLS_PER_CAP
 
 
+@dataclass
+class OpenHabitat:
+    """Meadow / forest-edge nests for bees and rabbits."""
+
+    id: int
+    nest_tiles: list[tuple[int, int]]
+    forage_tiles: set[tuple[int, int]]
+    allow_bee: bool = True
+    allow_rabbit: bool = True
+
+    @property
+    def bee_cap(self) -> int:
+        if not self.allow_bee:
+            return 0
+        return len(self.nest_tiles) // BEE_CELLS_PER_CAP
+
+    @property
+    def rabbit_cap(self) -> int:
+        if not self.allow_rabbit:
+            return 0
+        return len(self.nest_tiles) // RABBIT_CELLS_PER_CAP
+
+
+Habitat = ForestHabitat | OpenHabitat
+
+
 class WildlifeManager:
-    """Roam, graze, pair, breed, and migrate deer + boars on forest patches."""
+    """Roam, graze, pair, breed, and migrate wildlife on forest / open habitats."""
 
     def __init__(self, seed: int = RANDOM_SEED) -> None:
         self.rng = random.Random(seed + 7)
@@ -126,6 +179,7 @@ class WildlifeManager:
         self.next_id = 1
         self.growth_timer = ANIMAL_GROWTH_INTERVAL
         self.habitats: list[ForestHabitat] = []
+        self.open_habitats: list[OpenHabitat] = []
         self._seeded = False
         self._prev_season: Season | None = None
         self._by_id: dict[int, Animal] = {}
@@ -136,6 +190,7 @@ class WildlifeManager:
         self.next_id = 1
         self.growth_timer = ANIMAL_GROWTH_INTERVAL
         self.habitats.clear()
+        self.open_habitats.clear()
         self._seeded = False
         self._prev_season = None
         self.rng.seed(RANDOM_SEED + 7)
@@ -149,9 +204,20 @@ class WildlifeManager:
     def boars(self) -> list[Animal]:
         return [a for a in self.animals if a.kind == AnimalKind.BOAR]
 
+    def bees(self) -> list[Animal]:
+        return [a for a in self.animals if a.kind == AnimalKind.BEE]
+
+    def rabbits(self) -> list[Animal]:
+        return [a for a in self.animals if a.kind == AnimalKind.RABBIT]
+
+    def count_kind(self, kind: AnimalKind) -> int:
+        return sum(1 for a in self.animals if a.kind == kind)
+
     def total_capacity(self, world: World | None = None) -> int:
         del world
-        return sum(h.deer_cap + h.boar_cap for h in self.habitats)
+        forest = sum(h.deer_cap + h.boar_cap for h in self.habitats)
+        open_cap = sum(h.bee_cap + h.rabbit_cap for h in self.open_habitats)
+        return forest + open_cap
 
     def animal_at(self, x: int, y: int) -> Animal | None:
         for animal in self.animals:
@@ -173,16 +239,30 @@ class WildlifeManager:
         self._by_id.pop(animal_id, None)
         return pos
 
-    def habitat(self, patch_id: int | None) -> ForestHabitat | None:
-        if patch_id is None or not (0 <= patch_id < len(self.habitats)):
-            return None
-        return self.habitats[patch_id]
+    def _habitats_for(self, kind: AnimalKind) -> list[Habitat]:
+        if kind in OPEN_KINDS:
+            return list(self.open_habitats)
+        return list(self.habitats)
 
-    def breeding_grounds(self, kind: AnimalKind) -> list[ForestHabitat]:
+    def habitat(
+        self, patch_id: int | None, kind: AnimalKind | None = None
+    ) -> Habitat | None:
+        if patch_id is None:
+            return None
+        if kind in OPEN_KINDS:
+            if 0 <= patch_id < len(self.open_habitats):
+                return self.open_habitats[patch_id]
+            return None
+        if kind in FOREST_KINDS or kind is None:
+            if 0 <= patch_id < len(self.habitats):
+                return self.habitats[patch_id]
+        return None
+
+    def breeding_grounds(self, kind: AnimalKind) -> list[Habitat]:
         """Habitats large enough for a mating pair of this species."""
         return [
             h
-            for h in self.habitats
+            for h in self._habitats_for(kind)
             if self._breeding_for(kind, h)
             and self._cap_for(kind, h) >= MIN_BREEDING_CAPACITY
         ]
@@ -233,14 +313,16 @@ class WildlifeManager:
     # Habitat refresh (same cadence as biodiversity samples)
     # ------------------------------------------------------------------
     def refresh_habitats(self, world: World) -> None:
-        """Rebuild forest-patch breeding/roaming maps from current world state."""
+        """Rebuild forest-patch and open-nest breeding/roaming maps."""
         old_forests = [set(h.forest_tiles) for h in self.habitats]
-        old_ids = [a.patch_id for a in self.animals]
+        old_forest_ids = [
+            a.patch_id for a in self.animals if a.kind in FOREST_KINDS
+        ]
+        forest_animals = [a for a in self.animals if a.kind in FOREST_KINDS]
 
         patches = world.forest_patches()
         habitats: list[ForestHabitat] = []
         for i, forest in enumerate(patches):
-            forest_set = set(forest)
             deer_breeding = self._deer_breeding_tiles(world, forest)
             deer_cold = self._expand_walkable(world, deer_breeding, radius=1)
             deer_warm = self._warm_roam(world, forest, deer_cold)
@@ -260,7 +342,95 @@ class WildlifeManager:
                 )
             )
         self.habitats = habitats
-        self._remap_animals_after_refresh(old_forests, old_ids)
+        self._remap_animals_after_refresh(
+            forest_animals, old_forests, old_forest_ids, forest=True
+        )
+        self._refresh_open_habitats(world)
+
+    def _refresh_open_habitats(self, world: World) -> None:
+        old_nests = [set(h.nest_tiles) for h in self.open_habitats]
+        open_animals = [a for a in self.animals if a.kind in OPEN_KINDS]
+        old_ids = [a.patch_id for a in open_animals]
+
+        habitats: list[OpenHabitat] = []
+        hid = 0
+        for patch in world.meadow_patches():
+            nest = list(patch)
+            forage = self._forage_from_nests(world, nest)
+            if not nest or not forage:
+                continue
+            habitats.append(
+                OpenHabitat(
+                    id=hid,
+                    nest_tiles=nest,
+                    forage_tiles=forage,
+                    allow_bee=True,
+                    allow_rabbit=True,
+                )
+            )
+            hid += 1
+        for fh in self.habitats:
+            if not fh.deer_breeding:
+                continue
+            nest = list(fh.deer_breeding)
+            forage = self._forage_from_nests(world, nest)
+            if not forage:
+                continue
+            habitats.append(
+                OpenHabitat(
+                    id=hid,
+                    nest_tiles=nest,
+                    forage_tiles=forage,
+                    allow_bee=True,
+                    allow_rabbit=False,
+                )
+            )
+            hid += 1
+        self.open_habitats = habitats
+        self._remap_animals_after_refresh(
+            open_animals, old_nests, old_ids, forest=False
+        )
+
+    @staticmethod
+    def _is_forage_tile(world: World, x: int, y: int) -> bool:
+        cell = world.get_cell(x, y)
+        if cell is None or not world.is_walkable(x, y):
+            return False
+        if cell.terrain in (TerrainType.MEADOW, TerrainType.GRASS):
+            return True
+        return cell.feature == FeatureType.FIELD
+
+    def _forage_from_nests(
+        self, world: World, nests: list[tuple[int, int]]
+    ) -> set[tuple[int, int]]:
+        """Contiguous forage tiles within ``SMALL_GAME_FORAGE_RADIUS`` of nests."""
+        radius = SMALL_GAME_FORAGE_RADIUS
+        candidates: set[tuple[int, int]] = set()
+        for nx, ny in nests:
+            for cy, cx in world.neighbourhood(nx, ny, radius=radius):
+                if self._is_forage_tile(world, cx, cy):
+                    candidates.add((cx, cy))
+        starts: set[tuple[int, int]] = set()
+        for nx, ny in nests:
+            if (nx, ny) in candidates:
+                starts.add((nx, ny))
+            for cy, cx in world.neighbourhood(nx, ny, radius=1):
+                if (cx, cy) in candidates:
+                    starts.add((cx, cy))
+        if not starts:
+            return set()
+        forage: set[tuple[int, int]] = set()
+        stack = list(starts)
+        seen = set(starts)
+        while stack:
+            cx, cy = stack.pop()
+            forage.add((cx, cy))
+            for ny, nx in world.neighbourhood(cx, cy, radius=1):
+                pos = (nx, ny)
+                if pos in candidates and pos not in seen:
+                    seen.add(pos)
+                    stack.append(pos)
+        return forage
 
     @staticmethod
     def _deer_breeding_tiles(
@@ -321,24 +491,36 @@ class WildlifeManager:
 
     def _remap_animals_after_refresh(
         self,
-        old_forests: list[set[tuple[int, int]]],
+        animals: list[Animal],
+        old_tiles: list[set[tuple[int, int]]],
         old_ids: list[int | None],
+        *,
+        forest: bool,
     ) -> None:
-        """Keep patch affiliation by forest overlap; never auto-claim empty grounds."""
-        if not self.habitats:
-            for animal in self.animals:
+        """Keep patch affiliation by tile overlap; never auto-claim empty grounds."""
+        habitats: list[Habitat] = (
+            list(self.habitats) if forest else list(self.open_habitats)
+        )
+
+        def tiles_of(hab: Habitat) -> set[tuple[int, int]]:
+            if isinstance(hab, ForestHabitat):
+                return set(hab.forest_tiles)
+            return set(hab.nest_tiles)
+
+        if not habitats:
+            for animal in animals:
                 animal.patch_id = None
                 animal.migrate_home_id = None
                 animal.migrate_target = None
             return
 
-        for animal, old_id in zip(self.animals, old_ids):
+        for animal, old_id in zip(animals, old_ids):
             mapped: int | None = None
-            if old_id is not None and 0 <= old_id < len(old_forests):
-                old_set = old_forests[old_id]
+            if old_id is not None and 0 <= old_id < len(old_tiles):
+                old_set = old_tiles[old_id]
                 best_overlap = 0
-                for hab in self.habitats:
-                    overlap = len(old_set & set(hab.forest_tiles))
+                for hab in habitats:
+                    overlap = len(old_set & tiles_of(hab))
                     if overlap > best_overlap:
                         best_overlap = overlap
                         mapped = hab.id
@@ -350,11 +532,11 @@ class WildlifeManager:
             if animal.migrate_home_id is not None:
                 home_mapped: int | None = None
                 old_home = animal.migrate_home_id
-                if 0 <= old_home < len(old_forests):
-                    old_set = old_forests[old_home]
+                if 0 <= old_home < len(old_tiles):
+                    old_set = old_tiles[old_home]
                     best_overlap = 0
-                    for hab in self.habitats:
-                        overlap = len(old_set & set(hab.forest_tiles))
+                    for hab in habitats:
+                        overlap = len(old_set & tiles_of(hab))
                         if overlap > best_overlap:
                             best_overlap = overlap
                             home_mapped = hab.id
@@ -362,22 +544,52 @@ class WildlifeManager:
                 if home_mapped is None:
                     animal.migrate_target = None
 
-    def _cap_for(self, kind: AnimalKind, hab: ForestHabitat) -> int:
-        return hab.deer_cap if kind == AnimalKind.DEER else hab.boar_cap
+    def _cap_for(self, kind: AnimalKind, hab: Habitat) -> int:
+        if isinstance(hab, OpenHabitat):
+            if kind == AnimalKind.BEE:
+                return hab.bee_cap
+            if kind == AnimalKind.RABBIT:
+                return hab.rabbit_cap
+            return 0
+        if kind == AnimalKind.DEER:
+            return hab.deer_cap
+        if kind == AnimalKind.BOAR:
+            return hab.boar_cap
+        return 0
 
-    def _breeding_for(self, kind: AnimalKind, hab: ForestHabitat) -> list[tuple[int, int]]:
-        return hab.deer_breeding if kind == AnimalKind.DEER else hab.boar_breeding
+    def _breeding_for(self, kind: AnimalKind, hab: Habitat) -> list[tuple[int, int]]:
+        if isinstance(hab, OpenHabitat):
+            if kind == AnimalKind.BEE and hab.allow_bee:
+                return hab.nest_tiles
+            if kind == AnimalKind.RABBIT and hab.allow_rabbit:
+                return hab.nest_tiles
+            return []
+        if kind == AnimalKind.DEER:
+            return hab.deer_breeding
+        if kind == AnimalKind.BOAR:
+            return hab.boar_breeding
+        return []
 
     def _roaming_for(
-        self, kind: AnimalKind, hab: ForestHabitat, season: Season
+        self, kind: AnimalKind, hab: Habitat, season: Season
     ) -> set[tuple[int, int]]:
+        if isinstance(hab, OpenHabitat):
+            return set(hab.forage_tiles)
         warm = season in (Season.SPRING, Season.SUMMER)
         if kind == AnimalKind.DEER:
             return hab.deer_roam_warm if warm else hab.deer_roam_cold
-        return hab.boar_roam_warm if warm else hab.boar_roam_cold
+        if kind == AnimalKind.BOAR:
+            return hab.boar_roam_warm if warm else hab.boar_roam_cold
+        return set()
 
-    def _cold_roaming_for(self, kind: AnimalKind, hab: ForestHabitat) -> set[tuple[int, int]]:
-        return hab.deer_roam_cold if kind == AnimalKind.DEER else hab.boar_roam_cold
+    def _cold_roaming_for(self, kind: AnimalKind, hab: Habitat) -> set[tuple[int, int]]:
+        if isinstance(hab, OpenHabitat):
+            return set(hab.forage_tiles)
+        if kind == AnimalKind.DEER:
+            return hab.deer_roam_cold
+        if kind == AnimalKind.BOAR:
+            return hab.boar_roam_cold
+        return set()
 
     def count_in_patch(self, kind: AnimalKind, patch_id: int) -> int:
         return sum(1 for a in self.animals if a.kind == kind and a.patch_id == patch_id)
@@ -417,7 +629,7 @@ class WildlifeManager:
 
     def _room_on_patch(self, kind: AnimalKind, patch_id: int) -> int:
         """Free slots on a patch (present residents only)."""
-        hab = self.habitat(patch_id)
+        hab = self.habitat(patch_id, kind)
         if hab is None:
             return 0
         return max(0, self._cap_for(kind, hab) - self.count_in_patch(kind, patch_id))
@@ -432,30 +644,29 @@ class WildlifeManager:
     # Initial seeding
     # ------------------------------------------------------------------
     def seed_breeding_grounds(self, world: World) -> None:
-        """Seed WILDLIFE_SEED_GROUNDS deer + boar habitats with WILDLIFE_SEED_COUNT each."""
+        """Seed WILDLIFE_SEED_GROUNDS habitats per species with WILDLIFE_SEED_COUNT each."""
         if self._seeded:
             return
-        if not self.habitats:
+        if not self.habitats and not self.open_habitats:
             self.refresh_habitats(world)
         self.animals.clear()
         self.next_id = 1
         occupied: set[tuple[int, int]] = set()
 
-        deer_grounds = self.breeding_grounds(AnimalKind.DEER)
-        boar_grounds = self.breeding_grounds(AnimalKind.BOAR)
-        deer_grounds.sort(key=lambda h: len(h.deer_breeding), reverse=True)
-        boar_grounds.sort(key=lambda h: len(h.boar_breeding), reverse=True)
-
-        for hab in deer_grounds[:WILDLIFE_SEED_GROUNDS]:
-            self._seed_patch(AnimalKind.DEER, hab, WILDLIFE_SEED_COUNT, occupied)
-        for hab in boar_grounds[:WILDLIFE_SEED_GROUNDS]:
-            self._seed_patch(AnimalKind.BOAR, hab, WILDLIFE_SEED_COUNT, occupied)
+        for kind in ALL_ANIMAL_KINDS:
+            grounds = self.breeding_grounds(kind)
+            grounds.sort(
+                key=lambda h: len(self._breeding_for(kind, h)),
+                reverse=True,
+            )
+            for hab in grounds[:WILDLIFE_SEED_GROUNDS]:
+                self._seed_patch(kind, hab, WILDLIFE_SEED_COUNT, occupied)
         self._seeded = True
 
     def _seed_patch(
         self,
         kind: AnimalKind,
-        hab: ForestHabitat,
+        hab: Habitat,
         count: int,
         occupied: set[tuple[int, int]],
     ) -> None:
@@ -496,6 +707,8 @@ class WildlifeManager:
                     if p not in occupied and max(abs(p[0] - bx), abs(p[1] - by)) <= 1
                 ]
                 pool = near or [p for p in roam if p not in occupied]
+            if not pool and (bx, by) not in occupied:
+                pool = [(bx, by)]
             if not pool:
                 continue
             sx, sy = self.rng.choice(pool)
@@ -528,11 +741,26 @@ class WildlifeManager:
                 # Only reset settled animals; mid-dispersal pairs already used this year's move.
                 if animal.patch_id is not None and animal.migrate_home_id is None:
                     animal.migrated_this_year = False
+            self._reseed_extinct_species(world)
         elif season == Season.AUTUMN:
             self._start_autumn_retreat(world)
         elif season == Season.WINTER:
             self._kill_failed_migrants()
         self._prev_season = season
+
+    def _reseed_extinct_species(self, world: World) -> None:
+        """At new year, seed a random breeding ground with a pair if a species is gone."""
+        if not self.habitats and not self.open_habitats:
+            self.refresh_habitats(world)
+        occupied = self._occupied()
+        for kind in ALL_ANIMAL_KINDS:
+            if self.count_kind(kind) > 0:
+                continue
+            grounds = self.breeding_grounds(kind)
+            if not grounds:
+                continue
+            hab = self.rng.choice(grounds)
+            self._seed_patch(kind, hab, WILDLIFE_RESEED_PAIR, occupied)
 
     def _kill_failed_migrants(self) -> None:
         """Animals still searching for a new breeding ground die when winter arrives."""
@@ -549,6 +777,24 @@ class WildlifeManager:
     def _start_autumn_retreat(self, world: World) -> None:
         open_land = (TerrainType.GRASS, TerrainType.MEADOW)
         for animal in self.animals:
+            if animal.kind in OPEN_KINDS:
+                # Already forage on open land; pull back toward nest if far afield.
+                cell = world.get_cell(animal.x, animal.y)
+                hab = self.habitat(animal.patch_id, animal.kind)
+                if hab is None or cell is None:
+                    animal.retreat_target = None
+                    continue
+                breed = self._breeding_for(animal.kind, hab)
+                if breed and (animal.x, animal.y) not in breed:
+                    animal.retreat_target = min(
+                        breed,
+                        key=lambda p: max(
+                            abs(p[0] - animal.x), abs(p[1] - animal.y)
+                        ),
+                    )
+                else:
+                    animal.retreat_target = None
+                continue
             cell = world.get_cell(animal.x, animal.y)
             if cell is None or cell.terrain not in open_land:
                 animal.retreat_target = None
@@ -561,7 +807,7 @@ class WildlifeManager:
     ) -> tuple[int, int] | None:
         """Nearest breeding tile of this kind (empty or inhabited grounds)."""
         best: tuple[int, tuple[int, int]] | None = None
-        for hab in self.habitats:
+        for hab in self._habitats_for(kind):
             breed = self._breeding_for(kind, hab)
             if not breed:
                 continue
@@ -573,10 +819,10 @@ class WildlifeManager:
 
     def _nearest_breeding_habitat(
         self, kind: AnimalKind, x: int, y: int
-    ) -> ForestHabitat | None:
-        best_h: ForestHabitat | None = None
+    ) -> Habitat | None:
+        best_h: Habitat | None = None
         best_d = 10**9
-        for hab in self.habitats:
+        for hab in self._habitats_for(kind):
             breed = self._breeding_for(kind, hab)
             if not breed:
                 continue
@@ -590,7 +836,7 @@ class WildlifeManager:
     # Simulation tick
     # ------------------------------------------------------------------
     def tick(self, world: World, day: float = 0.0) -> None:
-        if not self.habitats:
+        if not self.habitats and not self.open_habitats:
             self.refresh_habitats(world)
         self._index_animals()
         season = season_for_day(int(day))
@@ -618,7 +864,7 @@ class WildlifeManager:
             if animal.mate_id is not None:
                 self._mate_of(animal)
 
-        for kind in (AnimalKind.DEER, AnimalKind.BOAR):
+        for kind in ALL_ANIMAL_KINDS:
             by_patch: dict[int, list[Animal]] = {}
             for animal in self.animals:
                 if animal.kind != kind or animal.patch_id is None:
@@ -640,7 +886,7 @@ class WildlifeManager:
                     female.mate_id = male.id
 
     def _breeding_center(
-        self, kind: AnimalKind, hab: ForestHabitat
+        self, kind: AnimalKind, hab: Habitat
     ) -> tuple[float, float] | None:
         breed = self._breeding_for(kind, hab)
         if not breed:
@@ -815,9 +1061,9 @@ class WildlifeManager:
 
     def _patches_with_space(
         self, kind: AnimalKind, *, need: int, exclude_id: int | None
-    ) -> list[ForestHabitat]:
-        out: list[ForestHabitat] = []
-        for hab in self.habitats:
+    ) -> list[Habitat]:
+        out: list[Habitat] = []
+        for hab in self._habitats_for(kind):
             if exclude_id is not None and hab.id == exclude_id:
                 continue
             if self._cap_for(kind, hab) < MIN_BREEDING_CAPACITY:
@@ -830,8 +1076,8 @@ class WildlifeManager:
 
     def _nearest_patch_with_space(
         self, kind: AnimalKind, x: int, y: int, *, need: int, exclude_id: int | None
-    ) -> ForestHabitat | None:
-        best: tuple[int, ForestHabitat] | None = None
+    ) -> Habitat | None:
+        best: tuple[int, Habitat] | None = None
         for hab in self._patches_with_space(kind, need=need, exclude_id=exclude_id):
             breed = self._breeding_for(kind, hab)
             if not breed:
@@ -842,7 +1088,7 @@ class WildlifeManager:
         return best[1] if best is not None else None
 
     def _home_center(self, animal: Animal) -> tuple[float, float] | None:
-        home = self.habitat(animal.migrate_home_id)
+        home = self.habitat(animal.migrate_home_id, animal.kind)
         if home is None:
             return None
         return self._breeding_center(animal.kind, home)
@@ -851,7 +1097,7 @@ class WildlifeManager:
         """Claim a new patch if standing in its cold roost and it has room."""
         if animal.migrate_home_id is None or animal.patch_id is not None:
             return False
-        for hab in self.habitats:
+        for hab in self._habitats_for(animal.kind):
             if hab.id == animal.migrate_home_id:
                 continue
             if self._cap_for(animal.kind, hab) < MIN_BREEDING_CAPACITY:
@@ -914,7 +1160,7 @@ class WildlifeManager:
 
         # If the partner already claimed a patch, walk there.
         if mate is not None and mate.patch_id is not None:
-            dest = self.habitat(mate.patch_id)
+            dest = self.habitat(mate.patch_id, animal.kind)
             if dest is not None:
                 cold = self._cold_roaming_for(animal.kind, dest)
                 if cold:
@@ -930,12 +1176,13 @@ class WildlifeManager:
                         occupied,
                     )
             self._try_settle_dispersal(animal, need=1)
+            mate_hab = self.habitat(mate.patch_id, animal.kind)
             if (
                 animal.patch_id is None
                 and mate.patch_id is not None
-                and self.habitat(mate.patch_id) is not None
+                and mate_hab is not None
                 and (animal.x, animal.y)
-                in self._cold_roaming_for(animal.kind, self.habitats[mate.patch_id])
+                in self._cold_roaming_for(animal.kind, mate_hab)
                 and self._room_on_patch(animal.kind, mate.patch_id) >= 1
             ):
                 animal.patch_id = mate.patch_id
@@ -975,7 +1222,7 @@ class WildlifeManager:
                 else mate.migrate_home_id
             )
             if settled and animal.patch_id is not None:
-                dest = self.habitat(animal.patch_id)
+                dest = self.habitat(animal.patch_id, animal.kind)
                 if dest is not None:
                     cold = self._cold_roaming_for(mate.kind, dest)
                     if cold:
@@ -1008,17 +1255,17 @@ class WildlifeManager:
             if animal.patch_id is not None:
                 if self._try_settle_dispersal(mate, need=1):
                     pass
-                elif (
-                    self.habitat(animal.patch_id) is not None
-                    and (mate.x, mate.y)
-                    in self._cold_roaming_for(
-                        mate.kind, self.habitats[animal.patch_id]
-                    )
-                    and self._room_on_patch(mate.kind, animal.patch_id) >= 1
-                ):
-                    mate.patch_id = animal.patch_id
-                    mate.migrate_home_id = None
-                    mate.migrate_target = None
+                else:
+                    claimed = self.habitat(animal.patch_id, mate.kind)
+                    if (
+                        claimed is not None
+                        and (mate.x, mate.y)
+                        in self._cold_roaming_for(mate.kind, claimed)
+                        and self._room_on_patch(mate.kind, animal.patch_id) >= 1
+                    ):
+                        mate.patch_id = animal.patch_id
+                        mate.migrate_home_id = None
+                        mate.migrate_target = None
             else:
                 self._try_settle_dispersal(mate, need=need)
             self._arm_move(mate, move_interval)
@@ -1050,7 +1297,7 @@ class WildlifeManager:
         world: World,
         a: Animal,
         b: Animal,
-        hab: ForestHabitat,
+        hab: Habitat,
         roam: set[tuple[int, int]],
         occupied: set[tuple[int, int]],
         move_interval: int,
@@ -1124,7 +1371,7 @@ class WildlifeManager:
 
             if animal.retreat_target is not None:
                 tx, ty = animal.retreat_target
-                hab = self.habitat(animal.patch_id)
+                hab = self.habitat(animal.patch_id, animal.kind)
                 cold = (
                     self._cold_roaming_for(animal.kind, hab)
                     if hab is not None
@@ -1163,7 +1410,7 @@ class WildlifeManager:
                 moved.add(animal.id)
                 continue
 
-            hab = self.habitat(animal.patch_id)
+            hab = self.habitat(animal.patch_id, animal.kind)
             if hab is None:
                 animal.patch_id = None
                 self._arm_move(animal, move_interval)
@@ -1260,7 +1507,7 @@ class WildlifeManager:
     def _try_spawn_in_patch(
         self,
         kind: AnimalKind,
-        hab: ForestHabitat,
+        hab: Habitat,
         occupied: set[tuple[int, int]],
     ) -> bool:
         """Spawn one offspring in this patch only; no-op at capacity."""
@@ -1299,12 +1546,13 @@ class WildlifeManager:
             crops = self._adjacent_wild_crops(world, animal.x, animal.y)
             if not crops:
                 continue
-            chance = (
-                DEER_CROP_EAT_CHANCE
-                if animal.kind == AnimalKind.DEER
-                else BOAR_CROP_EAT_CHANCE
-            )
-            if self.rng.random() >= chance:
+            chance = {
+                AnimalKind.DEER: DEER_CROP_EAT_CHANCE,
+                AnimalKind.BOAR: BOAR_CROP_EAT_CHANCE,
+                AnimalKind.RABBIT: RABBIT_CROP_EAT_CHANCE,
+                AnimalKind.BEE: 0.0,
+            }.get(animal.kind, 0.0)
+            if chance <= 0.0 or self.rng.random() >= chance:
                 continue
             cx, cy = self.rng.choice(crops)
             self._eat_wild_crop(world, cx, cy)
@@ -1326,7 +1574,7 @@ class WildlifeManager:
                 continue
             if animal.patch_id is None:
                 continue
-            hab = self.habitat(animal.patch_id)
+            hab = self.habitat(animal.patch_id, animal.kind)
             if hab is None:
                 continue
             cap = self._cap_for(animal.kind, hab)
@@ -1338,39 +1586,45 @@ class WildlifeManager:
 
     def _cull_excess(self) -> None:
         self._index_animals()
-        if not self.habitats:
+        if not self.habitats and not self.open_habitats:
             for animal in self.animals:
                 animal.patch_id = None
                 self._clear_mate(animal)
             return
-        for hab in self.habitats:
-            for kind in (AnimalKind.DEER, AnimalKind.BOAR):
-                group = [
-                    a for a in self.animals if a.kind == kind and a.patch_id == hab.id
-                ]
-                cap = self._cap_for(kind, hab)
-                if cap <= 0 or not self._breeding_for(kind, hab):
-                    for a in group:
-                        a.patch_id = None
-                        self._clear_mate(a)
-                    continue
-                while len(group) > cap:
-                    victim = group.pop()
-                    if victim in self.animals:
-                        self._clear_mate(victim)
-                        self.animals.remove(victim)
-                        self._by_id.pop(victim.id, None)
+        for kind in FOREST_KINDS:
+            for hab in self.habitats:
+                self._cull_kind_on_habitat(kind, hab)
+        for kind in OPEN_KINDS:
+            for hab in self.open_habitats:
+                self._cull_kind_on_habitat(kind, hab)
+
+    def _cull_kind_on_habitat(self, kind: AnimalKind, hab: Habitat) -> None:
+        group = [
+            a for a in self.animals if a.kind == kind and a.patch_id == hab.id
+        ]
+        cap = self._cap_for(kind, hab)
+        if cap <= 0 or not self._breeding_for(kind, hab):
+            for a in group:
+                a.patch_id = None
+                self._clear_mate(a)
+            return
+        while len(group) > cap:
+            victim = group.pop()
+            if victim in self.animals:
+                self._clear_mate(victim)
+                self.animals.remove(victim)
+                self._by_id.pop(victim.id, None)
 
     def _migrate(self) -> None:
         """Mating pairs leave home at most once per year; then roam until spring."""
-        if len(self.habitats) < 2:
-            return
         self._index_animals()
         started: set[int] = set()
         for animal in list(self.animals):
             if animal.id in started or animal.patch_id is None:
                 continue
             if animal.migrate_home_id is not None or animal.migrated_this_year:
+                continue
+            if len(self._habitats_for(animal.kind)) < 2:
                 continue
             mate = self._mate_of(animal)
             if mate is None or mate.id in started:

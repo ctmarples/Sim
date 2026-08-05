@@ -345,6 +345,7 @@ class Inventory:
     bread: int = 0
     stew: int = 0
     fish_stew: int = 0
+    mushroom_stew: int = 0
     grilled_meat: int = 0
     grilled_fish: int = 0
     twine: int = 0
@@ -616,6 +617,7 @@ class HomeStorage:
     bread: int = 0
     stew: int = 0
     fish_stew: int = 0
+    mushroom_stew: int = 0
     grilled_meat: int = 0
     grilled_fish: int = 0
     twine: int = 0
@@ -929,6 +931,11 @@ class FarmField:
 _FORAGE_KEYS = ("mushrooms", "berries", "berry_seeds", "reeds") + PRODUCE_KEYS + SEED_KEYS
 
 
+RECIPE_PRIORITY_MIN = 1
+RECIPE_PRIORITY_MAX = 3
+RECIPE_PRIORITY_DEFAULT = 1
+
+
 @dataclass
 class Building:
     id: int
@@ -972,6 +979,7 @@ class Building:
     bread: int = 0
     stew: int = 0
     fish_stew: int = 0
+    mushroom_stew: int = 0
     grilled_meat: int = 0
     grilled_fish: int = 0
     twine: int = 0
@@ -993,6 +1001,8 @@ class Building:
     # recipe name → enabled; progress steps toward PROCESSOR_RECIPE_STEPS.
     recipe_enabled: dict[str, bool] = field(default_factory=dict)
     recipe_progress: dict[str, int] = field(default_factory=dict)
+    # recipe name → priority 1 (highest) … 3 (lowest). Default 2.
+    recipe_priority: dict[str, int] = field(default_factory=dict)
     areas: list[TaskArea] = field(default_factory=list)
     fields: list[FarmField] = field(default_factory=list)  # legacy; migrated away
     # Standalone Field plot size (origin at x,y) and crop plans.
@@ -1278,13 +1288,36 @@ class Building:
         for recipe in self.known_recipes():
             self.recipe_enabled.setdefault(recipe.name, True)
             self.recipe_progress.setdefault(recipe.name, 0)
+            self.recipe_priority.setdefault(recipe.name, RECIPE_PRIORITY_DEFAULT)
         for recipe in self.split_recipes():
             self.recipe_enabled.setdefault(recipe.name, True)
             self.recipe_progress.setdefault(recipe.name, 0)
+            self.recipe_priority.setdefault(recipe.name, RECIPE_PRIORITY_DEFAULT)
 
     def is_recipe_enabled(self, name: str) -> bool:
         self.ensure_recipe_state()
         return bool(self.recipe_enabled.get(name, True))
+
+    def get_recipe_priority(self, name: str) -> int:
+        self.ensure_recipe_state()
+        p = int(self.recipe_priority.get(name, RECIPE_PRIORITY_DEFAULT))
+        return max(RECIPE_PRIORITY_MIN, min(RECIPE_PRIORITY_MAX, p))
+
+    def set_recipe_priority(self, name: str, priority: int) -> int:
+        self.ensure_recipe_state()
+        if name not in self.recipe_enabled:
+            return RECIPE_PRIORITY_DEFAULT
+        p = max(RECIPE_PRIORITY_MIN, min(RECIPE_PRIORITY_MAX, int(priority)))
+        self.recipe_priority[name] = p
+        return p
+
+    def cycle_recipe_priority(self, name: str) -> int:
+        """Cycle 1 → 2 → 3 → 1. Returns the new priority."""
+        current = self.get_recipe_priority(name)
+        nxt = current + 1
+        if nxt > RECIPE_PRIORITY_MAX:
+            nxt = RECIPE_PRIORITY_MIN
+        return self.set_recipe_priority(name, nxt)
 
     def toggle_recipe(self, name: str) -> bool:
         self.ensure_recipe_state()
@@ -1303,9 +1336,18 @@ class Building:
         if not enabled:
             self.recipe_progress[name] = 0
 
+    def _recipes_by_priority(self, recipes: tuple[Recipe, ...]) -> tuple[Recipe, ...]:
+        """Stable sort: priority 1 first, then 2, then 3."""
+        indexed = list(enumerate(recipes))
+        indexed.sort(key=lambda pair: (self.get_recipe_priority(pair[1].name), pair[0]))
+        return tuple(r for _, r in indexed)
+
     def enabled_recipes(self) -> tuple[Recipe, ...]:
         self.ensure_recipe_state()
-        return tuple(r for r in self.known_recipes() if self.recipe_enabled.get(r.name, True))
+        enabled = tuple(
+            r for r in self.known_recipes() if self.recipe_enabled.get(r.name, True)
+        )
+        return self._recipes_by_priority(enabled)
 
     def recipe_progress_fraction(self, name: str) -> float:
         self.ensure_recipe_state()
@@ -1321,6 +1363,8 @@ class Building:
 
         Prefer recipe gaps over blind top-ups so haulers fetch vegetables when
         meat is already stocked (instead of filling packs with meat first).
+        Also tops up toward ``item_mins`` / recipe reserve so haulers and
+        crafters are not fighting over under-min stock.
         """
         from recipes import input_keys_for_recipes, missing_inputs
 
@@ -1346,19 +1390,25 @@ class Building:
                     want = min(int(need), room)
                     if want > 0:
                         demand[key] = max(demand.get(key, 0), want)
-            for key in input_keys_for_recipes(self.enabled_split_recipes()):
-                target = self.reserve_amount(key)
-                if target <= 0:
-                    continue
-                have = int(getattr(self, key, 0))
-                if have >= target:
-                    continue
-                room = self.space_for_key(key)
-                if room <= 0:
-                    continue
-                want = min(target - have, room)
-                if want > 0:
-                    demand[key] = max(demand.get(key, 0), want)
+        # Top up processor / splitter inputs (and craft inputs like twine) to reserve.
+        top_keys: set[str] = set()
+        if self.is_processor():
+            top_keys.update(self.processor_input_keys())
+        if self.is_splitter():
+            top_keys.update(input_keys_for_recipes(self.enabled_split_recipes()))
+        for key in top_keys:
+            target = self.reserve_amount(key)
+            if target <= 0:
+                continue
+            have = int(getattr(self, key, 0))
+            if have >= target:
+                continue
+            room = self.space_for_key(key)
+            if room <= 0:
+                continue
+            want = min(target - have, room)
+            if want > 0:
+                demand[key] = max(demand.get(key, 0), want)
         if self.kind == BuildingKind.KITCHEN:
             fuel_want = self.fuel_space_left()
             if fuel_want > 0:
@@ -1393,13 +1443,13 @@ class Building:
         return max(int(self.item_mins.get(key, 0)), self.input_keep_amount(key))
 
     def excess_input_amounts(self) -> dict[str, int]:
-        """Input stock beyond recipe needs — haulers should clear this to free room."""
+        """Input stock beyond reserve (mins + recipe buffer) — safe for haulers to clear."""
         excess: dict[str, int] = {}
         if not self.is_processor():
             return excess
         for key in self.processor_input_keys():
             have = int(getattr(self, key, 0))
-            keep = self.input_keep_amount(key)
+            keep = self.reserve_amount(key)
             if have > keep:
                 excess[key] = have - keep
         return excess
@@ -1410,10 +1460,11 @@ class Building:
         if have <= 0:
             return 0
         if self.is_processor():
+            # Outputs and unused inputs still honour item_mins / recipe reserve.
             if key in self.processor_output_keys():
-                return have
+                return max(0, have - self.reserve_amount(key))
             if key in self.unused_input_keys():
-                return have
+                return max(0, have - self.reserve_amount(key))
             return int(self.excess_input_amounts().get(key, 0))
         if key in self.haul_keys():
             return max(0, have - self.reserve_amount(key))
@@ -1580,9 +1631,10 @@ class Building:
 
     def enabled_split_recipes(self) -> tuple[Recipe, ...]:
         self.ensure_recipe_state()
-        return tuple(
+        enabled = tuple(
             r for r in self.split_recipes() if self.recipe_enabled.get(r.name, True)
         )
+        return self._recipes_by_priority(enabled)
 
     def craftable_split_recipe(self) -> Recipe | None:
         recipes = self.enabled_split_recipes()
@@ -2187,3 +2239,18 @@ def entity_draw_xy(entity: object) -> tuple[float, float]:
     elif progress > 1.0:
         progress = 1.0
     return float(fx) + (x - float(fx)) * progress, float(fy) + (y - float(fy)) * progress
+
+
+def ensure_storage_item_fields() -> None:
+    """Ensure Inventory / HomeStorage / Building expose every recipe cargo key.
+
+    Directory-loaded recipes may introduce new output keys; class attrs are
+    created so ``hasattr`` / ``add_item`` / ``PROCESSED_KEYS`` totals work.
+    """
+    for cls in (Inventory, HomeStorage, Building):
+        for key in PROCESSED_KEYS:
+            if not hasattr(cls, key):
+                setattr(cls, key, 0)
+
+
+ensure_storage_item_fields()

@@ -42,7 +42,7 @@ _TREE_SAPLINGS = tuple(
     for t in TREES
 )
 
-RESOURCES: tuple[ResourceDef, ...] = (
+RESOURCES: list[ResourceDef] = [
     ResourceDef("meat", "Meat", "food", "meat"),
     ResourceDef("fish", "Fish", "food", "fish"),
     ResourceDef("berries", "Berries", "food", "berr"),
@@ -70,7 +70,7 @@ RESOURCES: tuple[ResourceDef, ...] = (
     *_TREE_SAPLINGS,
     ResourceDef("berry_seeds", "Berry seeds", "agriculture", "b.sd"),
     *_CROP_SEEDS,
-)
+]
 
 GROUP_ORDER: tuple[str, ...] = ("food", "wares", "agriculture")
 GROUP_LABELS: dict[str, str] = {
@@ -81,6 +81,33 @@ GROUP_LABELS: dict[str, str] = {
 }
 
 RESOURCE_KEYS: tuple[str, ...] = tuple(r.key for r in RESOURCES)
+
+
+def register_resource(
+    key: str,
+    *,
+    label: str,
+    group: str = "food",
+    short: str | None = None,
+) -> None:
+    """Add or replace a catalogue entry (used by recipe JSON loader)."""
+    global RESOURCE_KEYS
+    short_label = short or key[:4]
+    entry = ResourceDef(key, label, group, short_label)
+    for i, existing in enumerate(RESOURCES):
+        if existing.key == key:
+            RESOURCES[i] = entry
+            RESOURCE_KEYS = tuple(r.key for r in RESOURCES)
+            return
+    # Insert foods before wares when possible.
+    insert_at = len(RESOURCES)
+    if group == "food":
+        for i, existing in enumerate(RESOURCES):
+            if existing.group != "food":
+                insert_at = i
+                break
+    RESOURCES.insert(insert_at, entry)
+    RESOURCE_KEYS = tuple(r.key for r in RESOURCES)
 
 
 def resources_by_group() -> list[tuple[str, list[ResourceDef]]]:
@@ -273,6 +300,11 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
             ICON_FISH_STEW,
             {"body": (140, 100, 70), "accent": (64, 128, 176)},
         )
+    if key == "mushroom_stew":
+        return ResourceIconStyle(
+            "mushroom_stew",
+            {"body": (140, 100, 70), "accent": (107, 74, 46)},
+        )
     if key == "grilled_meat":
         # Same marker as raw meat, browned/cooked tint.
         return ResourceIconStyle(ICON_MEAT_MARKER, {"body": (160, 90, 45)})
@@ -304,6 +336,12 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
     crop = CROP_BY_KEY.get(key)
     if crop is not None:
         return _crop_plant_style(crop, dense=True)
+
+    # Drop-in recipe icons: assets/icons/<key>.svg
+    from icons import icons_dir
+
+    if (icons_dir() / f"{key}.svg").is_file():
+        return ResourceIconStyle(key, {})
 
     try:
         return ResourceIconStyle(

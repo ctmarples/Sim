@@ -1,10 +1,11 @@
-"""Central resource balance: yields, drops, spawn rates, and food effects.
+"""Central resource balance: yields, drops, spawn rates, food effects, and wildlife ecology.
 
 Edit amounts and consumption here. Related catalogues (not duplicated):
 - ``resources.py`` — inventory keys / labels / icons
 - ``crops.py`` — per-crop seasons, growth days, colours (uses seed defaults below)
 - ``trees.py`` — per-species wood yield and growth years
 - ``recipes.py`` — mill / kitchen craft input→output ratios
+- ``settings.py`` — tick cadence (animal/fish move & growth intervals)
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ VILLAGER_SATIATION_SECONDS: float = 180.0
 VILLAGER_SATIATION_DECAY_PER_TICK: float = 1.0 / (FPS * VILLAGER_SATIATION_SECONDS)
 
 # Prefer these HomeStorage / inventory food keys when eating.
-VILLAGER_FOOD_KEYS: tuple[str, ...] = (
+VILLAGER_FOOD_KEYS: list[str] = [
     "berries",
     "mushrooms",
     "fish",
@@ -40,7 +41,7 @@ VILLAGER_FOOD_KEYS: tuple[str, ...] = (
     "fish_stew",
     "grilled_meat",
     "grilled_fish",
-)
+]
 
 # 5 meal-points ≈ one full stew-sized meal.
 MEAL_POINTS_FULL: float = 5.0
@@ -60,7 +61,7 @@ class FoodDef:
     hunger_rate: float = 1.0
 
 
-FOODS: tuple[FoodDef, ...] = (
+FOODS: list[FoodDef] = [
     FoodDef("berries", satiation=1.0),
     FoodDef("mushrooms", satiation=1.0),
     FoodDef("onion", satiation=1.0),
@@ -72,20 +73,51 @@ FOODS: tuple[FoodDef, ...] = (
     FoodDef("fish", satiation=MEAL_POINTS_FULL / 3.0, walk_speed=0.8, work_efficiency=0.8),
     FoodDef("grilled_meat", satiation=MEAL_POINTS_FULL / 3.0),
     FoodDef("grilled_fish", satiation=MEAL_POINTS_FULL / 3.0),
+    FoodDef("grilled_mushrooms", satiation=1.5),
     # Bread: solid meal, halves hunger until next meal.
     FoodDef("bread", satiation=2.5, hunger_rate=0.5),
     # Stew: full meal, doubles walk + work.
     FoodDef("stew", satiation=MEAL_POINTS_FULL, walk_speed=2.0, work_efficiency=2.0),
+
     FoodDef(
         "fish_stew",
         satiation=MEAL_POINTS_FULL,
         walk_speed=2.0,
         work_efficiency=2.0,
     ),
-)
+    FoodDef("mushroom_stew", satiation=MEAL_POINTS_FULL, walk_speed=1.5, work_efficiency=1.5),
+]
 
 FOOD_BY_KEY: dict[str, FoodDef] = {f.key: f for f in FOODS}
 _DEFAULT_FOOD = FoodDef("default", satiation=1.0)
+
+
+def register_food(
+    key: str,
+    *,
+    satiation: float,
+    walk_speed: float = 1.0,
+    work_efficiency: float = 1.0,
+    hunger_rate: float = 1.0,
+    edible: bool = True,
+) -> None:
+    """Add or replace a food def (used by recipe JSON loader)."""
+    fx = FoodDef(
+        key,
+        satiation=satiation,
+        walk_speed=walk_speed,
+        work_efficiency=work_efficiency,
+        hunger_rate=hunger_rate,
+    )
+    FOOD_BY_KEY[key] = fx
+    for i, existing in enumerate(FOODS):
+        if existing.key == key:
+            FOODS[i] = fx
+            break
+    else:
+        FOODS.append(fx)
+    if edible and key not in VILLAGER_FOOD_KEYS:
+        VILLAGER_FOOD_KEYS.append(key)
 
 
 def food_def(key: str) -> FoodDef:
@@ -132,6 +164,32 @@ BOAR_MEAT_YIELD: int = 5
 ANIMAL_MEAT_YIELD: int = DEER_MEAT_YIELD  # legacy alias
 FISH_YIELD: int = 2
 
+# ---------------------------------------------------------------------------
+# Wildlife / fish ecology (population, habitats, seeding)
+# ---------------------------------------------------------------------------
+# Patch capacity from breeding-ground size.
+ANIMAL_TREES_PER_CAP: int = 3  # deer: 1 per 3 deer-breeding tiles
+BOAR_CELLS_PER_CAP: int = 6  # boar: 1 per 6 forest/breeding tiles in patch
+BEE_CELLS_PER_CAP: int = 4  # bees: 1 per 4 nest tiles
+RABBIT_CELLS_PER_CAP: int = 3  # rabbits: 1 per 3 meadow nest tiles
+# Forage flood-fill radius from nest (Chebyshev).
+SMALL_GAME_FORAGE_RADIUS: int = 2
+# Usable breeding habitats must hold at least a mating pair.
+MIN_BREEDING_CAPACITY: int = 2
+DEER_CROP_EAT_CHANCE: float = 0.50
+BOAR_CROP_EAT_CHANCE: float = 0.25
+RABBIT_CROP_EAT_CHANCE: float = 0.35
+# Chance per growth tick that a pair starts its once-per-year migration.
+ANIMAL_MIGRATION_CHANCE: float = 0.18
+# Chance a mating pair produces one offspring per growth tick (if under cap).
+ANIMAL_BREED_CHANCE: float = 0.55
+# Initial seed: how many deer / boar breeding grounds to populate, and animals each.
+WILDLIFE_SEED_GROUNDS: int = 4
+WILDLIFE_SEED_COUNT: int = 2
+# Pair seeded onto a random breeding ground when a species is extinct at new year.
+WILDLIFE_RESEED_PAIR: int = 2
+FISH_WATER_PER_CAP: int = 4
+
 BERRY_BUSH_YIELD: int = 5
 BERRY_REGEN_TICKS: int = 2400
 BERRY_SEED_DROP_CHANCE: float = 0.08
@@ -140,13 +198,13 @@ MUSHROOM_YIELD: int = 5  # per mushroom tile foraged
 REED_YIELD: int = 3
 WOOD_BUSH_YIELD: int = 1  # processed wood from bush tiles
 WILD_PRODUCE_YIELD: int = 1  # wild crop / herb produce per harvest
-FARM_PRODUCE_YIELD: int = 3  # farmed crop produce per harvest
+FARM_PRODUCE_YIELD: int = 6  # farmed crop produce per harvest
 
 # Crop seed drops (defaults applied on every CropDef in crops.py).
 WILD_SEED_CHANCE: float = 1.0 / 3.0  # forage: chance of 1 seed
 FARM_SEED_AMOUNTS: tuple[int, ...] = (1, 2, 3)  # farm: always one of these
 HERB_SEED_DROP_CHANCE: float = WILD_SEED_CHANCE  # legacy alias
-FARM_HERB_SEED_DROP_CHANCE: float = 1.0  # farm always rolls farm_seed_amounts
+FARM_HERB_SEED_DROP_CHANCE: tuple[int, ...] = (1, 2, 3)  # farm always rolls farm_seed_amounts
 
 # ---------------------------------------------------------------------------
 # Wild plant presence / spawn timing

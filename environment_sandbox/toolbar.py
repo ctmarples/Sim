@@ -109,10 +109,13 @@ class Toolbar:
         self._buttons.extend(reversed(speed_btns))
 
         self._menu_buttons = [
-            self._make_btn("file_save", "Save…", 8, TOOLBAR_HEIGHT + 4, 100, 24, "menu"),
-            self._make_btn("file_load", "Load…", 8, TOOLBAR_HEIGHT + 30, 100, 24, "menu"),
-            self._make_btn("file_reset", "Reset", 8, TOOLBAR_HEIGHT + 56, 100, 24, "menu"),
-            self._make_btn("file_quit", "Quit", 8, TOOLBAR_HEIGHT + 82, 100, 24, "menu"),
+            self._make_btn("file_save", "Save…", 8, TOOLBAR_HEIGHT + 4, 110, 24, "menu"),
+            self._make_btn("file_load", "Load…", 8, TOOLBAR_HEIGHT + 30, 110, 24, "menu"),
+            self._make_btn(
+                "file_tracker", "Tracker…", 8, TOOLBAR_HEIGHT + 56, 110, 24, "menu"
+            ),
+            self._make_btn("file_reset", "Reset", 8, TOOLBAR_HEIGHT + 82, 110, 24, "menu"),
+            self._make_btn("file_quit", "Quit", 8, TOOLBAR_HEIGHT + 108, 110, 24, "menu"),
         ]
 
     def task_buttons_for(

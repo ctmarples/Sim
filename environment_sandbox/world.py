@@ -1555,6 +1555,16 @@ class World:
         """Connected forest: tree or sapling tiles (8-connected)."""
         return self._connected_patches(set(self.forest_cells()))
 
+    def meadow_patches(self) -> list[list[tuple[int, int]]]:
+        """Connected meadow terrain patches (8-connected)."""
+        cells = {
+            (x, y)
+            for y in range(self.rows)
+            for x in range(self.cols)
+            if self.cells[y][x].terrain == TerrainType.MEADOW
+        }
+        return self._connected_patches(cells)
+
     def water_patches(self) -> list[list[tuple[int, int]]]:
         """Connected components of water cells."""
         return self._connected_patches(set(self.water_cells()))

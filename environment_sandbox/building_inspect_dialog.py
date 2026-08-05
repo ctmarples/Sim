@@ -250,7 +250,7 @@ class BuildingInspectDialog:
             self._moving = True
             self._move_offset = (pos[0] - self._panel_x, pos[1] - self._panel_y)
             return True
-        for action, rect in self._buttons:
+        for action, rect in reversed(self._buttons):
             if rect.collidepoint(pos):
                 self._pending_action = action
                 return True
@@ -347,11 +347,13 @@ class BuildingInspectDialog:
         old_clip = surface.get_clip()
         surface.set_clip(view.clip(old_clip) if old_clip.width else view)
         tip_key: str | None = None
-        for i, recipe in enumerate(recipes):
+        ordered = building._recipes_by_priority(recipes)
+        for i, recipe in enumerate(ordered):
             row_y = y + i * RECIPE_ROW_H - scroll
             if row_y + RECIPE_ROW_H < view.top or row_y > view.bottom:
                 continue
             enabled = building.is_recipe_enabled(recipe.name)
+            priority = building.get_recipe_priority(recipe.name)
             out_key = recipe.display_icon_key()
             out_n = int(next(iter(recipe.outputs.values()))) if recipe.outputs else 1
             out_cell = pygame.Rect(x, row_y, GRID_CELL, GRID_CELL)
@@ -375,8 +377,17 @@ class BuildingInspectDialog:
                 self._inv_tip_hits.append((out_cell, "recipe", out_key))
             if out_hov:
                 tip_key = out_key
+            # Priority chip: click to cycle 1→2→3.
+            prio_cell = pygame.Rect(out_cell.right + 2, row_y + 2, 16, 16)
+            if prio_cell.colliderect(view):
+                self._draw_priority_badge(
+                    surface, prio_cell, priority, enabled=enabled, hovered=(
+                        mouse_pos is not None and prio_cell.collidepoint(mouse_pos)
+                    ),
+                )
+                self._buttons.append((f"cycle_recipe_priority:{recipe.name}", prio_cell))
             if recipe.inputs:
-                ix = out_cell.right + GRID_GAP + 6
+                ix = out_cell.right + GRID_GAP + 20
                 arrow = self.font_small.render("←", True, COLOUR_TEXT_DIM)
                 surface.blit(
                     arrow,
@@ -408,7 +419,7 @@ class BuildingInspectDialog:
                     ix += GRID_CELL + GRID_GAP
             if show_fuel:
                 if ix + GRID_CELL > x + inner_w:
-                    ix = out_cell.right + GRID_GAP + 6
+                    ix = out_cell.right + GRID_GAP + 20
                     arrow2 = self.font_small.render("←", True, COLOUR_TEXT_DIM)
                     surface.blit(
                         arrow2,
@@ -456,6 +467,35 @@ class BuildingInspectDialog:
         surface.set_clip(old_clip)
         self._draw_scrollbar(surface, view, content_h, scroll)
         return view_h + SECTION_GAP, tip_key
+
+    def _draw_priority_badge(
+        self,
+        surface: pygame.Surface,
+        cell: pygame.Rect,
+        priority: int,
+        *,
+        enabled: bool,
+        hovered: bool,
+    ) -> None:
+        """Small clickable 1/2/3 chip (1 = highest priority)."""
+        if priority <= 1:
+            bg = (70, 110, 70) if enabled else (50, 55, 50)
+        elif priority == 2:
+            bg = (70, 80, 95) if enabled else (50, 52, 55)
+        else:
+            bg = (95, 75, 55) if enabled else (55, 50, 48)
+        if hovered:
+            bg = tuple(min(255, c + 25) for c in bg)
+        pygame.draw.rect(surface, bg, cell, border_radius=3)
+        pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, cell, 1, border_radius=3)
+        label = self.font_tiny.render(str(priority), True, COLOUR_TEXT if enabled else COLOUR_TEXT_DIM)
+        surface.blit(
+            label,
+            (
+                cell.centerx - label.get_width() // 2,
+                cell.centery - label.get_height() // 2,
+            ),
+        )
 
     def handle_mousemotion(self, pos: tuple[int, int]) -> bool:
         if not self.open:
@@ -802,7 +842,7 @@ class BuildingInspectDialog:
             scroll = self._register_scroll("gather_recipes", view, content_h, view_h)
             old_clip = surface.get_clip()
             surface.set_clip(view.clip(old_clip) if old_clip.width else view)
-            for i, recipe in enumerate(gather_recipes):
+            for i, recipe in enumerate(building._recipes_by_priority(gather_recipes)):
                 col = i % cols
                 row = i // cols
                 cell = pygame.Rect(
@@ -814,6 +854,7 @@ class BuildingInspectDialog:
                 if not cell.colliderect(view):
                     continue
                 enabled = building.is_recipe_enabled(recipe.name)
+                priority = building.get_recipe_priority(recipe.name)
                 hov = (
                     view.collidepoint(mouse_pos or (-1, -1))
                     and mouse_pos is not None
@@ -831,7 +872,13 @@ class BuildingInspectDialog:
                 )
                 self._buttons.append((f"toggle_recipe:{recipe.name}", cell))
                 self._inv_tip_hits.append((cell, "recipe", recipe.display_icon_key()))
-                if hov:
+                prio_cell = pygame.Rect(cell.right - 14, cell.bottom - 14, 13, 13)
+                prio_hov = mouse_pos is not None and prio_cell.collidepoint(mouse_pos)
+                self._draw_priority_badge(
+                    surface, prio_cell, priority, enabled=enabled, hovered=prio_hov
+                )
+                self._buttons.append((f"cycle_recipe_priority:{recipe.name}", prio_cell))
+                if hov and not prio_hov:
                     tip_key = recipe.display_icon_key()
             surface.set_clip(old_clip)
             self._draw_scrollbar(surface, view, content_h, scroll)
