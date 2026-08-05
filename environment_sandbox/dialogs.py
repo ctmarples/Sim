@@ -19,6 +19,10 @@ from settings import (
     WINDOW_WIDTH,
 )
 
+LIST_ROW_H = 22
+LIST_VIEW_H = 140
+SCROLL_STEP = LIST_ROW_H
+
 
 class FileDialog:
     """Modal Save / Load overlay. Blocks map input while open."""
@@ -30,6 +34,7 @@ class FileDialog:
         self.save_name = "savegame"
         self.load_files: list[str] = []
         self.load_index = 0
+        self.load_scroll = 0
         self._cursor_blink = 0
         self.result_path: Path | None = None
         self.cancelled = False
@@ -49,6 +54,7 @@ class FileDialog:
         self.mode = "load"
         self.load_files = list_save_files()
         self.load_index = 0
+        self.load_scroll = 0
         self.result_path = None
         self.cancelled = False
 
@@ -58,6 +64,29 @@ class FileDialog:
     def _panel_rect(self) -> pygame.Rect:
         w, h = 420, 280
         return pygame.Rect((WINDOW_WIDTH - w) // 2, (WINDOW_HEIGHT - h) // 2, w, h)
+
+    def _list_rect(self, panel: pygame.Rect) -> pygame.Rect:
+        return pygame.Rect(panel.x + 20, panel.y + 72, panel.w - 40, LIST_VIEW_H)
+
+    def _list_content_h(self) -> int:
+        if not self.load_files:
+            return LIST_VIEW_H
+        return max(LIST_VIEW_H, len(self.load_files) * LIST_ROW_H + 8)
+
+    def _clamp_scroll(self) -> None:
+        max_scroll = max(0, self._list_content_h() - LIST_VIEW_H)
+        self.load_scroll = max(0, min(int(self.load_scroll), max_scroll))
+
+    def _ensure_index_visible(self) -> None:
+        if not self.load_files:
+            self.load_scroll = 0
+            return
+        row_y = 4 + self.load_index * LIST_ROW_H
+        if row_y < self.load_scroll:
+            self.load_scroll = row_y
+        elif row_y + LIST_ROW_H > self.load_scroll + LIST_VIEW_H:
+            self.load_scroll = row_y + LIST_ROW_H - LIST_VIEW_H
+        self._clamp_scroll()
 
     def handle_keydown(self, event: pygame.event.Event) -> bool:
         """Return True if the event was consumed."""
@@ -70,6 +99,14 @@ class FileDialog:
         if self.mode == "save":
             return self._save_keydown(event)
         return self._load_keydown(event)
+
+    def handle_mousewheel(self, dy: int) -> bool:
+        """Scroll the load list. Returns True if consumed."""
+        if not self.open or self.mode != "load" or not self.load_files:
+            return self.open
+        self.load_scroll -= dy * SCROLL_STEP
+        self._clamp_scroll()
+        return True
 
     def _save_keydown(self, event: pygame.event.Event) -> bool:
         if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
@@ -93,9 +130,19 @@ class FileDialog:
             return True
         if event.key in (pygame.K_UP, pygame.K_w):
             self.load_index = max(0, self.load_index - 1)
+            self._ensure_index_visible()
             return True
         if event.key in (pygame.K_DOWN, pygame.K_s):
             self.load_index = min(len(self.load_files) - 1, self.load_index + 1)
+            self._ensure_index_visible()
+            return True
+        if event.key == pygame.K_PAGEUP:
+            self.load_index = max(0, self.load_index - 5)
+            self._ensure_index_visible()
+            return True
+        if event.key == pygame.K_PAGEDOWN:
+            self.load_index = min(len(self.load_files) - 1, self.load_index + 5)
+            self._ensure_index_visible()
             return True
         return True
 
@@ -118,14 +165,13 @@ class FileDialog:
                 self.close()
             return True
 
-        # Load list + buttons
-        list_top = panel.y + 56
-        row_h = 22
-        for i, _name in enumerate(self.load_files):
-            row = pygame.Rect(panel.x + 20, list_top + i * row_h, panel.w - 40, row_h)
-            if row.collidepoint(pos):
-                self.load_index = i
-                break
+        list_rect = self._list_rect(panel)
+        if list_rect.collidepoint(pos) and self.load_files:
+            local_y = pos[1] - list_rect.y + self.load_scroll - 4
+            if local_y >= 0:
+                idx = local_y // LIST_ROW_H
+                if 0 <= idx < len(self.load_files):
+                    self.load_index = idx
         load_btn = pygame.Rect(panel.x + 24, panel.bottom - 48, 100, 28)
         cancel_btn = pygame.Rect(panel.x + 136, panel.bottom - 48, 100, 28)
         if load_btn.collidepoint(pos) and self.load_files:
@@ -211,7 +257,7 @@ class FileDialog:
             self.font_small.render(f"Saves in {saves_dir().name}/", True, COLOUR_TEXT_DIM),
             (panel.x + 24, panel.y + 48),
         )
-        list_rect = pygame.Rect(panel.x + 20, panel.y + 72, panel.w - 40, 140)
+        list_rect = self._list_rect(panel)
         pygame.draw.rect(surface, (30, 32, 38), list_rect, border_radius=4)
         pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, list_rect, 1, border_radius=4)
 
@@ -221,16 +267,39 @@ class FileDialog:
                 (list_rect.x + 10, list_rect.y + 12),
             )
         else:
-            row_h = 22
+            self._clamp_scroll()
+            content_h = self._list_content_h()
+            old_clip = surface.get_clip()
+            surface.set_clip(list_rect.clip(old_clip) if old_clip.width else list_rect)
             for i, name in enumerate(self.load_files):
-                y = list_rect.y + 4 + i * row_h
-                if y + row_h > list_rect.bottom:
-                    break
-                row = pygame.Rect(list_rect.x + 4, y, list_rect.w - 8, row_h)
+                y = list_rect.y + 4 + i * LIST_ROW_H - self.load_scroll
+                if y + LIST_ROW_H < list_rect.top or y > list_rect.bottom:
+                    continue
+                row = pygame.Rect(list_rect.x + 4, y, list_rect.w - 8, LIST_ROW_H)
                 if i == self.load_index:
                     pygame.draw.rect(surface, COLOUR_TOOLBAR_BTN_ACTIVE, row, border_radius=3)
                 colour = COLOUR_TEXT if i == self.load_index else COLOUR_TEXT_DIM
-                surface.blit(self.font_small.render(name, True, colour), (row.x + 6, row.y + 4))
+                surface.blit(
+                    self.font_small.render(name, True, colour),
+                    (row.x + 6, row.y + 4),
+                )
+            surface.set_clip(old_clip)
+
+            if content_h > LIST_VIEW_H:
+                track = pygame.Rect(list_rect.right - 6, list_rect.y + 2, 4, list_rect.h - 4)
+                pygame.draw.rect(surface, (40, 42, 48), track, border_radius=2)
+                ratio = LIST_VIEW_H / content_h
+                thumb_h = max(12, int(track.h * ratio))
+                max_scroll = content_h - LIST_VIEW_H
+                thumb_y = track.y + int(
+                    (track.h - thumb_h) * (self.load_scroll / max(1, max_scroll))
+                )
+                pygame.draw.rect(
+                    surface,
+                    (120, 130, 140),
+                    pygame.Rect(track.x, thumb_y, track.w, thumb_h),
+                    border_radius=2,
+                )
 
         self._draw_button(
             surface,

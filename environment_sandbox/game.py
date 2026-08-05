@@ -604,6 +604,7 @@ class Game:
                     self._on_mouse_drag(event.pos)
             elif event.type == pygame.MOUSEWHEEL:
                 if self.file_dialog.open:
+                    self.file_dialog.handle_mousewheel(event.y)
                     continue
                 if self.field_plan_dialog.open and self.field_plan_dialog.contains(
                     pygame.mouse.get_pos()
@@ -2171,6 +2172,23 @@ class Game:
         ny = self.player.y + dy
         if self.world.is_walkable(nx, ny):
             self.player.move_to(nx, ny)
+            self._ensure_player_in_view()
+
+    def _ensure_player_in_view(self, *, margin: float = 2.5) -> None:
+        """Pan the camera when the player reaches the edge of the viewport."""
+        vis_w, vis_h = self.camera.visible_cells()
+        px = self.player.x + 0.5
+        py = self.player.y + 0.5
+        m = max(1.0, float(margin))
+        if px < self.camera.x + m:
+            self.camera.x = px - m
+        elif px > self.camera.x + vis_w - m:
+            self.camera.x = px - (vis_w - m)
+        if py < self.camera.y + m:
+            self.camera.y = py - m
+        elif py > self.camera.y + vis_h - m:
+            self.camera.y = py - (vis_h - m)
+        self.camera.clamp(self.world.cols, self.world.rows)
 
     def _set_overlay(self, mode: OverlayMode) -> None:
         self.overlay_mode = mode
@@ -2211,13 +2229,21 @@ class Game:
 
     def _footprint_blocked(self, cells: list[tuple[int, int]], *, ignore_site_id: int | None = None) -> str | None:
         """Return a status reason if any cell cannot host a structure footprint."""
+        # Herbs/crops are cleared when the footprint is claimed; trees/rocks stay blockers.
+        clearable = {
+            FeatureType.HERB,
+            FeatureType.WILD_CROP,
+            FeatureType.CROP_HERB,
+            FeatureType.REED,
+            FeatureType.MUSHROOM,
+        }
         for x, y in cells:
             cell = self.world.get_cell(x, y)
             if cell is None:
                 return "Footprint leaves the map."
             if cell.terrain not in PLANTABLE_LAND:
                 return "Build on soil, grass, or meadow."
-            if cell.feature != FeatureType.NONE:
+            if cell.feature != FeatureType.NONE and cell.feature not in clearable:
                 return "Cannot place construction site here."
             for building in self.buildings.values():
                 if building.contains_plot(x, y):
@@ -2477,6 +2503,10 @@ class Game:
             FeatureType.KITCHEN,
             FeatureType.CONSTRUCTION_SITE,
             FeatureType.STRUCTURE_PAD,
+            FeatureType.TREE,
+            FeatureType.SAPLING,
+            FeatureType.BERRY_BUSH,
+            FeatureType.ROCK,
         )
         for y in range(y0, y1 + 1):
             for x in range(x0, x1 + 1):
@@ -2485,19 +2515,30 @@ class Game:
                     self._set_status("Field must be entirely on soil, grass, or meadow.")
                     return False
                 if cell.feature in blocked:
-                    self._set_status("Field overlaps a building or construction site.")
+                    self._set_status("Field overlaps a building, tree, or rock.")
                     return False
                 if self._building_at(x, y) is not None or self._construction_at(x, y) is not None:
                     self._set_status("Field overlaps a building or construction site.")
                     return False
-        # Construction marker on top-left; clear natural cover there if needed.
-        origin = self.world.get_cell(x0, y0)
-        assert origin is not None
-        if origin.feature != FeatureType.NONE:
-            origin.feature = FeatureType.NONE
-            origin.deposit = 0
-            origin.growth_ticks = 0
-            origin.crop_kind = None
+                if self._field_plot_covers(x, y):
+                    self._set_status("Field overlaps another field.")
+                    return False
+        # Clear herbs/crops on the plot (trees already blocked above).
+        clearable = {
+            FeatureType.HERB,
+            FeatureType.WILD_CROP,
+            FeatureType.CROP_HERB,
+            FeatureType.REED,
+            FeatureType.MUSHROOM,
+        }
+        for y in range(y0, y1 + 1):
+            for x in range(x0, x1 + 1):
+                cell = self.world.get_cell(x, y)
+                if cell is not None and cell.feature in clearable:
+                    cell.feature = FeatureType.NONE
+                    cell.deposit = 0
+                    cell.growth_ticks = 0
+                    cell.crop_kind = None
         cost_w, cost_r, _ = self._building_cost(BuildingKind.FIELD)
         site = ConstructionSite(
             id=self.next_construction_id,
@@ -2510,7 +2551,6 @@ class Game:
             plot_h=plot_h,
         )
         # No map feature marker — the plot is shown as an outline while building.
-        # (Top-left stays walkable grass/soil; natural cover already cleared above.)
         self.next_construction_id += 1
         self.construction_sites[site.id] = site
         self.world.apply_disturbance(x0, y0)
@@ -2522,6 +2562,23 @@ class Game:
             f"Outline shows the plot; plough each tile before sowing."
         )
         return True
+
+    def _field_plot_covers(self, x: int, y: int) -> bool:
+        """True if an existing Field building or Field construction covers the cell."""
+        for building in self.buildings.values():
+            if building.kind == BuildingKind.FIELD and building.contains_plot(x, y):
+                return True
+        for site in self.construction_sites.values():
+            if site.kind == BuildingKind.FIELD and site.contains_plot(x, y):
+                return True
+        return False
+
+    def _field_drag_overlaps(self, left: int, top: int, right: int, bottom: int) -> bool:
+        for y in range(top, bottom + 1):
+            for x in range(left, right + 1):
+                if self._field_plot_covers(x, y):
+                    return True
+        return False
 
     def _place_construction_site(self, kind: BuildingKind, x: int, y: int) -> bool:
         if kind == BuildingKind.FIELD:
@@ -3011,6 +3068,16 @@ class Game:
                     villager.seeking_food = False
 
             acted = False
+            # Finish an in-progress haul before workplace can reclaim cargo.
+            if (
+                villager.state == VillagerState.HAULING
+                or (
+                    villager.state == VillagerState.DELIVERING
+                    and villager.haul_building_id is not None
+                )
+            ):
+                self._update_hauler(villager)
+                continue
             for priority in villager.priorities:
                 if priority == WorkPriority.NONE:
                     continue
@@ -3197,6 +3264,15 @@ class Game:
     def _workplace_has_work(self, villager: Villager) -> bool:
         building = self.buildings.get(villager.building_id) if villager.building_id else None
         if building is None:
+            return False
+        # Don't steal cargo from an in-progress haul (farm workers at home were
+        # dumping kitchen supplies back into the storehouse every tick).
+        if villager.state == VillagerState.HAULING:
+            return False
+        if (
+            villager.state == VillagerState.DELIVERING
+            and villager.haul_building_id is not None
+        ):
             return False
         # Already committed — do not re-scan the map.
         if villager.state == VillagerState.DELIVERING:
@@ -6423,7 +6499,7 @@ class Game:
         map_clip = pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())
         self.screen.set_clip(map_clip)
 
-        # Field plots: outline only (crop status lives in the plan popup).
+        # Field plots: always outline unploughed fields; selected fields too.
         for field_b in self.buildings.values():
             if field_b.kind != BuildingKind.FIELD:
                 continue
@@ -6444,6 +6520,37 @@ class Game:
                 width=2,
                 fill_alpha=0,
             )
+
+        # While placing a field, show every existing field outline for alignment.
+        if self.place_kind == BuildingKind.FIELD or self._placing_field:
+            for field_b in self.buildings.values():
+                if field_b.kind != BuildingKind.FIELD:
+                    continue
+                left, top, right, bottom = field_b.plot_bounds()
+                self._draw_field_plot_outline(
+                    left,
+                    top,
+                    right,
+                    bottom,
+                    colour=COLOUR_FARM,
+                    width=2,
+                    fill_alpha=18,
+                )
+            for site in self.construction_sites.values():
+                if site.kind != BuildingKind.FIELD:
+                    continue
+                left, top = site.x, site.y
+                right = site.x + max(1, site.plot_w) - 1
+                bottom = site.y + max(1, site.plot_h) - 1
+                self._draw_field_plot_outline(
+                    left,
+                    top,
+                    right,
+                    bottom,
+                    colour=COLOUR_TASK_PREVIEW,
+                    width=2,
+                    fill_alpha=18,
+                )
 
         # Non-field build ghost: 3×3 footprint centred on the hovered cell.
         if (
@@ -6501,8 +6608,10 @@ class Game:
             x1, y1 = self.draw_current
             left, top = min(x0, x1), min(y0, y1)
             right, bottom = max(x0, x1), max(y0, y1)
-            if self._placing_field or self.place_kind == BuildingKind.FIELD:
-                preview = COLOUR_TASK_FARM
+            placing_field = self._placing_field or self.place_kind == BuildingKind.FIELD
+            if placing_field:
+                overlap = self._field_drag_overlaps(left, top, right, bottom)
+                preview = (180, 70, 70) if overlap else COLOUR_TASK_FARM
             elif building is not None:
                 preview = TASK_COLOURS.get(building.draw_task_type, COLOUR_TASK_PREVIEW)
             else:
@@ -6518,16 +6627,28 @@ class Game:
                 top,
                 right,
                 bottom,
-                colour=COLOUR_TASK_PREVIEW,
+                colour=COLOUR_TASK_PREVIEW if not placing_field else preview,
                 width=2,
                 fill_alpha=0,
             )
 
         self.screen.set_clip(None)
 
+    def _field_needs_plough(self, building: Building) -> bool:
+        """True if any plot tile is still unploughed grass/meadow."""
+        for x, y in building.plot_cells():
+            cell = self.world.get_cell(x, y)
+            if cell is None:
+                continue
+            if cell.terrain not in SOIL_LIKE:
+                return True
+        return False
+
     def _draw_field_building(self, building: Building) -> None:
-        """Outline only when selected — otherwise soil/crops alone show the field."""
-        if building.id != self.selected_building_id:
+        """Outline selected fields, and any field that still needs ploughing."""
+        selected = building.id == self.selected_building_id
+        needs_plough = self._field_needs_plough(building)
+        if not selected and not needs_plough:
             return
         left, top, right, bottom = building.plot_bounds()
         self._draw_field_plot_outline(
@@ -6535,8 +6656,8 @@ class Game:
             top,
             right,
             bottom,
-            colour=COLOUR_SELECTED_ENTITY,
-            width=3,
+            colour=COLOUR_SELECTED_ENTITY if selected else COLOUR_FARM,
+            width=3 if selected else 2,
             fill_alpha=0,
         )
 
