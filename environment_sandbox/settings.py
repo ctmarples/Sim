@@ -30,6 +30,10 @@ WINDOW_WIDTH: int = GRID_COLS * CELL_SIZE + PANEL_WIDTH
 WINDOW_HEIGHT: int = MAP_OFFSET_Y + GRID_ROWS * CELL_SIZE
 FPS: int = 60
 SIM_SPEEDS: tuple[int, ...] = (0, 1, 2, 4, 8, 16, 32, 64, 128)
+# In-game ticks per day (at 60 FPS: 480 ≈ 8 s/day at sim ×1). Cycled with [ ] in play.
+# Lower = faster calendar (better for path-traffic testing); villager pacing scales to match.
+TICKS_PER_DAY_OPTIONS: tuple[int, ...] = (30, 60, 120, 240, 480, 960, 1920)
+REFERENCE_TICKS_PER_DAY: int = FPS * 8
 # Native terrain tile size (pre-rendered, then scaled to CELL_SIZE and stitched).
 TERRAIN_SUBDIV: int = 25
 # Terrain fill backend: "procedural" (default MS + noise) or "png" (assets/terrain).
@@ -242,7 +246,14 @@ FISH_GROWTH_INTERVAL: int = 480
 DISTURBANCE_DECAY_PER_TICK: float = 0.002
 DISTURBANCE_INTERACTION_BOOST: float = 0.25
 DISTURBANCE_NEIGHBOUR_SPREAD: float = 0.08
+DISTURBANCE_EXTRACTION_BOOST: float = 0.55
+DISTURBANCE_EXTRACTION_SPREAD: float = 0.14
 DISTURBANCE_MAX: float = 1.0
+# Permanent floors while terrain type is present (no decay on these tiles).
+DISTURBANCE_URBAN_LEVEL: float = 0.85
+DISTURBANCE_PATH_LEVEL: float = 0.45
+# Ecology/farming multiplier at full disturbance (0.25 → 25% effectiveness).
+DISTURBANCE_ACTIVITY_FLOOR: float = 0.25
 
 STATUS_MESSAGE_FRAMES: int = 150
 
@@ -311,6 +322,17 @@ COLOUR_WATER: Colour = (60, 120, 190)
 COLOUR_ICE: Colour = (170, 205, 230)
 COLOUR_ROCK_TERRAIN: Colour = (118, 118, 124)
 COLOUR_ROCK_TERRAIN_DARK: Colour = (95, 95, 102)
+# Packed earth under large building clusters; worn tracks are sandier PATH.
+COLOUR_URBAN: Colour = (145, 128, 108)
+COLOUR_PATH: Colour = (196, 178, 128)
+
+# Villager path-wear → PATH terrain (tracked every step; painted daily).
+PATH_TRAFFIC_STEP: float = 1.0  # added each villager cell-enter
+PATH_TRAFFIC_THRESHOLD: float = 4.0  # wear needed to first paint PATH
+PATH_TRAFFIC_DECAY: float = 0.78  # multiply traffic each env sample (8×/year)
+PATH_TRAFFIC_KEEP: float = 0.75  # PATH stays until wear falls below this
+PATH_TRAFFIC_OVERLAY_MAX: float = 12.0  # wear mapped to 1.0 on traffic overlay
+URBAN_MIN_BUILDINGS: int = 3  # fewer → no urban core; only worn PATH under footprints
 
 COLOUR_TREE_CANOPY: Colour = (34, 120, 45)
 COLOUR_TREE_TRUNK: Colour = (90, 55, 30)
@@ -334,3 +356,5 @@ COLOUR_BIODIVERSITY_LOW: Colour = COLOUR_BIODIVERSITY_1
 COLOUR_BIODIVERSITY_HIGH: Colour = COLOUR_BIODIVERSITY_10
 COLOUR_DISTURBANCE_LOW: Colour = (40, 20, 20)
 COLOUR_DISTURBANCE_HIGH: Colour = (255, 70, 40)
+COLOUR_PATH_TRAFFIC_LOW: Colour = (35, 35, 55)
+COLOUR_PATH_TRAFFIC_HIGH: Colour = (255, 130, 45)

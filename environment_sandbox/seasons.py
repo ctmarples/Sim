@@ -56,11 +56,19 @@ SEASON_SYMBOLS_FANCY: dict[Season, str] = {
 
 DAYS_PER_SEASON: int = 28
 YEAR_DAYS: int = DAYS_PER_SEASON * 4  # 112
-# ~4 seconds of real time per in-game day at simulation ×1.
+# ~4 seconds of real time per in-game day at simulation ×1 (see set_ticks_per_day).
 TICKS_PER_DAY: int = FPS * 8
 
 # Kept for older saves that stored season_timer.
 SEASON_LENGTH_TICKS: int = TICKS_PER_DAY * DAYS_PER_SEASON
+
+
+def set_ticks_per_day(ticks: int) -> int:
+    """Set runtime ticks per day; keeps seasons/crops/villager pacing in sync."""
+    global TICKS_PER_DAY, SEASON_LENGTH_TICKS
+    TICKS_PER_DAY = max(1, int(ticks))
+    SEASON_LENGTH_TICKS = TICKS_PER_DAY * DAYS_PER_SEASON
+    return TICKS_PER_DAY
 
 AUTUMN_SEED_MULTIPLIER: float = 3.0
 

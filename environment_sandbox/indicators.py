@@ -11,6 +11,7 @@ from __future__ import annotations
 from enum import Enum, auto
 from typing import Iterable
 
+from balance_config import active_balance
 from settings import (
     COLOUR_BIODIVERSITY_1,
     COLOUR_BIODIVERSITY_5,
@@ -19,15 +20,20 @@ from settings import (
     COLOUR_DISTURBANCE_LOW,
     COLOUR_DIVERSITY_HIGH,
     COLOUR_DIVERSITY_LOW,
+    COLOUR_PATH_TRAFFIC_HIGH,
+    COLOUR_PATH_TRAFFIC_LOW,
     COLOUR_SPECIES_DIVERSITY_HIGH,
     COLOUR_SPECIES_DIVERSITY_LOW,
     COLOUR_TREE_DENSITY_HIGH,
     COLOUR_TREE_DENSITY_LOW,
-    INDICATOR_RADIUS,
     Colour,
 )
 from trees import TREE_KEYS
 from world import FeatureType, World
+
+
+def _indicator_radius() -> int:
+    return active_balance().get_int("INDICATOR_RADIUS")
 
 # Samples: start + mid of each of 4 seasons.
 BIODIVERSITY_SAMPLES_PER_YEAR: int = 8
@@ -45,6 +51,7 @@ class OverlayMode(Enum):
     BIODIVERSITY = auto()
     FLORAL_RESOURCES = auto()
     POLLINATION = auto()
+    PATH_TRAFFIC = auto()
 
 
 OVERLAY_LABELS: dict[OverlayMode, str] = {
@@ -56,6 +63,7 @@ OVERLAY_LABELS: dict[OverlayMode, str] = {
     OverlayMode.BIODIVERSITY: "Biodiversity",
     OverlayMode.FLORAL_RESOURCES: "Floral resources",
     OverlayMode.POLLINATION: "Pollination",
+    OverlayMode.PATH_TRAFFIC: "Path traffic",
 }
 
 
@@ -68,8 +76,9 @@ def lerp_colour(low: Colour, high: Colour, t: float) -> Colour:
     )
 
 
-def habitat_diversity(world: World, x: int, y: int, radius: int = INDICATOR_RADIUS) -> float:
+def habitat_diversity(world: World, x: int, y: int, radius: int | None = None) -> float:
     """Unique habitat/feature categories in the local neighbourhood, normalised 0–1."""
+    radius = _indicator_radius() if radius is None else radius
     categories: set[str] = set()
     count = 0
     for ny, nx in world.neighbourhood(x, y, radius):
@@ -81,8 +90,9 @@ def habitat_diversity(world: World, x: int, y: int, radius: int = INDICATOR_RADI
     return min(1.0, len(categories) / max_categories)
 
 
-def tree_density(world: World, x: int, y: int, radius: int = INDICATOR_RADIUS) -> float:
+def tree_density(world: World, x: int, y: int, radius: int | None = None) -> float:
     """Proportion of nearby cells that contain a tree or sapling."""
+    radius = _indicator_radius() if radius is None else radius
     total = 0
     trees = 0
     for ny, nx in world.neighbourhood(x, y, radius):
@@ -95,8 +105,9 @@ def tree_density(world: World, x: int, y: int, radius: int = INDICATOR_RADIUS) -
     return trees / total
 
 
-def species_diversity(world: World, x: int, y: int, radius: int = INDICATOR_RADIUS) -> float:
+def species_diversity(world: World, x: int, y: int, radius: int | None = None) -> float:
     """Unique tree species among nearby trees/saplings, normalised 0–1."""
+    radius = _indicator_radius() if radius is None else radius
     species: set[str] = set()
     for ny, nx in world.neighbourhood(x, y, radius):
         cell = world.cells[ny][nx]
@@ -173,12 +184,13 @@ def biodiversity_snapshot(
     fish_positions: Iterable[tuple[int, int]],
     bee_positions: Iterable[tuple[int, int]] = (),
     rabbit_positions: Iterable[tuple[int, int]] = (),
-    radius: int = INDICATOR_RADIUS,
+    radius: int | None = None,
 ) -> list[list[float]]:
     """Spatial richness: unique plant + animal species in each neighbourhood.
 
     Colour scale: 0=red → 5=yellow → 10+=bright green.
     """
+    radius = _indicator_radius() if radius is None else radius
     rows, cols = world.rows, world.cols
     plant: list[list[set[str]]] = [[set() for _ in range(cols)] for _ in range(rows)]
     for y in range(rows):
@@ -219,9 +231,10 @@ def biodiversity_snapshot(
 
 
 def floral_resources_snapshot(
-    world: World, *, radius: int = INDICATOR_RADIUS
+    world: World, *, radius: int | None = None
 ) -> list[list[float]]:
     """Neighbourhood mean floral score (0–1-ish, can exceed 1 with dense flowers)."""
+    radius = _indicator_radius() if radius is None else radius
     rows, cols = world.rows, world.cols
     local = [
         [floral_score_on_cell(world.cells[y][x]) for x in range(cols)]
@@ -312,6 +325,12 @@ def pollination_colour(value: float) -> Colour:
     return lerp_colour((25, 25, 20), (255, 210, 60), t)
 
 
+def path_traffic_colour(value: float) -> Colour:
+    """Villager wear hotspot: cool dim → hot orange."""
+    t = max(0.0, min(1.0, float(value)))
+    return lerp_colour(COLOUR_PATH_TRAFFIC_LOW, COLOUR_PATH_TRAFFIC_HIGH, t)
+
+
 def indicator_value(world: World, mode: OverlayMode, x: int, y: int) -> float:
     if mode == OverlayMode.HABITAT_DIVERSITY:
         return habitat_diversity(world, x, y)
@@ -342,6 +361,8 @@ def overlay_colour(mode: OverlayMode, value: float) -> Colour:
         return floral_colour(value)
     if mode == OverlayMode.POLLINATION:
         return pollination_colour(value)
+    if mode == OverlayMode.PATH_TRAFFIC:
+        return path_traffic_colour(value)
     return (0, 0, 0)
 
 
@@ -352,6 +373,7 @@ def build_overlay_grid(world: World, mode: OverlayMode) -> list[list[float]]:
         OverlayMode.BIODIVERSITY,
         OverlayMode.FLORAL_RESOURCES,
         OverlayMode.POLLINATION,
+        OverlayMode.PATH_TRAFFIC,
     ):
         return [[0.0] * world.cols for _ in range(world.rows)]
     return [

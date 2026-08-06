@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from seasons import TICKS_PER_DAY, YEAR_DAYS
+from seasons import YEAR_DAYS
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,8 @@ class TreeDef:
 
 
 def growth_ticks_for(tree: TreeDef) -> int:
+    from seasons import TICKS_PER_DAY
+
     return max(1, int(round(tree.growth_years * YEAR_DAYS * TICKS_PER_DAY)))
 
 

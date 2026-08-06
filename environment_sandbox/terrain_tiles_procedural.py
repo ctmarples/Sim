@@ -43,10 +43,12 @@ from settings import (
     COLOUR_RIPARIAN,
     COLOUR_ROCK_TERRAIN,
     COLOUR_SOIL,
+    COLOUR_URBAN,
+    COLOUR_PATH,
     COLOUR_WATER,
     TERRAIN_SUBDIV,
 )
-from world import TerrainType
+from world import TerrainType, hardscape_tile_group
 
 TILE = TERRAIN_SUBDIV
 
@@ -60,6 +62,8 @@ _PRIORITY: tuple[TerrainType, ...] = (
     TerrainType.RIPARIAN,
     TerrainType.SOIL,
     TerrainType.FOREST_FLOOR,
+    TerrainType.PATH,
+    TerrainType.URBAN,  # above PATH at shared corners
     TerrainType.ROCK,
     TerrainType.WATER,
 )
@@ -72,6 +76,8 @@ _COLOURS: dict[TerrainType, tuple[int, int, int]] = {
     TerrainType.RIPARIAN: COLOUR_RIPARIAN,
     TerrainType.WATER: COLOUR_WATER,
     TerrainType.ROCK: COLOUR_ROCK_TERRAIN,
+    TerrainType.URBAN: COLOUR_URBAN,
+    TerrainType.PATH: COLOUR_PATH,
 }
 
 CASE_NAMES: dict[int, str] = {
@@ -178,6 +184,16 @@ def _opaque_fill(terrain: TerrainType, lx: int, ly: int) -> tuple[int, int, int]
             c = _shift(c, -0.14)
         elif _hash01(lx, ly, 95) > 0.9:
             c = _shift(c, 0.1)
+    elif terrain == TerrainType.URBAN:
+        if _hash01(lx, ly, 84) > 0.78:
+            c = _shift(c, -0.08)
+        elif _hash01(lx, ly, 85) > 0.88:
+            c = _shift(c, 0.06)
+    elif terrain == TerrainType.PATH:
+        if _hash01(lx, ly, 86) > 0.72:
+            c = _shift(c, 0.08)
+        elif _hash01(lx, ly, 87) > 0.82:
+            c = _shift(c, -0.06)
     elif terrain == TerrainType.WATER:
         if _hash01(lx, ly, 96) > 0.7:
             c = _shift(c, 0.1)
@@ -236,14 +252,14 @@ def corner_type_at(
 ) -> TerrainType:
     """Shared vertex (vx, vy): highest-priority terrain among the 2×2 cells.
 
-    Priority WATER > ROCK > FOREST_FLOOR > SOIL > RIPARIAN > MEADOW > GRASS (no colour averaging). Adjacent cells
-    read the same vertex, so shared edges cannot disagree.
+    Priority WATER > ROCK > URBAN > PATH > FOREST_FLOOR > SOIL > …
+    PATH and URBAN keep distinct colours at transitions.
     """
     types = (
-        terrain_at(vx - 1, vy - 1),
-        terrain_at(vx, vy - 1),
-        terrain_at(vx - 1, vy),
-        terrain_at(vx, vy),
+        hardscape_tile_group(terrain_at(vx - 1, vy - 1)),
+        hardscape_tile_group(terrain_at(vx, vy - 1)),
+        hardscape_tile_group(terrain_at(vx - 1, vy)),
+        hardscape_tile_group(terrain_at(vx, vy)),
     )
     for p in reversed(_PRIORITY):
         if p in types:

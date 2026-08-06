@@ -79,12 +79,20 @@ class TerrainType(Enum):
     RIPARIAN = auto()  # shoreline strip beside water
     WATER = auto()
     ROCK = auto()  # bare rocky ground (distinct from rock resource feature)
+    URBAN = auto()  # packed ground under contiguous building footprints
+    PATH = auto()  # worn sandy tracks from villager journeys
 
 
 # Soil and forest floor share plough / sow / forage behaviour.
 SOIL_LIKE: tuple[TerrainType, ...] = (
     TerrainType.SOIL,
     TerrainType.FOREST_FLOOR,
+)
+
+# Packed / paved ground — walkable, not plantable; URBAN≈PATH for tiling.
+HARDSCAPE: tuple[TerrainType, ...] = (
+    TerrainType.URBAN,
+    TerrainType.PATH,
 )
 
 # Wild forage plants by preferred terrain (farm crops may still grow on fields).
@@ -102,6 +110,18 @@ PLANTABLE_LAND: tuple[TerrainType, ...] = (
     TerrainType.GRASS,
     TerrainType.MEADOW,
 )
+
+# Where new buildings may be placed (densify over urban/path).
+BUILDABLE_LAND: tuple[TerrainType, ...] = (
+    *PLANTABLE_LAND,
+    TerrainType.URBAN,
+    TerrainType.PATH,
+)
+
+
+def hardscape_tile_group(terrain: TerrainType) -> TerrainType:
+    """Identity — PATH and URBAN tile separately (distinct colours)."""
+    return terrain
 
 
 class FeatureType(Enum):
@@ -161,6 +181,29 @@ class Cell:
         if self.feature != FeatureType.NONE:
             return self.feature.name.lower()
         return self.terrain.name.lower()
+
+
+def is_bare_rock(cell: Cell) -> bool:
+    """Rock ground without a collectable rock deposit."""
+    return cell.terrain == TerrainType.ROCK and cell.feature == FeatureType.NONE
+
+
+def hardscape_paintable(cell: Cell) -> bool:
+    """Cells that villager wear / urban may convert (not water, riparian, or deposits)."""
+    if cell.terrain in (TerrainType.WATER, TerrainType.RIPARIAN):
+        return False
+    if cell.feature == FeatureType.ROCK:
+        return False
+    return True
+
+
+def disturbance_activity_multiplier(disturbance: float) -> float:
+    """Ecology/farming effectiveness: 1.0 at zero disturbance, floor at max."""
+    from balance_config import active_balance
+
+    d = max(0.0, min(1.0, float(disturbance)))
+    floor = active_balance().get_float("DISTURBANCE_ACTIVITY_FLOOR")
+    return 1.0 - d * (1.0 - floor)
 
 
 class World:
@@ -796,10 +839,6 @@ class World:
                 cell = self.get_cell(x, y)
                 if cell is None:
                     continue
-                if cell.terrain in (TerrainType.WATER, TerrainType.RIPARIAN, TerrainType.ROCK):
-                    cell.terrain = TerrainType.SOIL
-                elif cell.terrain != TerrainType.SOIL:
-                    cell.terrain = TerrainType.SOIL
                 cell.feature = (
                     centre_feature
                     if (x, y) == (cx, cy)
@@ -810,6 +849,7 @@ class World:
                 cell.crop_kind = None
                 cell.tree_species = None
                 cell.icon_variant = None
+                self.mark_terrain_dirty(x, y)
         return cx, cy
 
     def neighbourhood(self, x: int, y: int, radius: int) -> Iterator[tuple[int, int]]:
@@ -969,6 +1009,8 @@ class World:
 
     def tick_bulk(self, ticks: int, decay_per_tick: float = 0.0, day: float = 0.0) -> None:
         """Apply `ticks` ecology steps at once (for headless fast-forward)."""
+        from balance_config import active_balance
+
         if ticks <= 0:
             return
         grow = trees_grow_factor(day)
@@ -994,8 +1036,15 @@ class World:
                 elif cell.feature == FeatureType.CROP_HERB and cell.growth_ticks > 0:
                     # Farm crops follow the calendar (growth_days), not ecology
                     # grow/freeze envelopes — otherwise they mature outside harvest.
-                    cell.growth_ticks = max(0, cell.growth_ticks - ticks)
-                if decay_per_tick > 0 and cell.disturbance > 0:
+                    grow_mult = disturbance_activity_multiplier(cell.disturbance)
+                    cell.growth_ticks = max(
+                        0, cell.growth_ticks - max(0, int(round(ticks * grow_mult)))
+                    )
+                if cell.terrain == TerrainType.URBAN:
+                    cell.disturbance = active_balance().get_float("DISTURBANCE_URBAN_LEVEL")
+                elif cell.terrain == TerrainType.PATH:
+                    cell.disturbance = active_balance().get_float("DISTURBANCE_PATH_LEVEL")
+                elif decay_per_tick > 0 and cell.disturbance > 0:
                     cell.disturbance = max(0.0, cell.disturbance - decay_per_tick * ticks)
 
         # Seasonal spawn/despawn timers: fire the same number of times as real ticks.
@@ -1070,7 +1119,10 @@ class World:
                     cell.feature == FeatureType.NONE
                     and cell.terrain == TerrainType.RIPARIAN
                     and room(TerrainType.RIPARIAN)
-                    and self._forage_rng.random() < herb_spawn_rate(day, x, y) * 0.55
+                    and self._forage_rng.random()
+                    < herb_spawn_rate(day, x, y)
+                    * 0.55
+                    * disturbance_activity_multiplier(cell.disturbance)
                 ):
                     cell.feature = FeatureType.REED
                     wild_n[TerrainType.RIPARIAN] = wild_n.get(TerrainType.RIPARIAN, 0) + 1
@@ -1078,7 +1130,10 @@ class World:
                     cell.feature == FeatureType.NONE
                     and cell.terrain in WILD_CROPS_BY_TERRAIN
                     and room(cell.terrain)
-                    and self._forage_rng.random() < herb_spawn_rate(day, x, y) * 0.55
+                    and self._forage_rng.random()
+                    < herb_spawn_rate(day, x, y)
+                    * 0.55
+                    * disturbance_activity_multiplier(cell.disturbance)
                 ):
                     crops = WILD_CROPS_BY_TERRAIN[cell.terrain]
                     crop_key = self._forage_rng.choice(crops)
@@ -1141,7 +1196,9 @@ class World:
                 if (
                     cell.feature == FeatureType.NONE
                     and cell.terrain == TerrainType.GRASS
-                    and self._forage_rng.random() < berry_spawn_rate(day, x, y)
+                    and self._forage_rng.random()
+                    < berry_spawn_rate(day, x, y)
+                    * disturbance_activity_multiplier(cell.disturbance)
                 ):
                     cell.feature = FeatureType.BERRY_BUSH
                     cell.deposit = BERRY_BUSH_YIELD
@@ -1175,7 +1232,10 @@ class World:
                     cell.feature == FeatureType.NONE
                     and cell.terrain in SOIL_LIKE
                     and self._forage_rng.random()
-                    < MUSHROOM_SPREAD_CHANCE * mushroom_spawn_rate(day, nx, ny) * 20.0
+                    < MUSHROOM_SPREAD_CHANCE
+                    * mushroom_spawn_rate(day, nx, ny)
+                    * 20.0
+                    * disturbance_activity_multiplier(cell.disturbance)
                 ):
                     cell.feature = FeatureType.MUSHROOM
 
@@ -1190,7 +1250,9 @@ class World:
                     if (
                         cell.feature == FeatureType.NONE
                         and cell.terrain in SOIL_LIKE
-                        and self._forage_rng.random() < mushroom_spawn_rate(day, nx, ny)
+                        and self._forage_rng.random()
+                        < mushroom_spawn_rate(day, nx, ny)
+                        * disturbance_activity_multiplier(cell.disturbance)
                     ):
                         cell.feature = FeatureType.MUSHROOM
 
@@ -1274,6 +1336,11 @@ class World:
             if not candidates:
                 continue
             sx, sy = self._sprout_rng.choice(candidates)
+            sprout_cell = self.cells[sy][sx]
+            if self._sprout_rng.random() > disturbance_activity_multiplier(
+                sprout_cell.disturbance
+            ):
+                continue
             # Inherit a species from the patch when possible.
             species = None
             for ny, nx in self.neighbourhood(sx, sy, radius=2):
@@ -1641,15 +1708,72 @@ class World:
 
     def apply_disturbance(self, x: int, y: int) -> None:
         """Raise disturbance at the target cell and lightly on neighbours."""
+        self._apply_disturbance_at(
+            x,
+            y,
+            boost_key="DISTURBANCE_INTERACTION_BOOST",
+            spread_key="DISTURBANCE_NEIGHBOUR_SPREAD",
+        )
+
+    def apply_extraction_disturbance(self, x: int, y: int) -> None:
+        """Stronger, longer-lasting disturbance from harvest/hunt/farm work."""
+        self._apply_disturbance_at(
+            x,
+            y,
+            boost_key="DISTURBANCE_EXTRACTION_BOOST",
+            spread_key="DISTURBANCE_EXTRACTION_SPREAD",
+        )
+
+    def sync_hardscape_disturbance(self) -> None:
+        """Apply constant urban/path disturbance floors immediately after terrain paint."""
+        from balance_config import active_balance
+
+        bal = active_balance()
+        urban = bal.get_float("DISTURBANCE_URBAN_LEVEL")
+        path = bal.get_float("DISTURBANCE_PATH_LEVEL")
+        for y in range(self.rows):
+            for x in range(self.cols):
+                cell = self.cells[y][x]
+                if cell.terrain == TerrainType.URBAN:
+                    cell.disturbance = urban
+                elif cell.terrain == TerrainType.PATH:
+                    cell.disturbance = path
+
+    def _apply_disturbance_at(
+        self,
+        x: int,
+        y: int,
+        *,
+        boost_key: str,
+        spread_key: str,
+    ) -> None:
+        from balance_config import active_balance
+
+        bal = active_balance()
+        dmax = bal.get_float("DISTURBANCE_MAX")
+        boost = bal.get_float(boost_key)
+        spread = bal.get_float(spread_key)
         cell = self.get_cell(x, y)
         if cell is None:
             return
-        cell.disturbance = min(DISTURBANCE_MAX, cell.disturbance + DISTURBANCE_INTERACTION_BOOST)
+        if cell.terrain == TerrainType.URBAN:
+            cell.disturbance = max(cell.disturbance, bal.get_float("DISTURBANCE_URBAN_LEVEL"))
+            return
+        if cell.terrain == TerrainType.PATH:
+            cell.disturbance = max(cell.disturbance, bal.get_float("DISTURBANCE_PATH_LEVEL"))
+            return
+        cell.disturbance = min(dmax, cell.disturbance + boost)
         for ny, nx in self.neighbourhood(x, y, radius=1):
             if (nx, ny) == (x, y):
                 continue
             ncell = self.cells[ny][nx]
-            ncell.disturbance = min(
-                DISTURBANCE_MAX,
-                ncell.disturbance + DISTURBANCE_NEIGHBOUR_SPREAD,
-            )
+            if ncell.terrain == TerrainType.URBAN:
+                ncell.disturbance = max(
+                    ncell.disturbance, bal.get_float("DISTURBANCE_URBAN_LEVEL")
+                )
+            elif ncell.terrain == TerrainType.PATH:
+                ncell.disturbance = max(
+                    ncell.disturbance, bal.get_float("DISTURBANCE_PATH_LEVEL")
+                )
+            else:
+                ncell.disturbance = min(dmax, ncell.disturbance + spread)

@@ -64,7 +64,7 @@ from settings import (
     FISH_MOVE_INTERVAL,
     RANDOM_SEED,
 )
-from world import FeatureType, TerrainType, World
+from world import FeatureType, TerrainType, World, disturbance_activity_multiplier
 
 
 class AnimalKind(Enum):
@@ -948,7 +948,7 @@ class WildlifeManager:
             self.growth_timer = ANIMAL_GROWTH_INTERVAL
             self._graze(world)
             self._form_mating_pairs()
-            self._breed()
+            self._breed(world)
             self._cull_excess()
             self._migrate()
             self._tick_colonies(world)
@@ -1651,7 +1651,7 @@ class WildlifeManager:
             cx, cy = self.rng.choice(crops)
             self._eat_wild_crop(world, cx, cy)
 
-    def _breed(self) -> None:
+    def _breed(self, world: World) -> None:
         """Mating pairs may produce one offspring in their current patch only."""
         occupied = self._occupied()
         seen: set[frozenset[int]] = set()
@@ -1674,7 +1674,11 @@ class WildlifeManager:
             cap = self._cap_for(animal.kind, hab)
             if self._count_in_patch(animal.kind, hab.id) >= cap:
                 continue
-            if self.rng.random() >= ANIMAL_BREED_CHANCE:
+            cell = world.get_cell(animal.x, animal.y)
+            ecology = (
+                disturbance_activity_multiplier(cell.disturbance) if cell is not None else 1.0
+            )
+            if self.rng.random() >= ANIMAL_BREED_CHANCE * ecology:
                 continue
             self._try_spawn_in_patch(animal.kind, hab, occupied)
 
@@ -1941,7 +1945,11 @@ class WildlifeManager:
         for colony in list(self.colonies):
             if not self._colony_has_food(world, colony):
                 continue
-            if colony.level < COLONY_LEVEL_MAX and self.rng.random() < COLONY_GROW_CHANCE:
+            nest = world.get_cell(colony.x, colony.y)
+            ecology = (
+                disturbance_activity_multiplier(nest.disturbance) if nest is not None else 1.0
+            )
+            if colony.level < COLONY_LEVEL_MAX and self.rng.random() < COLONY_GROW_CHANCE * ecology:
                 colony.level += 1
                 colony.clamp_level()
                 self._sync_colony_members(colony, self._colony_habitat(colony))
@@ -1951,7 +1959,11 @@ class WildlifeManager:
                 continue
             if not self._colony_has_food(world, colony):
                 continue
-            if self.rng.random() >= COLONY_SPLIT_CHANCE:
+            nest = world.get_cell(colony.x, colony.y)
+            ecology = (
+                disturbance_activity_multiplier(nest.disturbance) if nest is not None else 1.0
+            )
+            if self.rng.random() >= COLONY_SPLIT_CHANCE * ecology:
                 continue
             sites = self._empty_colony_sites(colony.kind)
             if not sites:

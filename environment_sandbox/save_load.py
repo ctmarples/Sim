@@ -348,6 +348,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
     ]
     from wildlife import AnimalKind
 
+    from seasons import TICKS_PER_DAY
+
     animals = [
         {
             "id": a.id,
@@ -394,6 +396,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "grid_rows": cfg.GRID_ROWS,
         },
         "sim_speed": game.sim_speed,
+        "ticks_per_day": getattr(game, "ticks_per_day", TICKS_PER_DAY),
         "season": game.season.name,
         "calendar_day": game.calendar_day,
         "day_tick": game.day_tick,
@@ -440,6 +443,10 @@ def serialize_game(game: Game) -> dict[str, Any]:
         payload["field_crop_kind"] = game.field_crop_kind
     if hasattr(game, "resource_history"):
         payload["resource_history"] = game.resource_history.to_dict()
+    if hasattr(game, "_path_traffic") and game._path_traffic:
+        payload["path_traffic"] = [
+            [int(x), int(y), float(w)] for (x, y), w in game._path_traffic.items()
+        ]
     return payload
 
 
@@ -1056,11 +1063,18 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         YEAR_DAYS,
         Season,
         season_for_day,
+        set_ticks_per_day,
     )
+    from settings import TICKS_PER_DAY_OPTIONS
+
+    saved_tpd = int(data.get("ticks_per_day", TICKS_PER_DAY))
+    if saved_tpd not in TICKS_PER_DAY_OPTIONS:
+        saved_tpd = min(TICKS_PER_DAY_OPTIONS, key=lambda x: abs(x - saved_tpd))
+    game.ticks_per_day = set_ticks_per_day(saved_tpd)
 
     if "calendar_day" in data:
         game.calendar_day = int(data["calendar_day"]) % YEAR_DAYS
-        game.day_tick = int(data.get("day_tick", TICKS_PER_DAY))
+        game.day_tick = int(data.get("day_tick", game.ticks_per_day))
     elif "season" in data:
         # Older saves: map season (+ optional timer) onto calendar day.
         try:
@@ -1075,12 +1089,12 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         }[season]
         timer = int(data.get("season_timer", SEASON_LENGTH_TICKS))
         elapsed = max(0, SEASON_LENGTH_TICKS - timer)
-        day_offset = min(DAYS_PER_SEASON - 1, elapsed // max(1, TICKS_PER_DAY))
+        day_offset = min(DAYS_PER_SEASON - 1, elapsed // max(1, game.ticks_per_day))
         game.calendar_day = (base + day_offset) % YEAR_DAYS
-        game.day_tick = TICKS_PER_DAY
+        game.day_tick = game.ticks_per_day
     else:
         game.calendar_day = 0
-        game.day_tick = TICKS_PER_DAY
+        game.day_tick = game.ticks_per_day
 
     # Sanity: season property should match day.
     _ = season_for_day(game.calendar_day)
@@ -1127,6 +1141,20 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         game._biodiversity_samples.clear()
         if hasattr(game, "_sample_biodiversity"):
             game._sample_biodiversity()
+
+    # Villager wear map for PATH painting (optional; older saves omit it).
+    if hasattr(game, "_path_traffic"):
+        game._path_traffic = {}
+        for entry in data.get("path_traffic") or []:
+            if len(entry) < 3:
+                continue
+            x, y, wear = int(entry[0]), int(entry[1]), float(entry[2])
+            if game.world.in_bounds(x, y) and wear > 0:
+                game._path_traffic[(x, y)] = wear
+
+    if hasattr(game, "_refresh_hardscape_terrain"):
+        game._refresh_hardscape_terrain()
+
     if hasattr(game, "_refresh_indicators"):
         game._refresh_indicators()
     else:

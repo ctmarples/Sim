@@ -40,6 +40,7 @@ from settings import (
     COLOUR_GRASS,
     COLOUR_HERB,
     COLOUR_HOME,
+    FPS,
     COLOUR_HOME_ROOF,
     COLOUR_HUNTER,
     COLOUR_ICE,
@@ -61,6 +62,8 @@ from settings import (
     COLOUR_ROCK_FEATURE,
     COLOUR_ROCK_TERRAIN,
     COLOUR_ROCK_TERRAIN_DARK,
+    COLOUR_URBAN,
+    COLOUR_PATH,
     COLOUR_SAPLING,
     COLOUR_SELECTED_ENTITY,
     COLOUR_SOIL,
@@ -381,6 +384,7 @@ class UI:
         overlay_mode: OverlayMode,
         status_message: str,
         sim_speed: int = 1,
+        ticks_per_day: int = 480,
         fish_manager: FishManager | None = None,
         construction_sites: dict[int, ConstructionSite] | None = None,
         assign_workplace_mode: bool = False,
@@ -410,6 +414,14 @@ class UI:
         y = _blit_text(content, self.font_title, "Environment Sandbox", (x, y))
         y = _blit_text(content, self.font_small, "WASD · Enter/E · toolbar build", (x, y), COLOUR_TEXT_DIM)
         y = _blit_text(content, self.font_small, f"Speed x{sim_speed}" if sim_speed else "Paused", (x, y), COLOUR_TEXT_DIM)
+        day_secs = ticks_per_day / max(1, FPS)
+        y = _blit_text(
+            content,
+            self.font_small,
+            f"Day {ticks_per_day}t (~{day_secs:.1f}s) [ ] — lower = faster",
+            (x, y),
+            COLOUR_TEXT_DIM,
+        )
         y = _blit_text(
             content,
             self.font_small,
@@ -689,6 +701,7 @@ class UI:
                 overlay_mode,
                 status_message,
                 sim_speed=sim_speed,
+                ticks_per_day=ticks_per_day,
                 fish_manager=fish_manager,
                 construction_sites=construction_sites,
                 assign_workplace_mode=assign_workplace_mode,
@@ -806,6 +819,8 @@ def terrain_colour(
         TerrainType.RIPARIAN: COLOUR_RIPARIAN,
         TerrainType.WATER: COLOUR_WATER,
         TerrainType.ROCK: COLOUR_ROCK_TERRAIN,
+        TerrainType.URBAN: COLOUR_URBAN,
+        TerrainType.PATH: COLOUR_PATH,
     }[terrain]
     if terrain == TerrainType.WATER and freeze > 0.0:
         base = blend_colour(COLOUR_WATER, COLOUR_ICE, freeze)

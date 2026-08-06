@@ -131,7 +131,6 @@ from settings import (
     COLOUR_TASK_PREVIEW,
     COLOUR_TASK_ROCK,
     COLOUR_VILLAGER,
-    DISTURBANCE_DECAY_PER_TICK,
     FARM_COST_ROCK,
     FARM_COST_WOOD,
     FARM_FIELD_RADIUS,
@@ -169,8 +168,8 @@ from settings import (
     STARTING_ROCK,
     STARTING_WOOD,
     STATUS_MESSAGE_FRAMES,
-    VILLAGER_MOVE_INTERVAL,
-    VILLAGER_WORK_INTERVAL,
+    TICKS_PER_DAY_OPTIONS,
+    REFERENCE_TICKS_PER_DAY,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
     WORLD_COLS,
@@ -179,6 +178,8 @@ from settings import (
     map_view_height,
     map_view_width,
 )
+from balance_config import BalanceState, set_active_balance
+from balance_dialog import BalanceDialog
 from camera import Camera
 from dialogs import FileDialog
 from building_inspect_dialog import BuildingInspectDialog
@@ -204,6 +205,7 @@ from seasons import (
     freeze_amount,
     season_for_day,
     seed_chance_multiplier,
+    set_ticks_per_day,
     terrain_vibrancy,
     water_frozen,
 )
@@ -217,7 +219,16 @@ from terrain_tiles import (
     verify_shared_edges,
 )
 from wildlife import AnimalKind, FishManager, WildlifeManager
-from world import FeatureType, PLANTABLE_LAND, SOIL_LIKE, TerrainType, World
+from world import (
+    BUILDABLE_LAND,
+    FeatureType,
+    PLANTABLE_LAND,
+    SOIL_LIKE,
+    TerrainType,
+    World,
+    hardscape_paintable,
+    is_bare_rock,
+)
 
 
 TASK_COLOURS = {
@@ -289,6 +300,9 @@ class Game:
         self.villager_inspect = VillagerInspectDialog()
         self.resource_inspect = ResourceInspectDialog()
         self.resource_tracker = ResourceTrackerDialog()
+        self.balance_dialog = BalanceDialog()
+        self.balance = BalanceState()
+        set_active_balance(self.balance)
         self.resource_history = ResourceHistory()
 
         self.world = World()
@@ -306,8 +320,10 @@ class Game:
         self.next_construction_id = 1
         self.sim_speed = 1
         self._speed_before_pause = 1
+        self.ticks_per_day = TICKS_PER_DAY
+        set_ticks_per_day(self.ticks_per_day)
         self.calendar_day = 0
-        self.day_tick = TICKS_PER_DAY
+        self.day_tick = self.ticks_per_day
         self._pending_file_action: str | None = None
 
         # Selection / drawing
@@ -335,6 +351,8 @@ class Game:
         self._forage_cell_index: dict[str, list[tuple[int, int]]] | None = None
         self._minimap_terrain: pygame.Surface | None = None
         self._minimap_terrain_key: tuple[int, int, int] | None = None
+        # Villager wear map: cell → cumulative traffic (decayed on env sample).
+        self._path_traffic: dict[tuple[int, int], float] = {}
 
         self._give_starting_resources()
         self._ensure_core_buildings()
@@ -477,6 +495,7 @@ class Game:
             or self.villager_inspect.open
             or self.resource_inspect.open
             or self.resource_tracker.open
+            or self.balance_dialog.open
         ):
             return
         keys = pygame.key.get_pressed()
@@ -502,7 +521,8 @@ class Game:
         self.place_kind = None
         self.field_crop_kind = "sage"
         self.calendar_day = 0
-        self.day_tick = TICKS_PER_DAY
+        self.day_tick = self.ticks_per_day
+        set_ticks_per_day(self.ticks_per_day)
         self.resource_history.reset()
         self.file_dialog.close()
         self.field_plan_dialog.close()
@@ -510,6 +530,7 @@ class Game:
         self.villager_inspect.close()
         self.resource_inspect.close()
         self.resource_tracker.close()
+        self.balance_dialog.close()
         self.drawing = False
         self.draw_start = None
         self.draw_current = None
@@ -602,6 +623,10 @@ class Game:
                     event
                 ):
                     continue
+                if self.balance_dialog.open and self.balance_dialog.handle_keydown(
+                    event
+                ):
+                    continue
                 self._on_keydown(event.key)
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if self.file_dialog.open:
@@ -639,6 +664,11 @@ class Game:
                 ):
                     self.resource_tracker.handle_mousedown(event.pos)
                     continue
+                if self.balance_dialog.open and self.balance_dialog.contains(
+                    event.pos
+                ):
+                    self.balance_dialog.handle_mousedown(event.pos)
+                    continue
                 mx, my = event.pos
                 if mx >= map_view_width() and my >= MAP_OFFSET_Y:
                     if self._handle_panel_click(event.pos):
@@ -669,6 +699,9 @@ class Game:
                 if self.resource_tracker.open and self.resource_tracker._moving:
                     self.resource_tracker.handle_mouseup(event.pos)
                     continue
+                if self.balance_dialog.open:
+                    self.balance_dialog.handle_mouseup(event.pos, self.balance)
+                    continue
                 self._on_mouse_up(event.pos)
             elif event.type == pygame.MOUSEMOTION:
                 if self.file_dialog.open:
@@ -692,6 +725,9 @@ class Game:
                     continue
                 if self.resource_tracker.open and self.resource_tracker._moving:
                     self.resource_tracker.handle_mousemotion(event.pos)
+                    continue
+                if self.balance_dialog.open and self.balance_dialog._moving:
+                    self.balance_dialog.handle_mousemotion(event.pos)
                     continue
                 if self.building_inspect.open:
                     self.building_inspect.handle_mousemotion(event.pos)
@@ -728,6 +764,10 @@ class Game:
                     continue
                 if self.resource_tracker.open and self.resource_tracker.handle_mousewheel(
                     event.y, pygame.mouse.get_pos()
+                ):
+                    continue
+                if self.balance_dialog.open and self.balance_dialog.handle_mousewheel(
+                    event.y
                 ):
                     continue
                 mx, my = pygame.mouse.get_pos()
@@ -786,6 +826,8 @@ class Game:
                 return
             if self.resource_tracker.open:
                 self.resource_tracker.close()
+            if self.balance_dialog.open:
+                self.balance_dialog.close()
                 return
             if (
                 self.selected_building_id is not None
@@ -826,6 +868,12 @@ class Game:
             self._set_overlay(OverlayMode.FLORAL_RESOURCES)
         elif key == pygame.K_8:
             self._set_overlay(OverlayMode.POLLINATION)
+        elif key == pygame.K_9:
+            self._set_overlay(OverlayMode.PATH_TRAFFIC)
+        elif key in (pygame.K_LEFTBRACKET, pygame.K_COMMA):
+            self._cycle_ticks_per_day(-1)
+        elif key in (pygame.K_RIGHTBRACKET, pygame.K_PERIOD):
+            self._cycle_ticks_per_day(1)
         elif key == pygame.K_F6:
             self._toggle_autotile_diagnostic()
         elif key == pygame.K_UP:
@@ -1425,6 +1473,33 @@ class Game:
         else:
             self._set_status(f"Simulation speed x{speed}")
 
+    def _set_ticks_per_day(self, ticks: int) -> None:
+        if ticks not in TICKS_PER_DAY_OPTIONS:
+            return
+        old = max(1, self.ticks_per_day)
+        day_frac = 1.0 - (self.day_tick / old)
+        self.ticks_per_day = set_ticks_per_day(ticks)
+        self.day_tick = max(
+            1, min(self.ticks_per_day, int(round(day_frac * self.ticks_per_day)))
+        )
+        secs = self.ticks_per_day / max(1, FPS)
+        self._set_status(
+            f"Day length: {self.ticks_per_day} ticks (~{secs:.1f}s at ×1) — "
+            f"lower = faster calendar for path testing"
+        )
+
+    def _day_length_scale(self) -> float:
+        """Scale tick-based intervals so villager moves/day stay ~constant."""
+        return self.ticks_per_day / max(1, REFERENCE_TICKS_PER_DAY)
+
+    def _cycle_ticks_per_day(self, delta: int) -> None:
+        opts = TICKS_PER_DAY_OPTIONS
+        try:
+            idx = opts.index(self.ticks_per_day)
+        except ValueError:
+            idx = min(range(len(opts)), key=lambda i: abs(opts[i] - self.ticks_per_day))
+        self._set_ticks_per_day(opts[(idx + delta) % len(opts)])
+
     def _toggle_pause(self) -> None:
         if self.sim_speed == 0:
             restore = getattr(self, "_speed_before_pause", 1) or 1
@@ -1658,6 +1733,9 @@ class Game:
         if is_env_sample_day(self.calendar_day):
             self._sample_environment()
             self._sync_habitat_selection()
+        else:
+            # Paint worn paths every in-game day; decay stays on the 8×/year env sample.
+            self._update_path_terrain(decay_traffic=False)
 
     def _sample_environment(self) -> None:
         """8×/year: refresh habitats/forest floor and stable env production grids."""
@@ -1665,6 +1743,7 @@ class Game:
 
         self.wildlife.refresh_habitats(self.world)
         self.world.update_forest_floor()
+        self._refresh_hardscape_terrain(decay_traffic=True)
         # Seasonal overlays follow the same ≤8/year cadence (not daily).
         self._season_mask_period_key = None
         self._season_check_trees = True
@@ -1729,6 +1808,253 @@ class Game:
         from environment import CROP_HEALTH_MIN
 
         return max(CROP_HEALTH_MIN, min(1.0, float(getattr(field, "crop_health", 1.0))))
+
+    def _record_path_traffic(self, x: int, y: int) -> None:
+        """Accumulate villager wear on a cell (every logical step)."""
+        cell = self.world.get_cell(x, y)
+        if cell is None or not hardscape_paintable(cell):
+            return
+        if cell.feature in BUILDING_FEATURES:
+            return
+        key = (x, y)
+        step = self.balance.get_float("PATH_TRAFFIC_STEP")
+        self._path_traffic[key] = float(self._path_traffic.get(key, 0.0)) + step
+
+    @staticmethod
+    def _cell_buildable(cell) -> bool:
+        """Terrain may host a structure footprint (bare rock ground, not rock deposits)."""
+        if cell.terrain in BUILDABLE_LAND:
+            return True
+        if is_bare_rock(cell):
+            return True
+        return False
+
+    def _field_plot_cells(self) -> set[tuple[int, int]]:
+        cells: set[tuple[int, int]] = set()
+        for building in self.buildings.values():
+            if building.kind == BuildingKind.FIELD:
+                cells.update(building.plot_cells())
+        for site in self.construction_sites.values():
+            if site.kind == BuildingKind.FIELD:
+                cells.update(site.plot_cells())
+        return cells
+
+    def _non_field_footprints(self) -> list[tuple[int, object]]:
+        """Stable id + building/construction for urban clustering."""
+        items: list[tuple[int, object]] = []
+        for building in self.buildings.values():
+            if building.kind != BuildingKind.FIELD:
+                items.append((building.id, building))
+        for site in self.construction_sites.values():
+            if site.kind != BuildingKind.FIELD:
+                items.append((1_000_000 + site.id, site))
+        return items
+
+    @staticmethod
+    def _footprint_sets_touch(a: set[tuple[int, int]], b: set[tuple[int, int]]) -> bool:
+        """Orthogonal adjacency only — diagonal gaps stay separate clusters."""
+        for x, y in a:
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                if (x + dx, y + dy) in b:
+                    return True
+        return False
+
+    @staticmethod
+    def _cardinally_adjacent_to(
+        x: int, y: int, cells: set[tuple[int, int]]
+    ) -> bool:
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            if (x + dx, y + dy) in cells:
+                return True
+        return False
+
+    def _hardscape_candidate(self, x: int, y: int) -> bool:
+        if not self.world.in_bounds(x, y):
+            return False
+        if (x, y) in self._field_plot_cells():
+            return False
+        return hardscape_paintable(self.world.cells[y][x])
+
+    def _revert_hardscape_terrain(self, x: int, y: int) -> TerrainType:
+        if (x, y) in self._field_plot_cells():
+            return TerrainType.SOIL
+        cell = self.world.cells[y][x]
+        if cell.terrain_shade < 0.0:
+            cell.terrain_shade = 0.55
+            return TerrainType.ROCK
+        return TerrainType.GRASS
+
+    def _set_hardscape_terrain(self, x: int, y: int, terrain: TerrainType) -> None:
+        cell = self.world.cells[y][x]
+        if not hardscape_paintable(cell):
+            return
+        if is_bare_rock(cell):
+            cell.terrain_shade = -1.0
+        cell.terrain = terrain
+        self.world.mark_terrain_dirty(x, y)
+
+    def _compute_urban_layout(self) -> set[tuple[int, int]]:
+        """Urban cores (3+ building clusters); 1-cell gaps between clusters fill in."""
+        field_cells = self._field_plot_cells()
+        structures = self._non_field_footprints()
+        if not structures:
+            return set()
+
+        cell_sets = [(sid, set(obj.plot_cells())) for sid, obj in structures]
+        n = len(cell_sets)
+        parent = list(range(n))
+
+        def find(i: int) -> int:
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        def union(i: int, j: int) -> None:
+            ri, rj = find(i), find(j)
+            if ri != rj:
+                parent[rj] = ri
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                if self._footprint_sets_touch(cell_sets[i][1], cell_sets[j][1]):
+                    union(i, j)
+
+        clusters: dict[int, list[int]] = {}
+        for i in range(n):
+            clusters.setdefault(find(i), []).append(i)
+
+        urban_cells: set[tuple[int, int]] = set()
+        cluster_cores: list[tuple[int, set[tuple[int, int]]]] = []
+
+        for members in clusters.values():
+            if len(members) < self.balance.get_int("URBAN_MIN_BUILDINGS"):
+                continue
+            core: set[tuple[int, int]] = set()
+            cluster_id = min(members)
+            for idx in members:
+                core |= cell_sets[idx][1]
+            core -= field_cells
+            if not core:
+                continue
+            urban_cells |= core
+            cluster_cores.append((cluster_id, core))
+
+        if len(cluster_cores) >= 2:
+            for y in range(self.world.rows):
+                for x in range(self.world.cols):
+                    if (x, y) in urban_cells or (x, y) in field_cells:
+                        continue
+                    if not self._hardscape_candidate(x, y):
+                        continue
+                    touching: set[int] = set()
+                    for cluster_id, core in cluster_cores:
+                        if self._cardinally_adjacent_to(x, y, core):
+                            touching.add(cluster_id)
+                    if len(touching) >= 2:
+                        urban_cells.add((x, y))
+
+        return urban_cells
+
+    def _refresh_hardscape_terrain(self, *, decay_traffic: bool = False) -> None:
+        """Recompute urban patches and worn paths."""
+        self._update_urban_terrain()
+        self._update_path_terrain(decay_traffic=decay_traffic)
+        self.world.sync_hardscape_disturbance()
+
+    def _update_urban_terrain(self) -> None:
+        """Paint URBAN for 3+ building clusters; merge 1-cell gaps; protect fields."""
+        urban_cells = self._compute_urban_layout()
+        field_cells = self._field_plot_cells()
+        changed = False
+
+        for x, y in urban_cells:
+            cell = self.world.cells[y][x]
+            if cell.terrain == TerrainType.URBAN:
+                continue
+            if (x, y) in field_cells or not hardscape_paintable(cell):
+                continue
+            self._set_hardscape_terrain(x, y, TerrainType.URBAN)
+            changed = True
+
+        for x, y in field_cells:
+            cell = self.world.cells[y][x]
+            if cell.terrain in (TerrainType.URBAN, TerrainType.PATH):
+                cell.terrain = TerrainType.SOIL
+                self.world.mark_terrain_dirty(x, y)
+                changed = True
+
+        for y in range(self.world.rows):
+            for x in range(self.world.cols):
+                if (x, y) in field_cells:
+                    continue
+                cell = self.world.cells[y][x]
+                if cell.terrain == TerrainType.URBAN and (x, y) not in urban_cells:
+                    wear = float(self._path_traffic.get((x, y), 0.0))
+                    cell.terrain = (
+                        TerrainType.PATH
+                        if wear >= self.balance.get_float("PATH_TRAFFIC_THRESHOLD")
+                        else self._revert_hardscape_terrain(x, y)
+                    )
+                    self.world.mark_terrain_dirty(x, y)
+                    changed = True
+
+        if changed:
+            self.world.terrain_revision += 1
+
+    def _update_path_terrain(self, *, decay_traffic: bool = False) -> None:
+        """Paint PATH from villager wear; sticky until wear drops below KEEP."""
+        urban_cells = self._compute_urban_layout()
+        field_cells = self._field_plot_cells()
+
+        if decay_traffic:
+            decayed: dict[tuple[int, int], float] = {}
+            decay = self.balance.get_float("PATH_TRAFFIC_DECAY")
+            for key, wear in self._path_traffic.items():
+                nxt = float(wear) * decay
+                if nxt >= 0.2:
+                    decayed[key] = nxt
+            self._path_traffic = decayed
+
+        threshold = self.balance.get_float("PATH_TRAFFIC_THRESHOLD")
+        keep = self.balance.get_float("PATH_TRAFFIC_KEEP")
+        changed = False
+        for (x, y), wear in self._path_traffic.items():
+            if (x, y) in urban_cells or (x, y) in field_cells:
+                continue
+            cell = self.world.get_cell(x, y)
+            if cell is None or not hardscape_paintable(cell):
+                continue
+            if cell.terrain == TerrainType.URBAN:
+                continue
+            if wear >= threshold:
+                if cell.terrain != TerrainType.PATH:
+                    self._set_hardscape_terrain(x, y, TerrainType.PATH)
+                    changed = True
+
+        for y in range(self.world.rows):
+            for x in range(self.world.cols):
+                if (x, y) in field_cells or (x, y) in urban_cells:
+                    continue
+                cell = self.world.cells[y][x]
+                if cell.terrain != TerrainType.PATH:
+                    continue
+                wear = float(self._path_traffic.get((x, y), 0.0))
+                if wear < keep:
+                    cell.terrain = self._revert_hardscape_terrain(x, y)
+                    self.world.mark_terrain_dirty(x, y)
+                    changed = True
+
+        if changed:
+            self.world.terrain_revision += 1
+
+    def _path_traffic_overlay_grid(self) -> list[list[float]]:
+        cap = max(1.0, self.balance.get_float("PATH_TRAFFIC_OVERLAY_MAX"))
+        grid = [[0.0] * self.world.cols for _ in range(self.world.rows)]
+        for (x, y), wear in self._path_traffic.items():
+            if self.world.in_bounds(x, y):
+                grid[y][x] = min(1.0, float(wear) / cap)
+        return grid
 
     def _bee_nest_sites(self) -> list[tuple[int, int, int]]:
         """Active bee nests as (x, y, level) for pollination coverage."""
@@ -1850,7 +2176,16 @@ class Game:
         poll = pollination_yield_multiplier(self._farm_pollination_at(x, y))
         field_b = self._field_building_at(x, y)
         health = self._field_crop_health(field_b) if field_b is not None else 1.0
-        return max(1, int(round(FARM_PRODUCE_YIELD * pest * health * poll)))
+        from world import disturbance_activity_multiplier
+
+        cell = self.world.get_cell(x, y)
+        ecology = (
+            disturbance_activity_multiplier(cell.disturbance) if cell is not None else 1.0
+        )
+        return max(
+            1,
+            int(round(FARM_PRODUCE_YIELD * pest * health * poll * ecology)),
+        )
 
     def _farm_produce_yield_budget(self) -> int:
         """Conservative cargo budget for next farm harvest (best-case mults)."""
@@ -1956,6 +2291,8 @@ class Game:
             self.file_dialog.open_load()
         elif action == "file_tracker":
             self.resource_tracker.toggle(self.resource_history)
+        elif action == "file_balance":
+            self.balance_dialog.toggle()
         elif action == "file_reset":
             self.reset()
         elif action == "file_quit":
@@ -1973,6 +2310,10 @@ class Game:
             self._set_building_task(TaskType[action[len("task_") :]])
         elif action.startswith("speed_"):
             self._set_sim_speed(int(action[len("speed_") :]))
+        elif action == "day_slower":
+            self._cycle_ticks_per_day(-1)
+        elif action == "day_faster":
+            self._cycle_ticks_per_day(1)
 
     def _select_building(
         self, building: Building, *, show_player: bool = False
@@ -2696,8 +3037,8 @@ class Game:
             cell = self.world.get_cell(x, y)
             if cell is None:
                 return "Footprint leaves the map."
-            if cell.terrain not in PLANTABLE_LAND:
-                return "Build on soil, grass, or meadow."
+            if not self._cell_buildable(cell):
+                return "Build on soil, grass, meadow, bare rock, urban, or path."
             if cell.feature != FeatureType.NONE and cell.feature not in clearable:
                 return "Cannot place construction site here."
             for building in self.buildings.values():
@@ -3098,6 +3439,7 @@ class Game:
         self.world.claim_structure_footprint(
             ox, oy, plot_w, plot_h, FeatureType.CONSTRUCTION_SITE
         )
+        self._refresh_hardscape_terrain()
         self.world.apply_disturbance(x, y)
         self._refresh_indicators()
         self.place_kind = None
@@ -3170,6 +3512,7 @@ class Game:
             self._wake_all_farm_workers()
         else:
             self._set_status(f"Finished {BUILDING_LABELS[site.kind]} #{building.id}.")
+        self._refresh_hardscape_terrain()
 
     def _try_build(self, kind: BuildingKind, x: int, y: int) -> None:
         # Legacy Enter/E path also places a construction site.
@@ -3237,7 +3580,7 @@ class Game:
                 inventory.add_saplings(1, species=tree.key)
                 self.record_produced(skey, 1)
                 sapling_msg = f" +1 {tree.label.lower()} sapling"
-        self.world.apply_disturbance(x, y)
+        self.world.apply_extraction_disturbance(x, y)
         self._refresh_indicators()
         if status:
             left = self.world.get_cell(x, y)
@@ -3265,7 +3608,7 @@ class Game:
             return False
         inventory.add_rock(taken)
         self.record_produced("rock", taken)
-        self.world.apply_disturbance(x, y)
+        self.world.apply_extraction_disturbance(x, y)
         self._refresh_indicators()
         if status:
             left = self.world.get_cell(x, y)
@@ -3350,7 +3693,7 @@ class Game:
             return False
         inventory.add_mushrooms(MUSHROOM_YIELD)
         self.record_produced("mushrooms", MUSHROOM_YIELD)
-        self.world.apply_disturbance(x, y)
+        self.world.apply_extraction_disturbance(x, y)
         self._refresh_indicators()
         if status:
             self._set_status(
@@ -3373,7 +3716,7 @@ class Game:
             return False
         inventory.add_item("wood", taken)
         self.record_produced("wood", taken)
-        self.world.apply_disturbance(x, y)
+        self.world.apply_extraction_disturbance(x, y)
         self._refresh_indicators()
         if status:
             self._set_status(f"Collected {taken} wood.")
@@ -3396,7 +3739,7 @@ class Game:
             inventory.add_berry_seeds(1)
             self.record_produced("berry_seeds", 1)
             seed_msg = " +1 berry seed"
-        self.world.apply_disturbance(x, y)
+        self.world.apply_extraction_disturbance(x, y)
         self._refresh_indicators()
         if status:
             left = self.world.get_cell(x, y)
@@ -3442,7 +3785,7 @@ class Game:
         if crop_key == "reeds":
             inventory.add_item("reeds", REED_YIELD)
             self.record_produced("reeds", REED_YIELD)
-            self.world.apply_disturbance(x, y)
+            self.world.apply_extraction_disturbance(x, y)
             self._refresh_indicators()
             if status:
                 self._set_status(
@@ -3460,7 +3803,7 @@ class Game:
             inventory.add_item(crop.seed_key, 1)
             self.record_produced(crop.seed_key, 1)
             seed_msg = f" +1 {crop.label.lower()} seed"
-        self.world.apply_disturbance(x, y)
+        self.world.apply_extraction_disturbance(x, y)
         self._refresh_indicators()
         if status:
             self._set_status(
@@ -3518,7 +3861,7 @@ class Game:
         if got > 0:
             self.record_produced(crop.seed_key, got)
             seed_msg = f" +{got} {crop.label.lower()} seed{'s' if got != 1 else ''}"
-        self.world.apply_disturbance(x, y)
+        self.world.apply_extraction_disturbance(x, y)
         self._refresh_indicators()
         if status:
             qty = f" ×{yield_n}" if yield_n != 1 else ""
@@ -3663,7 +4006,7 @@ class Game:
         meat = BOAR_MEAT_YIELD if kind == AnimalKind.BOAR else DEER_MEAT_YIELD
         label = "boar" if kind == AnimalKind.BOAR else "deer"
         self.world.add_meat_deposit(x, y, meat)
-        self.world.apply_disturbance(x, y)
+        self.world.apply_extraction_disturbance(x, y)
         self._refresh_indicators()
         self._set_status(f"Hunted {label}. {meat} meat on ({x}, {y}).")
 
@@ -3701,7 +4044,7 @@ class Game:
             self._set_status("Fish got away.")
             return
         self.world.add_fish_deposit(pos[0], pos[1], FISH_YIELD)
-        self.world.apply_disturbance(pos[0], pos[1])
+        self.world.apply_extraction_disturbance(pos[0], pos[1])
         self._refresh_indicators()
         self._set_status(f"Caught fish. {FISH_YIELD} fish left on shore.")
 
@@ -3884,13 +4227,15 @@ class Game:
         factor = self._satiation_speed_factor(villager) * max(
             0.1, villager.food_walk_mult
         )
-        return max(8, int(round(VILLAGER_MOVE_INTERVAL / factor)))
+        scaled = self.balance.get_int("VILLAGER_MOVE_INTERVAL") * self._day_length_scale()
+        return max(4, int(round(scaled / factor)))
 
     def _villager_work_interval(self, villager: Villager) -> int:
         factor = self._satiation_speed_factor(villager) * max(
             0.1, villager.food_work_mult
         )
-        return max(12, int(round(VILLAGER_WORK_INTERVAL / factor)))
+        scaled = self.balance.get_int("VILLAGER_WORK_INTERVAL") * self._day_length_scale()
+        return max(6, int(round(scaled / factor)))
 
     def _food_count(self, storage) -> int:
         return sum(getattr(storage, key, 0) for key in VILLAGER_FOOD_KEYS)
@@ -5623,7 +5968,7 @@ class Game:
             self._harvest_farm_herb(x, y, inv, status=False)
             if phase == SeasonPhase.HARVEST_PLOUGH_PLANT and allow_plant:
                 self.world.plough_tile(x, y)
-                self.world.apply_disturbance(x, y)
+                self.world.apply_extraction_disturbance(x, y)
                 self._refresh_indicators()
             return
 
@@ -5644,7 +5989,7 @@ class Game:
                 if not building.give_item_to(inv, seed_key):
                     self.home_storage.withdraw_keys_to(inv, (seed_key,))
             if getattr(inv, seed_key, 0) > 0 and self.world.sow_crop(
-                x, y, crop.key, growth_ticks_for(crop, TICKS_PER_DAY)
+                x, y, crop.key, growth_ticks_for(crop, self.ticks_per_day)
             ):
                 setattr(inv, seed_key, getattr(inv, seed_key) - 1)
                 self.record_consumed(seed_key, 1)
@@ -5652,7 +5997,7 @@ class Game:
                 self._refresh_indicators()
             return
         self.world.plough_tile(x, y)
-        self.world.apply_disturbance(x, y)
+        self.world.apply_extraction_disturbance(x, y)
         self._refresh_indicators()
 
     def _update_hunter(self, villager: Villager, building: Building) -> None:
@@ -5719,6 +6064,7 @@ class Game:
                         _kind, amount = result
                         villager.inventory.add_item("meat", amount)
                         self.record_produced("meat", amount)
+                        self.world.apply_extraction_disturbance(colony.x, colony.y)
                         self._refresh_indicators()
                         villager.work_cooldown = self._villager_work_interval(villager)
                         self._force_assigned_delivery(villager, building)
@@ -5751,7 +6097,7 @@ class Game:
                     x, y, kind = result
                     meat = BOAR_MEAT_YIELD if kind == AnimalKind.BOAR else DEER_MEAT_YIELD
                     self.world.add_meat_deposit(x, y, meat)
-                    self.world.apply_disturbance(x, y)
+                    self.world.apply_extraction_disturbance(x, y)
                     self._refresh_indicators()
                     villager.hunt_meat_pos = (x, y)
                     self._register_field_claim(villager, (x, y))
@@ -6996,6 +7342,7 @@ class Game:
                 if result is not None:
                     inv.add_item("honey", result[1])
                     self.record_produced("honey", result[1])
+                    self.world.apply_extraction_disturbance(x, y)
                     villager._return_after_harvest = True  # type: ignore[attr-defined]
                 return
 
@@ -7076,6 +7423,7 @@ class Game:
         step = cache.pop(0)
         interval = self._villager_move_interval(villager)
         note_cell_step(villager, step[0], step[1])
+        self._record_path_traffic(step[0], step[1])
         villager.move_cooldown = interval
         arm_cell_step_visual(villager, interval)
         return True
@@ -7118,6 +7466,9 @@ class Game:
         if self.overlay_mode == OverlayMode.POLLINATION:
             self.overlay_values = [row[:] for row in self.env_maps.pollination]
             return
+        if self.overlay_mode == OverlayMode.PATH_TRAFFIC:
+            self.overlay_values = self._path_traffic_overlay_grid()
+            return
         self.overlay_values = build_overlay_grid(self.world, self.overlay_mode)
 
     def _update_status_timer(self) -> None:
@@ -7130,10 +7481,12 @@ class Game:
         self._invalidate_forage_index()
         self.day_tick -= 1
         if self.day_tick <= 0:
-            self.day_tick = TICKS_PER_DAY
+            self.day_tick = self.ticks_per_day
             self._advance_day()
-        day = float(self.calendar_day) + (1.0 - self.day_tick / TICKS_PER_DAY)
-        self.world.tick(decay_per_tick=DISTURBANCE_DECAY_PER_TICK, day=day)
+        day = float(self.calendar_day) + (1.0 - self.day_tick / self.ticks_per_day)
+        self.world.tick(
+            decay_per_tick=self.balance.get_float("DISTURBANCE_DECAY_PER_TICK"), day=day
+        )
         self._update_villagers()
         self.wildlife.tick(self.world, day)
         self.fish.tick(self.world, day)
@@ -7143,6 +7496,7 @@ class Game:
             OverlayMode.BIODIVERSITY,
             OverlayMode.FLORAL_RESOURCES,
             OverlayMode.POLLINATION,
+            OverlayMode.PATH_TRAFFIC,
         ):
             self._refresh_indicators()
 
@@ -7158,14 +7512,14 @@ class Game:
                 return
             self.world.tick_bulk(
                 eco_pending,
-                decay_per_tick=DISTURBANCE_DECAY_PER_TICK,
+                decay_per_tick=self.balance.get_float("DISTURBANCE_DECAY_PER_TICK"),
                 day=day,
             )
             eco_pending = 0
 
         while remaining > 0:
             skip = self._idle_cooldown_skip(remaining)
-            day = float(self.calendar_day) + (1.0 - self.day_tick / TICKS_PER_DAY)
+            day = float(self.calendar_day) + (1.0 - self.day_tick / self.ticks_per_day)
 
             if skip > 1:
                 flush_eco(day)
@@ -7190,12 +7544,12 @@ class Game:
                     self.day_tick -= step
                     eco_left -= step
                     if self.day_tick <= 0:
-                        self.day_tick = TICKS_PER_DAY
+                        self.day_tick = self.ticks_per_day
                         self._advance_day()
                 day = float(self.calendar_day)
                 self.world.tick_bulk(
                     skip,
-                    decay_per_tick=DISTURBANCE_DECAY_PER_TICK,
+                    decay_per_tick=self.balance.get_float("DISTURBANCE_DECAY_PER_TICK"),
                     day=day,
                 )
                 self.wildlife.tick(self.world, day)
@@ -7209,11 +7563,11 @@ class Game:
             self.day_tick -= 1
             if self.day_tick <= 0:
                 flush_eco(day)
-                self.day_tick = TICKS_PER_DAY
+                self.day_tick = self.ticks_per_day
                 self._advance_day()
                 day = float(self.calendar_day)
             else:
-                day = float(self.calendar_day) + (1.0 - self.day_tick / TICKS_PER_DAY)
+                day = float(self.calendar_day) + (1.0 - self.day_tick / self.ticks_per_day)
 
             eco_pending += 1
             wildlife_pending += 1
@@ -7226,7 +7580,7 @@ class Game:
                 wildlife_pending = 0
             remaining -= 1
 
-        day = float(self.calendar_day) + (1.0 - self.day_tick / TICKS_PER_DAY)
+        day = float(self.calendar_day) + (1.0 - self.day_tick / self.ticks_per_day)
         flush_eco(day)
         if wildlife_pending:
             self.wildlife.tick(self.world, day)
@@ -7248,11 +7602,11 @@ class Game:
     def simulate_fast_day(self) -> None:
         """One in-game day: same rules as live play, no rendering."""
         self.fast_forward = True
-        self._advance_sim_ticks(TICKS_PER_DAY)
+        self._advance_sim_ticks(self.ticks_per_day)
 
     def simulate_fast_days(self, days: int) -> None:
         self.fast_forward = True
-        self._advance_sim_ticks(days * TICKS_PER_DAY)
+        self._advance_sim_ticks(days * self.ticks_per_day)
         self.fast_forward = False
 
     # ------------------------------------------------------------------
@@ -7286,6 +7640,7 @@ class Game:
             self.overlay_mode,
             self.status_message,
             sim_speed=self.sim_speed,
+            ticks_per_day=self.ticks_per_day,
             fish_manager=self.fish,
             construction_sites=self.construction_sites,
             assign_workplace_mode=self.assign_workplace_mode,
@@ -7394,6 +7749,7 @@ class Game:
             stock_now=self._village_stock_amounts(),
             mouse_pos=mouse,
         )
+        self.balance_dialog.draw(self.screen, self.balance, mouse_pos=mouse)
         pygame.display.flip()
 
     def _farm_field_cells(self) -> set[tuple[int, int]]:
@@ -7987,6 +8343,8 @@ class Game:
                         TerrainType.FOREST_FLOOR,
                         TerrainType.RIPARIAN,
                         TerrainType.ROCK,
+                        TerrainType.URBAN,
+                        TerrainType.PATH,
                     }
                 )
             )
@@ -8188,7 +8546,7 @@ class Game:
         speed = max(0, int(self.sim_speed))
         if speed <= 0:
             return False
-        total = max(1, int(TICKS_PER_DAY * self._SEASON_FADE_DAYS))
+        total = max(1, int(self.ticks_per_day * self._SEASON_FADE_DAYS))
         self._season_fade_tick += speed
         t = min(1.0, self._season_fade_tick / total)
         present = int(t * 20)
@@ -8254,7 +8612,7 @@ class Game:
         period = self._season_mask_period(self.calendar_day)
         tree_sig = self._season_tree_sig
         key = (period, self.world.terrain_revision, CELL_SIZE, tree_sig)
-        total = max(1, int(TICKS_PER_DAY * self._SEASON_FADE_DAYS))
+        total = max(1, int(self.ticks_per_day * self._SEASON_FADE_DAYS))
         fading = (
             self._season_fade_to == period
             and self._season_fade_tick < total
@@ -8325,7 +8683,7 @@ class Game:
 
     def _draw_world(self) -> None:
         """Draw tiled terrain under camera, then features for visible cells."""
-        day = float(self.calendar_day) + (1.0 - self.day_tick / TICKS_PER_DAY)
+        day = float(self.calendar_day) + (1.0 - self.day_tick / self.ticks_per_day)
         freeze = freeze_amount(day)
         vibrancy = terrain_vibrancy(day)
         farm_cells = self._farm_field_cells()
@@ -8718,7 +9076,7 @@ class Game:
         from icons import ICON_FISH, blit_icon
 
         freeze = freeze_amount(
-            float(self.calendar_day) + (1.0 - self.day_tick / TICKS_PER_DAY)
+            float(self.calendar_day) + (1.0 - self.day_tick / self.ticks_per_day)
         )
         colour = blend_colour(COLOUR_FISH, (150, 190, 210), freeze)
         size = self.camera.view_cell_px()
