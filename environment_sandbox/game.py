@@ -990,7 +990,12 @@ class Game:
         self._height_sample_cache = None
         self._height_sample_cache_key = None
 
-    def _ensure_height_sample_cache(self, base: pygame.Surface) -> None:
+    def _ensure_height_sample_cache(
+        self,
+        ground: pygame.Surface,
+        *,
+        layer_key: tuple,
+    ) -> None:
         if not self.height_sample_enabled or self.height_sample is None:
             return
         key = (
@@ -1001,15 +1006,61 @@ class Game:
             self.height_sample.width,
             self.height_sample.height,
             id(self.height_sample),
+            layer_key,
         )
         if self._height_sample_cache is not None and self._height_sample_cache_key == key:
             return
         surf, pad = bake_height_sample_surface(
-            self.height_sample, base, cell_size=CELL_SIZE
+            self.height_sample, ground, cell_size=CELL_SIZE
         )
         self._height_sample_cache = surf
         self._height_sample_cache_pad = pad
         self._height_sample_cache_key = key
+
+    def _height_sample_ground_composite(
+        self,
+        base: pygame.Surface,
+        mute: pygame.Surface | None,
+        season_overlay: pygame.Surface | None,
+        ice: pygame.Surface | None,
+    ) -> pygame.Surface:
+        """Sample-footprint ground stack (base + mute + speckles/clusters + ice)."""
+        sample = self.height_sample
+        assert sample is not None
+        area = pygame.Rect(
+            sample.x0 * CELL_SIZE,
+            sample.y0 * CELL_SIZE,
+            sample.width * CELL_SIZE,
+            sample.height * CELL_SIZE,
+        ).clip(base.get_rect())
+        ground = pygame.Surface(
+            (sample.width * CELL_SIZE, sample.height * CELL_SIZE), depth=24
+        )
+        ground.fill((40, 55, 35))
+        if area.w > 0 and area.h > 0:
+            dest = (area.x - sample.x0 * CELL_SIZE, area.y - sample.y0 * CELL_SIZE)
+            ground.blit(base.subsurface(area), dest)
+            if mute is not None:
+                ground.blit(
+                    mute.subsurface(area),
+                    dest,
+                    special_flags=pygame.BLEND_RGB_MULT,
+                )
+            if season_overlay is not None:
+                ov = season_overlay.get_rect().clip(area)
+                if ov.w > 0 and ov.h > 0:
+                    ground.blit(
+                        season_overlay.subsurface(ov),
+                        (ov.x - sample.x0 * CELL_SIZE, ov.y - sample.y0 * CELL_SIZE),
+                    )
+            if ice is not None:
+                ic = ice.get_rect().clip(area)
+                if ic.w > 0 and ic.h > 0:
+                    ground.blit(
+                        ice.subsurface(ic),
+                        (ic.x - sample.x0 * CELL_SIZE, ic.y - sample.y0 * CELL_SIZE),
+                    )
+        return ground
 
     def _height_screen_lift(self, wx: float, wy: float) -> float:
         if not self.height_sample_enabled or self.height_sample is None:
@@ -8893,7 +8944,7 @@ class Game:
         if ice is not None:
             self._blit_camera_world_surface(ice, origin)
 
-        self._draw_height_sample(base)
+        self._draw_height_sample(base, mute, self._season_period_overlay, ice)
 
         x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
         vc = self.camera.view_cell_px()
@@ -9000,7 +9051,13 @@ class Game:
 
         self.screen.set_clip(None)
 
-    def _draw_height_sample(self, base: pygame.Surface) -> None:
+    def _draw_height_sample(
+        self,
+        base: pygame.Surface,
+        mute: pygame.Surface | None = None,
+        season_overlay: pygame.Surface | None = None,
+        ice: pygame.Surface | None = None,
+    ) -> None:
         """Blit a cached warped sample (bake once; cheap pan/zoom)."""
         if not self.height_sample_enabled or self.height_sample is None:
             return
@@ -9009,7 +9066,39 @@ class Game:
         if x1 < sample.x0 or x0 > sample.x1 or y1 < sample.y0 or y0 > sample.y1:
             return
 
-        self._ensure_height_sample_cache(base)
+        total_fade = max(1, int(self.ticks_per_day * self._SEASON_FADE_DAYS))
+        fade_q = None
+        if (
+            self._season_fade_to is not None
+            and self._season_fade_tick < total_fade
+        ):
+            # Coarse buckets so crossfade doesn't rebake every frame.
+            fade_q = round(self._season_fade_tick / total_fade, 1)
+        layer_key = (
+            self._season_mute_key,
+            self._season_mask_period_key,
+            fade_q,
+            self._ice_overlay_key,
+        )
+        cache_key = (
+            self.world.terrain_revision,
+            CELL_SIZE,
+            sample.x0,
+            sample.y0,
+            sample.width,
+            sample.height,
+            id(sample),
+            layer_key,
+        )
+        if (
+            self._height_sample_cache is None
+            or self._height_sample_cache_key != cache_key
+        ):
+            ground = self._height_sample_ground_composite(
+                base, mute, season_overlay, ice
+            )
+            self._ensure_height_sample_cache(ground, layer_key=layer_key)
+
         cache = self._height_sample_cache
         if cache is None:
             return

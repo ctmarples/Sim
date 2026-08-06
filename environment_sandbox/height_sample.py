@@ -14,6 +14,9 @@ from settings import (
     HEIGHT_SAMPLE_H,
     HEIGHT_SAMPLE_LIGHT_NW,
     HEIGHT_SAMPLE_PX,
+    HEIGHT_SAMPLE_SHADE_LIT,
+    HEIGHT_SAMPLE_SHADE_MIX,
+    HEIGHT_SAMPLE_SHADE_SHADOW,
     HEIGHT_SAMPLE_W,
 )
 
@@ -187,7 +190,8 @@ def corner_shade_factor(
     else:
         gy = (hs - hn) * 0.5
     lit = (-gx - gy) * 0.5
-    return max(0.42, min(1.45, 1.0 + lit * strength * 5.5))
+    # Narrow band — tint handles colour; avoid crushed blacks / blown whites.
+    return max(0.72, min(1.22, 1.0 + lit * strength * 4.0))
 
 
 def cell_corner_shades(
@@ -230,10 +234,19 @@ def bake_pad_px() -> int:
 
 
 def _shade_rgb(colour: pygame.Color | tuple, factor: float) -> tuple[int, int, int]:
+    """Soft relief tint: lit → light yellow, shaded → dark brown (no hard B/W)."""
+    r, g, b = int(colour[0]), int(colour[1]), int(colour[2])
+    mix = max(0.0, min(1.0, HEIGHT_SAMPLE_SHADE_MIX))
+    if factor >= 1.0:
+        t = min(1.0, (factor - 1.0) / 0.22) * mix
+        tr, tg, tb = HEIGHT_SAMPLE_SHADE_LIT
+    else:
+        t = min(1.0, (1.0 - factor) / 0.28) * mix
+        tr, tg, tb = HEIGHT_SAMPLE_SHADE_SHADOW
     return (
-        max(0, min(255, int(colour[0] * factor))),
-        max(0, min(255, int(colour[1] * factor))),
-        max(0, min(255, int(colour[2] * factor))),
+        max(0, min(255, int(r + (tr - r) * t))),
+        max(0, min(255, int(g + (tg - g) * t))),
+        max(0, min(255, int(b + (tb - b) * t))),
     )
 
 
@@ -288,37 +301,35 @@ def blit_warped_cell_columns(
 
 def bake_height_sample_surface(
     sample: HeightSample,
-    terrain_base: pygame.Surface,
+    terrain_patch: pygame.Surface,
     *,
     cell_size: int,
 ) -> tuple[pygame.Surface, int]:
-    """Bake warped sample once at native cell size. Returns (surface, top_pad_px)."""
+    """Bake warped sample once at native cell size. Returns (surface, top_pad_px).
+
+    ``terrain_patch`` must cover the sample footprint only:
+    ``(sample.width * cell_size) × (sample.height * cell_size)``, already
+    composited with mute / season flecks / ice as needed.
+    """
     pad = bake_pad_px()
     w = sample.width * cell_size
     h = sample.height * cell_size + pad
     # depth=24: no per-pixel alpha. (Display is often SRCALPHA; alpha-0 RGB
     # blits are invisible and look like a dark wiped box.)
     surf = pygame.Surface((w, h), depth=24)
-    src_x = sample.x0 * cell_size
-    src_y = sample.y0 * cell_size - pad
-    src_rect = pygame.Rect(src_x, src_y, w, h).clip(terrain_base.get_rect())
     surf.fill((40, 55, 35))
-    if src_rect.w > 0 and src_rect.h > 0:
-        dest_x = src_rect.x - src_x
-        dest_y = src_rect.y - src_y
-        piece = terrain_base.subsurface(src_rect)
-        opaque = pygame.Surface(piece.get_size(), depth=24)
-        opaque.blit(piece, (0, 0))
-        surf.blit(opaque, (dest_x, dest_y))
-        if dest_y > 0:
-            top_row = pygame.Rect(src_x, max(0, sample.y0 * cell_size), w, 1).clip(
-                terrain_base.get_rect()
-            )
-            if top_row.w > 0 and top_row.h > 0:
-                row = pygame.Surface(top_row.size, depth=24)
-                row.blit(terrain_base.subsurface(top_row), (0, 0))
-                for yy in range(dest_y):
-                    surf.blit(row, (0, yy))
+    patch = terrain_patch
+    if patch.get_bitsize() != 24:
+        opaque = pygame.Surface(patch.get_size(), depth=24)
+        opaque.blit(patch, (0, 0))
+        patch = opaque
+    # Flat ground under the pad, then warp cells on top.
+    if patch.get_width() >= w and patch.get_height() >= sample.height * cell_size:
+        surf.blit(patch, (0, pad))
+        top_row = pygame.Surface((w, 1), depth=24)
+        top_row.blit(patch, (0, 0), pygame.Rect(0, 0, w, 1))
+        for yy in range(pad):
+            surf.blit(top_row, (0, yy))
 
     for ly in range(sample.height):
         for lx in range(sample.width):
@@ -333,9 +344,9 @@ def bake_height_sample_surface(
                 se * HEIGHT_SAMPLE_PX,
             )
             shades = cell_corner_shades(sample, x, y)
-            src = pygame.Rect(x * cell_size, y * cell_size, cell_size, cell_size)
+            src = pygame.Rect(lx * cell_size, ly * cell_size, cell_size, cell_size)
             try:
-                tile_src = terrain_base.subsurface(src)
+                tile_src = patch.subsurface(src)
             except ValueError:
                 continue
             tile = pygame.Surface(tile_src.get_size(), depth=24)

@@ -266,7 +266,12 @@ HEIGHT_SAMPLE_H: int = 12
 # Peak screen lift in pixels at zoom 1 (scales with view_cell / CELL_SIZE).
 HEIGHT_SAMPLE_PX: float = 30.0
 # Origin is centred on the world at runtime; these are half-sizes only as docs.
-HEIGHT_SAMPLE_LIGHT_NW: float = 0.55  # stronger NW slope shading so relief reads clearly
+HEIGHT_SAMPLE_LIGHT_NW: float = 0.32  # softer NW slope shading (was harsh white/black)
+# Per-pixel shade tint: highlights → light yellow, shadows → dark brown.
+HEIGHT_SAMPLE_SHADE_LIT: tuple[int, int, int] = (255, 232, 175)
+HEIGHT_SAMPLE_SHADE_SHADOW: tuple[int, int, int] = (72, 46, 28)
+# How strongly extreme slopes lean into the tint colours (0..1).
+HEIGHT_SAMPLE_SHADE_MIX: float = 0.48
 
 # ---------------------------------------------------------------------------
 # Colours (RGB)
