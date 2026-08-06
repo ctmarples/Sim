@@ -818,10 +818,12 @@ def terrain_colour(
         TerrainType.MEADOW: COLOUR_MEADOW,
         TerrainType.RIPARIAN: COLOUR_RIPARIAN,
         TerrainType.WATER: COLOUR_WATER,
+        TerrainType.RIVER: COLOUR_WATER,
         TerrainType.ROCK: COLOUR_ROCK_TERRAIN,
         TerrainType.URBAN: COLOUR_URBAN,
         TerrainType.PATH: COLOUR_PATH,
     }[terrain]
+    # Only standing lake water freezes — rivers stay open.
     if terrain == TerrainType.WATER and freeze > 0.0:
         base = blend_colour(COLOUR_WATER, COLOUR_ICE, freeze)
     return adjust_colour(base, vibrancy)
@@ -885,7 +887,7 @@ def _paint_texture(
         if terrain in (TerrainType.SOIL, TerrainType.FOREST_FLOOR)
         else 8
     )
-    if terrain == TerrainType.WATER:
+    if terrain in (TerrainType.WATER, TerrainType.RIVER):
         density = 6
     if terrain == TerrainType.ROCK:
         density = 12

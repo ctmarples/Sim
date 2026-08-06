@@ -171,7 +171,7 @@ from settings import (
     TICKS_PER_DAY_OPTIONS,
     REFERENCE_TICKS_PER_DAY,
     HEIGHT_SAMPLE_ENABLED_DEFAULT,
-    HEIGHT_SAMPLE_PX,
+    HEIGHT_VIEW_MARGIN,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
     WORLD_COLS,
@@ -237,6 +237,7 @@ from world import (
     World,
     hardscape_paintable,
     is_bare_rock,
+    is_water_terrain,
 )
 
 
@@ -319,11 +320,16 @@ class Game:
         self._height_sample_cache: pygame.Surface | None = None
         self._height_sample_cache_pad: int = 0
         self._height_sample_cache_key: tuple | None = None
+        # Sticky baked cell bounds (x0,y0,x1,y1). Rebake only when camera leaves.
+        self._height_cache_bounds: tuple[int, int, int, int] | None = None
 
         self.world = World()
         self.camera = Camera()
         self.height_sample = generate_height_sample(
-            self.world.cols, self.world.rows, seed=self.world.seed
+            self.world.cols,
+            self.world.rows,
+            seed=self.world.seed,
+            corners=self.world.height_corners,
         )
         self.player = Player(x=self.world.start_pos[0], y=self.world.start_pos[1])
         self.camera.center_on(self.player.x, self.player.y, self.world.cols, self.world.rows)
@@ -526,7 +532,10 @@ class Game:
     def reset(self) -> None:
         self.world.reset()
         self.height_sample = generate_height_sample(
-            self.world.cols, self.world.rows, seed=self.world.seed
+            self.world.cols,
+            self.world.rows,
+            seed=self.world.seed,
+            corners=self.world.height_corners,
         )
         self._invalidate_height_sample_cache()
         self.player.reset(self.world.start_pos[0], self.world.start_pos[1])
@@ -969,18 +978,14 @@ class Game:
         self.height_sample_enabled = not self.height_sample_enabled
         if self.height_sample_enabled:
             self.height_sample = generate_height_sample(
-                self.world.cols, self.world.rows, seed=self.world.seed
-            )
-            self._invalidate_height_sample_cache()
-            s = self.height_sample
-            self.camera.center_on(
-                s.x0 + s.width / 2,
-                s.y0 + s.height / 2,
                 self.world.cols,
                 self.world.rows,
+                seed=self.world.seed,
+                corners=self.world.height_corners,
             )
+            self._invalidate_height_sample_cache()
             self._set_status(
-                f"Height warp ON ({s.width}×{s.height} @ {s.x0},{s.y0}) — H to toggle"
+                f"Height warp ON (full map, head={int(self.height_sample.max_height)}) — H to toggle"
             )
         else:
             self._invalidate_height_sample_cache()
@@ -989,78 +994,108 @@ class Game:
     def _invalidate_height_sample_cache(self) -> None:
         self._height_sample_cache = None
         self._height_sample_cache_key = None
+        self._height_cache_bounds = None
 
     def _ensure_height_sample_cache(
         self,
         ground: pygame.Surface,
         *,
         layer_key: tuple,
+        region: HeightSample,
     ) -> None:
         if not self.height_sample_enabled or self.height_sample is None:
             return
         key = (
             self.world.terrain_revision,
             CELL_SIZE,
-            self.height_sample.x0,
-            self.height_sample.y0,
-            self.height_sample.width,
-            self.height_sample.height,
+            region.x0,
+            region.y0,
+            region.width,
+            region.height,
             id(self.height_sample),
+            round(self.height_sample.max_height, 2),
             layer_key,
         )
         if self._height_sample_cache is not None and self._height_sample_cache_key == key:
             return
         surf, pad = bake_height_sample_surface(
-            self.height_sample, ground, cell_size=CELL_SIZE
+            region, ground, cell_size=CELL_SIZE
         )
         self._height_sample_cache = surf
         self._height_sample_cache_pad = pad
         self._height_sample_cache_key = key
+        self._height_cache_bounds = (
+            region.x0,
+            region.y0,
+            region.x1,
+            region.y1,
+        )
 
     def _height_sample_ground_composite(
         self,
         base: pygame.Surface,
-        mute: pygame.Surface | None,
         season_overlay: pygame.Surface | None,
         ice: pygame.Surface | None,
+        *,
+        region: HeightSample,
     ) -> pygame.Surface:
-        """Sample-footprint ground stack (base + mute + speckles/clusters + ice)."""
-        sample = self.height_sample
-        assert sample is not None
+        """Region footprint for warp bake: base + flecks + lake ice.
+
+        Mute is applied after blit so vibrancy drift does not invalidate the cache.
+        Ice uses a coarse freeze bucket in the cache key (see ``_draw_height_sample``).
+        """
         area = pygame.Rect(
-            sample.x0 * CELL_SIZE,
-            sample.y0 * CELL_SIZE,
-            sample.width * CELL_SIZE,
-            sample.height * CELL_SIZE,
+            region.x0 * CELL_SIZE,
+            region.y0 * CELL_SIZE,
+            region.width * CELL_SIZE,
+            region.height * CELL_SIZE,
         ).clip(base.get_rect())
         ground = pygame.Surface(
-            (sample.width * CELL_SIZE, sample.height * CELL_SIZE), depth=24
+            (region.width * CELL_SIZE, region.height * CELL_SIZE), depth=24
         )
         ground.fill((40, 55, 35))
         if area.w > 0 and area.h > 0:
-            dest = (area.x - sample.x0 * CELL_SIZE, area.y - sample.y0 * CELL_SIZE)
+            dest = (area.x - region.x0 * CELL_SIZE, area.y - region.y0 * CELL_SIZE)
             ground.blit(base.subsurface(area), dest)
-            if mute is not None:
-                ground.blit(
-                    mute.subsurface(area),
-                    dest,
-                    special_flags=pygame.BLEND_RGB_MULT,
-                )
             if season_overlay is not None:
                 ov = season_overlay.get_rect().clip(area)
                 if ov.w > 0 and ov.h > 0:
                     ground.blit(
                         season_overlay.subsurface(ov),
-                        (ov.x - sample.x0 * CELL_SIZE, ov.y - sample.y0 * CELL_SIZE),
+                        (ov.x - region.x0 * CELL_SIZE, ov.y - region.y0 * CELL_SIZE),
                     )
             if ice is not None:
                 ic = ice.get_rect().clip(area)
                 if ic.w > 0 and ic.h > 0:
                     ground.blit(
                         ice.subsurface(ic),
-                        (ic.x - sample.x0 * CELL_SIZE, ic.y - sample.y0 * CELL_SIZE),
+                        (ic.x - region.x0 * CELL_SIZE, ic.y - region.y0 * CELL_SIZE),
                     )
         return ground
+
+    def _height_view_region(self) -> HeightSample | None:
+        """Sticky viewport sample: rebake only when the camera leaves the cached bounds."""
+        if self.height_sample is None:
+            return None
+        vx0, vy0, vx1, vy1 = self.camera.visible_range(self.world.cols, self.world.rows)
+        bounds = self._height_cache_bounds
+        if (
+            bounds is not None
+            and self._height_sample_cache is not None
+            and vx0 >= bounds[0]
+            and vy0 >= bounds[1]
+            and vx1 <= bounds[2]
+            and vy1 <= bounds[3]
+        ):
+            return self.height_sample.subregion(*bounds)
+
+        m = HEIGHT_VIEW_MARGIN
+        return self.height_sample.subregion(
+            max(0, vx0 - m),
+            max(0, vy0 - m),
+            min(self.world.cols - 1, vx1 + m),
+            min(self.world.rows - 1, vy1 + m),
+        )
 
     def _height_screen_lift(self, wx: float, wy: float) -> float:
         if not self.height_sample_enabled or self.height_sample is None:
@@ -1069,6 +1104,58 @@ class Game:
         if h <= 0.0:
             return 0.0
         return screen_lift_px(h, self.camera.view_cell(), float(CELL_SIZE))
+
+    def _screen_world_point(self, wx: float, wy: float) -> tuple[int, int]:
+        """Screen pixel for a continuous world cell corner/point, with height lift."""
+        sx, sy = self.camera.world_to_screen(wx, wy)
+        dy = self._height_screen_lift(wx, wy)
+        return sx, sy - int(round(dy))
+
+    def _cell_quad_points(self, x: int, y: int) -> list[tuple[int, int]]:
+        return [
+            self._screen_world_point(x, y),
+            self._screen_world_point(x + 1, y),
+            self._screen_world_point(x + 1, y + 1),
+            self._screen_world_point(x, y + 1),
+        ]
+
+    def _draw_height_quad(
+        self,
+        x: int,
+        y: int,
+        colour: tuple[int, int, int],
+        alpha: int,
+    ) -> None:
+        """Fill a cell as a height-warped quad (for overlays / placement tints)."""
+        pts = self._cell_quad_points(x, y)
+        min_x = min(p[0] for p in pts)
+        min_y = min(p[1] for p in pts)
+        max_x = max(p[0] for p in pts)
+        max_y = max(p[1] for p in pts)
+        w = max(1, max_x - min_x + 1)
+        h = max(1, max_y - min_y + 1)
+        local = [(p[0] - min_x, p[1] - min_y) for p in pts]
+        surf = pygame.Surface((w, h), pygame.SRCALPHA)
+        pygame.draw.polygon(surf, (*colour, alpha), local)
+        self.screen.blit(surf, (min_x, min_y))
+
+    def _plot_outline_points(
+        self, left: int, top: int, right: int, bottom: int
+    ) -> list[tuple[int, int]]:
+        """Perimeter polyline following terrain height along cell edges."""
+        pts: list[tuple[int, int]] = []
+        for x in range(left, right + 1):
+            pts.append(self._screen_world_point(x, top))
+        pts.append(self._screen_world_point(right + 1, top))
+        for y in range(top + 1, bottom + 1):
+            pts.append(self._screen_world_point(right + 1, y))
+        pts.append(self._screen_world_point(right + 1, bottom + 1))
+        for x in range(right, left - 1, -1):
+            pts.append(self._screen_world_point(x, bottom + 1))
+        pts.append(self._screen_world_point(left, bottom + 1))
+        for y in range(bottom, top, -1):
+            pts.append(self._screen_world_point(left, y))
+        return pts
 
     def _flat_cell_rect(self, x: int, y: int) -> pygame.Rect:
         """Screen rect without height lift (for covering baked terrain)."""
@@ -3485,7 +3572,7 @@ class Game:
             self._set_status("Sapling is already growing.")
             return
 
-        if cell.terrain == TerrainType.WATER:
+        if is_water_terrain(cell.terrain):
             if water_frozen(self.calendar_day):
                 self._set_status("Ice — fishing resumes in spring.")
             else:
@@ -6058,7 +6145,7 @@ class Game:
             return False
         if cell.terrain in SOIL_LIKE and cell.feature == FeatureType.NONE:
             return True
-        if cell.terrain not in (TerrainType.WATER, TerrainType.ROCK):
+        if not is_water_terrain(cell.terrain) and cell.terrain != TerrainType.ROCK:
             return True
         return False
 
@@ -6100,7 +6187,7 @@ class Game:
                         ):
                             sow.append((x, y))
                         continue
-                    if cell.terrain not in (TerrainType.WATER, TerrainType.ROCK):
+                    if not is_water_terrain(cell.terrain) and cell.terrain != TerrainType.ROCK:
                         if cell.feature not in (
                             FeatureType.HOME,
                             FeatureType.WORKSTATION,
@@ -6585,7 +6672,7 @@ class Game:
                         return (x, y)
                 for x, y in area.cells():
                     cell = self.world.get_cell(x, y)
-                    if cell is None or cell.terrain != TerrainType.WATER:
+                    if cell is None or not is_water_terrain(cell.terrain):
                         continue
                     for ny, nx in self.world.neighbourhood(x, y, radius=1):
                         if (nx, ny) in claimed:
@@ -7149,7 +7236,7 @@ class Game:
                 if exclude_cells and (x, y) in exclude_cells:
                     continue
                 cell = row[x]
-                if cell.terrain == TerrainType.WATER:
+                if is_water_terrain(cell.terrain):
                     continue
                 if not self._cell_matches_task(
                     cell,
@@ -7352,7 +7439,7 @@ class Game:
             row = cells[y]
             for x in range(self.world.cols):
                 cell = row[x]
-                if cell.terrain == TerrainType.WATER:
+                if is_water_terrain(cell.terrain):
                     continue
                 key = self._forage_key_for_cell(cell)
                 if key is None:
@@ -7380,7 +7467,7 @@ class Game:
             row = cells[y]
             for x in range(self.world.cols):
                 cell = row[x]
-                if cell.terrain == TerrainType.WATER:
+                if is_water_terrain(cell.terrain):
                     continue
                 if not self._cell_matches_forage_plant(
                     cell,
@@ -7419,7 +7506,7 @@ class Game:
                     if exclude_cells and (x, y) in exclude_cells:
                         continue
                     cell = cells[y][x]
-                    if cell.terrain == TerrainType.WATER:
+                    if is_water_terrain(cell.terrain):
                         continue
                     if self._cell_matches_manage_plant(
                         cell, can_plant_sapling=True
@@ -8006,19 +8093,20 @@ class Game:
         fill_alpha: int = 0,
         tint: pygame.Surface | None = None,
     ) -> None:
-        if fill_alpha > 0 and tint is not None:
+        if fill_alpha > 0:
             for y in range(top, bottom + 1):
                 for x in range(left, right + 1):
-                    rect = self._cell_rect(x, y)
-                    # tint surface is map-local (0,0 = map top-left)
-                    local = pygame.Rect(
-                        rect.x, rect.y - MAP_OFFSET_Y, rect.w, rect.h
-                    )
-                    tint.fill((*colour, fill_alpha), local)
-        tl = self.camera.world_to_screen(left, top)
-        br = self.camera.world_to_screen(right + 1, bottom + 1)
-        border = pygame.Rect(tl[0], tl[1], br[0] - tl[0], br[1] - tl[1])
-        pygame.draw.rect(self.screen, colour, border, width)
+                    if tint is not None:
+                        rect = self._cell_rect(x, y)
+                        local = pygame.Rect(
+                            rect.x, rect.y - MAP_OFFSET_Y, rect.w, rect.h
+                        )
+                        tint.fill((*colour, fill_alpha), local)
+                    else:
+                        self._draw_height_quad(x, y, colour, fill_alpha)
+        pts = self._plot_outline_points(left, top, right, bottom)
+        if len(pts) >= 2:
+            pygame.draw.lines(self.screen, colour, True, pts, width)
 
     def _terrain_base_cache_key(self) -> tuple:
         from terrain_tiles import active_fill_mode
@@ -8189,6 +8277,7 @@ class Game:
     def _ensure_ice_overlay(
         self, freeze: float, water_mask: pygame.Surface
     ) -> pygame.Surface | None:
+        """Ice only on standing WATER (lakes). Rivers stay open."""
         bucket = round(freeze, 2)
         if bucket < 0.02:
             return None
@@ -8197,6 +8286,14 @@ class Game:
         ice = pygame.Surface(water_mask.get_size(), pygame.SRCALPHA)
         ice.fill((210, 228, 240, int(min(1.0, bucket) * 200)))
         ice.blit(water_mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        # Strip river cells so only the lake freezes (mask also covers RIVER visuals).
+        for y in range(self.world.rows):
+            for x in range(self.world.cols):
+                if self.world.cells[y][x].terrain == TerrainType.RIVER:
+                    ice.fill(
+                        (0, 0, 0, 0),
+                        pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE),
+                    )
         self._ice_overlay = ice
         self._ice_overlay_key = bucket
         return ice
@@ -8931,20 +9028,29 @@ class Game:
         self.screen.set_clip(map_clip)
 
         origin = (0, MAP_OFFSET_Y)
-        self._blit_camera_world_surface(base, origin)
         mute = self._ensure_season_mute(vibrancy)
-        if mute is not None:
-            self._blit_camera_world_surface(
-                mute, origin, special_flags=pygame.BLEND_RGB_MULT
-            )
         self._refresh_season_masks(grass_mask, soil_mask, water_mask)
-        if self._season_period_overlay is not None:
-            self._blit_camera_world_surface(self._season_period_overlay, origin)
         ice = self._ensure_ice_overlay(freeze, water_mask)
-        if ice is not None:
-            self._blit_camera_world_surface(ice, origin)
 
-        self._draw_height_sample(base, mute, self._season_period_overlay, ice)
+        if self.height_sample_enabled and self.height_sample is not None:
+            # Height path composites stable layers into the bake — skip flat blits.
+            self.screen.fill(COLOUR_BG, map_clip)
+            self._draw_height_sample(base, self._season_period_overlay, ice)
+            # Mute stays out of the bake so vibrancy drift does not rebake.
+            if mute is not None:
+                self._blit_camera_world_surface(
+                    mute, origin, special_flags=pygame.BLEND_RGB_MULT
+                )
+        else:
+            self._blit_camera_world_surface(base, origin)
+            if mute is not None:
+                self._blit_camera_world_surface(
+                    mute, origin, special_flags=pygame.BLEND_RGB_MULT
+                )
+            if self._season_period_overlay is not None:
+                self._blit_camera_world_surface(self._season_period_overlay, origin)
+            if ice is not None:
+                self._blit_camera_world_surface(ice, origin)
 
         x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
         vc = self.camera.view_cell_px()
@@ -9054,40 +9160,28 @@ class Game:
     def _draw_height_sample(
         self,
         base: pygame.Surface,
-        mute: pygame.Surface | None = None,
         season_overlay: pygame.Surface | None = None,
         ice: pygame.Surface | None = None,
     ) -> None:
-        """Blit a cached warped sample (bake once; cheap pan/zoom)."""
+        """Blit a cached warped viewport of the full-map heightfield."""
         if not self.height_sample_enabled or self.height_sample is None:
             return
-        sample = self.height_sample
-        x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
-        if x1 < sample.x0 or x0 > sample.x1 or y1 < sample.y0 or y0 > sample.y1:
+        region = self._height_view_region()
+        if region is None or region.width <= 0 or region.height <= 0:
             return
 
-        total_fade = max(1, int(self.ticks_per_day * self._SEASON_FADE_DAYS))
-        fade_q = None
-        if (
-            self._season_fade_to is not None
-            and self._season_fade_tick < total_fade
-        ):
-            # Coarse buckets so crossfade doesn't rebake every frame.
-            fade_q = round(self._season_fade_tick / total_fade, 1)
-        layer_key = (
-            self._season_mute_key,
-            self._season_mask_period_key,
-            fade_q,
-            self._ice_overlay_key,
-        )
+        # Coarse ice bucket (~0.1) so freeze drift does not stutter every frame.
+        ice_bucket = None if ice is None else round(float(self._ice_overlay_key or 0.0), 1)
+        layer_key = (self._season_mask_period_key, ice_bucket)
         cache_key = (
             self.world.terrain_revision,
             CELL_SIZE,
-            sample.x0,
-            sample.y0,
-            sample.width,
-            sample.height,
-            id(sample),
+            region.x0,
+            region.y0,
+            region.width,
+            region.height,
+            id(self.height_sample),
+            round(self.height_sample.max_height, 2),
             layer_key,
         )
         if (
@@ -9095,9 +9189,11 @@ class Game:
             or self._height_sample_cache_key != cache_key
         ):
             ground = self._height_sample_ground_composite(
-                base, mute, season_overlay, ice
+                base, season_overlay, ice, region=region
             )
-            self._ensure_height_sample_cache(ground, layer_key=layer_key)
+            self._ensure_height_sample_cache(
+                ground, layer_key=layer_key, region=region
+            )
 
         cache = self._height_sample_cache
         if cache is None:
@@ -9105,10 +9201,12 @@ class Game:
         pad = self._height_sample_cache_pad
         zoom = self.camera.view_cell() / CELL_SIZE
 
-        # Wipe only the flat sample footprint (not lift headroom above) so raised
-        # terrain composites over the real map instead of a black strip.
-        tl = self.camera.world_to_screen(sample.x0, sample.y0)
-        br = self.camera.world_to_screen(sample.x1 + 1, sample.y1 + 1)
+        # Wipe the visible flat footprint so warped terrain replaces it.
+        vx0, vy0, vx1, vy1 = self.camera.visible_range(
+            self.world.cols, self.world.rows
+        )
+        tl = self.camera.world_to_screen(vx0, vy0)
+        br = self.camera.world_to_screen(vx1 + 1, vy1 + 1)
         wipe = pygame.Rect(
             tl[0],
             tl[1],
@@ -9119,10 +9217,9 @@ class Game:
         if wipe.w > 0 and wipe.h > 0:
             self.screen.fill(COLOUR_BG, wipe)
 
-        # Cache is authored in world-pixel space with top padding for lifts.
-        # Cache (0, pad) == world (sample.x0 * CELL_SIZE, sample.y0 * CELL_SIZE).
-        world_ox = sample.x0 * CELL_SIZE
-        world_oy = sample.y0 * CELL_SIZE - pad
+        # Cache (0, pad) == world (region.x0 * CELL_SIZE, region.y0 * CELL_SIZE).
+        world_ox = region.x0 * CELL_SIZE
+        world_oy = region.y0 * CELL_SIZE - pad
         mw = map_view_width()
         mh = map_view_height()
         sx = self.camera.x * CELL_SIZE - world_ox
@@ -9138,7 +9235,6 @@ class Game:
             cache.subsurface(src),
             (max(1, int(round(src.w * zoom))), max(1, int(round(src.h * zoom)))),
         )
-        # Keep opaque: display surfaces are often SRCALPHA; alpha-0 RGB is invisible.
         if scaled.get_bitsize() != 24 and scaled.get_flags() & pygame.SRCALPHA:
             opaque = pygame.Surface(scaled.get_size(), depth=24)
             opaque.blit(scaled, (0, 0))
@@ -9175,10 +9271,7 @@ class Game:
                     continue
                 value = self.overlay_values[y][x]
                 colour = overlay_colour(self.overlay_mode, value)
-                rect = self._cell_rect(x, y)
-                tint = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
-                tint.fill((*colour, OVERLAY_ALPHA))
-                self.screen.blit(tint, rect.topleft)
+                self._draw_height_quad(x, y, colour, OVERLAY_ALPHA)
         self.screen.set_clip(None)
 
     def _draw_task_areas(self) -> None:
@@ -9259,10 +9352,7 @@ class Game:
                 blocked = self._footprint_blocked(cells) is not None
                 colour = (180, 70, 70) if blocked else COLOUR_TASK_PREVIEW
                 for px, py in cells:
-                    rect = self._cell_rect(px, py)
-                    tint = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
-                    tint.fill((*colour, 55))
-                    self.screen.blit(tint, rect.topleft)
+                    self._draw_height_quad(px, py, colour, 55)
                 self._draw_field_plot_outline(
                     ox,
                     oy,
@@ -9282,10 +9372,7 @@ class Game:
                 left, top, right, bottom = area.normalised()
                 for y in range(top, bottom + 1):
                     for x in range(left, right + 1):
-                        rect = self._cell_rect(x, y)
-                        tint = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
-                        tint.fill((*colour, 55))
-                        self.screen.blit(tint, rect.topleft)
+                        self._draw_height_quad(x, y, colour, 55)
                 self._draw_field_plot_outline(
                     left, top, right, bottom, colour=colour, width=2, fill_alpha=0
                 )
@@ -9305,10 +9392,7 @@ class Game:
                 preview = COLOUR_TASK_PREVIEW
             for y in range(top, bottom + 1):
                 for x in range(left, right + 1):
-                    rect = self._cell_rect(x, y)
-                    tint = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
-                    tint.fill((*preview, 70))
-                    self.screen.blit(tint, rect.topleft)
+                    self._draw_height_quad(x, y, preview, 70)
             self._draw_field_plot_outline(
                 left,
                 top,
@@ -9460,41 +9544,36 @@ class Game:
     ) -> None:
         """Draw only the outer border of a cell region (no internal grid lines)."""
         for x, y in cells:
-            rect = self._cell_rect(x, y)
+            pts = self._cell_quad_points(x, y)
+            nw, ne, se, sw = pts
             if (x, y - 1) not in cells:
-                pygame.draw.line(
-                    self.screen, colour, (rect.left, rect.top), (rect.right, rect.top), width
-                )
+                pygame.draw.line(self.screen, colour, nw, ne, width)
             if (x, y + 1) not in cells:
-                pygame.draw.line(
-                    self.screen,
-                    colour,
-                    (rect.left, rect.bottom - 1),
-                    (rect.right, rect.bottom - 1),
-                    width,
-                )
+                pygame.draw.line(self.screen, colour, sw, se, width)
             if (x - 1, y) not in cells:
-                pygame.draw.line(
-                    self.screen, colour, (rect.left, rect.top), (rect.left, rect.bottom), width
-                )
+                pygame.draw.line(self.screen, colour, nw, sw, width)
             if (x + 1, y) not in cells:
-                pygame.draw.line(
-                    self.screen,
-                    colour, (rect.right - 1, rect.top), (rect.right - 1, rect.bottom), width
-                )
+                pygame.draw.line(self.screen, colour, ne, se, width)
 
     def _draw_selection_highlights(self) -> None:
         if self.selected_villager_id is not None:
             villager = self._get_villager(self.selected_villager_id)
             if villager is not None:
-                rect = self._cell_rect(villager.x, villager.y)
-                pygame.draw.rect(self.screen, COLOUR_SELECTED_ENTITY, rect, 3)
+                pts = self._cell_quad_points(villager.x, villager.y)
+                pygame.draw.lines(self.screen, COLOUR_SELECTED_ENTITY, True, pts, 3)
         if self.selected_building_id is not None:
             building = self.buildings.get(self.selected_building_id)
             if building is not None:
                 left, top, right, bottom = building.plot_bounds()
-                rect = self._cell_rect(left, top).union(self._cell_rect(right, bottom))
-                pygame.draw.rect(self.screen, COLOUR_SELECTED_ENTITY, rect, 3)
+                self._draw_field_plot_outline(
+                    left,
+                    top,
+                    right,
+                    bottom,
+                    colour=COLOUR_SELECTED_ENTITY,
+                    width=3,
+                    fill_alpha=0,
+                )
         if (
             self.selected_habitat_id is not None
             and self.selected_habitat_kind is not None

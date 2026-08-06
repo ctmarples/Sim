@@ -109,7 +109,7 @@ def configure_for_display(screen_w: int, screen_h: int) -> None:
 # ---------------------------------------------------------------------------
 # Simulation
 # ---------------------------------------------------------------------------
-RANDOM_SEED: int = 42
+RANDOM_SEED: int = 77
 INVENTORY_CAPACITY: int = 20
 SEED_CARRY_CAPACITY: int = 20  # villager/player berry + crop seeds (carry pool)
 MAX_VILLAGERS: int = 20
@@ -259,19 +259,28 @@ DISTURBANCE_RADIUS: int = 2
 
 STATUS_MESSAGE_FRAMES: int = 150
 
-# Visual-only height sample (toggle with H). Logic grid stays flat.
-HEIGHT_SAMPLE_ENABLED_DEFAULT: bool = False
-HEIGHT_SAMPLE_W: int = 16
-HEIGHT_SAMPLE_H: int = 12
-# Peak screen lift in pixels at zoom 1 (scales with view_cell / CELL_SIZE).
-HEIGHT_SAMPLE_PX: float = 30.0
-# Origin is centred on the world at runtime; these are half-sizes only as docs.
-HEIGHT_SAMPLE_LIGHT_NW: float = 0.32  # softer NW slope shading (was harsh white/black)
+# Visual-only height warp (toggle with H). Logic grid stays flat.
+HEIGHT_SAMPLE_ENABLED_DEFAULT: bool = True
+# Absolute height units matching valley hydrology.
+HEIGHT_LAKE: float = 0.0
+HEIGHT_RIVER_HEAD: float = 40.0  # upstream river end; falls to HEIGHT_LAKE at the lake
+# Valley walls: rise with distance from the river/lake channel.
+HEIGHT_VALLEY_RISE_PER_CELL: float = 2.8
+HEIGHT_VALLEY_RISE_MAX: float = 36.0
+# Screen lift in pixels per height unit at zoom 1 (scales with view_cell / CELL_SIZE).
+HEIGHT_LIFT_PX: float = 1.0
+# Legacy alias used by older call sites.
+HEIGHT_SAMPLE_PX: float = HEIGHT_LIFT_PX
+HEIGHT_SAMPLE_LIGHT_NW: float = 0.28  # slope response; highlights kept gentle
 # Per-pixel shade tint: highlights → light yellow, shadows → dark brown.
-HEIGHT_SAMPLE_SHADE_LIT: tuple[int, int, int] = (255, 232, 175)
+HEIGHT_SAMPLE_SHADE_LIT: tuple[int, int, int] = (248, 228, 175)
 HEIGHT_SAMPLE_SHADE_SHADOW: tuple[int, int, int] = (72, 46, 28)
 # How strongly extreme slopes lean into the tint colours (0..1).
 HEIGHT_SAMPLE_SHADE_MIX: float = 0.48
+# Highlight mix is separate — light was too strong at full SHADE_MIX.
+HEIGHT_SAMPLE_SHADE_LIT_MIX: float = 0.16
+# Viewport bake margin (cells). Cache sticks until the camera leaves this region.
+HEIGHT_VIEW_MARGIN: int = 14
 
 # ---------------------------------------------------------------------------
 # Colours (RGB)
@@ -335,6 +344,7 @@ COLOUR_GRASS: Colour = (90, 150, 70)
 COLOUR_MEADOW: Colour = (100, 175, 85)  # slightly greener than grass
 COLOUR_RIPARIAN: Colour = (148, 142, 158)  # light grey–purple–green shoreline
 COLOUR_WATER: Colour = (60, 120, 190)
+COLOUR_RIVER: Colour = (60, 120, 190)  # same look as lake; distinct terrain (no freeze)
 COLOUR_ICE: Colour = (170, 205, 230)
 COLOUR_ROCK_TERRAIN: Colour = (118, 118, 124)
 COLOUR_ROCK_TERRAIN_DARK: Colour = (95, 95, 102)

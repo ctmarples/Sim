@@ -18,6 +18,7 @@ Production modifiers from cyclic layers live in ``environment.EnvMaps``
 
 from __future__ import annotations
 
+import math
 import random
 from collections import deque
 from dataclasses import dataclass
@@ -67,6 +68,10 @@ from settings import (
     DISTURBANCE_INTERACTION_BOOST,
     DISTURBANCE_MAX,
     DISTURBANCE_NEIGHBOUR_SPREAD,
+    HEIGHT_LAKE,
+    HEIGHT_RIVER_HEAD,
+    HEIGHT_VALLEY_RISE_MAX,
+    HEIGHT_VALLEY_RISE_PER_CELL,
     RANDOM_SEED,
 )
 
@@ -77,10 +82,22 @@ class TerrainType(Enum):
     GRASS = auto()
     MEADOW = auto()  # open meadow — slightly greener than grass
     RIPARIAN = auto()  # shoreline strip beside water
-    WATER = auto()
+    WATER = auto()  # standing water / lakes (can freeze)
+    RIVER = auto()  # flowing channel (does not freeze)
     ROCK = auto()  # bare rocky ground (distinct from rock resource feature)
     URBAN = auto()  # packed ground under contiguous building footprints
     PATH = auto()  # worn sandy tracks from villager journeys
+
+
+# Open water bodies (impassable; fishing / riparian). Lake-only freeze uses WATER.
+WATER_LIKE: tuple[TerrainType, ...] = (
+    TerrainType.WATER,
+    TerrainType.RIVER,
+)
+
+
+def is_water_terrain(terrain: TerrainType) -> bool:
+    return terrain in WATER_LIKE
 
 
 # Soil and forest floor share plough / sow / forage behaviour.
@@ -120,7 +137,9 @@ BUILDABLE_LAND: tuple[TerrainType, ...] = (
 
 
 def hardscape_tile_group(terrain: TerrainType) -> TerrainType:
-    """Identity — PATH and URBAN tile separately (distinct colours)."""
+    """Tile grouping: RIVER shares WATER visuals; PATH/URBAN stay distinct."""
+    if terrain == TerrainType.RIVER:
+        return TerrainType.WATER
     return terrain
 
 
@@ -190,7 +209,7 @@ def is_bare_rock(cell: Cell) -> bool:
 
 def hardscape_paintable(cell: Cell) -> bool:
     """Cells that villager wear / urban may convert (not water, riparian, or deposits)."""
-    if cell.terrain in (TerrainType.WATER, TerrainType.RIPARIAN):
+    if is_water_terrain(cell.terrain) or cell.terrain == TerrainType.RIPARIAN:
         return False
     if cell.feature == FeatureType.ROCK:
         return False
@@ -248,6 +267,13 @@ class World:
         self._forage_rng = random.Random(seed + 123)
         self.terrain_revision = 0
         self.terrain_dirty: set[tuple[int, int]] = set()
+        # Valley hydrology / heightfield (filled during generate).
+        self.valley_path: list[tuple[float, float]] = []
+        self.lake_cx = 0.0
+        self.lake_cy = 0.0
+        self.lake_rx = 1.0
+        self.lake_ry = 1.0
+        self.height_corners: list[list[float]] = []
         self.generate()
 
     def bump_terrain(self) -> None:
@@ -276,21 +302,13 @@ class World:
         # Base terrain: coherent grass with soil pockets (value-noise blobs).
         self._paint_base_grass_soil(rng)
 
-        # Compact water ponds (not map-spanning lakes).
-        self._place_clusters(
-            rng,
-            count=max(2, self.cols // 20),
-            radius=3,
-            density=0.72,
-            apply=lambda c: setattr(c, "terrain", TerrainType.WATER),
-        )
-        self._expand_terrain_patches(rng, TerrainType.WATER, passes=2, chance=0.55)
-        self._cull_isolated_terrain(TerrainType.WATER, min_neighbours=2)
-        self._cull_small_patches(TerrainType.WATER, min_size=5)
+        # Valley floor / ridge layout, then a corner lake + meandering river.
+        self._paint_valley_basin_landform(rng)
+        self._paint_valley_lake_and_river(rng)
 
-        # Compact grey rock outcrops.
+        # Compact grey rock outcrops (prefer high ground; never overwrite water).
         def _paint_rock(cell: Cell) -> None:
-            if cell.terrain != TerrainType.WATER:
+            if not is_water_terrain(cell.terrain):
                 cell.terrain = TerrainType.ROCK
 
         self._place_clusters(
@@ -312,7 +330,7 @@ class World:
             forest_centres.append((cx, cy))
             for ny, nx in self.neighbourhood(cx, cy, radius=3):
                 cell = self.cells[ny][nx]
-                if cell.terrain == TerrainType.WATER:
+                if is_water_terrain(cell.terrain):
                     continue
                 # Soil under the canopy; keep rock outcrops if already placed.
                 if cell.terrain != TerrainType.ROCK and rng.random() < 0.85:
@@ -474,7 +492,7 @@ class World:
                         cell.deposit = 0
                         cell.growth_ticks = 0
                         cell.crop_kind = None
-                    if cell.terrain == TerrainType.WATER:
+                    if is_water_terrain(cell.terrain):
                         cell.terrain = TerrainType.GRASS
                     elif cell.terrain == TerrainType.RIPARIAN:
                         cell.terrain = TerrainType.GRASS
@@ -484,7 +502,7 @@ class World:
             for ny, nx in self.neighbourhood(home_cx, home_cy, radius=half + 1)
             if (nx, ny) not in (self.home_pos, self.workstation_pos)
             and self.cells[ny][nx].feature == FeatureType.NONE
-            and self.cells[ny][nx].terrain != TerrainType.WATER
+            and not is_water_terrain(self.cells[ny][nx].terrain)
         ]
         if start_candidates:
             self.start_pos = start_candidates[0]
@@ -495,10 +513,11 @@ class World:
         sx, sy = self.start_pos
         if self.in_bounds(sx, sy):
             self.cells[sy][sx].feature = FeatureType.NONE
-            if self.cells[sy][sx].terrain == TerrainType.WATER:
+            if is_water_terrain(self.cells[sy][sx].terrain):
                 self.cells[sy][sx].terrain = TerrainType.GRASS
         self.update_forest_floor()
         self._paint_terrain_subclusters(rng)
+        self._build_valley_heightfield()
         self.bump_terrain()
 
     def _seed_wood_near_trees(self, rng: random.Random) -> None:
@@ -612,6 +631,212 @@ class World:
         if changed:
             self.terrain_revision += 1
 
+    def _valley_axis_v(self, u: float) -> float:
+        """Normalised valley centerline v for normalised u (SW lake → NE head)."""
+        return 0.92 - u * 0.72 + math.sin(u * math.pi * 2.4) * 0.07
+
+    def _valley_river_path(self) -> list[tuple[float, float]]:
+        """Polyline from lake (t=0) to upstream head (t=1), in cell coordinates."""
+        cols, rows = self.cols, self.rows
+        steps = max(cols, rows) * 2
+        path: list[tuple[float, float]] = []
+        for i in range(steps + 1):
+            t = i / steps
+            u = 0.10 + t * 0.82
+            v = 0.90 - t * 0.70 + math.sin(t * math.pi * 2.6) * 0.08
+            v += math.sin(t * math.pi * 5.1 + 0.4) * 0.03
+            path.append((u * (cols - 1), v * (rows - 1)))
+        return path
+
+    def _valley_lake_params(self) -> tuple[float, float, float, float]:
+        cols, rows = self.cols, self.rows
+        return (
+            cols * 0.11,
+            rows * 0.88,
+            max(6.0, cols * 0.15),
+            max(6.0, rows * 0.17),
+        )
+
+    def _nearest_on_valley_path(
+        self, x: float, y: float
+    ) -> tuple[float, float]:
+        """Return (distance, t) for nearest point on ``valley_path`` (t: 0 lake → 1 head)."""
+        path = self.valley_path
+        if len(path) < 2:
+            return 1e9, 0.0
+        best = 1e9
+        best_t = 0.0
+        nseg = len(path) - 1
+        for i in range(nseg):
+            x0, y0 = path[i]
+            x1, y1 = path[i + 1]
+            seg_dx = x1 - x0
+            seg_dy = y1 - y0
+            seg_len2 = seg_dx * seg_dx + seg_dy * seg_dy
+            if seg_len2 < 1e-6:
+                continue
+            tt = ((x - x0) * seg_dx + (y - y0) * seg_dy) / seg_len2
+            tt = max(0.0, min(1.0, tt))
+            px = x0 + seg_dx * tt
+            py = y0 + seg_dy * tt
+            d = math.hypot(x - px, y - py)
+            if d < best:
+                best = d
+                best_t = (i + tt) / nseg
+        return best, best_t
+
+    def _in_lake(self, x: float, y: float, *, shore_scale: float = 1.0) -> bool:
+        dx = (x - self.lake_cx) / max(1e-6, self.lake_rx * shore_scale)
+        dy = (y - self.lake_cy) / max(1e-6, self.lake_ry * shore_scale)
+        return math.hypot(dx, dy) <= 1.0
+
+    def _channel_height(self, t: float, *, in_lake: bool) -> float:
+        if in_lake:
+            return float(HEIGHT_LAKE)
+        return float(HEIGHT_LAKE) + (
+            float(HEIGHT_RIVER_HEAD) - float(HEIGHT_LAKE)
+        ) * max(0.0, min(1.0, t))
+
+    def _valley_wall_rise(self, dist: float) -> float:
+        """Height above the local channel from perpendicular distance (cells)."""
+        # Keep the channel itself flat; start rising just outside the banks.
+        d = max(0.0, dist - 0.85)
+        rise = d * float(HEIGHT_VALLEY_RISE_PER_CELL)
+        return min(float(HEIGHT_VALLEY_RISE_MAX), rise)
+
+    def _build_valley_heightfield(self) -> None:
+        """Corner heights: lake=0, river head=40→0 downstream, walls slope into channel."""
+        cols, rows = self.cols, self.rows
+        if not self.valley_path:
+            self.valley_path = self._valley_river_path()
+            self.lake_cx, self.lake_cy, self.lake_rx, self.lake_ry = self._valley_lake_params()
+
+        corners = [[0.0] * (cols + 1) for _ in range(rows + 1)]
+        for ly in range(rows + 1):
+            for lx in range(cols + 1):
+                wx = float(lx)
+                wy = float(ly)
+                in_lake = self._in_lake(wx, wy, shore_scale=1.05)
+                dist, t = self._nearest_on_valley_path(wx, wy)
+                base = self._channel_height(t, in_lake=in_lake)
+                # Inside the lake bowl, stay at lake level.
+                if in_lake:
+                    corners[ly][lx] = base
+                    continue
+                # On/near the painted water channel: stay on the thalweg gradient.
+                near_channel = dist <= 2.2
+                if near_channel:
+                    # Peek neighbouring cells — if mostly water, flatten to channel.
+                    cx = min(cols - 1, max(0, int(math.floor(wx - 1e-6))))
+                    cy = min(rows - 1, max(0, int(math.floor(wy - 1e-6))))
+                    waterish = 0
+                    for dy in (-1, 0):
+                        for dx in (-1, 0):
+                            nx, ny = cx + dx, cy + dy
+                            if 0 <= nx < cols and 0 <= ny < rows:
+                                if is_water_terrain(self.cells[ny][nx].terrain):
+                                    waterish += 1
+                    if waterish >= 2 or dist <= 1.35:
+                        corners[ly][lx] = base
+                        continue
+                corners[ly][lx] = base + self._valley_wall_rise(dist)
+
+        # Flatten water cells so lake/river surfaces read as level at local stage.
+        for y in range(rows):
+            for x in range(cols):
+                if not is_water_terrain(self.cells[y][x].terrain):
+                    continue
+                in_lake = self.cells[y][x].terrain == TerrainType.WATER or self._in_lake(
+                    x + 0.5, y + 0.5, shore_scale=1.08
+                )
+                _, t = self._nearest_on_valley_path(x + 0.5, y + 0.5)
+                h = self._channel_height(t, in_lake=in_lake)
+                for cy in (y, y + 1):
+                    for cx in (x, x + 1):
+                        corners[cy][cx] = h
+
+        self.height_corners = corners
+
+    def _paint_valley_basin_landform(self, rng: random.Random) -> None:
+        """Bias land into a SW→NE river valley: soft floor, grassier ridges."""
+        del rng  # deterministic from seed + coords
+        cols, rows = self.cols, self.rows
+        self.lake_cx, self.lake_cy, self.lake_rx, self.lake_ry = self._valley_lake_params()
+        self.valley_path = self._valley_river_path()
+
+        def _n(x: int, y: int, salt: int) -> float:
+            n = (x * 374761393 + y * 668265263 + salt * 1274126177 + self.seed) & 0x7FFFFFFF
+            return (n % 10007) / 10007.0
+
+        for y in range(rows):
+            for x in range(cols):
+                u = x / max(1, cols - 1)
+                v = y / max(1, rows - 1)
+                axis_v = self._valley_axis_v(u)
+                dist = abs(v - axis_v) / 0.20
+                basin = math.hypot(u / 0.28, (1.0 - v) / 0.30)
+                cell = self.cells[y][x]
+                roll = _n(x, y, 3)
+                if basin < 0.9:
+                    cell.terrain = (
+                        TerrainType.MEADOW if roll < 0.55 else TerrainType.SOIL
+                    )
+                elif dist < 0.65:
+                    cell.terrain = (
+                        TerrainType.SOIL if roll < 0.45 else TerrainType.MEADOW
+                    )
+                elif dist < 1.15:
+                    if cell.terrain == TerrainType.SOIL and roll < 0.55:
+                        cell.terrain = TerrainType.GRASS
+                else:
+                    if roll < 0.35:
+                        cell.terrain = TerrainType.GRASS
+                    elif roll > 0.92:
+                        cell.terrain = TerrainType.ROCK
+
+    def _paint_valley_lake_and_river(self, rng: random.Random) -> None:
+        """Corner lake (WATER, freezes) + meandering river (RIVER, no freeze)."""
+        cols, rows = self.cols, self.rows
+        self.lake_cx, self.lake_cy, self.lake_rx, self.lake_ry = self._valley_lake_params()
+        self.valley_path = self._valley_river_path()
+
+        def _n(x: int, y: int, salt: int) -> float:
+            n = (x * 374761393 + y * 668265263 + salt * 1274126177 + self.seed) & 0x7FFFFFFF
+            return (n % 10007) / 10007.0
+
+        # Lake body with noisy shore.
+        for y in range(rows):
+            for x in range(cols):
+                dx = (x + 0.5 - self.lake_cx) / self.lake_rx
+                dy = (y + 0.5 - self.lake_cy) / self.lake_ry
+                r = math.hypot(dx, dy)
+                shore = 0.82 + (_n(x, y, 9) - 0.5) * 0.28
+                if r <= shore:
+                    self.cells[y][x].terrain = TerrainType.WATER
+
+        # Paint river channel (does not overwrite the lake).
+        for y in range(rows):
+            for x in range(cols):
+                if self.cells[y][x].terrain == TerrainType.WATER:
+                    continue
+                best, best_t = self._nearest_on_valley_path(float(x), float(y))
+                half_w = 1.15 + (1.0 - best_t) * 1.35 + (_n(x, y, 11) - 0.5) * 0.45
+                if best <= half_w:
+                    self.cells[y][x].terrain = TerrainType.RIVER
+
+        self._expand_terrain_patches(rng, TerrainType.RIVER, passes=1, chance=0.35)
+        # Keep lake cells as WATER if expansion spilled.
+        for y in range(rows):
+            for x in range(cols):
+                if self.cells[y][x].terrain != TerrainType.RIVER:
+                    continue
+                if self._in_lake(x + 0.5, y + 0.5, shore_scale=0.95):
+                    self.cells[y][x].terrain = TerrainType.WATER
+        self._cull_isolated_terrain(TerrainType.RIVER, min_neighbours=2)
+        self._cull_isolated_terrain(TerrainType.WATER, min_neighbours=2)
+        self._cull_small_patches(TerrainType.RIVER, min_size=8)
+        self._cull_small_patches(TerrainType.WATER, min_size=8)
+
     def _paint_base_grass_soil(self, rng: random.Random) -> None:
         """Fill the map with large grass / meadow / soil regions via coarse value noise."""
         # A few random influence points → smooth-ish regions without per-cell coin flips.
@@ -666,7 +891,7 @@ class World:
                 for ny, nx in self.neighbourhood(x, y, radius=1):
                     if (nx, ny) == (x, y):
                         continue
-                    if self.cells[ny][nx].terrain == TerrainType.WATER:
+                    if is_water_terrain(self.cells[ny][nx].terrain):
                         touches_water = True
                         break
                 if touches_water and rng.random() < 0.5:
@@ -702,11 +927,13 @@ class World:
                 for x in range(self.cols):
                     if self.cells[y][x].terrain == terrain:
                         continue
-                    if terrain == TerrainType.ROCK and self.cells[y][x].terrain == TerrainType.WATER:
+                    if terrain == TerrainType.ROCK and is_water_terrain(
+                        self.cells[y][x].terrain
+                    ):
                         continue
-                    if terrain == TerrainType.WATER:
+                    if is_water_terrain(terrain):
                         pass
-                    elif self.cells[y][x].terrain == TerrainType.WATER:
+                    elif is_water_terrain(self.cells[y][x].terrain):
                         continue
                     neighbours = list(self.neighbourhood(x, y, radius=1))
                     matching = sum(
@@ -725,6 +952,7 @@ class World:
         """Remove 1-cell speckles of `terrain` that lack enough same-type neighbours."""
         fallback = {
             TerrainType.WATER: TerrainType.GRASS,
+            TerrainType.RIVER: TerrainType.GRASS,
             TerrainType.ROCK: TerrainType.GRASS,
             TerrainType.SOIL: TerrainType.GRASS,
             TerrainType.MEADOW: TerrainType.GRASS,
@@ -884,11 +1112,11 @@ class World:
         return max(abs(ax - bx), abs(ay - by)) <= radius
 
     def is_walkable(self, x: int, y: int) -> bool:
-        """Water is impassable; features never block movement in this prototype."""
+        """Water/river is impassable; features never block movement in this prototype."""
         cell = self.get_cell(x, y)
         if cell is None:
             return False
-        return cell.terrain != TerrainType.WATER
+        return not is_water_terrain(cell.terrain)
 
     def land_component_size(self, x: int, y: int, *, limit: int = 24) -> int:
         """How many walkable tiles are cardinally connected (capped). Isolates score 1."""
@@ -1447,7 +1675,7 @@ class World:
         cell = self.get_cell(x, y)
         if cell is None:
             return False
-        if cell.terrain == TerrainType.WATER or cell.terrain == TerrainType.ROCK:
+        if is_water_terrain(cell.terrain) or cell.terrain == TerrainType.ROCK:
             return False
         if cell.feature in (
             FeatureType.HOME,
@@ -1681,7 +1909,7 @@ class World:
             (x, y)
             for y in range(self.rows)
             for x in range(self.cols)
-            if self.cells[y][x].terrain == TerrainType.WATER
+            if is_water_terrain(self.cells[y][x].terrain)
         ]
 
     def tree_patches(self) -> list[list[tuple[int, int]]]:

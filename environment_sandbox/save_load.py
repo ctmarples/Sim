@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from crops import LEGACY_HERB_PRODUCE, LEGACY_HERB_SEED, PRODUCE_KEYS, SEED_KEYS
 from trees import SAPLING_ITEM_KEYS
+from height_sample import generate_height_sample
 from entities import (
     Building,
     BuildingKind,
@@ -662,6 +663,9 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         for cell in row
     ):
         world._paint_terrain_subclusters(random.Random(world.seed + 77))
+    world.valley_path = world._valley_river_path()
+    world.lake_cx, world.lake_cy, world.lake_rx, world.lake_ry = world._valley_lake_params()
+    world._build_valley_heightfield()
     world.bump_terrain()
     world.home_pos = tuple(world_data["home_pos"])  # type: ignore[assignment]
     world.workstation_pos = tuple(world_data["workstation_pos"])  # type: ignore[assignment]
@@ -674,6 +678,14 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     world._herb_timer = int(world_data.get("herb_timer", world._herb_timer))
 
     game.world = world
+    game.height_sample = generate_height_sample(
+        world.cols,
+        world.rows,
+        seed=world.seed,
+        corners=world.height_corners,
+    )
+    if hasattr(game, "_invalidate_height_sample_cache"):
+        game._invalidate_height_sample_cache()
     player_data = data["player"]
     game.player.x = int(player_data["x"])
     game.player.y = int(player_data["y"])

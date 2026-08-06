@@ -1,6 +1,7 @@
-"""Visual-only height sample: corner heightmap + fast column-warped cache.
+"""Visual-only heightfield: corner heights + column-warped terrain bake.
 
 Logic/pathfinding stay flat; only drawing uses these helpers.
+Heights are absolute units (lake = 0, river head = 40, valley walls rise outward).
 """
 
 from __future__ import annotations
@@ -11,22 +12,32 @@ from dataclasses import dataclass
 import pygame
 
 from settings import (
-    HEIGHT_SAMPLE_H,
+    HEIGHT_LIFT_PX,
     HEIGHT_SAMPLE_LIGHT_NW,
-    HEIGHT_SAMPLE_PX,
     HEIGHT_SAMPLE_SHADE_LIT,
+    HEIGHT_SAMPLE_SHADE_LIT_MIX,
     HEIGHT_SAMPLE_SHADE_MIX,
     HEIGHT_SAMPLE_SHADE_SHADOW,
-    HEIGHT_SAMPLE_W,
 )
+
+try:
+    import numpy as np
+    from pygame import surfarray as _surfarray
+
+    _HAS_NUMPY = True
+except ImportError:  # pragma: no cover - optional accel
+    np = None  # type: ignore[assignment]
+    _surfarray = None  # type: ignore[assignment]
+    _HAS_NUMPY = False
 
 
 @dataclass
 class HeightSample:
-    """Fixed rect with heights at cell *corners* for continuous warping.
+    """World (or region) heights at cell *corners* for continuous warping.
 
-    ``corners[ly][lx]`` covers local corner (lx, ly) with
+    ``corners[ly][lx]`` covers corner (lx, ly) with
     ``lx`` in ``0..width``, ``ly`` in ``0..height``.
+    World cell (x, y) uses corners at local (x-x0, y-y0) … (+1,+1).
     """
 
     x0: int
@@ -34,6 +45,16 @@ class HeightSample:
     width: int
     height: int
     corners: list[list[float]]
+    max_height: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.max_height <= 0.0 and self.corners:
+            peak = 0.0
+            for row in self.corners:
+                for v in row:
+                    if v > peak:
+                        peak = v
+            self.max_height = peak
 
     @property
     def x1(self) -> int:
@@ -87,81 +108,61 @@ class HeightSample:
             self.corner_at_local(lx + 1, ly + 1),
         )
 
-
-def _smooth_noise(ix: int, iy: int, seed: int) -> float:
-    n = (ix * 374761393 + iy * 668265263 + seed * 1274126177) & 0x7FFFFFFF
-    n = (n ^ (n >> 13)) * 1274126177
-    return ((n ^ (n >> 16)) & 0xFFFF) / 65535.0
+    def subregion(self, x0: int, y0: int, x1: int, y1: int) -> HeightSample:
+        """Corner-sharing sub-sample covering cells x0..x1, y0..y1 inclusive."""
+        x0 = max(self.x0, x0)
+        y0 = max(self.y0, y0)
+        x1 = min(self.x1, x1)
+        y1 = min(self.y1, y1)
+        w = max(0, x1 - x0 + 1)
+        h = max(0, y1 - y0 + 1)
+        lx0 = x0 - self.x0
+        ly0 = y0 - self.y0
+        corners = [
+            self.corners[ly0 + ly][lx0 : lx0 + w + 1]
+            for ly in range(h + 1)
+        ]
+        return HeightSample(
+            x0=x0,
+            y0=y0,
+            width=w,
+            height=h,
+            corners=corners,
+            max_height=self.max_height,
+        )
 
 
 def _lerp(a: float, b: float, t: float) -> float:
     return a + (b - a) * t
 
 
-def _smoothstep(t: float) -> float:
-    t = max(0.0, min(1.0, t))
-    return t * t * (3.0 - 2.0 * t)
-
-
-def _value_noise_2d(x: float, y: float, seed: int) -> float:
-    x0 = int(math.floor(x))
-    y0 = int(math.floor(y))
-    fx = _smoothstep(x - x0)
-    fy = _smoothstep(y - y0)
-    v00 = _smooth_noise(x0, y0, seed)
-    v10 = _smooth_noise(x0 + 1, y0, seed)
-    v01 = _smooth_noise(x0, y0 + 1, seed)
-    v11 = _smooth_noise(x0 + 1, y0 + 1, seed)
-    return _lerp(_lerp(v00, v10, fx), _lerp(v01, v11, fx), fy)
-
-
-def _height_field(lx: float, ly: float, width: float, height: float, seed: int) -> float:
-    """Diagonal valley / ridge undulations with soft edge falloff."""
-    # Primary diagonal valleys (NW–SE troughs).
-    v1 = math.sin((lx + ly) * (math.pi / 4.2) + 0.35)
-    # Crossing diagonal undulation (NE–SW).
-    v2 = math.sin((lx - ly) * (math.pi / 5.0) + 1.1)
-    # Longer-wavelength roll so the patch isn't only short ripples.
-    v3 = math.sin((lx + 0.6 * ly) * (math.pi / 7.5) + 0.2)
-    v4 = math.cos((0.7 * lx - ly) * (math.pi / 6.0) + 0.9)
-    # Map sines from [-1,1] into gentle hills / valleys.
-    undulation = (
-        0.50
-        + 0.22 * v1
-        + 0.18 * v2
-        + 0.12 * v3
-        + 0.10 * v4
+def height_sample_from_corners(
+    cols: int,
+    rows: int,
+    corners: list[list[float]],
+) -> HeightSample:
+    """Wrap a full-world corner heightfield (size (rows+1) × (cols+1))."""
+    return HeightSample(
+        x0=0,
+        y0=0,
+        width=cols,
+        height=rows,
+        corners=corners,
     )
-    # Fine noise for irregularity along the valleys.
-    n = _value_noise_2d(lx * 0.45 + 2.1, ly * 0.45 + 1.3, seed) * 0.18
-    n2 = _value_noise_2d(lx * 0.18, ly * 0.18, seed + 9) * 0.12
-    h = undulation + n + n2 - 0.08
-    # Soft edge so the patch meets flat land.
-    edge = min(lx, ly, width - lx, height - ly)
-    h *= _smoothstep(edge / 2.2)
-    return max(0.0, min(1.0, h))
 
 
 def generate_height_sample(
     world_cols: int,
     world_rows: int,
     *,
-    seed: int = 42,
-    width: int = HEIGHT_SAMPLE_W,
-    height: int = HEIGHT_SAMPLE_H,
+    seed: int = 0,
+    corners: list[list[float]] | None = None,
 ) -> HeightSample:
-    """Build a centred sample with shared corner heights (smooth warp field)."""
-    width = max(4, min(width, world_cols))
-    height = max(4, min(height, world_rows))
-    x0 = max(0, (world_cols - width) // 2)
-    y0 = max(0, (world_rows - height) // 2)
-    corners: list[list[float]] = []
-    for ly in range(height + 1):
-        row: list[float] = []
-        for lx in range(width + 1):
-            row.append(_height_field(float(lx), float(ly), float(width), float(height), seed))
-        corners.append(row)
-    return HeightSample(x0=x0, y0=y0, width=width, height=height, corners=corners)
+    """Build a full-map height sample from world corners (or zeros)."""
+    del seed
+    if corners is None:
+        corners = [[0.0] * (world_cols + 1) for _ in range(world_rows + 1)]
+    return height_sample_from_corners(world_cols, world_rows, corners)
 
 
 def corner_shade_factor(
@@ -189,9 +190,9 @@ def corner_shade_factor(
         gy = h - hn
     else:
         gy = (hs - hn) * 0.5
-    lit = (-gx - gy) * 0.5
-    # Narrow band — tint handles colour; avoid crushed blacks / blown whites.
-    return max(0.72, min(1.22, 1.0 + lit * strength * 4.0))
+    # Normalise by typical valley gradient so shade stays readable.
+    lit = (-gx - gy) * 0.5 / max(8.0, sample.max_height * 0.15)
+    return max(0.70, min(1.10, 1.0 + lit * strength * 4.0))
 
 
 def cell_corner_shades(
@@ -225,22 +226,24 @@ def slope_shade_factor(
 
 def screen_lift_px(height: float, view_cell: float, cell_size: float) -> float:
     scale = view_cell / max(1.0, cell_size)
-    return height * HEIGHT_SAMPLE_PX * scale
+    return height * HEIGHT_LIFT_PX * scale
 
 
-def bake_pad_px() -> int:
-    """Top padding in the bake surface so max lift stays in-bounds."""
-    return int(math.ceil(HEIGHT_SAMPLE_PX)) + 2
+def bake_pad_px(max_height: float | None = None) -> int:
+    """Top padding so max lift stays in-bounds."""
+    peak = float(max_height) if max_height is not None else 80.0
+    return int(math.ceil(peak * HEIGHT_LIFT_PX)) + 2
 
 
 def _shade_rgb(colour: pygame.Color | tuple, factor: float) -> tuple[int, int, int]:
-    """Soft relief tint: lit → light yellow, shaded → dark brown (no hard B/W)."""
+    """Soft relief tint: lit → light yellow, shaded → dark brown."""
     r, g, b = int(colour[0]), int(colour[1]), int(colour[2])
-    mix = max(0.0, min(1.0, HEIGHT_SAMPLE_SHADE_MIX))
     if factor >= 1.0:
-        t = min(1.0, (factor - 1.0) / 0.22) * mix
+        mix = max(0.0, min(1.0, HEIGHT_SAMPLE_SHADE_LIT_MIX))
+        t = min(1.0, (factor - 1.0) / 0.10) * mix
         tr, tg, tb = HEIGHT_SAMPLE_SHADE_LIT
     else:
+        mix = max(0.0, min(1.0, HEIGHT_SAMPLE_SHADE_MIX))
         t = min(1.0, (1.0 - factor) / 0.28) * mix
         tr, tg, tb = HEIGHT_SAMPLE_SHADE_SHADOW
     return (
@@ -250,6 +253,73 @@ def _shade_rgb(colour: pygame.Color | tuple, factor: float) -> tuple[int, int, i
     )
 
 
+def _shade_tile_bilinear(
+    tile: pygame.Surface,
+    shades: tuple[float, float, float, float],
+) -> pygame.Surface:
+    """Return a shaded copy of ``tile`` (bilinear corner factors)."""
+    nw, ne, sw, se = shades
+    w, h = tile.get_size()
+    if w <= 0 or h <= 0:
+        return tile
+
+    if _HAS_NUMPY and _surfarray is not None and np is not None:
+        src = _surfarray.array3d(tile).astype(np.float32)
+        xs = np.linspace(0.0, 1.0, w, dtype=np.float32)
+        ys = np.linspace(0.0, 1.0, h, dtype=np.float32)
+        fx = xs[:, None]
+        fy = ys[None, :]
+        top = nw * (1.0 - fx) + ne * fx
+        bot = sw * (1.0 - fx) + se * fx
+        factor = top * (1.0 - fy) + bot * fy
+
+        lit = HEIGHT_SAMPLE_SHADE_LIT
+        shadow = HEIGHT_SAMPLE_SHADE_SHADOW
+        lit_mix = float(HEIGHT_SAMPLE_SHADE_LIT_MIX)
+        sh_mix = float(HEIGHT_SAMPLE_SHADE_MIX)
+
+        out = src.copy()
+        hi = factor >= 1.0
+        if np.any(hi):
+            t = np.clip((factor - 1.0) / 0.10, 0.0, 1.0) * lit_mix
+            for c in range(3):
+                ch = out[:, :, c]
+                ch[hi] = ch[hi] + (lit[c] - ch[hi]) * t[hi]
+                out[:, :, c] = ch
+        lo = ~hi
+        if np.any(lo):
+            t = np.clip((1.0 - factor) / 0.28, 0.0, 1.0) * sh_mix
+            for c in range(3):
+                ch = out[:, :, c]
+                ch[lo] = ch[lo] + (shadow[c] - ch[lo]) * t[lo]
+                out[:, :, c] = ch
+        shaded = pygame.Surface((w, h), depth=24)
+        _surfarray.blit_array(shaded, np.clip(out, 0, 255).astype(np.uint8))
+        return shaded
+
+    if tile.get_bitsize() != 24:
+        fixed = pygame.Surface((w, h), depth=24)
+        fixed.blit(tile, (0, 0))
+        tile = fixed
+    buf = bytearray(tile.get_buffer())
+    pitch = tile.get_pitch()
+    inv_x = 1.0 / max(1, w - 1)
+    inv_y = 1.0 / max(1, h - 1)
+    for y in range(h):
+        fy = y * inv_y
+        row = y * pitch
+        for x in range(w):
+            fx = x * inv_x
+            factor = (nw * (1.0 - fx) + ne * fx) * (1.0 - fy) + (
+                sw * (1.0 - fx) + se * fx
+            ) * fy
+            i = row + x * 3
+            b, g, r = buf[i], buf[i + 1], buf[i + 2]
+            sr, sg, sb = _shade_rgb((r, g, b), factor)
+            buf[i], buf[i + 1], buf[i + 2] = sb, sg, sr
+    return pygame.image.frombuffer(bytes(buf), (w, h), "BGR").convert()
+
+
 def blit_warped_cell_columns(
     dest: pygame.Surface,
     src: pygame.Surface,
@@ -257,14 +327,13 @@ def blit_warped_cell_columns(
     lifts: tuple[float, float, float, float],
     shades: tuple[float, float, float, float],
 ) -> None:
-    """Y-only warp with per-pixel bilinear shade from the four corners."""
+    """Y-only warp; shade is applied on the flat tile first."""
     nw_h, ne_h, sw_h, se_h = lifts
-    nw_s, ne_s, sw_s, se_s = shades
     w = flat_rect.w
     if w <= 0 or flat_rect.h <= 0:
         return
 
-    tile = src
+    tile = _shade_tile_bilinear(src, shades)
     sw, sh = tile.get_size()
     if sw != w or sh != flat_rect.h:
         tile = pygame.transform.scale(tile, (w, flat_rect.h))
@@ -279,24 +348,15 @@ def blit_warped_cell_columns(
         u = i * inv_u if w > 1 else 0.0
         top_lift = nw_h * (1.0 - u) + ne_h * u
         bot_lift = sw_h * (1.0 - u) + se_h * u
-        top_shade = nw_s * (1.0 - u) + ne_s * u
-        bot_shade = sw_s * (1.0 - u) + se_s * u
         top_y = flat_rect.top - top_lift
         bot_y = flat_rect.bottom - bot_lift
         y0 = int(math.floor(top_y))
-        y1 = int(math.ceil(bot_y)) + 1
+        y1 = int(math.ceil(bot_y))
         dest_h = max(1, y1 - y0)
-        inv_v = 1.0 / max(1, dest_h - 1)
-
-        # Map each dest column pixel from source v, with bilinear shade.
-        out = pygame.Surface((1, dest_h), depth=24)
-        for j in range(dest_h):
-            v = j * inv_v if dest_h > 1 else 0.0
-            # Sample source along the unwarped column (same v).
-            sy = min(sh - 1, max(0, int(round(v * (sh - 1)))))
-            shade = top_shade * (1.0 - v) + bot_shade * v
-            out.set_at((0, j), _shade_rgb(tile.get_at((i, sy)), shade))
-        dest.blit(out, (flat_rect.left + i, y0))
+        col = tile.subsurface((i, 0, 1, sh))
+        if dest_h != sh:
+            col = pygame.transform.scale(col, (1, dest_h))
+        dest.blit(col, (flat_rect.left + i, y0))
 
 
 def bake_height_sample_surface(
@@ -305,17 +365,14 @@ def bake_height_sample_surface(
     *,
     cell_size: int,
 ) -> tuple[pygame.Surface, int]:
-    """Bake warped sample once at native cell size. Returns (surface, top_pad_px).
+    """Bake warped sample at native cell size. Returns (surface, top_pad_px).
 
-    ``terrain_patch`` must cover the sample footprint only:
-    ``(sample.width * cell_size) × (sample.height * cell_size)``, already
-    composited with mute / season flecks / ice as needed.
+    ``terrain_patch`` covers the sample footprint only:
+    ``(sample.width * cell_size) × (sample.height * cell_size)``.
     """
-    pad = bake_pad_px()
+    pad = bake_pad_px(sample.max_height)
     w = sample.width * cell_size
     h = sample.height * cell_size + pad
-    # depth=24: no per-pixel alpha. (Display is often SRCALPHA; alpha-0 RGB
-    # blits are invisible and look like a dark wiped box.)
     surf = pygame.Surface((w, h), depth=24)
     surf.fill((40, 55, 35))
     patch = terrain_patch
@@ -323,7 +380,6 @@ def bake_height_sample_surface(
         opaque = pygame.Surface(patch.get_size(), depth=24)
         opaque.blit(patch, (0, 0))
         patch = opaque
-    # Flat ground under the pad, then warp cells on top.
     if patch.get_width() >= w and patch.get_height() >= sample.height * cell_size:
         surf.blit(patch, (0, pad))
         top_row = pygame.Surface((w, 1), depth=24)
@@ -338,10 +394,10 @@ def bake_height_sample_surface(
             flat = pygame.Rect(lx * cell_size, pad + ly * cell_size, cell_size, cell_size)
             nw, ne, sw, se = sample.cell_corners(x, y)
             lifts = (
-                nw * HEIGHT_SAMPLE_PX,
-                ne * HEIGHT_SAMPLE_PX,
-                sw * HEIGHT_SAMPLE_PX,
-                se * HEIGHT_SAMPLE_PX,
+                nw * HEIGHT_LIFT_PX,
+                ne * HEIGHT_LIFT_PX,
+                sw * HEIGHT_LIFT_PX,
+                se * HEIGHT_LIFT_PX,
             )
             shades = cell_corner_shades(sample, x, y)
             src = pygame.Rect(lx * cell_size, ly * cell_size, cell_size, cell_size)

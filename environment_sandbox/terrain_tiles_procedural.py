@@ -75,6 +75,7 @@ _COLOURS: dict[TerrainType, tuple[int, int, int]] = {
     TerrainType.MEADOW: COLOUR_MEADOW,
     TerrainType.RIPARIAN: COLOUR_RIPARIAN,
     TerrainType.WATER: COLOUR_WATER,
+    TerrainType.RIVER: COLOUR_WATER,
     TerrainType.ROCK: COLOUR_ROCK_TERRAIN,
     TerrainType.URBAN: COLOUR_URBAN,
     TerrainType.PATH: COLOUR_PATH,
