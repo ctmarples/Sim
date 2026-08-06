@@ -602,10 +602,6 @@ class BuildingInspectDialog:
                 if building.kind == BuildingKind.HOME
                 else building.capacity_label()
             )
-            if building.kind == BuildingKind.KITCHEN and building.fuel_capacity > 0:
-                capacity_label += (
-                    f"  · fuel {building.fuel_wood}/{building.fuel_capacity}"
-                )
         else:
             amounts = {}
             capacity_label = "—"

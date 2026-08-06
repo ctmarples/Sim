@@ -232,6 +232,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "input_capacity": b.input_capacity,
             "output_capacity": b.output_capacity,
             "fuel_capacity": b.fuel_capacity,
+            "seed_capacity": getattr(b, "seed_capacity", 0),
             "fuel_wood": b.fuel_wood,
             "item_caps": {k: int(v) for k, v in b.item_caps.items()},
             "item_mins": {k: int(v) for k, v in b.item_mins.items()},
@@ -725,24 +726,17 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             input_capacity=int(bdata.get("input_capacity", 0)),
             output_capacity=int(bdata.get("output_capacity", 0)),
             fuel_capacity=int(bdata.get("fuel_capacity", 0)),
+            seed_capacity=int(bdata.get("seed_capacity", 0)),
             fuel_wood=int(bdata.get("fuel_wood", 0)),
             draw_task_type=draw_task,
             work_mode=work_mode,
             plot_w=max(1, int(bdata.get("plot_w", 1))),
             plot_h=max(1, int(bdata.get("plot_h", 1))),
         )
-        # Migrate pre-split processor saves to input/output pools.
-        from entities import default_processor_capacities
+        # Settings are the source of truth for pool sizes (avoids stale save caps).
+        from entities import apply_building_storage
 
-        if building.is_processor() and building.input_capacity <= 0:
-            cap, in_cap, out_cap = default_processor_capacities(kind)
-            building.capacity = cap
-            building.input_capacity = in_cap
-            building.output_capacity = out_cap
-        if building.kind == BuildingKind.KITCHEN and building.fuel_capacity <= 0:
-            from settings import KITCHEN_FUEL_CAPACITY
-
-            building.fuel_capacity = KITCHEN_FUEL_CAPACITY
+        apply_building_storage(building)
         raw_caps = bdata.get("item_caps") or {}
         if isinstance(raw_caps, dict):
             building.item_caps = {

@@ -31,22 +31,15 @@ from recipes import (
     input_keys_for_recipes,
 )
 from settings import (
-    ALCHEMIST_INPUT_CAPACITY,
-    ALCHEMIST_OUTPUT_CAPACITY,
     BUILDING_FOOTPRINT,
     BUILDING_STORAGE_CAPACITY,
-    CRAFT_BENCH_INPUT_CAPACITY,
-    CRAFT_BENCH_OUTPUT_CAPACITY,
     FORESTER_DEFAULT_HARDWOOD_LOGS_MIN,
     FORESTER_DEFAULT_LOGS_MIN,
     INVENTORY_CAPACITY,
-    KITCHEN_FUEL_CAPACITY,
-    KITCHEN_INPUT_CAPACITY,
-    KITCHEN_OUTPUT_CAPACITY,
-    MILL_INPUT_CAPACITY,
-    MILL_OUTPUT_CAPACITY,
     PROCESSOR_RECIPE_STEPS,
     SEED_CARRY_CAPACITY,
+    BuildingStorageSpec,
+    building_storage_spec,
 )
 from trees import SAPLING_ITEM_KEYS, sapling_item_key
 
@@ -192,33 +185,25 @@ def default_building_plot(kind: BuildingKind) -> tuple[int, int]:
     return n, n
 
 
+def default_building_storage(kind: BuildingKind) -> BuildingStorageSpec:
+    """Storage pools from ``settings.BUILDING_STORAGE`` for this kind."""
+    return building_storage_spec(kind.name)
+
+
 def default_processor_capacities(kind: BuildingKind) -> tuple[int, int, int]:
     """Return (capacity, input_capacity, output_capacity) for a new building."""
-    if kind == BuildingKind.MILL:
-        return (
-            MILL_INPUT_CAPACITY + MILL_OUTPUT_CAPACITY,
-            MILL_INPUT_CAPACITY,
-            MILL_OUTPUT_CAPACITY,
-        )
-    if kind == BuildingKind.KITCHEN:
-        return (
-            KITCHEN_INPUT_CAPACITY + KITCHEN_OUTPUT_CAPACITY,
-            KITCHEN_INPUT_CAPACITY,
-            KITCHEN_OUTPUT_CAPACITY,
-        )
-    if kind == BuildingKind.CRAFT_BENCH:
-        return (
-            CRAFT_BENCH_INPUT_CAPACITY + CRAFT_BENCH_OUTPUT_CAPACITY,
-            CRAFT_BENCH_INPUT_CAPACITY,
-            CRAFT_BENCH_OUTPUT_CAPACITY,
-        )
-    if kind == BuildingKind.ALCHEMIST:
-        return (
-            ALCHEMIST_INPUT_CAPACITY + ALCHEMIST_OUTPUT_CAPACITY,
-            ALCHEMIST_INPUT_CAPACITY,
-            ALCHEMIST_OUTPUT_CAPACITY,
-        )
-    return BUILDING_STORAGE_CAPACITY, 0, 0
+    spec = default_building_storage(kind)
+    return spec.capacity, spec.input_capacity, spec.output_capacity
+
+
+def apply_building_storage(building: Building) -> None:
+    """Apply central storage specs onto ``building`` (settings are source of truth)."""
+    spec = default_building_storage(building.kind)
+    building.capacity = spec.capacity
+    building.input_capacity = spec.input_capacity
+    building.output_capacity = spec.output_capacity
+    building.fuel_capacity = spec.fuel_capacity
+    building.seed_capacity = spec.seed_capacity
 
 
 def default_item_mins(kind: BuildingKind) -> dict[str, int]:
@@ -1017,6 +1002,8 @@ class Building:
     input_capacity: int = 0
     output_capacity: int = 0
     fuel_capacity: int = 0
+    # Separate seed pool (farm / forager); 0 = seeds share ``capacity``.
+    seed_capacity: int = 0
     fuel_wood: int = 0
     # Per-resource stock limits (omit key = unlimited within the pool).
     item_caps: dict[str, int] = field(default_factory=dict)
@@ -1229,7 +1216,21 @@ class Building:
 
     @property
     def stored_total(self) -> int:
-        return (
+        return self.cargo_stored_total + self.seed_stored_total
+
+    @property
+    def seed_stored_total(self) -> int:
+        if self.seed_capacity <= 0:
+            return 0
+        total = sum(int(getattr(self, key, 0)) for key in SEED_KEYS)
+        if self.is_seed_storage_key("berry_seeds"):
+            total += int(getattr(self, "berry_seeds", 0))
+        return total
+
+    @property
+    def cargo_stored_total(self) -> int:
+        """Stock that counts against ``capacity`` (excludes separate seed pool)."""
+        total = (
             self.logs
             + self.hardwood_logs
             + self.wood
@@ -1240,14 +1241,25 @@ class Building:
             + self.mushrooms
             + self.honey
             + self.berries
-            + self.berry_seeds
             + self.reeds
             + self.twine
             + self.axe
             + sum(getattr(self, key) for key in PRODUCE_KEYS)
-            + sum(getattr(self, key) for key in SEED_KEYS)
             + sum(getattr(self, key) for key in PROCESSED_KEYS)
         )
+        if self.seed_capacity <= 0:
+            total += int(getattr(self, "berry_seeds", 0))
+            total += sum(getattr(self, key) for key in SEED_KEYS)
+        elif not self.is_seed_storage_key("berry_seeds"):
+            total += int(getattr(self, "berry_seeds", 0))
+        return total
+
+    def is_seed_storage_key(self, key: str) -> bool:
+        if self.seed_capacity <= 0:
+            return False
+        if key in SEED_KEYS:
+            return True
+        return key == "berry_seeds" and "berry_seeds" in self.depositable_keys()
 
     def is_processor(self) -> bool:
         return self.kind in (
@@ -1458,6 +1470,11 @@ class Building:
             return 0
         return max(0, self.fuel_capacity - self.fuel_wood)
 
+    def seed_space_left(self) -> int:
+        if self.seed_capacity <= 0:
+            return 0
+        return max(0, self.seed_capacity - self.seed_stored_total)
+
     def has_cooking_fuel(self) -> bool:
         return self.fuel_wood > 0
 
@@ -1556,7 +1573,9 @@ class Building:
     def space_for_key(self, key: str) -> int:
         if self.kind == BuildingKind.KITCHEN and key == KITCHEN_FUEL_KEY:
             return self.fuel_space_left()
-        if self.is_processor() and (self.input_capacity > 0 or self.output_capacity > 0):
+        if self.is_seed_storage_key(key):
+            room = self.seed_space_left()
+        elif self.is_processor() and (self.input_capacity > 0 or self.output_capacity > 0):
             if key in self.processor_input_keys():
                 room = self.input_space_left()
             elif key in self.processor_output_keys():
@@ -1578,6 +1597,10 @@ class Building:
 
     def max_item_cap(self, key: str) -> int:
         """Upper bound when setting a cap (pool size for this key)."""
+        if self.kind == BuildingKind.KITCHEN and key == KITCHEN_FUEL_KEY:
+            return max(1, self.fuel_capacity)
+        if self.is_seed_storage_key(key):
+            return max(1, self.seed_capacity)
         if self.is_processor() and (self.input_capacity > 0 or self.output_capacity > 0):
             if key in self.processor_input_keys():
                 return max(1, self.input_capacity)
@@ -1644,15 +1667,21 @@ class Building:
     def space_left(self) -> int:
         if self.is_processor() and (self.input_capacity > 0 or self.output_capacity > 0):
             return self.input_space_left() + self.output_space_left()
-        return max(0, self.capacity - self.stored_total)
+        return max(0, self.capacity - self.cargo_stored_total)
 
     def capacity_label(self) -> str:
         if self.is_processor() and self.input_capacity > 0:
-            return (
+            label = (
                 f"{self.input_stored_total()}/{self.input_capacity} in  "
                 f"{self.output_stored_total()}/{self.output_capacity} out"
             )
-        return f"{self.stored_total}/{self.capacity}"
+        else:
+            label = f"{self.cargo_stored_total}/{self.capacity}"
+        if self.seed_capacity > 0:
+            label += f"  · seeds {self.seed_stored_total}/{self.seed_capacity}"
+        if self.fuel_capacity > 0:
+            label += f"  · fuel {self.fuel_wood}/{self.fuel_capacity}"
+        return label
 
     def craftable_recipe(self) -> Recipe | None:
         """Pick an enabled recipe that can run now.

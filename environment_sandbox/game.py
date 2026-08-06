@@ -419,10 +419,12 @@ class Game:
                     kind=kind,
                     x=ox,
                     y=oy,
-                    capacity=BUILDING_STORAGE_CAPACITY * 50,
                     plot_w=pw,
                     plot_h=ph,
                 )
+                from entities import apply_building_storage
+
+                apply_building_storage(building)
                 self.buildings[building.id] = building
                 self.next_building_id += 1
             else:
@@ -3130,9 +3132,10 @@ class Game:
             plot_w=plot_w,
             plot_h=plot_h,
         )
+        from entities import apply_building_storage
+
+        apply_building_storage(building)
         building.sync_draw_task_from_mode()
-        if site.kind == BuildingKind.KITCHEN:
-            building.fuel_capacity = KITCHEN_FUEL_CAPACITY
         if site.kind == BuildingKind.FORESTER:
             building.item_mins = dict(default_item_mins(BuildingKind.FORESTER))
         self.next_building_id += 1

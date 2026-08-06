@@ -492,7 +492,7 @@ class UI:
                     workers = sum(1 for v in villagers if v.building_id == b.id)
                     label = (
                         f"{BUILDING_LABELS[b.kind]} #{b.id}  "
-                        f"{b.stored_total}/{b.capacity} · {workers}w · "
+                        f"{b.capacity_label()} · {workers}w · "
                         f"{WORK_MODE_SHORT[b.work_mode]}"
                     )
                     if selected:

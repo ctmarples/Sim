@@ -7,6 +7,8 @@ the camera pans/zooms over it.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 # ---------------------------------------------------------------------------
 # World grid (logical map — larger than the on-screen viewport)
 # ---------------------------------------------------------------------------
@@ -105,9 +107,87 @@ def configure_for_display(screen_w: int, screen_h: int) -> None:
 # ---------------------------------------------------------------------------
 RANDOM_SEED: int = 42
 INVENTORY_CAPACITY: int = 20
-SEED_CARRY_CAPACITY: int = 20  # berry + crop seeds (separate from general cargo)
+SEED_CARRY_CAPACITY: int = 20  # villager/player berry + crop seeds (carry pool)
 MAX_VILLAGERS: int = 20
-BUILDING_STORAGE_CAPACITY: int = 40
+
+# ---------------------------------------------------------------------------
+# Building storage (single source of truth)
+# Edit BUILDING_STORAGE below — construction + save load both apply these.
+# Optional pools: input/output (processors), fuel (kitchen), seeds (farm).
+# Zero = that pool is unused (items share ``capacity`` instead).
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class BuildingStorageSpec:
+    """Storage pools for one building kind."""
+
+    capacity: int = 40  # general cargo (or display total when split)
+    input_capacity: int = 0
+    output_capacity: int = 0
+    fuel_capacity: int = 0
+    seed_capacity: int = 0  # crop seeds; separate from produce cargo
+
+
+_CARGO: int = 40
+_PROC_IN: int = 40
+_PROC_OUT: int = 10
+_FUEL: int = 10
+_SEEDS: int = 40
+
+BUILDING_STORAGE: dict[str, BuildingStorageSpec] = {
+    "home": BuildingStorageSpec(capacity=_CARGO * 50),
+    "workstation": BuildingStorageSpec(capacity=0),
+    "forester": BuildingStorageSpec(capacity=_CARGO),
+    "mason": BuildingStorageSpec(capacity=_CARGO),
+    "hunter": BuildingStorageSpec(capacity=_CARGO),
+    "forager": BuildingStorageSpec(capacity=_CARGO, seed_capacity=_SEEDS),
+    "fisher": BuildingStorageSpec(capacity=_CARGO),
+    "farm": BuildingStorageSpec(capacity=_CARGO, seed_capacity=_SEEDS),
+    "field": BuildingStorageSpec(capacity=0),
+    "mill": BuildingStorageSpec(
+        capacity=_PROC_IN + _PROC_OUT,
+        input_capacity=_PROC_IN,
+        output_capacity=_PROC_OUT,
+    ),
+    "kitchen": BuildingStorageSpec(
+        capacity=_PROC_IN + _PROC_OUT,
+        input_capacity=_PROC_IN,
+        output_capacity=_PROC_OUT,
+        fuel_capacity=_FUEL,
+    ),
+    "craft_bench": BuildingStorageSpec(
+        capacity=_PROC_IN + _PROC_OUT,
+        input_capacity=_PROC_IN,
+        output_capacity=_PROC_OUT,
+    ),
+    "alchemist": BuildingStorageSpec(
+        capacity=_PROC_IN + _PROC_OUT,
+        input_capacity=_PROC_IN,
+        output_capacity=_PROC_OUT,
+    ),
+}
+
+
+def building_storage_spec(kind_name: str) -> BuildingStorageSpec:
+    """Lookup by BuildingKind.name (case-insensitive). Unknown → default cargo."""
+    key = kind_name.strip().lower()
+    if key in BUILDING_STORAGE:
+        return BUILDING_STORAGE[key]
+    return BuildingStorageSpec(capacity=_CARGO)
+
+
+# Back-compat aliases (prefer BUILDING_STORAGE / building_storage_spec).
+BUILDING_STORAGE_CAPACITY: int = _CARGO
+MILL_INPUT_CAPACITY: int = BUILDING_STORAGE["mill"].input_capacity
+MILL_OUTPUT_CAPACITY: int = BUILDING_STORAGE["mill"].output_capacity
+KITCHEN_INPUT_CAPACITY: int = BUILDING_STORAGE["kitchen"].input_capacity
+KITCHEN_OUTPUT_CAPACITY: int = BUILDING_STORAGE["kitchen"].output_capacity
+KITCHEN_FUEL_CAPACITY: int = BUILDING_STORAGE["kitchen"].fuel_capacity
+CRAFT_BENCH_INPUT_CAPACITY: int = BUILDING_STORAGE["craft_bench"].input_capacity
+CRAFT_BENCH_OUTPUT_CAPACITY: int = BUILDING_STORAGE["craft_bench"].output_capacity
+ALCHEMIST_INPUT_CAPACITY: int = BUILDING_STORAGE["alchemist"].input_capacity
+ALCHEMIST_OUTPUT_CAPACITY: int = BUILDING_STORAGE["alchemist"].output_capacity
+FARM_SEED_CAPACITY: int = BUILDING_STORAGE["farm"].seed_capacity
+
 FORESTER_COST_WOOD: int = 2
 FORESTER_COST_ROCK: int = 2
 FORESTER_DEFAULT_LOGS_MIN: int = 5
@@ -128,20 +208,10 @@ MILL_COST_WOOD: int = 2
 MILL_COST_ROCK: int = 2
 KITCHEN_COST_WOOD: int = 2
 KITCHEN_COST_ROCK: int = 2
-# Separate input / output storage pools for processor buildings.
-MILL_INPUT_CAPACITY: int = 40
-MILL_OUTPUT_CAPACITY: int = 10
-KITCHEN_INPUT_CAPACITY: int = 40
-KITCHEN_OUTPUT_CAPACITY: int = 10
-KITCHEN_FUEL_CAPACITY: int = 10
 CRAFT_BENCH_COST_WOOD: int = 2
 CRAFT_BENCH_COST_ROCK: int = 2
-CRAFT_BENCH_INPUT_CAPACITY: int = 20
-CRAFT_BENCH_OUTPUT_CAPACITY: int = 10
 ALCHEMIST_COST_WOOD: int = 2
 ALCHEMIST_COST_ROCK: int = 2
-ALCHEMIST_INPUT_CAPACITY: int = 20
-ALCHEMIST_OUTPUT_CAPACITY: int = 10
 # Chebyshev distance from Farm to a Field plot for workers to manage it.
 FARM_FIELD_RADIUS: int = 20
 
