@@ -17,6 +17,7 @@ from settings import (
     DISTURBANCE_MAX,
     DISTURBANCE_NEIGHBOUR_SPREAD,
     DISTURBANCE_PATH_LEVEL,
+    DISTURBANCE_RADIUS,
     DISTURBANCE_URBAN_LEVEL,
     INDICATOR_RADIUS,
     PATH_TRAFFIC_DECAY,
@@ -148,6 +149,16 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
         "disturbance",
         "Disturbance",
         (
+            BalanceParam(
+                "DISTURBANCE_RADIUS",
+                "Disturbance radius (cells)",
+                "int",
+                float(DISTURBANCE_RADIUS),
+                0,
+                5,
+                1,
+                "Neighbourhood average for effects and wider spread.",
+            ),
             BalanceParam(
                 "DISTURBANCE_URBAN_LEVEL",
                 "Urban floor",

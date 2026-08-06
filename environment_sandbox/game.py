@@ -184,6 +184,7 @@ from camera import Camera
 from dialogs import FileDialog
 from building_inspect_dialog import BuildingInspectDialog
 from field_plan_dialog import FieldPlanDialog
+from habitat_inspect_dialog import HabitatInspectDialog, HabitatInspectView
 from resource_inspect_dialog import ResourceInspectDialog
 from resource_tracker import ResourceHistory
 from resource_tracker_dialog import ResourceTrackerDialog
@@ -296,6 +297,7 @@ class Game:
         self.resource_bar = ResourceBar()
         self.file_dialog = FileDialog()
         self.field_plan_dialog = FieldPlanDialog()
+        self.habitat_inspect = HabitatInspectDialog()
         self.building_inspect = BuildingInspectDialog()
         self.villager_inspect = VillagerInspectDialog()
         self.resource_inspect = ResourceInspectDialog()
@@ -496,6 +498,7 @@ class Game:
             or self.resource_inspect.open
             or self.resource_tracker.open
             or self.balance_dialog.open
+            or self.habitat_inspect.open
         ):
             return
         keys = pygame.key.get_pressed()
@@ -531,6 +534,7 @@ class Game:
         self.resource_inspect.close()
         self.resource_tracker.close()
         self.balance_dialog.close()
+        self.habitat_inspect.close()
         self.drawing = False
         self.draw_start = None
         self.draw_current = None
@@ -564,6 +568,7 @@ class Game:
         self.villager_inspect.close()
         self.resource_inspect.close()
         self.resource_tracker.close()
+        self.habitat_inspect.close()
 
     def record_produced(self, key: str, amount: int = 1) -> None:
         self.resource_history.record_produced(key, amount)
@@ -627,6 +632,10 @@ class Game:
                     event
                 ):
                     continue
+                if self.habitat_inspect.open and self.habitat_inspect.handle_keydown(
+                    event
+                ):
+                    continue
                 self._on_keydown(event.key)
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if self.file_dialog.open:
@@ -669,6 +678,11 @@ class Game:
                 ):
                     self.balance_dialog.handle_mousedown(event.pos)
                     continue
+                if self.habitat_inspect.open and self.habitat_inspect.contains(
+                    event.pos
+                ):
+                    self.habitat_inspect.handle_mousedown(event.pos)
+                    continue
                 mx, my = event.pos
                 if mx >= map_view_width() and my >= MAP_OFFSET_Y:
                     if self._handle_panel_click(event.pos):
@@ -702,6 +716,9 @@ class Game:
                 if self.balance_dialog.open:
                     self.balance_dialog.handle_mouseup(event.pos, self.balance)
                     continue
+                if self.habitat_inspect.open and self.habitat_inspect._moving:
+                    self.habitat_inspect.handle_mouseup(event.pos)
+                    continue
                 self._on_mouse_up(event.pos)
             elif event.type == pygame.MOUSEMOTION:
                 if self.file_dialog.open:
@@ -728,6 +745,9 @@ class Game:
                     continue
                 if self.balance_dialog.open and self.balance_dialog._moving:
                     self.balance_dialog.handle_mousemotion(event.pos)
+                    continue
+                if self.habitat_inspect.open and self.habitat_inspect._moving:
+                    self.habitat_inspect.handle_mousemotion(event.pos)
                     continue
                 if self.building_inspect.open:
                     self.building_inspect.handle_mousemotion(event.pos)
@@ -828,6 +848,9 @@ class Game:
                 self.resource_tracker.close()
             if self.balance_dialog.open:
                 self.balance_dialog.close()
+                return
+            if self.habitat_inspect.open:
+                self.habitat_inspect.close()
                 return
             if (
                 self.selected_building_id is not None
@@ -1198,39 +1221,108 @@ class Game:
         self.building_inspect.close()
         self.villager_inspect.close()
         self.resource_inspect.close()
+        self.field_plan_dialog.close()
         cx = sum(p[0] for p in breed) // len(breed)
         cy = sum(p[1] for p in breed) // len(breed)
         self.camera.center_on(cx, cy, self.world.cols, self.world.rows)
+        screen_xy = self.camera.world_to_screen(cx, cy)
+        self.habitat_inspect.open_for(kind, patch_id, screen_xy=screen_xy)
+
+    def _habitat_inspect_view(self) -> HabitatInspectView | None:
+        if self.selected_habitat_id is None or self.selected_habitat_kind is None:
+            return None
+        kind = self.selected_habitat_kind
+        patch_id = self.selected_habitat_id
+        hab = self.wildlife.habitat(patch_id, kind)
+        if hab is None:
+            return None
+        from resource_balance import (
+            ANIMAL_BREED_CHANCE,
+            COLONY_GROW_CHANCE,
+            COLONY_LEVEL_MAX,
+        )
+        from wildlife import COLONY_KINDS, OpenHabitat
+        from world import disturbance_activity_multiplier, effective_disturbance_at
+
         label = {
-            AnimalKind.DEER: "Deer",
-            AnimalKind.BOAR: "Boar",
-            AnimalKind.BEE: "Bee",
-            AnimalKind.RABBIT: "Rabbit",
+            AnimalKind.DEER: "Deer breeding ground",
+            AnimalKind.BOAR: "Boar breeding ground",
+            AnimalKind.BEE: "Bee nest",
+            AnimalKind.RABBIT: "Rabbit warren",
         }.get(kind, kind.name.title())
-        if kind in (AnimalKind.BEE, AnimalKind.RABBIT):
+        breed = self.wildlife._breeding_for(kind, hab)
+        roam = self.wildlife._cold_roaming_for(kind, hab)
+        breed_set = set(breed)
+        roam_only = roam - breed_set
+        sample_cells = list(breed_set | roam)
+        if not sample_cells:
+            return None
+
+        dist_values = [
+            effective_disturbance_at(self.world, x, y) for x, y in sample_cells
+        ]
+        avg_dist = sum(dist_values) / len(dist_values)
+        max_dist = max(dist_values)
+        ecology = disturbance_activity_multiplier(avg_dist)
+
+        bio = self.env_maps.farm_biodiversity(sample_cells)
+        floral = self.env_maps.farm_floral(sample_cells)
+        poll = self.env_maps.farm_pollination(sample_cells)
+        benefits: list[tuple[str, str]] = [
+            ("Biodiversity", f"{bio * 100:.0f}%"),
+            ("Floral resources", f"{floral * 100:.0f}%"),
+        ]
+        if kind == AnimalKind.BEE:
+            benefits.append(("Pollination (nest)", f"{poll * 100:.0f}%"))
+        elif isinstance(hab, OpenHabitat):
+            benefits.append(("Forage tiles", str(len(hab.forage_tiles))))
+        else:
+            benefits.append(("Forest patch", f"{len(hab.forest_tiles)} cells"))
+
+        cap = self.wildlife._cap_for(kind, hab)
+        if kind in COLONY_KINDS:
             colony = self.wildlife._colony_on_habitat(kind, patch_id)
             if colony is None:
-                self._set_status(f"{label} nest #{patch_id}: empty")
+                population = "Empty nest"
+                pop_factor = 0.35
             else:
-                self._set_status(
-                    f"{label} nest #{patch_id}: level {colony.level} · "
+                population = (
+                    f"Level {colony.level}/{COLONY_LEVEL_MAX} · "
                     f"{colony.target_members()} visible"
                 )
-            return
-        _present, migrating, total, pairs = self.wildlife.patch_occupancy(
-            kind, patch_id
-        )
-        cap = self.wildlife._cap_for(kind, hab)
-        pair_txt = f"{pairs} pair" if pairs == 1 else f"{pairs} pairs"
-        if migrating:
-            self._set_status(
-                f"{label} ground #{patch_id}: {total}/{cap} · "
-                f"{pair_txt} · {migrating} migrating"
-            )
+                pop_factor = colony.level / float(COLONY_LEVEL_MAX)
+            base_breed = COLONY_GROW_CHANCE
+            subtitle = f"Nest #{patch_id} · open habitat"
         else:
-            self._set_status(
-                f"{label} ground #{patch_id}: {total}/{cap} · {pair_txt}"
+            _present, migrating, total, pairs = self.wildlife.patch_occupancy(
+                kind, patch_id
             )
+            pair_txt = f"{pairs} pair" if pairs == 1 else f"{pairs} pairs"
+            if migrating:
+                population = f"{total}/{cap} · {pair_txt} · {migrating} migrating"
+            else:
+                population = f"{total}/{cap} · {pair_txt}"
+            pop_factor = min(1.0, total / cap) if cap > 0 else 0.0
+            base_breed = ANIMAL_BREED_CHANCE
+            subtitle = f"Ground #{patch_id} · forest patch"
+
+        benefit_factor = 0.55 + 0.45 * min(1.0, bio)
+        health = max(0.0, min(100.0, 100.0 * ecology * pop_factor * benefit_factor))
+        breed_pct = base_breed * ecology * 100.0
+
+        return HabitatInspectView(
+            title=label,
+            subtitle=subtitle,
+            population=population,
+            breeding_tiles=len(breed_set),
+            roam_tiles=len(roam_only),
+            avg_disturbance=avg_dist,
+            max_disturbance=max_dist,
+            ecology_mult=ecology,
+            breed_chance_pct=breed_pct,
+            health_pct=health,
+            benefits=benefits,
+        )
 
     def _assign_unassigned_to_selected_building(self) -> None:
         if self.selected_building_id is None:
@@ -2176,11 +2268,13 @@ class Game:
         poll = pollination_yield_multiplier(self._farm_pollination_at(x, y))
         field_b = self._field_building_at(x, y)
         health = self._field_crop_health(field_b) if field_b is not None else 1.0
-        from world import disturbance_activity_multiplier
+        from world import disturbance_activity_multiplier, effective_disturbance_at
 
         cell = self.world.get_cell(x, y)
         ecology = (
-            disturbance_activity_multiplier(cell.disturbance) if cell is not None else 1.0
+            disturbance_activity_multiplier(effective_disturbance_at(self.world, x, y))
+            if cell is not None
+            else 1.0
         )
         return max(
             1,
@@ -2209,12 +2303,14 @@ class Game:
         if hab is None:
             self.selected_habitat_kind = None
             self.selected_habitat_id = None
+            self.habitat_inspect.close()
             return
         breed = self.wildlife._breeding_for(kind, hab)
         cap = self.wildlife._cap_for(kind, hab)
         if not breed or cap <= 0:
             self.selected_habitat_kind = None
             self.selected_habitat_id = None
+            self.habitat_inspect.close()
 
     def _expire_unharvested_crops(self, ended_season: Season) -> None:
         """Clear ripe crops that missed their harvest window so the tile can be replanted.
@@ -7750,6 +7846,11 @@ class Game:
             mouse_pos=mouse,
         )
         self.balance_dialog.draw(self.screen, self.balance, mouse_pos=mouse)
+        self.habitat_inspect.draw(
+            self.screen,
+            self._habitat_inspect_view(),
+            mouse_pos=mouse,
+        )
         pygame.display.flip()
 
     def _farm_field_cells(self) -> set[tuple[int, int]]:
@@ -9115,6 +9216,38 @@ class Game:
             recolour={"body": COLOUR_PLAYER},
         )
 
+    def _draw_cell_set_outline(
+        self,
+        cells: set[tuple[int, int]],
+        *,
+        colour: tuple[int, int, int],
+        width: int = 2,
+    ) -> None:
+        """Draw only the outer border of a cell region (no internal grid lines)."""
+        for x, y in cells:
+            rect = self._cell_rect(x, y)
+            if (x, y - 1) not in cells:
+                pygame.draw.line(
+                    self.screen, colour, (rect.left, rect.top), (rect.right, rect.top), width
+                )
+            if (x, y + 1) not in cells:
+                pygame.draw.line(
+                    self.screen,
+                    colour,
+                    (rect.left, rect.bottom - 1),
+                    (rect.right, rect.bottom - 1),
+                    width,
+                )
+            if (x - 1, y) not in cells:
+                pygame.draw.line(
+                    self.screen, colour, (rect.left, rect.top), (rect.left, rect.bottom), width
+                )
+            if (x + 1, y) not in cells:
+                pygame.draw.line(
+                    self.screen,
+                    colour, (rect.right - 1, rect.top), (rect.right - 1, rect.bottom), width
+                )
+
     def _draw_selection_highlights(self) -> None:
         if self.selected_villager_id is not None:
             villager = self._get_villager(self.selected_villager_id)
@@ -9136,14 +9269,19 @@ class Game:
             if hab is not None:
                 tiles = set(self.wildlife._breeding_for(kind, hab))
                 roam = self.wildlife._cold_roaming_for(kind, hab)
-                for x, y in roam:
-                    if (x, y) in tiles:
-                        continue
-                    rect = self._cell_rect(x, y)
-                    pygame.draw.rect(self.screen, (120, 140, 80), rect, 1)
-                for x, y in tiles:
-                    rect = self._cell_rect(x, y)
-                    pygame.draw.rect(self.screen, COLOUR_SELECTED_ENTITY, rect, 2)
+                roam_only = roam - tiles
+                if roam_only:
+                    self._draw_cell_set_outline(
+                        roam_only,
+                        colour=(120, 140, 80),
+                        width=1,
+                    )
+                if tiles:
+                    self._draw_cell_set_outline(
+                        tiles,
+                        colour=COLOUR_SELECTED_ENTITY,
+                        width=2,
+                    )
 
     def _draw_minimap(self) -> None:
         """Draw minimap showing terrain, buildings, and camera viewport."""

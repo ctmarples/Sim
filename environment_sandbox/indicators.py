@@ -123,10 +123,9 @@ def species_diversity(world: World, x: int, y: int, radius: int | None = None) -
 
 
 def disturbance_value(world: World, x: int, y: int) -> float:
-    cell = world.get_cell(x, y)
-    if cell is None:
-        return 0.0
-    return max(0.0, min(1.0, cell.disturbance))
+    from world import effective_disturbance_at
+
+    return effective_disturbance_at(world, x, y)
 
 
 def species_on_cell(cell) -> set[str]:

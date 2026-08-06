@@ -254,6 +254,8 @@ DISTURBANCE_URBAN_LEVEL: float = 0.85
 DISTURBANCE_PATH_LEVEL: float = 0.45
 # Ecology/farming multiplier at full disturbance (0.25 → 25% effectiveness).
 DISTURBANCE_ACTIVITY_FLOOR: float = 0.25
+# Chebyshev radius for neighbourhood-averaged disturbance (read + spread falloff).
+DISTURBANCE_RADIUS: int = 2
 
 STATUS_MESSAGE_FRAMES: int = 150
 

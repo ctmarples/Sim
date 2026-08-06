@@ -64,7 +64,7 @@ from settings import (
     FISH_MOVE_INTERVAL,
     RANDOM_SEED,
 )
-from world import FeatureType, TerrainType, World, disturbance_activity_multiplier
+from world import FeatureType, TerrainType, World, disturbance_activity_multiplier, effective_disturbance_at
 
 
 class AnimalKind(Enum):
@@ -1676,7 +1676,9 @@ class WildlifeManager:
                 continue
             cell = world.get_cell(animal.x, animal.y)
             ecology = (
-                disturbance_activity_multiplier(cell.disturbance) if cell is not None else 1.0
+                disturbance_activity_multiplier(effective_disturbance_at(world, animal.x, animal.y))
+                if cell is not None
+                else 1.0
             )
             if self.rng.random() >= ANIMAL_BREED_CHANCE * ecology:
                 continue
@@ -1947,7 +1949,11 @@ class WildlifeManager:
                 continue
             nest = world.get_cell(colony.x, colony.y)
             ecology = (
-                disturbance_activity_multiplier(nest.disturbance) if nest is not None else 1.0
+                disturbance_activity_multiplier(
+                    effective_disturbance_at(world, colony.x, colony.y)
+                )
+                if nest is not None
+                else 1.0
             )
             if colony.level < COLONY_LEVEL_MAX and self.rng.random() < COLONY_GROW_CHANCE * ecology:
                 colony.level += 1
@@ -1961,7 +1967,11 @@ class WildlifeManager:
                 continue
             nest = world.get_cell(colony.x, colony.y)
             ecology = (
-                disturbance_activity_multiplier(nest.disturbance) if nest is not None else 1.0
+                disturbance_activity_multiplier(
+                    effective_disturbance_at(world, colony.x, colony.y)
+                )
+                if nest is not None
+                else 1.0
             )
             if self.rng.random() >= COLONY_SPLIT_CHANCE * ecology:
                 continue

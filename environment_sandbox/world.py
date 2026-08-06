@@ -206,6 +206,26 @@ def disturbance_activity_multiplier(disturbance: float) -> float:
     return 1.0 - d * (1.0 - floor)
 
 
+def effective_disturbance_at(world: "World", x: int, y: int) -> float:
+    """Neighbourhood-mean disturbance (Chebyshev radius from balance)."""
+    from balance_config import active_balance
+
+    radius = active_balance().get_int("DISTURBANCE_RADIUS")
+    if radius <= 0:
+        cell = world.get_cell(x, y)
+        return max(0.0, min(1.0, cell.disturbance)) if cell is not None else 0.0
+    total = 0.0
+    count = 0
+    for ny, nx in world.neighbourhood(x, y, radius=radius):
+        cell = world.get_cell(nx, ny)
+        if cell is not None:
+            total += cell.disturbance
+            count += 1
+    if count <= 0:
+        return 0.0
+    return max(0.0, min(1.0, total / count))
+
+
 class World:
     """Grid landscape with generation and local queries."""
 
@@ -1036,7 +1056,9 @@ class World:
                 elif cell.feature == FeatureType.CROP_HERB and cell.growth_ticks > 0:
                     # Farm crops follow the calendar (growth_days), not ecology
                     # grow/freeze envelopes — otherwise they mature outside harvest.
-                    grow_mult = disturbance_activity_multiplier(cell.disturbance)
+                    grow_mult = disturbance_activity_multiplier(
+                        effective_disturbance_at(self, x, y)
+                    )
                     cell.growth_ticks = max(
                         0, cell.growth_ticks - max(0, int(round(ticks * grow_mult)))
                     )
@@ -1122,7 +1144,9 @@ class World:
                     and self._forage_rng.random()
                     < herb_spawn_rate(day, x, y)
                     * 0.55
-                    * disturbance_activity_multiplier(cell.disturbance)
+                    * disturbance_activity_multiplier(
+                        effective_disturbance_at(self, x, y)
+                    )
                 ):
                     cell.feature = FeatureType.REED
                     wild_n[TerrainType.RIPARIAN] = wild_n.get(TerrainType.RIPARIAN, 0) + 1
@@ -1133,7 +1157,9 @@ class World:
                     and self._forage_rng.random()
                     < herb_spawn_rate(day, x, y)
                     * 0.55
-                    * disturbance_activity_multiplier(cell.disturbance)
+                    * disturbance_activity_multiplier(
+                        effective_disturbance_at(self, x, y)
+                    )
                 ):
                     crops = WILD_CROPS_BY_TERRAIN[cell.terrain]
                     crop_key = self._forage_rng.choice(crops)
@@ -1198,7 +1224,9 @@ class World:
                     and cell.terrain == TerrainType.GRASS
                     and self._forage_rng.random()
                     < berry_spawn_rate(day, x, y)
-                    * disturbance_activity_multiplier(cell.disturbance)
+                    * disturbance_activity_multiplier(
+                        effective_disturbance_at(self, x, y)
+                    )
                 ):
                     cell.feature = FeatureType.BERRY_BUSH
                     cell.deposit = BERRY_BUSH_YIELD
@@ -1235,7 +1263,9 @@ class World:
                     < MUSHROOM_SPREAD_CHANCE
                     * mushroom_spawn_rate(day, nx, ny)
                     * 20.0
-                    * disturbance_activity_multiplier(cell.disturbance)
+                    * disturbance_activity_multiplier(
+                        effective_disturbance_at(self, nx, ny)
+                    )
                 ):
                     cell.feature = FeatureType.MUSHROOM
 
@@ -1252,7 +1282,9 @@ class World:
                         and cell.terrain in SOIL_LIKE
                         and self._forage_rng.random()
                         < mushroom_spawn_rate(day, nx, ny)
-                        * disturbance_activity_multiplier(cell.disturbance)
+                        * disturbance_activity_multiplier(
+                            effective_disturbance_at(self, nx, ny)
+                        )
                     ):
                         cell.feature = FeatureType.MUSHROOM
 
@@ -1336,9 +1368,8 @@ class World:
             if not candidates:
                 continue
             sx, sy = self._sprout_rng.choice(candidates)
-            sprout_cell = self.cells[sy][sx]
             if self._sprout_rng.random() > disturbance_activity_multiplier(
-                sprout_cell.disturbance
+                effective_disturbance_at(self, sx, sy)
             ):
                 continue
             # Inherit a species from the patch when possible.
@@ -1763,9 +1794,12 @@ class World:
             cell.disturbance = max(cell.disturbance, bal.get_float("DISTURBANCE_PATH_LEVEL"))
             return
         cell.disturbance = min(dmax, cell.disturbance + boost)
-        for ny, nx in self.neighbourhood(x, y, radius=1):
+        spread_radius = max(1, bal.get_int("DISTURBANCE_RADIUS"))
+        for ny, nx in self.neighbourhood(x, y, radius=spread_radius):
             if (nx, ny) == (x, y):
                 continue
+            dist = max(abs(nx - x), abs(ny - y))
+            amount = spread / float(dist)
             ncell = self.cells[ny][nx]
             if ncell.terrain == TerrainType.URBAN:
                 ncell.disturbance = max(
@@ -1776,4 +1810,4 @@ class World:
                     ncell.disturbance, bal.get_float("DISTURBANCE_PATH_LEVEL")
                 )
             else:
-                ncell.disturbance = min(dmax, ncell.disturbance + spread)
+                ncell.disturbance = min(dmax, ncell.disturbance + amount)
