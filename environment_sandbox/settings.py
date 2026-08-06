@@ -259,6 +259,15 @@ DISTURBANCE_RADIUS: int = 2
 
 STATUS_MESSAGE_FRAMES: int = 150
 
+# Visual-only height sample (toggle with H). Logic grid stays flat.
+HEIGHT_SAMPLE_ENABLED_DEFAULT: bool = False
+HEIGHT_SAMPLE_W: int = 16
+HEIGHT_SAMPLE_H: int = 12
+# Peak screen lift in pixels at zoom 1 (scales with view_cell / CELL_SIZE).
+HEIGHT_SAMPLE_PX: float = 30.0
+# Origin is centred on the world at runtime; these are half-sizes only as docs.
+HEIGHT_SAMPLE_LIGHT_NW: float = 0.55  # stronger NW slope shading so relief reads clearly
+
 # ---------------------------------------------------------------------------
 # Colours (RGB)
 # ---------------------------------------------------------------------------

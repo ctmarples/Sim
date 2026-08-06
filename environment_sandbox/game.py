@@ -170,6 +170,8 @@ from settings import (
     STATUS_MESSAGE_FRAMES,
     TICKS_PER_DAY_OPTIONS,
     REFERENCE_TICKS_PER_DAY,
+    HEIGHT_SAMPLE_ENABLED_DEFAULT,
+    HEIGHT_SAMPLE_PX,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
     WORLD_COLS,
@@ -177,6 +179,12 @@ from settings import (
     MAP_OFFSET_Y,
     map_view_height,
     map_view_width,
+)
+from height_sample import (
+    HeightSample,
+    bake_height_sample_surface,
+    generate_height_sample,
+    screen_lift_px,
 )
 from balance_config import BalanceState, set_active_balance
 from balance_dialog import BalanceDialog
@@ -306,9 +314,17 @@ class Game:
         self.balance = BalanceState()
         set_active_balance(self.balance)
         self.resource_history = ResourceHistory()
+        self.height_sample_enabled = HEIGHT_SAMPLE_ENABLED_DEFAULT
+        self.height_sample: HeightSample | None = None
+        self._height_sample_cache: pygame.Surface | None = None
+        self._height_sample_cache_pad: int = 0
+        self._height_sample_cache_key: tuple | None = None
 
         self.world = World()
         self.camera = Camera()
+        self.height_sample = generate_height_sample(
+            self.world.cols, self.world.rows, seed=self.world.seed
+        )
         self.player = Player(x=self.world.start_pos[0], y=self.world.start_pos[1])
         self.camera.center_on(self.player.x, self.player.y, self.world.cols, self.world.rows)
         self.home_storage = HomeStorage()
@@ -509,6 +525,10 @@ class Game:
 
     def reset(self) -> None:
         self.world.reset()
+        self.height_sample = generate_height_sample(
+            self.world.cols, self.world.rows, seed=self.world.seed
+        )
+        self._invalidate_height_sample_cache()
         self.player.reset(self.world.start_pos[0], self.world.start_pos[1])
         self.camera.center_on(self.player.x, self.player.y, self.world.cols, self.world.rows)
         self.home_storage.reset()
@@ -875,6 +895,8 @@ class Game:
             self._clear_selected_building_areas()
         elif key == pygame.K_SPACE:
             self._toggle_pause()
+        elif key == pygame.K_h:
+            self._toggle_height_sample()
         elif key == pygame.K_1:
             self._set_overlay(OverlayMode.NONE)
         elif key == pygame.K_2:
@@ -931,11 +953,75 @@ class Game:
 
     def _cell_rect(self, x: int, y: int) -> pygame.Rect:
         """Return screen rect for given world cell coordinates."""
-        return self.camera.cell_rect(x, y)
+        rect = self.camera.cell_rect(x, y)
+        dy = self._height_screen_lift(float(x) + 0.5, float(y) + 0.5)
+        if dy:
+            rect = rect.move(0, -int(round(dy)))
+        return rect
 
     def _cell_center(self, x: float, y: float) -> tuple[int, int]:
         """Return screen center point for given world cell coordinates (may be fractional)."""
-        return self.camera.world_to_screen(float(x) + 0.5, float(y) + 0.5)
+        cx, cy = self.camera.world_to_screen(float(x) + 0.5, float(y) + 0.5)
+        dy = self._height_screen_lift(float(x) + 0.5, float(y) + 0.5)
+        return cx, cy - int(round(dy))
+
+    def _toggle_height_sample(self) -> None:
+        self.height_sample_enabled = not self.height_sample_enabled
+        if self.height_sample_enabled:
+            self.height_sample = generate_height_sample(
+                self.world.cols, self.world.rows, seed=self.world.seed
+            )
+            self._invalidate_height_sample_cache()
+            s = self.height_sample
+            self.camera.center_on(
+                s.x0 + s.width / 2,
+                s.y0 + s.height / 2,
+                self.world.cols,
+                self.world.rows,
+            )
+            self._set_status(
+                f"Height warp ON ({s.width}×{s.height} @ {s.x0},{s.y0}) — H to toggle"
+            )
+        else:
+            self._invalidate_height_sample_cache()
+            self._set_status("Height warp OFF — H to toggle")
+
+    def _invalidate_height_sample_cache(self) -> None:
+        self._height_sample_cache = None
+        self._height_sample_cache_key = None
+
+    def _ensure_height_sample_cache(self, base: pygame.Surface) -> None:
+        if not self.height_sample_enabled or self.height_sample is None:
+            return
+        key = (
+            self.world.terrain_revision,
+            CELL_SIZE,
+            self.height_sample.x0,
+            self.height_sample.y0,
+            self.height_sample.width,
+            self.height_sample.height,
+            id(self.height_sample),
+        )
+        if self._height_sample_cache is not None and self._height_sample_cache_key == key:
+            return
+        surf, pad = bake_height_sample_surface(
+            self.height_sample, base, cell_size=CELL_SIZE
+        )
+        self._height_sample_cache = surf
+        self._height_sample_cache_pad = pad
+        self._height_sample_cache_key = key
+
+    def _height_screen_lift(self, wx: float, wy: float) -> float:
+        if not self.height_sample_enabled or self.height_sample is None:
+            return 0.0
+        h = self.height_sample.height_world(wx, wy)
+        if h <= 0.0:
+            return 0.0
+        return screen_lift_px(h, self.camera.view_cell(), float(CELL_SIZE))
+
+    def _flat_cell_rect(self, x: int, y: int) -> pygame.Rect:
+        """Screen rect without height lift (for covering baked terrain)."""
+        return self.camera.cell_rect(x, y)
 
     def _on_mouse_down(self, pos: tuple[int, int]) -> None:
         building = self._selected_building()
@@ -8807,6 +8893,8 @@ class Game:
         if ice is not None:
             self._blit_camera_world_surface(ice, origin)
 
+        self._draw_height_sample(base)
+
         x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
         vc = self.camera.view_cell_px()
         # Tall / overhanging icons (trees, buildings) must paint after ground
@@ -8911,6 +8999,64 @@ class Game:
             _draw_cell_feature(x, y)
 
         self.screen.set_clip(None)
+
+    def _draw_height_sample(self, base: pygame.Surface) -> None:
+        """Blit a cached warped sample (bake once; cheap pan/zoom)."""
+        if not self.height_sample_enabled or self.height_sample is None:
+            return
+        sample = self.height_sample
+        x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
+        if x1 < sample.x0 or x0 > sample.x1 or y1 < sample.y0 or y0 > sample.y1:
+            return
+
+        self._ensure_height_sample_cache(base)
+        cache = self._height_sample_cache
+        if cache is None:
+            return
+        pad = self._height_sample_cache_pad
+        zoom = self.camera.view_cell() / CELL_SIZE
+
+        # Wipe only the flat sample footprint (not lift headroom above) so raised
+        # terrain composites over the real map instead of a black strip.
+        tl = self.camera.world_to_screen(sample.x0, sample.y0)
+        br = self.camera.world_to_screen(sample.x1 + 1, sample.y1 + 1)
+        wipe = pygame.Rect(
+            tl[0],
+            tl[1],
+            max(1, br[0] - tl[0]),
+            max(1, br[1] - tl[1]),
+        )
+        wipe = wipe.clip(pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height()))
+        if wipe.w > 0 and wipe.h > 0:
+            self.screen.fill(COLOUR_BG, wipe)
+
+        # Cache is authored in world-pixel space with top padding for lifts.
+        # Cache (0, pad) == world (sample.x0 * CELL_SIZE, sample.y0 * CELL_SIZE).
+        world_ox = sample.x0 * CELL_SIZE
+        world_oy = sample.y0 * CELL_SIZE - pad
+        mw = map_view_width()
+        mh = map_view_height()
+        sx = self.camera.x * CELL_SIZE - world_ox
+        sy = self.camera.y * CELL_SIZE - world_oy
+        sw = mw / max(1e-6, zoom)
+        sh = mh / max(1e-6, zoom)
+        ix = max(0, int(sx))
+        iy = max(0, int(sy))
+        src = pygame.Rect(ix, iy, int(sw) + 2, int(sh) + 2).clip(cache.get_rect())
+        if src.w <= 0 or src.h <= 0:
+            return
+        scaled = pygame.transform.scale(
+            cache.subsurface(src),
+            (max(1, int(round(src.w * zoom))), max(1, int(round(src.h * zoom)))),
+        )
+        # Keep opaque: display surfaces are often SRCALPHA; alpha-0 RGB is invisible.
+        if scaled.get_bitsize() != 24 and scaled.get_flags() & pygame.SRCALPHA:
+            opaque = pygame.Surface(scaled.get_size(), depth=24)
+            opaque.blit(scaled, (0, 0))
+            scaled = opaque
+        dest_x = int(round((ix - sx) * zoom))
+        dest_y = MAP_OFFSET_Y + int(round((iy - sy) * zoom))
+        self.screen.blit(scaled, (dest_x, dest_y))
 
     def _draw_construction_progress(self, site: ConstructionSite, rect: pygame.Rect) -> None:
         bar = pygame.Rect(rect.x + 4, rect.bottom - 8, rect.w - 8, 4)
