@@ -111,6 +111,7 @@ from settings import (
     COLOUR_BOAR,
     COLOUR_DEER,
     COLOUR_BG,
+    COLOUR_GRASS,
     COLOUR_FISH,
     COLOUR_FARM,
     COLOUR_FISHER,
@@ -1353,7 +1354,9 @@ class Game:
         ground = pygame.Surface(
             (region.width * CELL_SIZE, region.height * CELL_SIZE), depth=24
         )
-        ground.fill((40, 55, 35))
+        # Must match terrain — dark olive here shows through warp seams as
+        # fake "black biome borders" (especially along height breaks).
+        ground.fill(COLOUR_GRASS)
         if area.w > 0 and area.h > 0:
             dest = (area.x - region.x0 * CELL_SIZE, area.y - region.y0 * CELL_SIZE)
             ground.blit(base.subsurface(area), dest)
@@ -8823,6 +8826,8 @@ class Game:
             CELL_SIZE,
             self.world.terrain_revision,
             active_fill_mode(),
+            # Bump when soft-join math changes so in-session rebakes pick it up.
+            "ms-soft-mottle-v1",
         )
 
     def _invalidate_terrain_layer(self) -> None:
@@ -8843,6 +8848,18 @@ class Game:
         self._season_compose_source = None
         self._season_compose_source_key = None
         self._season_reveal_period = None
+        try:
+            from terrain_fills import clear_fill_cache
+
+            clear_fill_cache()
+        except ImportError:
+            pass
+        try:
+            from terrain_mottle import clear_mottle_cache
+
+            clear_mottle_cache()
+        except ImportError:
+            pass
         # Density fields are seed-stable; terrain paint only needs remask.
 
     def _visual_terrain_at(
@@ -8910,6 +8927,7 @@ class Game:
         if full_rebuild:
             size = (self.world.cols * CELL_SIZE, self.world.rows * CELL_SIZE)
             self._terrain_base = pygame.Surface(size)
+            self._terrain_base.fill(COLOUR_GRASS)
             self._terrain_water_mask = pygame.Surface(size, pygame.SRCALPHA)
             self._terrain_water_mask.fill((0, 0, 0, 0))
             self._terrain_grass_mask = pygame.Surface(size, pygame.SRCALPHA)
@@ -9760,7 +9778,9 @@ class Game:
         if self.height_sample_enabled and self.height_sample is not None:
             # Warp path: do not run season fleck fade / ice (expensive, and we do not
             # blit them under warp). Day-length fade rebuilds were the low-ticks hitch.
-            self.screen.fill(COLOUR_BG, map_clip)
+            # Grass, not COLOUR_BG: warp seams / wipe gaps must not read as
+            # black stair-step "terrain transitions".
+            self.screen.fill(COLOUR_GRASS, map_clip)
             self._draw_height_sample(base)
             if mute is not None:
                 tint = pygame.Surface((map_clip.w, map_clip.h))
@@ -9937,7 +9957,8 @@ class Game:
         wipe.height = max(wipe.height, MAP_OFFSET_Y + map_view_height() - wipe.y)
         wipe = wipe.clip(pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height()))
         if wipe.w > 0 and wipe.h > 0:
-            self.screen.fill(COLOUR_BG, wipe)
+            # Match terrain base fill so height-warp gaps don't read as black seams.
+            self.screen.fill(COLOUR_GRASS, wipe)
 
         # Cache (0, pad) == world (region.x0 * CELL_SIZE, region.y0 * CELL_SIZE).
         world_ox = region.x0 * CELL_SIZE

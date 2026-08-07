@@ -2,10 +2,9 @@
 
 Active implementation is selected by ``settings.TERRAIN_FILL_MODE``:
 
-- ``"procedural"`` — 16-case marching-squares with procedural fills
-  (``terrain_tiles_procedural``). Default.
-- ``"png"`` — PNG fills + soft neighbour joins (``terrain_tiles_png``).
-  Kept for a possible return; not the active default.
+- ``"procedural"`` — 16-case MS opaque joins + world-UV procedural mottling
+  (``terrain_mottle``). Preview / knobs: ``python preview_terrain_fills.py``.
+- ``"png"`` — legacy soft neighbour-join path (``terrain_tiles_png``).
 """
 
 from __future__ import annotations

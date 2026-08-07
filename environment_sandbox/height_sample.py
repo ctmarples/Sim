@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import pygame
 
 from settings import (
+    COLOUR_GRASS,
     HEIGHT_LIFT_PX,
     HEIGHT_SAMPLE_LIGHT_NW,
     HEIGHT_SAMPLE_SHADE_LIT,
@@ -374,7 +375,7 @@ def bake_height_sample_surface(
     w = sample.width * cell_size
     h = sample.height * cell_size + pad
     surf = pygame.Surface((w, h), depth=24)
-    surf.fill((40, 55, 35))
+    surf.fill(COLOUR_GRASS)
     patch = terrain_patch
     if patch.get_bitsize() != 24:
         opaque = pygame.Surface(patch.get_size(), depth=24)
@@ -470,7 +471,7 @@ def patch_height_sample_cells(
                 (0, 0),
             )
         except ValueError:
-            top.fill((40, 55, 35))
+            top.fill(COLOUR_GRASS)
         for yy in range(dest_pad):
             dest.blit(top, (x0 * cell_size, yy))
 

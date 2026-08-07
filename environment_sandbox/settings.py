@@ -36,7 +36,8 @@ TICKS_PER_DAY_OPTIONS: tuple[int, ...] = (30, 60, 120, 240, 480, 960, 1920)
 REFERENCE_TICKS_PER_DAY: int = FPS * 8
 # Native terrain tile size (pre-rendered, then scaled to CELL_SIZE and stitched).
 TERRAIN_SUBDIV: int = 25
-# Terrain fill backend: "procedural" (default MS + noise) or "png" (assets/terrain).
+# Terrain edge backend: "procedural" (MS opaque joins + mottling) or "png"
+# (legacy soft joins). Preview mottling: python preview_terrain_fills.py
 TERRAIN_FILL_MODE: str = "procedural"
 
 # Camera

@@ -1,31 +1,10 @@
-"""16-case marching-squares terrain autotiling (no colour averaging).
+"""16-case marching-squares terrain autotiling + procedural mottling.
 
-Restored verbatim from pre-PNG commit ``7289cd6`` (new habitats).
 Active via ``settings.TERRAIN_FILL_MODE = "procedural"``.
-PNG path kept in ``terrain_tiles_png``.
 
-Convention
-----------
-Artwork is a **procedural 16-case marching-squares tileset**, not a 47-tile
-blob atlas and not a simple 4-neighbour edge/corner set. There is no external
-spritesheet in this repository — cases are generated once and cached.
-
-Shared corner grid (visual only; gameplay still uses per-cell TerrainType):
-
-    top-left     = bit 1
-    top-right    = bit 2
-    bottom-right = bit 4
-    bottom-left  = bit 8
-
-Screen directions (verified):
-
-    north = (x, y - 1)
-    east  = (x + 1, y)
-    south = (x, y + 1)
-    west  = (x - 1, y)
-
-Each cell reads the same four vertex values as its neighbours, so the east
-edge of (x,y) always matches the west edge of (x+1,y).
+Land↔land: soft bilinear coverage, **opaque colour lerp** of world-UV mottles
+(never alpha-blend onto black). Water edges stay sharp.
+Tune mottling: ``python preview_terrain_fills.py``.
 """
 
 from __future__ import annotations
@@ -149,58 +128,10 @@ def _lerp_colour(
 
 
 def _opaque_fill(terrain: TerrainType, lx: int, ly: int) -> tuple[int, int, int]:
-    """Opaque terrain colour with variation across every pixel of the tile."""
-    base = _COLOURS[terrain]
-    # Low-frequency mottling + fine speckles (fully opaque).
-    n1 = (_hash01(lx, ly, 11 + terrain.value * 17) - 0.5) * 0.16
-    n2 = (_hash01(lx * 2, ly * 3, 40 + terrain.value) - 0.5) * 0.09
-    c = _shift(base, n1 + n2)
-    if terrain == TerrainType.GRASS:
-        if _hash01(lx, ly, 90) > 0.82:
-            c = _shift(c, 0.12)
-        elif _hash01(lx, ly, 91) > 0.88:
-            c = _shift(c, -0.1)
-    elif terrain == TerrainType.MEADOW:
-        if _hash01(lx, ly, 88) > 0.8:
-            c = _shift(c, 0.14)
-        elif _hash01(lx, ly, 89) > 0.86:
-            c = _shift(c, -0.08)
-    elif terrain == TerrainType.RIPARIAN:
-        if _hash01(lx, ly, 86) > 0.78:
-            c = _shift(c, 0.1)
-        elif _hash01(lx, ly, 87) > 0.85:
-            c = _shift(c, -0.1)
-    elif terrain == TerrainType.SOIL:
-        if _hash01(lx, ly, 92) > 0.8:
-            c = _shift(c, -0.12)
-        elif _hash01(lx, ly, 93) > 0.85:
-            c = _shift(c, 0.08)
-    elif terrain == TerrainType.FOREST_FLOOR:
-        if _hash01(lx, ly, 98) > 0.8:
-            c = _shift(c, -0.1)
-        elif _hash01(lx, ly, 99) > 0.85:
-            c = _shift(c, 0.06)
-    elif terrain == TerrainType.ROCK:
-        if _hash01(lx, ly, 94) > 0.75:
-            c = _shift(c, -0.14)
-        elif _hash01(lx, ly, 95) > 0.9:
-            c = _shift(c, 0.1)
-    elif terrain == TerrainType.URBAN:
-        if _hash01(lx, ly, 84) > 0.78:
-            c = _shift(c, -0.08)
-        elif _hash01(lx, ly, 85) > 0.88:
-            c = _shift(c, 0.06)
-    elif terrain == TerrainType.PATH:
-        if _hash01(lx, ly, 86) > 0.72:
-            c = _shift(c, 0.08)
-        elif _hash01(lx, ly, 87) > 0.82:
-            c = _shift(c, -0.06)
-    elif terrain == TerrainType.WATER:
-        if _hash01(lx, ly, 96) > 0.7:
-            c = _shift(c, 0.1)
-        ripple = (_hash01(lx + ly, ly, 97) - 0.5) * 0.06
-        c = _shift(c, ripple)
-    return c
+    """Opaque mottling for cached MS atlas tiles (local UV; game uses world_mottle)."""
+    from terrain_mottle import sample_mottle
+
+    return sample_mottle(terrain, lx, ly)
 
 
 def _bilinear(tl: float, tr: float, br: float, bl: float, u: float, v: float) -> float:
@@ -312,20 +243,65 @@ def _unit_polygons(mask: int) -> list[list[tuple[float, float]]]:
     return table[mask & 15]
 
 
-def _fg_coverage_mask(mask: int) -> pygame.Surface:
-    """Opaque white where FG should be for this MS case."""
-    surf = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
+_HARD_COV_CACHE: dict[tuple[int, int], pygame.Surface] = {}
+
+
+def _fg_coverage_mask(mask: int, size: int | None = None) -> pygame.Surface:
+    """Opaque white where FG should be for this MS case (drawn at ``size``)."""
+    size = TILE if size is None else size
+    mask = mask & 15
+    key = (mask, size)
+    hit = _HARD_COV_CACHE.get(key)
+    if hit is not None:
+        return hit
+    surf = pygame.Surface((size, size), pygame.SRCALPHA)
     surf.fill((0, 0, 0, 0))
     if mask == 0:
+        _HARD_COV_CACHE[key] = surf
         return surf
     if mask == 15:
         surf.fill((255, 255, 255, 255))
+        _HARD_COV_CACHE[key] = surf
         return surf
     for poly in _unit_polygons(mask):
-        pts = [(int(round(x * (TILE - 1))), int(round(y * (TILE - 1)))) for x, y in poly]
+        pts = []
+        for x, y in poly:
+            px = 0 if x <= 0.0 else (size - 1 if x >= 1.0 else int(round(x * (size - 1))))
+            py = 0 if y <= 0.0 else (size - 1 if y >= 1.0 else int(round(y * (size - 1))))
+            pts.append((px, py))
         if len(pts) >= 3:
             pygame.draw.polygon(surf, (255, 255, 255, 255), pts)
+    _HARD_COV_CACHE[key] = surf
     return surf
+
+
+def _stamp_replace(
+    dest: pygame.Surface,
+    texture: pygame.Surface,
+    coverage: pygame.Surface,
+) -> None:
+    """Opaque replace: texture RGB where coverage alpha is opaque.
+
+    Copies coverage alpha onto the texture (RGB untouched) then blits — never
+    multiplies RGB toward black (classic dark-rim bug).
+    """
+    stamped = texture.convert_alpha()
+    try:
+        import numpy as np
+        from pygame import surfarray
+
+        alpha = surfarray.pixels_alpha(stamped)
+        alpha[:, :] = surfarray.array_alpha(coverage)
+        del alpha
+    except Exception:
+        # Fallback without numpy: per-pixel (slow; rare).
+        w, h = stamped.get_size()
+        for y in range(h):
+            for x in range(w):
+                c = stamped.get_at((x, y))
+                a = coverage.get_at((x, y))[3]
+                stamped.set_at((x, y), (c[0], c[1], c[2], a))
+    dest.blit(stamped, (0, 0))
 
 
 def build_tile_from_corners(
@@ -334,10 +310,10 @@ def build_tile_from_corners(
     br: TerrainType,
     bl: TerrainType,
 ) -> tuple[pygame.Surface, pygame.Surface, int, TerrainType, TerrainType]:
-    """MS composition from four shared corners.
+    """MS composition from four shared corners (atlas / F6).
 
-    Land↔land transitions are gradual (soft bilinear coverage).
-    Water↔other stays sharp. All fills are textured, never flat.
+    Land↔land: soft bilinear coverage + opaque colour lerp.
+    Water↔other: sharp. Fills from local-UV mottling.
     """
     corners = (tl, tr, br, bl)
     present: list[TerrainType] = []
@@ -367,7 +343,6 @@ def build_tile_from_corners(
         mask = mask_for_corners(tl, tr, br, bl, fg)
         if mask == 0:
             continue
-        # Sharp only when water meets something else.
         sharp = fg == TerrainType.WATER or bg == TerrainType.WATER
         for ly in range(TILE):
             v = ly / denom
@@ -379,7 +354,6 @@ def build_tile_from_corners(
                         continue
                     t = 1.0
                 else:
-                    # Wide soft band across the MS contour.
                     t = _smoothstep((field - 0.08) / 0.84)
                     if t <= 0.001:
                         continue
@@ -389,7 +363,6 @@ def build_tile_from_corners(
                 if fg == TerrainType.WATER:
                     water.set_at((lx, ly), (255, 255, 255, int(255 * t)))
                 elif bg == TerrainType.WATER:
-                    # Covering water with land — clear ice mask by coverage.
                     wa = water.get_at((lx, ly))[3]
                     water.set_at((lx, ly), (255, 255, 255, int(wa * (1.0 - t))))
         primary_mask = mask
@@ -414,6 +387,7 @@ class TerrainAtlas:
         self._cell_size = size
         self._tile_res = TILE
         self._cache.clear()
+        _HARD_COV_CACHE.clear()
         _COV_CACHE.clear()
 
     def tile_for_corners(
@@ -430,12 +404,10 @@ class TerrainAtlas:
             return hit
         native_rgb, native_w, mask, fg, bg = build_tile_from_corners(tl, tr, br, bl)
         size = self._cell_size
-        # Soft land blends benefit from smoothscale; water edges stay crisp with scale.
-        involves_water = TerrainType.WATER in (tl, tr, br, bl)
-        scaler = pygame.transform.scale if involves_water else pygame.transform.smoothscale
+        # Soft land blends benefit from smoothscale; water edges stay acceptable.
         out = (
-            scaler(native_rgb, (size, size)),
-            scaler(native_w, (size, size)),
+            pygame.transform.smoothscale(native_rgb, (size, size)),
+            pygame.transform.scale(native_w, (size, size)),
             mask,
             fg,
             bg,
@@ -467,6 +439,117 @@ def cell_corners(
     )
 
 
+def cell_neighbourhood(
+    terrain_at: Callable[[int, int], TerrainType], x: int, y: int
+) -> tuple[TerrainType, TerrainType, TerrainType, TerrainType]:
+    """This cell + east + south + south-east (diagnostics / legacy)."""
+    return (
+        hardscape_tile_group(terrain_at(x, y)),
+        hardscape_tile_group(terrain_at(x + 1, y)),
+        hardscape_tile_group(terrain_at(x, y + 1)),
+        hardscape_tile_group(terrain_at(x + 1, y + 1)),
+    )
+
+
+def compose_cell_fills(
+    tl: TerrainType,
+    tr: TerrainType,
+    br: TerrainType,
+    bl: TerrainType,
+    *,
+    cell_x: int,
+    cell_y: int,
+    size: int,
+) -> tuple[pygame.Surface, pygame.Surface, int, TerrainType, TerrainType]:
+    """Soft land MS joins via opaque colour-lerp of world-UV mottling.
+
+    Never alpha-blends onto black. Water edges stay hard-thresholded.
+    """
+    import numpy as np
+    from pygame import surfarray
+
+    from terrain_mottle import world_mottle_surface
+
+    corners = (tl, tr, br, bl)
+    present: list[TerrainType] = []
+    for p in _PRIORITY:
+        if p in corners and p not in present:
+            present.append(p)
+    for t in corners:
+        if t not in present:
+            present.append(t)
+
+    bg = present[0]
+    bg_surf = world_mottle_surface(bg, cell_x, cell_y, size)
+    # surfarray layout: [x, y, channel]
+    rgb = surfarray.array3d(bg_surf).astype(np.float32)
+    water = pygame.Surface((size, size), pygame.SRCALPHA)
+    water.fill((0, 0, 0, 0))
+    water_a = np.zeros((size, size), dtype=np.float32)
+    if bg == TerrainType.WATER:
+        water_a[:, :] = 255.0
+
+    primary_mask = 15 if len(present) == 1 else 0
+    primary_fg = bg
+
+    # u along x, v along y — match get_at((lx, ly)) / MS unit square.
+    u = np.linspace(0.0, 1.0, size, dtype=np.float32)
+    v = np.linspace(0.0, 1.0, size, dtype=np.float32)
+    uu = np.broadcast_to(u[:, None], (size, size))
+    vv = np.broadcast_to(v[None, :], (size, size))
+
+    for fg in present[1:]:
+        mask = mask_for_corners(tl, tr, br, bl, fg)
+        if mask == 0:
+            continue
+        sharp = fg == TerrainType.WATER or bg == TerrainType.WATER
+        c_tl = 1.0 if tl == fg else 0.0
+        c_tr = 1.0 if tr == fg else 0.0
+        c_br = 1.0 if br == fg else 0.0
+        c_bl = 1.0 if bl == fg else 0.0
+        top = c_tl + (c_tr - c_tl) * uu
+        bot = c_bl + (c_br - c_bl) * uu
+        field = top + (bot - top) * vv
+
+        if sharp:
+            t = (field >= 0.5).astype(np.float32)
+        else:
+            # Wide soft band across the MS contour (same as restore-tiling).
+            t = (field - 0.08) / 0.84
+            t = np.clip(t, 0.0, 1.0)
+            t = t * t * (3.0 - 2.0 * t)
+
+        fg_arr = surfarray.array3d(
+            world_mottle_surface(fg, cell_x, cell_y, size)
+        ).astype(np.float32)
+        tw = t[:, :, None]
+        rgb = rgb * (1.0 - tw) + fg_arr * tw
+
+        if fg == TerrainType.WATER:
+            water_a = np.maximum(water_a, t * 255.0)
+        elif bg == TerrainType.WATER:
+            water_a = water_a * (1.0 - t)
+
+        primary_mask = mask
+        primary_fg = fg
+
+    out = pygame.Surface((size, size))
+    surfarray.blit_array(out, np.clip(rgb, 0, 255).astype(np.uint8))
+
+    if np.any(water_a > 0.5):
+        wa = np.clip(np.rint(water_a), 0, 255).astype(np.uint8)
+        buf = pygame.Surface((size, size), pygame.SRCALPHA)
+        px = pygame.surfarray.pixels_alpha(buf)
+        px[:, :] = wa
+        del px
+        rgb3 = pygame.surfarray.pixels3d(buf)
+        rgb3[:, :, :] = 255
+        del rgb3
+        water = buf
+
+    return out, water, primary_mask, primary_fg, bg
+
+
 def paint_cell(
     layer: pygame.Surface,
     water_mask: pygame.Surface,
@@ -478,14 +561,14 @@ def paint_cell(
     grass_mask: pygame.Surface | None = None,
     soil_mask: pygame.Surface | None = None,
 ) -> tuple[int, TerrainType, TerrainType, tuple[TerrainType, TerrainType, TerrainType, TerrainType]]:
-    """Blit MS tile. Returns (mask, fg, bg, corners) for diagnostics."""
+    """Blit soft MS + mottling. Returns (mask, fg, bg, corners)."""
     size = CELL_SIZE if cell_size is None else cell_size
-    atlas = get_atlas()
-    atlas.ensure(size)
     corners = cell_corners(terrain_at, x, y)
-    rgb, wmask, mask, fg, bg = atlas.tile_for_corners(*corners)
+    tl, tr, br, bl = corners
+    rgb, wmask, mask, fg, bg = compose_cell_fills(
+        tl, tr, br, bl, cell_x=x, cell_y=y, size=size
+    )
     dest = (x * size, y * size)
-    layer.fill(_COLOURS[bg], pygame.Rect(dest[0], dest[1], size, size))
     layer.blit(rgb, dest)
     water_mask.fill((0, 0, 0, 0), pygame.Rect(dest[0], dest[1], size, size))
     water_mask.blit(wmask, dest)
@@ -516,7 +599,7 @@ def _blit_type_coverage(
     corners: tuple[TerrainType, TerrainType, TerrainType, TerrainType],
     types: frozenset[TerrainType],
 ) -> None:
-    """Write soft white coverage for terrain types into a seasonal mask."""
+    """Write hard white coverage for terrain types into a seasonal mask."""
     rect = pygame.Rect(dest[0], dest[1], size, size)
     mask.fill((0, 0, 0, 0), rect)
     tl, tr, br, bl = corners
@@ -528,12 +611,12 @@ def _blit_type_coverage(
     key = (corners, types, size)
     hit = _COV_CACHE.get(key)
     if hit is None:
-        hit = _soft_coverage_surface(tl, tr, br, bl, types, size)
+        hit = _hard_type_coverage_surface(tl, tr, br, bl, types, size)
         _COV_CACHE[key] = hit
     mask.blit(hit, dest)
 
 
-def _soft_coverage_surface(
+def _hard_type_coverage_surface(
     tl: TerrainType,
     tr: TerrainType,
     br: TerrainType,
@@ -541,48 +624,36 @@ def _soft_coverage_surface(
     types: frozenset[TerrainType],
     size: int,
 ) -> pygame.Surface:
-    native = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
-    native.fill((0, 0, 0, 0))
-    denom = max(1, TILE - 1)
-    for ly in range(TILE):
-        v = ly / denom
-        for lx in range(TILE):
-            u = lx / denom
-            field = 0.0
-            for terr in types:
-                field = max(field, _fg_field(tl, tr, br, bl, terr, u, v))
-            t = _smoothstep((field - 0.08) / 0.84)
-            if t > 0.001:
-                native.set_at((lx, ly), (255, 255, 255, int(255 * t)))
-    return pygame.transform.smoothscale(native, (size, size))
+    """OR of hard MS masks for every corner type in ``types``."""
+    out = pygame.Surface((size, size), pygame.SRCALPHA)
+    out.fill((0, 0, 0, 0))
+    for terr in types:
+        m = mask_for_corners(tl, tr, br, bl, terr)
+        if m:
+            out.blit(_fg_coverage_mask(m, size), (0, 0), special_flags=pygame.BLEND_RGBA_MAX)
+    return out
 
 
 def describe_system() -> str:
     return (
-        "convention=16-case marching-squares (procedural; no spritesheet on disk)\n"
+        "convention=16-case marching-squares + world-UV procedural mottling\n"
         "bits: TL=1 TR=2 BR=4 BL=8\n"
         "dirs: N=(0,-1) E=(+1,0) S=(0,+1) W=(-1,0)\n"
-        "corners: shared vertex grid; value = max-priority among 2x2 cells\n"
-        "  (WATER>ROCK>SOIL>GRASS).\n"
-        "blends: land↔land gradual (soft bilinear coverage); water↔other sharp\n"
-        "fills: per-pixel colour variation on all solid terrain\n"
-        "atlas: logical 4x4 of cases 0..15 (row=mask//4, col=mask%4)\n"
+        "corners: shared vertex grid; max-priority among 2x2 cells\n"
+        "joins: land↔land soft bilinear coverage (opaque colour lerp); water sharp\n"
+        "fills: palette + multi-scale noise (terrain_mottle; preview knobs)\n"
+        "atlas: logical 4x4 of cases 0..15 for F6 diagnostics\n"
     )
 
 
 def verify_shared_edges(
     terrain_at: Callable[[int, int], TerrainType],
-    x: int,
-    y: int,
+    x: int, y: int,
 ) -> tuple[bool, bool]:
     """Check east/west and south/north corner agreement with neighbours."""
     tl, tr, br, bl = cell_corners(terrain_at, x, y)
-    east_ok = True
-    south_ok = True
-    # Neighbour (x+1,y) west corners must equal this cell's east corners.
     etl, etr, ebr, ebl = cell_corners(terrain_at, x + 1, y)
     east_ok = tr == etl and br == ebl
-    # Neighbour (x,y+1) north corners must equal this cell's south corners.
     stl, str_, sbr, sbl = cell_corners(terrain_at, x, y + 1)
     south_ok = bl == stl and br == str_
     return east_ok, south_ok
