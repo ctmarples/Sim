@@ -1,0 +1,528 @@
+{
+  "export_cell_px": 160,
+  "icon_cell": 40.0,
+  "icons": {
+    "alchemist": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "axe": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "bee": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "bee_hive": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "berries": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "berry_bush": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "boar_female": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "boar_male": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "bread": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "burrow": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "construction_site": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "craft_bench": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "crop_plant_1": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "crop_plant_2": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "crop_plant_3": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "crop_plant_dense_1": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "crop_plant_dense_2": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "crop_plant_dense_3": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "deer_female": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "deer_male": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "farm": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "field": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "fish": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "fish_marker": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "fish_stew": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "fisher": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "fishing_rod": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "flower_plant_1": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "flower_plant_2": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "flower_plant_3": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "flower_plant_4": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "flower_plant_dense_1": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "flower_plant_dense_2": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "flower_plant_dense_3": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "forager": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 240,
+      "height": 240
+    },
+    "forester": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "hoe": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "home": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "honey": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "hunter": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "insect_repellant": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "kitchen": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "knife": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "log_hardwood": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "log_wood": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "mason": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "meat_marker": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "mill": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "mineral_powder": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "mushroom": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "mushroom_1": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "mushroom_2": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "mushroom_3": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "mushroom_4": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "mushroom_stew": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "player": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "rabbit": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "reed": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "rock_1": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "rock_2": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "rock_3": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "rock_4": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "rock_big_1": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "rock_big_2": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "rock_big_3": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "sapling_cone_1": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "sapling_cone_2": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "sapling_cone_3": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "sapling_round_1": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "sapling_round_2": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "sapling_round_3": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "seeds": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "spiced_stew": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "spices": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "stew": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "stone_spear": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "tree_cone_1": {
+      "anchor_x": 80,
+      "anchor_y": 240,
+      "width": 160,
+      "height": 320
+    },
+    "tree_cone_2": {
+      "anchor_x": 80,
+      "anchor_y": 240,
+      "width": 160,
+      "height": 320
+    },
+    "tree_cone_3": {
+      "anchor_x": 80,
+      "anchor_y": 240,
+      "width": 160,
+      "height": 320
+    },
+    "tree_round_1": {
+      "anchor_x": 80,
+      "anchor_y": 240,
+      "width": 160,
+      "height": 320
+    },
+    "tree_round_2": {
+      "anchor_x": 80,
+      "anchor_y": 240,
+      "width": 160,
+      "height": 320
+    },
+    "tree_round_3": {
+      "anchor_x": 80,
+      "anchor_y": 240,
+      "width": 160,
+      "height": 320
+    },
+    "twine": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "villager": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "wood": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "wooden_spear": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "workstation": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    }
+  }
+}

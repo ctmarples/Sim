@@ -1,54 +1,34 @@
-"""SVG icon catalogue: load once, rasterise to cached Surfaces, blit cheaply.
+"""Icon catalogue: SVG at runtime (class recolour / omit / scale); optional PNG.
 
 Coordinate convention (Y down, matching the game)
 -------------------------------------------------
-* ``ICON_CELL`` (40) SVG units = one map cell edge.
+* ``ICON_CELL`` (40) units = one map cell edge (SVG viewBox / PNG export space).
 * The **home cell** is the tile the feature lives on. By default it is the
   **bottom-left 40×40** of the viewBox (so a 40×80 tree keeps its trunk in the
   lower cell and canopy may overlap the cell above).
 * The **anchor** is the home-cell centre. That point is blitted to the map cell
-  centre ``(cx, cy)``. Default for viewBox ``0 0 40 40`` → anchor ``(20, 20)``;
-  for ``0 0 40 80`` → home ``(0, 40)``, anchor ``(20, 60)``.
-* Override on the root ``<svg>`` if needed::
-
-    data-anchor="20,70"          # or data-anchor-x / data-anchor-y
-    data-home="0,40,40"          # home cell x,y,size (optional)
+  centre ``(cx, cy)``.
+* PNGs are baked with ``python export_icons_png.py`` (see ``_png_anchors.json``).
+  With ``settings.ICON_USE_PNG`` (default False), map/UI use SVG. Set True to
+  prefer baked ``.png`` (recolour / omit / scale ignored for that blit).
 
 Icon variants (folder discovery)
 --------------------------------
 Each logical base (e.g. ``crop_plant``, ``tree_round``) resolves to files in
 ``assets/icons/``:
 
-* If ``base_1.svg``, ``base_2.svg``, … exist, those are the only variants
-  (``base.svg`` is ignored).
-* Otherwise a single ``base.svg`` is used.
+* If ``base_1.png`` / ``base_1.svg``, ``base_2…`` exist, those are the only
+  variants (``base.png`` / ``base.svg`` is ignored).
+* Otherwise a single ``base.png`` or ``base.svg`` is used.
 
 ``preload`` caches every discovered file. At draw time a 1-based variant index
 selects among them (rolled once per cell when first drawn).
 
-Art may extend outside the home cell in any direction. Scale is always
-``cell_px / 40`` so overhanging pixels cover neighbouring tiles.
-
-Editing SVGs (Inkscape / Affinity / Figma / Illustrator)
---------------------------------------------------------
-* **``class`` is what the game reads** for recolour / scale / omit. ``id`` is
-  only for you (and should match when convenient).
-* Shared classes: ``canopy``, ``trunk``, ``stem``, ``flower``, ``body``,
-  ``antler``, ``shadow``, plus building faces ``wall_l`` / ``wall_r`` / ``roof`` / …
-* Put **every part that should share a tint** on that class (e.g. all legs
-  ``class="body"``). Untagged fills stay as baked SVG colours.
-* Draw order = paint order: shadows first, then trunk, then canopy.
-* Supported shapes: ``path``, ``rect``, ``circle``, ``ellipse``, ``line``,
-  ``polygon``, ``polyline``. Prefer ``<ellipse>`` for simple blobs.
-* Supported paints: ``fill`` / ``stroke`` as attributes **or** in ``style=``,
-  plus ``fill-opacity`` / ``stroke-opacity`` / ``opacity``.
-* Supported transforms: ``translate``, ``scale``, ``rotate``, ``matrix``
-  (Inkscape forms OK). Nested ``<g transform>`` works.
-* Prefer baking Live Path Effects (Path → Object to Path) so ``d`` is final.
-* Avoid ``<use>``, gradients, filters, text, clipPaths.
-* Inkscape tip: Object → Object Properties → set ``class``. Shadows:
-  ``class="shadow"`` on a simple ellipse/path is enough (skip PowerStroke).
-* Saving a file busts that icon’s cache via mtime (no restart needed).
+Editing art
+-----------
+* Prefer editing the SVG, then re-run ``export_icons_png.py``.
+* SVG ``class`` still drives runtime recolour: ``canopy``, ``trunk``, ``stem``,
+  ``flower``, ``body``, ``antler``, ``shadow``, building faces, etc.
 """
 
 from __future__ import annotations
@@ -56,6 +36,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+import json
 import math
 import random
 import re
@@ -64,13 +45,16 @@ import xml.etree.ElementTree as ET
 import pygame
 
 _ICONS_DIR = Path(__file__).resolve().parent / "assets" / "icons"
+_PNG_MANIFEST_PATH = _ICONS_DIR / "_png_anchors.json"
 
-# One map cell in SVG units (home-cell edge).
+# One map cell in SVG / export units (home-cell edge).
 ICON_CELL: float = 40.0
 
 Colour = tuple[int, int, int]
 Paint = tuple[int, int, int, int]  # RGBA; alpha 255 = opaque
 Recolour = dict[str, Colour]
+
+_PNG_MANIFEST: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -86,10 +70,54 @@ def icons_dir() -> Path:
     return _ICONS_DIR
 
 
+def _is_icon_stem(stem: str) -> bool:
+    if not stem or stem.startswith("_"):
+        return False
+    if " " in stem or stem.count(".") > 0:
+        return False
+    return True
+
+
+def _has_icon_file(stem: str) -> bool:
+    return (_ICONS_DIR / f"{stem}.png").is_file() or (_ICONS_DIR / f"{stem}.svg").is_file()
+
+
 def list_icon_names() -> list[str]:
     if not _ICONS_DIR.is_dir():
         return []
-    return sorted(p.stem for p in _ICONS_DIR.glob("*.svg"))
+    stems: set[str] = set()
+    for path in _ICONS_DIR.glob("*.png"):
+        if _is_icon_stem(path.stem):
+            stems.add(path.stem)
+    for path in _ICONS_DIR.glob("*.svg"):
+        if _is_icon_stem(path.stem):
+            stems.add(path.stem)
+    return sorted(stems)
+
+
+def _load_png_manifest() -> dict:
+    global _PNG_MANIFEST
+    if _PNG_MANIFEST is not None:
+        return _PNG_MANIFEST
+    if not _PNG_MANIFEST_PATH.is_file():
+        _PNG_MANIFEST = {"export_cell_px": int(ICON_CELL), "icons": {}}
+        return _PNG_MANIFEST
+    try:
+        data = json.loads(_PNG_MANIFEST_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        _PNG_MANIFEST = {"export_cell_px": int(ICON_CELL), "icons": {}}
+        return _PNG_MANIFEST
+    if not isinstance(data, dict):
+        _PNG_MANIFEST = {"export_cell_px": int(ICON_CELL), "icons": {}}
+        return _PNG_MANIFEST
+    _PNG_MANIFEST = data
+    return _PNG_MANIFEST
+
+
+def reload_png_manifest() -> None:
+    """Drop cached PNG anchor manifest (call after re-export)."""
+    global _PNG_MANIFEST
+    _PNG_MANIFEST = None
 
 
 def _local(tag: str) -> str:
@@ -934,14 +962,15 @@ _VARIANT_CACHE: dict[str, tuple[str, ...]] = {}
 def clear_cache() -> None:
     _SURFACE_CACHE.clear()
     _VARIANT_CACHE.clear()
+    reload_png_manifest()
 
 
 def variant_names(base: str) -> tuple[str, ...]:
-    """Return concrete SVG stems for a logical icon base.
+    """Return concrete icon stems for a logical icon base.
 
     Numbered convention wins exclusively when present:
-    ``base_1.svg``, ``base_2.svg``, … (``base.svg`` is then unused).
-    If no numbered files exist, falls back to a single ``base.svg``.
+    ``base_1.png``/``.svg``, ``base_2…`` (plain ``base`` is then unused).
+    If no numbered files exist, falls back to a single ``base`` file.
     """
     cached = _VARIANT_CACHE.get(base)
     if cached is not None:
@@ -950,13 +979,13 @@ def variant_names(base: str) -> tuple[str, ...]:
     i = 1
     while True:
         stem = f"{base}_{i}"
-        if not (_ICONS_DIR / f"{stem}.svg").is_file():
+        if not _has_icon_file(stem):
             break
         numbered.append(stem)
         i += 1
     if numbered:
         result = tuple(numbered)
-    elif (_ICONS_DIR / f"{base}.svg").is_file():
+    elif _has_icon_file(base):
         result = (base,)
     else:
         result = ()
@@ -981,10 +1010,10 @@ def roll_icon_variant(base: str, rng: random.Random) -> int:
 
 
 def resolve_icon_name(base: str, variant: int | None = None) -> str:
-    """Map logical base + optional 1-based variant to a concrete SVG stem."""
+    """Map logical base + optional 1-based variant to a concrete icon stem."""
     names = variant_names(base)
     if not names:
-        raise FileNotFoundError(f"No icon SVG for base '{base}' in {_ICONS_DIR}")
+        raise FileNotFoundError(f"No icon for base '{base}' in {_ICONS_DIR}")
     if len(names) == 1:
         return names[0]
     idx = 0 if variant is None else max(0, int(variant) - 1)
@@ -1006,6 +1035,41 @@ def ensure_icon_variant(
         return 1
     return roll_icon_variant(base, rng)
 
+
+
+def _load_png_icon(name: str, cell_px: int) -> IconImage | None:
+    """Load a baked PNG and scale anchors/surface to ``cell_px``."""
+    path = _ICONS_DIR / f"{name}.png"
+    if not path.is_file() or path.stat().st_size == 0:
+        return None
+    manifest = _load_png_manifest()
+    export_cell = int(manifest.get("export_cell_px") or ICON_CELL)
+    meta = (manifest.get("icons") or {}).get(name) or {}
+    try:
+        surf = pygame.image.load(str(path)).convert_alpha()
+    except pygame.error:
+        return None
+    ax = int(meta.get("anchor_x", surf.get_width() // 2))
+    ay = int(meta.get("anchor_y", surf.get_height() // 2))
+    scale = float(cell_px) / float(max(1, export_cell))
+    if abs(scale - 1.0) > 1e-6:
+        tw = max(1, int(round(surf.get_width() * scale)))
+        th = max(1, int(round(surf.get_height() * scale)))
+        surf = pygame.transform.smoothscale(surf, (tw, th))
+        ax = int(round(ax * scale))
+        ay = int(round(ay * scale))
+    return IconImage(surface=surf, anchor_x=ax, anchor_y=ay)
+
+
+def _prefer_png() -> bool:
+    try:
+        from settings import ICON_USE_PNG
+
+        return bool(ICON_USE_PNG)
+    except Exception:
+        return False
+
+
 def get_icon(
     name: str,
     cell_px: int,
@@ -1013,34 +1077,60 @@ def get_icon(
     recolour: Recolour | None = None,
     class_scales: dict[str, float] | None = None,
     omit_classes: Iterable[str] | None = None,
+    prefer_png: bool | None = None,
 ) -> IconImage:
     """Return a cached icon for ``name`` at ``cell_px`` pixels per map cell.
 
-    Cache keys include the SVG file mtime, so saving an edited icon rebuilds
-    that surface on the next blit (no game restart required).
+    When ``prefer_png`` (default: ``settings.ICON_USE_PNG``) is True and a
+    ``.png`` exists, that file is used even if recolour kwargs were passed
+    (baked colours; class tint / omit / scale do not apply). When False,
+    ``.svg`` is preferred whenever present so the SVG pipeline runs; PNG is
+    only a fallback if no SVG exists.
     """
     cell_px = max(4, int(cell_px))
     omit = frozenset(omit_classes) if omit_classes else None
-    path = _ICONS_DIR / f"{name}.svg"
-    if not path.is_file():
-        raise FileNotFoundError(f"Icon SVG not found: {path}")
+    png_path = _ICONS_DIR / f"{name}.png"
+    svg_path = _ICONS_DIR / f"{name}.svg"
+    want_png = _prefer_png() if prefer_png is None else bool(prefer_png)
+
+    if want_png and png_path.is_file():
+        path = png_path
+        source = "png"
+        # Baked PNG: ignore class recolour / omit / scale in the cache key so
+        # all callers share one surface per size.
+        recolour = None
+        class_scales = None
+        omit = None
+    elif svg_path.is_file():
+        path = svg_path
+        source = "svg"
+    elif png_path.is_file():
+        path = png_path
+        source = "png"
+    else:
+        raise FileNotFoundError(f"Icon not found: {name}.png / {name}.svg")
     if path.stat().st_size == 0:
-        raise FileNotFoundError(f"Icon SVG is empty: {path}")
+        raise FileNotFoundError(f"Icon file is empty: {path}")
     mtime_ns = path.stat().st_mtime_ns
-    key = _cache_key(name, cell_px, recolour, class_scales, omit, mtime_ns)
+    key = _cache_key(f"{source}:{name}", cell_px, recolour, class_scales, omit, mtime_ns)
     cached = _SURFACE_CACHE.get(key)
     if cached is not None:
         return cached
-    try:
-        icon = _rasterise_svg(
-            path,
-            cell_px,
-            recolour or {},
-            class_scales or {},
-            set(omit) if omit else set(),
-        )
-    except ET.ParseError as exc:
-        raise FileNotFoundError(f"Icon SVG is invalid ({path.name}): {exc}") from exc
+    if source == "png":
+        icon = _load_png_icon(name, cell_px)
+        if icon is None:
+            raise FileNotFoundError(f"Icon PNG failed to load: {path}")
+    else:
+        try:
+            icon = _rasterise_svg(
+                path,
+                cell_px,
+                recolour or {},
+                class_scales or {},
+                set(omit) if omit else set(),
+            )
+        except ET.ParseError as exc:
+            raise FileNotFoundError(f"Icon SVG is invalid ({path.name}): {exc}") from exc
     _SURFACE_CACHE[key] = icon
     return icon
 
@@ -1056,6 +1146,7 @@ def blit_icon(
     recolour: Recolour | None = None,
     class_scales: dict[str, float] | None = None,
     omit_classes: Iterable[str] | None = None,
+    prefer_png: bool | None = None,
 ) -> pygame.Rect:
     """Blit icon so its anchor lands on (cx, cy).
 
@@ -1070,6 +1161,7 @@ def blit_icon(
             recolour=recolour,
             class_scales=class_scales,
             omit_classes=omit_classes,
+            prefer_png=prefer_png,
         )
     except (FileNotFoundError, OSError):
         return pygame.Rect(cx, cy, 0, 0)
@@ -1088,10 +1180,10 @@ def preload(
     *,
     sizes: Iterable[int] = (40,),
 ) -> int:
-    """Rasterise every available variant into the cache.
+    """Rasterise / load every available variant into the cache.
 
     For each logical base, caches ``base_1``…``base_N`` when those files exist,
-    otherwise ``base.svg``. With ``names=None``, every SVG on disk is loaded.
+    otherwise ``base``. With ``names=None``, every icon stem on disk is loaded.
     """
     refresh_variant_index()
     if names is None:
@@ -1102,7 +1194,7 @@ def preload(
         for base in names:
             variants = variant_names(base)
             stems = variants if variants else (
-                (base,) if (_ICONS_DIR / f"{base}.svg").is_file() else ()
+                (base,) if _has_icon_file(base) else ()
             )
             for stem in stems:
                 if stem not in seen:

@@ -49,7 +49,7 @@ def main() -> None:
             continue
         if base not in on_disk:
             missing.append(base)
-    assert not missing, f"Missing SVG files: {missing}"
+    assert not missing, f"Missing icon files: {missing}"
     extra = sorted(
         s
         for s in on_disk
@@ -58,14 +58,14 @@ def main() -> None:
         )
     )
     if extra:
-        print(f"Note: extra SVGs not in ALL_ICON_NAMES: {extra}")
+        print(f"Note: extra icons not in ALL_ICON_NAMES: {extra}")
 
     clear_cache()
     # Each base expands to its folder variants (or a single unnumbered file).
     created = preload(ALL_ICON_NAMES, sizes=(20, 40))
-    expected_stems = sum(max(1, len(variant_names(b))) for b in ALL_ICON_NAMES)
-    # Bases with zero files on disk contribute 0 via variant_names; count only present.
-    expected_stems = sum(len(variant_names(b)) for b in ALL_ICON_NAMES)
+    expected_stems = len(
+        {stem for b in ALL_ICON_NAMES for stem in variant_names(b)}
+    )
     assert created == expected_stems * 2, (created, expected_stems)
 
     assert len(variant_names(ICON_TREE_ROUND)) >= 3
@@ -89,7 +89,7 @@ def main() -> None:
     assert tall.anchor_x == 20
 
     # Square icon still anchors at cell centre.
-    rock = get_icon("rock", 40)
+    rock = get_icon(resolve_icon_name("rock", 1), 40)
     assert rock.surface.get_size() == (40, 40)
     assert rock.anchor_x == 20 and rock.anchor_y == 20
 

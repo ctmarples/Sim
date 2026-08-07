@@ -349,10 +349,10 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
     if crop is not None:
         return _crop_plant_style(crop, dense=True)
 
-    # Drop-in recipe icons: assets/icons/<key>.svg
+    # Drop-in recipe icons: assets/icons/<key>.png (or .svg)
     from icons import icons_dir
 
-    if (icons_dir() / f"{key}.svg").is_file():
+    if (icons_dir() / f"{key}.png").is_file() or (icons_dir() / f"{key}.svg").is_file():
         return ResourceIconStyle(key, {})
 
     try:

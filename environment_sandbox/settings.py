@@ -39,6 +39,11 @@ TERRAIN_SUBDIV: int = 25
 # Terrain edge backend: "procedural" (MS opaque joins + mottling) or "png"
 # (legacy soft joins). Preview mottling: python preview_terrain_fills.py
 TERRAIN_FILL_MODE: str = "procedural"
+# Map / UI icons: when True, prefer baked ``assets/icons/*.png`` whenever
+# present (recolour / class_scales / omit are ignored for that blit). When
+# False (default), runtime uses SVG so class recolour / omit / scale work;
+# PNG export + shade pipeline stays available via export_icons_png.py.
+ICON_USE_PNG: bool = False
 
 # Camera
 ZOOM_MIN: float = 0.35

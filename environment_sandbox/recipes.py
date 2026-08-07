@@ -3,7 +3,7 @@
 Builtin recipes live in this module. Additional recipes are loaded from
 ``recipes_data/<building>/*.json`` (building folder → workplace recipe list).
 Each JSON may declare ``resource`` / ``food`` metadata so new outputs get
-catalogue entries and use ``assets/icons/<icon_key>.svg`` automatically.
+catalogue entries and use ``assets/icons/<icon_key>.png`` (or ``.svg``) automatically.
 
 Harvest yields and food satiation/buffs: ``resource_balance.py``.
 """
