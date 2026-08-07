@@ -409,3 +409,93 @@ def bake_height_sample_surface(
             tile.blit(tile_src, (0, 0))
             blit_warped_cell_columns(surf, tile, flat, lifts, shades)
     return surf, pad
+
+
+def patch_height_sample_cells(
+    dest: pygame.Surface,
+    dest_pad: int,
+    sample: HeightSample,
+    terrain_base: pygame.Surface,
+    cells: list[tuple[int, int]],
+    *,
+    cell_size: int,
+    margin: int = 1,
+) -> None:
+    """Re-warp dirty cells in-place on an existing full-map height cache.
+
+    Must not blit a sub-bake (that stamps the subregion's top pad into mid-map).
+    Restore flat terrain for an AABB large enough for lift bleed, then warp
+    north→south into ``dest``.
+    """
+    if not cells or sample.width <= 0:
+        return
+    lift_m = max(
+        margin,
+        int(math.ceil(float(sample.max_height) * HEIGHT_LIFT_PX / max(1, cell_size)))
+        + 1,
+    )
+    xs = [x for x, _y in cells]
+    ys = [y for _x, y in cells]
+    x0 = max(sample.x0, min(xs) - margin)
+    y0 = max(sample.y0, min(ys) - lift_m)
+    x1 = min(sample.x1, max(xs) + margin)
+    y1 = min(sample.y1, max(ys) + margin)
+    if x1 < x0 or y1 < y0:
+        return
+
+    base = terrain_base
+    if base.get_bitsize() != 24:
+        opaque = pygame.Surface(base.get_size(), depth=24)
+        opaque.blit(base, (0, 0))
+        base = opaque
+
+    # 1) Restore flat terrain under the AABB (clears old warp in this band).
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            src = pygame.Rect(x * cell_size, y * cell_size, cell_size, cell_size)
+            try:
+                tile = base.subsurface(src)
+            except ValueError:
+                continue
+            dest.blit(tile, (x * cell_size, dest_pad + y * cell_size))
+
+    # Top pad: only the global strip (y == 0 lifts). Refresh from top terrain row.
+    if y0 == sample.y0:
+        top = pygame.Surface(( (x1 - x0 + 1) * cell_size, 1), depth=24)
+        try:
+            top.blit(
+                base.subsurface(
+                    pygame.Rect(x0 * cell_size, 0, (x1 - x0 + 1) * cell_size, 1)
+                ),
+                (0, 0),
+            )
+        except ValueError:
+            top.fill((40, 55, 35))
+        for yy in range(dest_pad):
+            dest.blit(top, (x0 * cell_size, yy))
+
+    # 2) Warp cells north→south so southern lifts paint over northern flats.
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            src = pygame.Rect(x * cell_size, y * cell_size, cell_size, cell_size)
+            try:
+                tile_src = base.subsurface(src)
+            except ValueError:
+                continue
+            tile = pygame.Surface(tile_src.get_size(), depth=24)
+            tile.blit(tile_src, (0, 0))
+            flat = pygame.Rect(
+                x * cell_size,
+                dest_pad + y * cell_size,
+                cell_size,
+                cell_size,
+            )
+            nw, ne, sw, se = sample.cell_corners(x, y)
+            lifts = (
+                nw * HEIGHT_LIFT_PX,
+                ne * HEIGHT_LIFT_PX,
+                sw * HEIGHT_LIFT_PX,
+                se * HEIGHT_LIFT_PX,
+            )
+            shades = cell_corner_shades(sample, x, y)
+            blit_warped_cell_columns(dest, tile, flat, lifts, shades)

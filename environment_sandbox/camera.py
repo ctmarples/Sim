@@ -27,6 +27,8 @@ class Camera:
         self.zoom_target: float = 1.0
         self._zoom_focus: tuple[float, float] | None = None
         self._zoom_screen: tuple[int, int] | None = None
+        # Extra north scroll (cells) so height-lifted peaks stay in view.
+        self.y_overscan: float = 0.0
 
     def view_cell(self) -> float:
         """On-screen pixels per world cell (continuous; not snapped to integers)."""
@@ -45,7 +47,7 @@ class Camera:
         max_x = max(0.0, world_cols - vis_w)
         max_y = max(0.0, world_rows - vis_h)
         self.x = max(0.0, min(self.x, max_x))
-        self.y = max(0.0, min(self.y, max_y))
+        self.y = max(-max(0.0, self.y_overscan), min(self.y, max_y))
 
     def pan(self, dx_cells: float, dy_cells: float, world_cols: int, world_rows: int) -> None:
         # Pan distance scales inversely with zoom so motion feels similar on screen.

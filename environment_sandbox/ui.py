@@ -89,7 +89,14 @@ from settings import (
 )
 from resource_balance import ROCK_LARGE_MIN
 from wildlife import AnimalKind, FishManager, WildlifeManager
-from world import FeatureType, TerrainType, World
+from world import (
+    EDIT_PAINTABLE_TERRAIN,
+    MapEditTool,
+    TERRAIN_EDIT_LABELS,
+    FeatureType,
+    TerrainType,
+    World,
+)
 
 
 def _panel_height() -> int:
@@ -189,6 +196,231 @@ class UI:
                 rect.y + (rect.h - text.get_height()) // 2,
             ),
         )
+
+    def _register_tool_button(
+        self,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        glyph: str,
+        action: str,
+        tip: str,
+        *,
+        active: bool,
+        local_mouse: tuple[int, int] | None,
+    ) -> None:
+        hovered = local_mouse is not None and rect.collidepoint(local_mouse)
+        self._draw_icon_button(surface, rect, glyph, active=active, hovered=hovered)
+        self.action_hits.append((rect, action, tip))
+        if hovered:
+            self._tooltip = (tip, (rect.centerx, rect.top))
+
+    def _draw_labelled_tool_button(
+        self,
+        surface: pygame.Surface,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        label: str,
+        action: str,
+        tip: str,
+        *,
+        active: bool,
+        local_mouse: tuple[int, int] | None,
+    ) -> None:
+        rect = pygame.Rect(x, y, w, h)
+        hovered = local_mouse is not None and rect.collidepoint(local_mouse)
+        if active:
+            colour = COLOUR_TOOLBAR_BTN_ACTIVE
+        elif hovered:
+            colour = (70, 78, 92)
+        else:
+            colour = COLOUR_TOOLBAR_BTN
+        pygame.draw.rect(surface, colour, rect, border_radius=3)
+        pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1, border_radius=3)
+        text = self.font_small.render(label, True, COLOUR_TEXT)
+        surface.blit(
+            text,
+            (
+                rect.x + (rect.w - text.get_width()) // 2,
+                rect.y + (rect.h - text.get_height()) // 2,
+            ),
+        )
+        self.action_hits.append((rect, action, tip))
+        if hovered:
+            self._tooltip = (tip, (rect.centerx, rect.top))
+
+    def _draw_map_edit_panel(
+        self,
+        content: pygame.Surface,
+        x: int,
+        y: int,
+        *,
+        map_edit_tool: MapEditTool,
+        map_edit_terrain: TerrainType,
+        height_paint_value: float,
+        height_delta_step: float,
+        height_brush_radius: int,
+        local_mouse: tuple[int, int] | None,
+    ) -> int:
+        """Tool palette shown instead of the entity list while map-edit is on."""
+        y = _blit_text(content, self.font_title, "Map Edit", (x, y))
+        y = _blit_text(
+            content,
+            self.font_small,
+            "Y / Esc exit · scroll zoom",
+            (x, y),
+            COLOUR_TEXT_DIM,
+        )
+        y += 6
+
+        y = _blit_text(content, self.font_title, "Height", (x, y))
+        btn_h = 22
+        gap = 4
+        tools_h = (
+            (MapEditTool.HEIGHT_SET, "Set", "Paint a specific height"),
+            (MapEditTool.HEIGHT_RAISE, "Raise", "Raise terrain under the brush"),
+            (MapEditTool.HEIGHT_LOWER, "Lower", "Lower terrain under the brush"),
+        )
+        bx = x
+        for tool, label, tip in tools_h:
+            tw = 54 if label != "Raise" else 58
+            self._draw_labelled_tool_button(
+                content,
+                bx,
+                y,
+                tw,
+                btn_h,
+                label,
+                f"edit_tool:{tool.value}",
+                tip,
+                active=map_edit_tool == tool,
+                local_mouse=local_mouse,
+            )
+            bx += tw + gap
+        y += btn_h + 8
+
+        height_tools = {
+            MapEditTool.HEIGHT_SET,
+            MapEditTool.HEIGHT_RAISE,
+            MapEditTool.HEIGHT_LOWER,
+        }
+        if map_edit_tool in height_tools:
+            if map_edit_tool == MapEditTool.HEIGHT_SET:
+                y = _blit_text(
+                    content,
+                    self.font_small,
+                    f"Paint height: {height_paint_value:.0f}",
+                    (x, y),
+                    COLOUR_TEXT,
+                )
+                row = (
+                    ("−", "edit_value:-1", "Decrease paint height"),
+                    ("+", "edit_value:+1", "Increase paint height"),
+                    ("0", "edit_value:0", "Set paint height to 0"),
+                )
+            else:
+                y = _blit_text(
+                    content,
+                    self.font_small,
+                    f"Step: {height_delta_step:.0f}",
+                    (x, y),
+                    COLOUR_TEXT,
+                )
+                row = (
+                    ("−", "edit_delta:-1", "Decrease raise/lower step"),
+                    ("+", "edit_delta:+1", "Increase raise/lower step"),
+                )
+            bx = x
+            for glyph, action, tip in row:
+                self._register_tool_button(
+                    content,
+                    pygame.Rect(bx, y, 22, 22),
+                    glyph,
+                    action,
+                    tip,
+                    active=False,
+                    local_mouse=local_mouse,
+                )
+                bx += 26
+            y += 28
+
+        y = _blit_text(content, self.font_title, "Terrain", (x, y))
+        tools_t = (
+            (MapEditTool.TERRAIN_PAINT, "Paint", "Paint the selected terrain type"),
+            (MapEditTool.SEED_FOREST, "Forest", "Seed mixed trees + forest floor"),
+        )
+        bx = x
+        for tool, label, tip in tools_t:
+            self._draw_labelled_tool_button(
+                content,
+                bx,
+                y,
+                64,
+                btn_h,
+                label,
+                f"edit_tool:{tool.value}",
+                tip,
+                active=map_edit_tool == tool,
+                local_mouse=local_mouse,
+            )
+            bx += 68
+        y += btn_h + 8
+
+        if map_edit_tool == MapEditTool.TERRAIN_PAINT:
+            y = _blit_text(content, self.font_small, "Terrain type", (x, y), COLOUR_TEXT_DIM)
+            col_w = (PANEL_WIDTH - 28) // 2
+            col = 0
+            row_y = y
+            for terrain in EDIT_PAINTABLE_TERRAIN:
+                label = TERRAIN_EDIT_LABELS.get(terrain, terrain.name.title())
+                tx = x + col * (col_w + 4)
+                self._draw_labelled_tool_button(
+                    content,
+                    tx,
+                    row_y,
+                    col_w,
+                    btn_h,
+                    label,
+                    f"edit_terrain:{terrain.name}",
+                    f"Paint {label}",
+                    active=map_edit_terrain == terrain,
+                    local_mouse=local_mouse,
+                )
+                col += 1
+                if col >= 2:
+                    col = 0
+                    row_y += btn_h + gap
+            if col != 0:
+                row_y += btn_h + gap
+            y = row_y + 4
+
+        y = _blit_text(
+            content,
+            self.font_small,
+            f"Brush radius: {height_brush_radius}",
+            (x, y),
+            COLOUR_TEXT,
+        )
+        bx = x
+        for glyph, action, tip in (
+            ("[", "edit_brush:-1", "Shrink brush"),
+            ("]", "edit_brush:+1", "Grow brush"),
+        ):
+            self._register_tool_button(
+                content,
+                pygame.Rect(bx, y, 22, 22),
+                glyph,
+                action,
+                tip,
+                active=False,
+                local_mouse=local_mouse,
+            )
+            bx += 26
+        y += 30
+
+        y = _blit_text(content, self.font_title, "Status", (x, y))
+        return y
 
     def _draw_list_row(
         self,
@@ -369,9 +601,12 @@ class UI:
 
         return y + row_h + 2
 
-    def draw_panel(
+    def _draw_normal_panel_body(
         self,
-        surface: pygame.Surface,
+        content: pygame.Surface,
+        x: int,
+        y: int,
+        *,
         world: World,
         player: Player,
         home_storage: HomeStorage,
@@ -380,39 +615,21 @@ class UI:
         wildlife: WildlifeManager,
         selected_building_id: int | None,
         selected_villager_id: int | None,
-        place_kind: BuildingKind | None,
         overlay_mode: OverlayMode,
         status_message: str,
-        sim_speed: int = 1,
-        ticks_per_day: int = 480,
-        fish_manager: FishManager | None = None,
-        construction_sites: dict[int, ConstructionSite] | None = None,
-        assign_workplace_mode: bool = False,
-        mouse_pos: tuple[int, int] | None = None,
-        season: Season = Season.SPRING,
-        calendar_day: int = 0,
-        selected_field_id: int | None = None,
-        selected_habitat_kind: AnimalKind | None = None,
-        selected_habitat_id: int | None = None,
-    ) -> None:
-        panel_x = map_view_width()
-        panel_h = _panel_height()
-        self.priority_hits = []
-        self.list_hits = []
-        self.action_hits = []
-        self._tooltip = None
-        content = self._ensure_content_surface(max(self.content_height, panel_h + 200))
-        content.fill(COLOUR_PANEL_BG)
-
-        local_mouse: tuple[int, int] | None = None
-        if mouse_pos is not None:
-            local_mouse = self._local_pos(mouse_pos)
-
-        x = 10
-        y = 8
-
+        sim_speed: int,
+        ticks_per_day: int,
+        fish_manager: FishManager | None,
+        construction_sites: dict[int, ConstructionSite] | None,
+        assign_workplace_mode: bool,
+        local_mouse: tuple[int, int] | None,
+        season: Season,
+        calendar_day: int,
+        selected_habitat_kind: AnimalKind | None,
+        selected_habitat_id: int | None,
+    ) -> int:
         y = _blit_text(content, self.font_title, "Environment Sandbox", (x, y))
-        y = _blit_text(content, self.font_small, "WASD · Enter/E · toolbar build", (x, y), COLOUR_TEXT_DIM)
+        y = _blit_text(content, self.font_small, "WASD · Enter/E · Y map edit · H warp", (x, y), COLOUR_TEXT_DIM)
         y = _blit_text(content, self.font_small, f"Speed x{sim_speed}" if sim_speed else "Paused", (x, y), COLOUR_TEXT_DIM)
         day_secs = ticks_per_day / max(1, FPS)
         y = _blit_text(
@@ -685,6 +902,100 @@ class UI:
         y = self._draw_legend(content, x, y)
         y += 12
 
+        return y
+
+    def draw_panel(
+        self,
+        surface: pygame.Surface,
+        world: World,
+        player: Player,
+        home_storage: HomeStorage,
+        villagers: list[Villager],
+        buildings: dict[int, Building],
+        wildlife: WildlifeManager,
+        selected_building_id: int | None,
+        selected_villager_id: int | None,
+        place_kind: BuildingKind | None,
+        overlay_mode: OverlayMode,
+        status_message: str,
+        sim_speed: int = 1,
+        ticks_per_day: int = 480,
+        fish_manager: FishManager | None = None,
+        construction_sites: dict[int, ConstructionSite] | None = None,
+        assign_workplace_mode: bool = False,
+        mouse_pos: tuple[int, int] | None = None,
+        season: Season = Season.SPRING,
+        calendar_day: int = 0,
+        selected_field_id: int | None = None,
+        selected_habitat_kind: AnimalKind | None = None,
+        selected_habitat_id: int | None = None,
+        map_edit_mode: bool = False,
+        map_edit_tool: MapEditTool = MapEditTool.HEIGHT_SET,
+        map_edit_terrain: TerrainType = TerrainType.GRASS,
+        height_paint_value: float = 20.0,
+        height_delta_step: float = 2.0,
+        height_brush_radius: int = 2,
+    ) -> None:
+        panel_x = map_view_width()
+        panel_h = _panel_height()
+        self.priority_hits = []
+        self.list_hits = []
+        self.action_hits = []
+        self._tooltip = None
+        content = self._ensure_content_surface(max(self.content_height, panel_h + 200))
+        content.fill(COLOUR_PANEL_BG)
+
+        local_mouse: tuple[int, int] | None = None
+        if mouse_pos is not None:
+            local_mouse = self._local_pos(mouse_pos)
+
+        x = 10
+        y = 8
+
+        if map_edit_mode:
+            y = self._draw_map_edit_panel(
+                content,
+                x,
+                y,
+                map_edit_tool=map_edit_tool,
+                map_edit_terrain=map_edit_terrain,
+                height_paint_value=height_paint_value,
+                height_delta_step=height_delta_step,
+                height_brush_radius=height_brush_radius,
+                local_mouse=local_mouse,
+            )
+            msg = status_message if status_message else "—"
+            colour = COLOUR_STATUS if status_message else COLOUR_TEXT_DIM
+            for line in _wrap(msg, 30):
+                y = _blit_text(content, self.font_small, line, (x, y), colour)
+            y += 12
+        else:
+            y = self._draw_normal_panel_body(
+                content,
+                x,
+                y,
+                world=world,
+                player=player,
+                home_storage=home_storage,
+                villagers=villagers,
+                buildings=buildings,
+                wildlife=wildlife,
+                selected_building_id=selected_building_id,
+                selected_villager_id=selected_villager_id,
+                overlay_mode=overlay_mode,
+                status_message=status_message,
+                sim_speed=sim_speed,
+                ticks_per_day=ticks_per_day,
+                fish_manager=fish_manager,
+                construction_sites=construction_sites,
+                assign_workplace_mode=assign_workplace_mode,
+                local_mouse=local_mouse,
+                season=season,
+                calendar_day=calendar_day,
+                selected_habitat_kind=selected_habitat_kind,
+                selected_habitat_id=selected_habitat_id,
+            )
+
         if y > content.get_height():
             self._content = pygame.Surface((PANEL_WIDTH, y + 64))
             return self.draw_panel(
@@ -708,8 +1019,15 @@ class UI:
                 mouse_pos=mouse_pos,
                 season=season,
                 calendar_day=calendar_day,
+                selected_field_id=selected_field_id,
                 selected_habitat_kind=selected_habitat_kind,
                 selected_habitat_id=selected_habitat_id,
+                map_edit_mode=map_edit_mode,
+                map_edit_tool=map_edit_tool,
+                map_edit_terrain=map_edit_terrain,
+                height_paint_value=height_paint_value,
+                height_delta_step=height_delta_step,
+                height_brush_radius=height_brush_radius,
             )
 
         self.content_height = max(panel_h, y)
@@ -742,7 +1060,6 @@ class UI:
         if self._tooltip is not None and mouse_pos is not None:
             tip, _anchor = self._tooltip
             self._draw_tooltip(surface, tip, mouse_pos)
-
     def _draw_tooltip(
         self, surface: pygame.Surface, text: str, mouse_pos: tuple[int, int]
     ) -> None:
@@ -1134,6 +1451,10 @@ def draw_feature(
         return
     if feature == FeatureType.STRUCTURE_PAD:
         return
+    # Quantize vibrancy so icon cache keys stay stable across fine day drift.
+    # Step 0.25 → a few seasonal buckets/year instead of re-rasterising SVGs
+    # on every small vibrancy nudge (very visible at low ticks/day).
+    vibrancy = round(float(vibrancy) * 4.0) / 4.0
     from crops import CROP_BY_KEY
     from icons import (
         ICON_BERRY_BUSH,

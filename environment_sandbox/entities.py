@@ -2209,6 +2209,7 @@ class Villager:
     hunt_meat_pos: tuple[int, int] | None = None
     fish_target_id: int | None = None
     fish_catch_pos: tuple[int, int] | None = None
+    fish_post_pos: tuple[int, int] | None = None
     forage_colony_id: int | None = None
     construction_id: int | None = None
     priorities: list[WorkPriority] = field(
@@ -2233,6 +2234,7 @@ class Villager:
         self.hunt_meat_pos = None
         self.fish_target_id = None
         self.fish_catch_pos = None
+        self.fish_post_pos = None
         self.forage_colony_id = None
         self.construction_id = None
         self.state = VillagerState.IDLE

@@ -279,7 +279,13 @@ HEIGHT_SAMPLE_SHADE_SHADOW: tuple[int, int, int] = (72, 46, 28)
 HEIGHT_SAMPLE_SHADE_MIX: float = 0.48
 # Highlight mix is separate — light was too strong at full SHADE_MIX.
 HEIGHT_SAMPLE_SHADE_LIT_MIX: float = 0.16
-# Viewport bake margin (cells). Cache sticks until the camera leaves this region.
+# Map edit tools (Y). Flat map; warp stays off while editing.
+HEIGHT_EDIT_BRUSH_MIN: int = 0
+HEIGHT_EDIT_BRUSH_MAX: int = 10
+HEIGHT_EDIT_VALUE_MAX: float = 80.0
+HEIGHT_EDIT_VALUE_STEP: float = 1.0
+HEIGHT_EDIT_DELTA_DEFAULT: float = 2.0
+# Viewport bake margin (cells). Unused — height warp bakes the full map once.
 HEIGHT_VIEW_MARGIN: int = 14
 
 # ---------------------------------------------------------------------------

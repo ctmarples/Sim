@@ -216,6 +216,34 @@ def _cell_from_save(c: dict[str, Any]) -> Cell:
     return cell
 
 
+def _serialize_height_corners(world: World) -> list[list[float]] | None:
+    """Snapshot the heightfield if present and sized for this map."""
+    world.ensure_height_corners()
+    need_h = world.rows + 1
+    need_w = world.cols + 1
+    corners = world.height_corners
+    if len(corners) != need_h or not corners or len(corners[0]) != need_w:
+        return None
+    return [[float(v) for v in row] for row in corners]
+
+
+def _apply_height_corners(world: World, raw: Any) -> bool:
+    """Restore saved height corners. Returns True if applied."""
+    if not isinstance(raw, list) or not raw:
+        return False
+    need_h = world.rows + 1
+    need_w = world.cols + 1
+    if len(raw) != need_h:
+        return False
+    corners: list[list[float]] = []
+    for row in raw:
+        if not isinstance(row, list) or len(row) != need_w:
+            return False
+        corners.append([float(v) for v in row])
+    world.height_corners = corners
+    return True
+
+
 def serialize_game(game: Game) -> dict[str, Any]:
     import settings as cfg
 
@@ -319,6 +347,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
                 "hunt_meat_pos": list(v.hunt_meat_pos) if v.hunt_meat_pos else None,
                 "fish_target_id": v.fish_target_id,
                 "fish_catch_pos": list(v.fish_catch_pos) if v.fish_catch_pos else None,
+                "fish_post_pos": list(v.fish_post_pos) if v.fish_post_pos else None,
                 "forage_colony_id": v.forage_colony_id,
                 "construction_id": v.construction_id,
                 "priorities": [p.name for p in v.priorities],
@@ -410,6 +439,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "mushroom_timer": world._mushroom_timer,
             "berry_spread_timer": world._berry_spread_timer,
             "herb_timer": world._herb_timer,
+            "height_corners": _serialize_height_corners(world),
         },
         "player": {
             "x": game.player.x,
@@ -665,7 +695,9 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         world._paint_terrain_subclusters(random.Random(world.seed + 77))
     world.valley_path = world._valley_river_path()
     world.lake_cx, world.lake_cy, world.lake_rx, world.lake_ry = world._valley_lake_params()
-    world._build_valley_heightfield()
+    # Prefer painted/saved heights; older saves rebuild from the valley map.
+    if not _apply_height_corners(world, world_data.get("height_corners")):
+        world._build_valley_heightfield()
     world.bump_terrain()
     world.home_pos = tuple(world_data["home_pos"])  # type: ignore[assignment]
     world.workstation_pos = tuple(world_data["workstation_pos"])  # type: ignore[assignment]
@@ -901,6 +933,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         target = vdata.get("target")
         meat_pos = vdata.get("hunt_meat_pos")
         catch_pos = vdata.get("fish_catch_pos")
+        post_pos = vdata.get("fish_post_pos")
         villager = Villager(
             id=int(vdata["id"]),
             x=int(vdata["x"]),
@@ -918,6 +951,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             hunt_meat_pos=tuple(meat_pos) if meat_pos else None,  # type: ignore[arg-type]
             fish_target_id=vdata.get("fish_target_id"),
             fish_catch_pos=tuple(catch_pos) if catch_pos else None,  # type: ignore[arg-type]
+            fish_post_pos=tuple(post_pos) if post_pos else None,  # type: ignore[arg-type]
             forage_colony_id=vdata.get("forage_colony_id"),
             construction_id=vdata.get("construction_id"),
         )

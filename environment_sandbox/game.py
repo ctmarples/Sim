@@ -28,7 +28,13 @@ from resource_balance import (
     FARM_PRODUCE_YIELD,
     FARM_SEED_AMOUNTS,
     FISH_YIELD,
+    FISH_POST_LOCAL_RADIUS,
+    FISH_POST_MIN_FISH,
+    FISH_POST_SCORE_RADIUS,
     FORAGER_PRIORITY_BAND,
+    WORK_SEARCH_RADIUS,
+    PATH_DETOUR_RATIO,
+    PATH_DETOUR_SLACK,
     HONEY_PER_BEE_LEVEL,
     MAX_FOOD_TYPES_PER_MEAL,
     MUSHROOM_YIELD,
@@ -171,7 +177,12 @@ from settings import (
     TICKS_PER_DAY_OPTIONS,
     REFERENCE_TICKS_PER_DAY,
     HEIGHT_SAMPLE_ENABLED_DEFAULT,
-    HEIGHT_VIEW_MARGIN,
+    HEIGHT_LIFT_PX,
+    HEIGHT_EDIT_BRUSH_MIN,
+    HEIGHT_EDIT_BRUSH_MAX,
+    HEIGHT_EDIT_VALUE_MAX,
+    HEIGHT_EDIT_VALUE_STEP,
+    HEIGHT_EDIT_DELTA_DEFAULT,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
     WORLD_COLS,
@@ -230,9 +241,12 @@ from terrain_tiles import (
 from wildlife import AnimalKind, FishManager, WildlifeManager
 from world import (
     BUILDABLE_LAND,
+    EDIT_PAINTABLE_TERRAIN,
     FeatureType,
+    MapEditTool,
     PLANTABLE_LAND,
     SOIL_LIKE,
+    TERRAIN_EDIT_LABELS,
     TerrainType,
     World,
     hardscape_paintable,
@@ -322,6 +336,16 @@ class Game:
         self._height_sample_cache_key: tuple | None = None
         # Sticky baked cell bounds (x0,y0,x1,y1). Rebake only when camera leaves.
         self._height_cache_bounds: tuple[int, int, int, int] | None = None
+        self.height_edit_mode = False
+        self._height_warp_before_edit = HEIGHT_SAMPLE_ENABLED_DEFAULT
+        self.map_edit_tool = MapEditTool.HEIGHT_SET
+        self.map_edit_terrain = TerrainType.GRASS
+        self.height_paint_value = 20.0
+        self.height_delta_step = HEIGHT_EDIT_DELTA_DEFAULT
+        self.height_brush_radius = 2
+        self._height_painting = False
+        self._height_paint_last: tuple[int, int] | None = None
+        self._edit_paint_rng = random.Random(0xED17)
 
         self.world = World()
         self.camera = Camera()
@@ -404,6 +428,8 @@ class Game:
         self._season_mute_key: float | None = None
         self._ice_overlay: pygame.Surface | None = None
         self._ice_overlay_key: float | None = None
+        self._lake_ice_mask: pygame.Surface | None = None
+        self._lake_ice_mask_key: int | None = None
         self._season_period_overlay: pygame.Surface | None = None
         self._season_mask_period_key: tuple | None = None
         # Six seed-stable density fields; cycle tints/masks + crossfade.
@@ -497,6 +523,7 @@ class Game:
         while self.running:
             dt = self.clock.get_time() / 1000.0
             self._handle_events()
+            self._sync_camera_height_overscan()
             self._update_camera_input(dt)
             self.camera.update(dt, self.world.cols, self.world.rows)
             self.player.update_visual(dt, PLAYER_VIS_SPEED)
@@ -538,6 +565,9 @@ class Game:
             corners=self.world.height_corners,
         )
         self._invalidate_height_sample_cache()
+        self.height_edit_mode = False
+        self._height_painting = False
+        self._height_paint_last = None
         self.player.reset(self.world.start_pos[0], self.world.start_pos[1])
         self.camera.center_on(self.player.x, self.player.y, self.world.cols, self.world.rows)
         self.home_storage.reset()
@@ -786,7 +816,7 @@ class Game:
                     self.resource_inspect.handle_mousemotion(event.pos)
                 if self.resource_tracker.open:
                     self.resource_tracker.handle_mousemotion(event.pos)
-                if self.drawing:
+                if self.drawing or self._height_painting:
                     self._on_mouse_drag(event.pos)
             elif event.type == pygame.MOUSEWHEEL:
                 if self.file_dialog.open:
@@ -823,7 +853,8 @@ class Game:
                 if mx >= map_view_width() and my >= MAP_OFFSET_Y:
                     self.ui.scroll(event.y * 28)
                 else:
-                    # Zoom camera over map (not over minimap, not over dialogs)
+                    # Zoom camera over map (not over minimap, not over dialogs).
+                    # Height-edit still zooms; brush/value use [ ] and +/-.
                     if my >= MAP_OFFSET_Y and not self._minimap_rect().collidepoint((mx, my)):
                         factor = (1 + ZOOM_STEP) if event.y > 0 else (1 - ZOOM_STEP)
                         self.camera.zoom_at(factor, (mx, my), self.world.cols, self.world.rows)
@@ -881,6 +912,9 @@ class Game:
             if self.habitat_inspect.open:
                 self.habitat_inspect.close()
                 return
+            if self.height_edit_mode:
+                self._toggle_height_edit()
+                return
             if (
                 self.selected_building_id is not None
                 or self.selected_villager_id is not None
@@ -905,7 +939,42 @@ class Game:
         elif key == pygame.K_SPACE:
             self._toggle_pause()
         elif key == pygame.K_h:
-            self._toggle_height_sample()
+            if self.height_edit_mode:
+                self._set_status("Exit map edit (Y) before toggling warp (H).")
+            else:
+                self._toggle_height_sample()
+        elif key == pygame.K_y:
+            self._toggle_height_edit()
+        elif self.height_edit_mode and key in (
+            pygame.K_EQUALS,
+            pygame.K_PLUS,
+            pygame.K_KP_PLUS,
+        ):
+            if self.map_edit_tool in (
+                MapEditTool.HEIGHT_RAISE,
+                MapEditTool.HEIGHT_LOWER,
+            ):
+                self._adjust_height_delta_step(HEIGHT_EDIT_VALUE_STEP)
+            else:
+                self._adjust_height_paint_value(HEIGHT_EDIT_VALUE_STEP)
+        elif self.height_edit_mode and key in (
+            pygame.K_MINUS,
+            pygame.K_KP_MINUS,
+        ):
+            if self.map_edit_tool in (
+                MapEditTool.HEIGHT_RAISE,
+                MapEditTool.HEIGHT_LOWER,
+            ):
+                self._adjust_height_delta_step(-HEIGHT_EDIT_VALUE_STEP)
+            else:
+                self._adjust_height_paint_value(-HEIGHT_EDIT_VALUE_STEP)
+        elif self.height_edit_mode and key == pygame.K_0:
+            self.height_paint_value = 0.0
+            self._set_status(self._height_edit_status())
+        elif self.height_edit_mode and key == pygame.K_LEFTBRACKET:
+            self._adjust_height_brush(-1)
+        elif self.height_edit_mode and key == pygame.K_RIGHTBRACKET:
+            self._adjust_height_brush(1)
         elif key == pygame.K_1:
             self._set_overlay(OverlayMode.NONE)
         elif key == pygame.K_2:
@@ -954,11 +1023,85 @@ class Game:
     def _map_cell_from_pos(self, pos: tuple[int, int]) -> tuple[int, int] | None:
         """Convert screen position to world cell coordinates (None if over minimap or outside)."""
         mx, my = pos
-        # Check if over minimap
         if self._minimap_rect().collidepoint(pos):
             return None
-        # Use camera to convert screen to world
-        return self.camera.screen_to_world(mx, my)
+        flat = self.camera.screen_to_world_float(mx, my)
+        if flat is None:
+            return None
+        fx, fy = flat
+        ix, iy = int(fx), int(fy)
+        # Height-edit forces warp off; keep flat picking there.
+        if (
+            not self.height_sample_enabled
+            or self.height_sample is None
+            or self.height_edit_mode
+        ):
+            if not self.world.in_bounds(ix, iy):
+                return None
+            return ix, iy
+        return self._map_cell_from_pos_height(mx, my, fx, fy)
+
+    @staticmethod
+    def _point_in_convex_quad(
+        px: float, py: float, pts: list[tuple[int, int]]
+    ) -> bool:
+        """True if (px, py) is inside a convex quad (screen space)."""
+        sign = 0
+        n = len(pts)
+        for i in range(n):
+            x1, y1 = pts[i]
+            x2, y2 = pts[(i + 1) % n]
+            cross = (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)
+            if cross == 0:
+                continue
+            s = 1 if cross > 0 else -1
+            if sign == 0:
+                sign = s
+            elif s != sign:
+                return False
+        return True
+
+    def _map_cell_from_pos_height(
+        self,
+        mx: int,
+        my: int,
+        fx: float,
+        fy: float,
+    ) -> tuple[int, int] | None:
+        """Pick the height-warped cell under the cursor (flat pick is biased north)."""
+        peak = self.height_sample.max_height if self.height_sample is not None else 0.0
+        search = max(3, int(math.ceil(peak * HEIGHT_LIFT_PX / CELL_SIZE)) + 2)
+        x_mid = int(fx)
+        y_mid = int(fy)
+        best: tuple[int, int] | None = None
+        best_y = -10**9
+        # Prefer southern hits — drawn later / in front on slopes.
+        for dy in range(-1, search + 1):
+            for dx in range(-2, 3):
+                x = x_mid + dx
+                y = y_mid + dy
+                if not self.world.in_bounds(x, y):
+                    continue
+                pts = self._cell_quad_points(x, y)
+                if self._point_in_convex_quad(mx, my, pts) and y >= best_y:
+                    best = (x, y)
+                    best_y = y
+        if best is not None:
+            return best
+        if self.world.in_bounds(x_mid, y_mid):
+            return x_mid, y_mid
+        return None
+
+    def _sync_camera_height_overscan(self) -> None:
+        """Allow scrolling north so lifted peaks are not clipped under the toolbar."""
+        if self.height_sample_enabled and self.height_sample is not None:
+            peak = max(0.0, float(self.height_sample.max_height))
+            self.camera.y_overscan = peak * HEIGHT_LIFT_PX / float(CELL_SIZE) + 0.75
+        else:
+            self.camera.y_overscan = 0.0
+            if self.camera.y < 0.0:
+                self.camera.y = 0.0
+                self.camera.clamp(self.world.cols, self.world.rows)
 
     def _cell_rect(self, x: int, y: int) -> pygame.Rect:
         """Return screen rect for given world cell coordinates."""
@@ -976,6 +1119,7 @@ class Game:
 
     def _toggle_height_sample(self) -> None:
         self.height_sample_enabled = not self.height_sample_enabled
+        self._sync_camera_height_overscan()
         if self.height_sample_enabled:
             self.height_sample = generate_height_sample(
                 self.world.cols,
@@ -991,6 +1135,156 @@ class Game:
             self._invalidate_height_sample_cache()
             self._set_status("Height warp OFF — H to toggle")
 
+    def _height_edit_status(self) -> str:
+        tool = self.map_edit_tool
+        brush = self.height_brush_radius
+        if tool == MapEditTool.HEIGHT_SET:
+            return (
+                f"Set height={self.height_paint_value:.0f}  brush={brush}  "
+                f"(drag paint · panel tools · Y exit)"
+            )
+        if tool == MapEditTool.HEIGHT_RAISE:
+            return (
+                f"Raise +{self.height_delta_step:.0f}  brush={brush}  "
+                f"(drag · panel tools · Y exit)"
+            )
+        if tool == MapEditTool.HEIGHT_LOWER:
+            return (
+                f"Lower -{self.height_delta_step:.0f}  brush={brush}  "
+                f"(drag · panel tools · Y exit)"
+            )
+        if tool == MapEditTool.TERRAIN_PAINT:
+            label = TERRAIN_EDIT_LABELS.get(
+                self.map_edit_terrain, self.map_edit_terrain.name.title()
+            )
+            return f"Paint {label}  brush={brush}  (drag · panel tools · Y exit)"
+        return f"Seed forest  brush={brush}  (drag · panel tools · Y exit)"
+
+    @staticmethod
+    def _height_heatmap_colour(t: float) -> tuple[int, int, int]:
+        """Blue → cyan → green → yellow → red for t in 0..1."""
+        t = max(0.0, min(1.0, t))
+        stops = (
+            (0.0, (40, 80, 200)),
+            (0.25, (40, 180, 200)),
+            (0.5, (60, 190, 70)),
+            (0.75, (230, 200, 40)),
+            (1.0, (220, 60, 40)),
+        )
+        for i in range(len(stops) - 1):
+            t0, c0 = stops[i]
+            t1, c1 = stops[i + 1]
+            if t <= t1 or i == len(stops) - 2:
+                u = 0.0 if t1 <= t0 else (t - t0) / (t1 - t0)
+                u = max(0.0, min(1.0, u))
+                return (
+                    int(c0[0] + (c1[0] - c0[0]) * u),
+                    int(c0[1] + (c1[1] - c0[1]) * u),
+                    int(c0[2] + (c1[2] - c0[2]) * u),
+                )
+        return stops[-1][1]
+
+    def _toggle_height_edit(self) -> None:
+        self.height_edit_mode = not self.height_edit_mode
+        if self.height_edit_mode:
+            self._height_warp_before_edit = self.height_sample_enabled
+            self.height_sample_enabled = False
+            self._invalidate_height_sample_cache()
+            self.place_kind = None
+            self._clear_selection()
+            self.world.ensure_height_corners()
+            self._set_status(self._height_edit_status())
+        else:
+            self._height_painting = False
+            self._sync_height_sample_from_world()
+            self.height_sample_enabled = self._height_warp_before_edit
+            if self.height_sample_enabled:
+                self._invalidate_height_sample_cache()
+                self._set_status("Map edit OFF — warp restored (H to toggle)")
+            else:
+                self._set_status("Map edit OFF — Y to edit, H for warp")
+
+    def _set_map_edit_tool(self, tool: MapEditTool) -> None:
+        self.map_edit_tool = tool
+        self._set_status(self._height_edit_status())
+
+    def _adjust_height_paint_value(self, delta: float) -> None:
+        self.height_paint_value = max(
+            0.0,
+            min(HEIGHT_EDIT_VALUE_MAX, self.height_paint_value + delta),
+        )
+        self._set_status(self._height_edit_status())
+
+    def _adjust_height_delta_step(self, delta: float) -> None:
+        self.height_delta_step = max(
+            1.0,
+            min(HEIGHT_EDIT_VALUE_MAX, self.height_delta_step + delta),
+        )
+        self._set_status(self._height_edit_status())
+
+    def _adjust_height_brush(self, delta: int) -> None:
+        self.height_brush_radius = max(
+            HEIGHT_EDIT_BRUSH_MIN,
+            min(HEIGHT_EDIT_BRUSH_MAX, self.height_brush_radius + delta),
+        )
+        self._set_status(self._height_edit_status())
+
+    def _sync_height_sample_from_world(self) -> None:
+        self.world.ensure_height_corners()
+        self.height_sample = generate_height_sample(
+            self.world.cols,
+            self.world.rows,
+            seed=self.world.seed,
+            corners=self.world.height_corners,
+        )
+        self._invalidate_height_sample_cache()
+
+    def _paint_height_at(self, x: int, y: int) -> None:
+        """Dispatch the active map-edit brush stamp at cell (x, y)."""
+        if not self.world.in_bounds(x, y):
+            return
+        if self._height_paint_last == (x, y):
+            return
+        self._height_paint_last = (x, y)
+        tool = self.map_edit_tool
+        r = self.height_brush_radius
+        if tool == MapEditTool.HEIGHT_SET:
+            self.world.paint_height(x, y, self.height_paint_value, r)
+            self._sync_height_corners_peak()
+        elif tool == MapEditTool.HEIGHT_RAISE:
+            self.world.paint_height_delta(
+                x,
+                y,
+                self.height_delta_step,
+                r,
+                max_h=HEIGHT_EDIT_VALUE_MAX,
+            )
+            self._sync_height_corners_peak()
+        elif tool == MapEditTool.HEIGHT_LOWER:
+            self.world.paint_height_delta(
+                x,
+                y,
+                -self.height_delta_step,
+                r,
+                max_h=HEIGHT_EDIT_VALUE_MAX,
+            )
+            self._sync_height_corners_peak()
+        elif tool == MapEditTool.TERRAIN_PAINT:
+            self.world.paint_terrain(x, y, self.map_edit_terrain, r)
+        elif tool == MapEditTool.SEED_FOREST:
+            self.world.seed_forest(x, y, r, self._edit_paint_rng)
+
+    def _sync_height_corners_peak(self) -> None:
+        if self.height_sample is not None:
+            self.height_sample.corners = self.world.height_corners
+            peak = 0.0
+            for row in self.world.height_corners:
+                for v in row:
+                    if v > peak:
+                        peak = v
+            self.height_sample.max_height = peak
+        self._invalidate_height_sample_cache()
+
     def _invalidate_height_sample_cache(self) -> None:
         self._height_sample_cache = None
         self._height_sample_cache_key = None
@@ -1000,13 +1294,12 @@ class Game:
         self,
         ground: pygame.Surface,
         *,
-        layer_key: tuple,
         region: HeightSample,
     ) -> None:
         if not self.height_sample_enabled or self.height_sample is None:
             return
+        # Height is static; do NOT key on terrain_revision (paths bump that daily).
         key = (
-            self.world.terrain_revision,
             CELL_SIZE,
             region.x0,
             region.y0,
@@ -1014,7 +1307,6 @@ class Game:
             region.height,
             id(self.height_sample),
             round(self.height_sample.max_height, 2),
-            layer_key,
         )
         if self._height_sample_cache is not None and self._height_sample_cache_key == key:
             return
@@ -1031,18 +1323,26 @@ class Game:
             region.y1,
         )
 
+    def _patch_height_warp_cells(self, cells: list[tuple[int, int]]) -> None:
+        """Terrain pixels changed under an existing height warp.
+
+        Intentionally a no-op: invalidating here forced a full-map height rebake
+        (~700ms) on env-sample dirties and path reverts — catastrophic at low
+        ticks/day. Warp geometry is static; colour can lag until the next height
+        edit or H toggle.
+        """
+        return
+
     def _height_sample_ground_composite(
         self,
         base: pygame.Surface,
-        season_overlay: pygame.Surface | None,
-        ice: pygame.Surface | None,
         *,
         region: HeightSample,
     ) -> pygame.Surface:
-        """Region footprint for warp bake: base + flecks + lake ice.
+        """Region footprint for warp bake: terrain base only.
 
-        Mute is applied after blit so vibrancy drift does not invalidate the cache.
-        Ice uses a coarse freeze bucket in the cache key (see ``_draw_height_sample``).
+        Season flecks, ice, and mute are applied after the warp blit so calendar
+        drift does not force expensive height rebakes.
         """
         area = pygame.Rect(
             region.x0 * CELL_SIZE,
@@ -1057,45 +1357,11 @@ class Game:
         if area.w > 0 and area.h > 0:
             dest = (area.x - region.x0 * CELL_SIZE, area.y - region.y0 * CELL_SIZE)
             ground.blit(base.subsurface(area), dest)
-            if season_overlay is not None:
-                ov = season_overlay.get_rect().clip(area)
-                if ov.w > 0 and ov.h > 0:
-                    ground.blit(
-                        season_overlay.subsurface(ov),
-                        (ov.x - region.x0 * CELL_SIZE, ov.y - region.y0 * CELL_SIZE),
-                    )
-            if ice is not None:
-                ic = ice.get_rect().clip(area)
-                if ic.w > 0 and ic.h > 0:
-                    ground.blit(
-                        ice.subsurface(ic),
-                        (ic.x - region.x0 * CELL_SIZE, ic.y - region.y0 * CELL_SIZE),
-                    )
         return ground
 
     def _height_view_region(self) -> HeightSample | None:
-        """Sticky viewport sample: rebake only when the camera leaves the cached bounds."""
-        if self.height_sample is None:
-            return None
-        vx0, vy0, vx1, vy1 = self.camera.visible_range(self.world.cols, self.world.rows)
-        bounds = self._height_cache_bounds
-        if (
-            bounds is not None
-            and self._height_sample_cache is not None
-            and vx0 >= bounds[0]
-            and vy0 >= bounds[1]
-            and vx1 <= bounds[2]
-            and vy1 <= bounds[3]
-        ):
-            return self.height_sample.subregion(*bounds)
-
-        m = HEIGHT_VIEW_MARGIN
-        return self.height_sample.subregion(
-            max(0, vx0 - m),
-            max(0, vy0 - m),
-            min(self.world.cols - 1, vx1 + m),
-            min(self.world.rows - 1, vy1 + m),
-        )
+        """Full-map sample — bake once; pan/zoom only re-blits."""
+        return self.height_sample
 
     def _height_screen_lift(self, wx: float, wy: float) -> float:
         if not self.height_sample_enabled or self.height_sample is None:
@@ -1196,6 +1462,11 @@ class Game:
         if cell is None:
             return
         self._mouse_down_cell = cell
+        if self.height_edit_mode:
+            self._height_painting = True
+            self._height_paint_last = None
+            self._paint_height_at(cell[0], cell[1])
+            return
         # Field placement: drag to size the plot.
         if self.place_kind == BuildingKind.FIELD:
             self.drawing = True
@@ -1217,18 +1488,26 @@ class Game:
         cell = self._map_cell_from_pos(pos)
         if cell is not None:
             self.draw_current = cell
+            if self.height_edit_mode and self._height_painting:
+                self._paint_height_at(cell[0], cell[1])
 
     def _on_mouse_up(self, pos: tuple[int, int]) -> None:
         end = self._map_cell_from_pos(pos) or self.draw_current or self._mouse_down_cell
         start = self.draw_start or self._mouse_down_cell
         was_drawing = self.drawing
+        was_height_painting = self._height_painting
         placing_field = self._placing_field
         self.drawing = False
         self._placing_field = False
+        self._height_painting = False
+        self._height_paint_last = None
         self.draw_start = None
         self.draw_current = None
         down = self._mouse_down_cell
         self._mouse_down_cell = None
+
+        if was_height_painting:
+            return
 
         if end is None or start is None or down is None:
             return
@@ -1327,6 +1606,38 @@ class Game:
 
     def _handle_panel_click(self, pos: tuple[int, int]) -> bool:
         action = self.ui.hit_action(pos)
+        if action is not None and action.startswith("edit_tool:"):
+            key = action.split(":", 1)[1]
+            try:
+                self._set_map_edit_tool(MapEditTool(key))
+            except ValueError:
+                pass
+            return True
+        if action is not None and action.startswith("edit_terrain:"):
+            name = action.split(":", 1)[1]
+            try:
+                terrain = TerrainType[name]
+            except KeyError:
+                return True
+            if terrain in EDIT_PAINTABLE_TERRAIN:
+                self.map_edit_terrain = terrain
+                self.map_edit_tool = MapEditTool.TERRAIN_PAINT
+                self._set_status(self._height_edit_status())
+            return True
+        if action is not None and action.startswith("edit_value:"):
+            raw = action.split(":", 1)[1]
+            if raw == "0":
+                self.height_paint_value = 0.0
+                self._set_status(self._height_edit_status())
+            else:
+                self._adjust_height_paint_value(float(raw))
+            return True
+        if action is not None and action.startswith("edit_delta:"):
+            self._adjust_height_delta_step(float(action.split(":", 1)[1]))
+            return True
+        if action is not None and action.startswith("edit_brush:"):
+            self._adjust_height_brush(int(action.split(":", 1)[1]))
+            return True
         if action is not None and action.startswith("prio:"):
             parts = action.split(":")
             if len(parts) == 3:
@@ -2334,7 +2645,8 @@ class Game:
 
         threshold = self.balance.get_float("PATH_TRAFFIC_THRESHOLD")
         keep = self.balance.get_float("PATH_TRAFFIC_KEEP")
-        changed = False
+        # Local dirty only — bumping terrain_revision here forced a full-map
+        # terrain stitch + height rebake every in-game day.
         for (x, y), wear in self._path_traffic.items():
             if (x, y) in urban_cells or (x, y) in field_cells:
                 continue
@@ -2343,10 +2655,8 @@ class Game:
                 continue
             if cell.terrain == TerrainType.URBAN:
                 continue
-            if wear >= threshold:
-                if cell.terrain != TerrainType.PATH:
-                    self._set_hardscape_terrain(x, y, TerrainType.PATH)
-                    changed = True
+            if wear >= threshold and cell.terrain != TerrainType.PATH:
+                self._set_hardscape_terrain(x, y, TerrainType.PATH)
 
         for y in range(self.world.rows):
             for x in range(self.world.cols):
@@ -2359,10 +2669,6 @@ class Game:
                 if wear < keep:
                     cell.terrain = self._revert_hardscape_terrain(x, y)
                     self.world.mark_terrain_dirty(x, y)
-                    changed = True
-
-        if changed:
-            self.world.terrain_revision += 1
 
     def _path_traffic_overlay_grid(self) -> list[list[float]]:
         cap = max(1.0, self.balance.get_float("PATH_TRAFFIC_OVERLAY_MAX"))
@@ -4395,6 +4701,8 @@ class Game:
                 cells.add(other.hunt_meat_pos)
             if other.fish_catch_pos is not None:
                 cells.add(other.fish_catch_pos)
+            if other.fish_post_pos is not None:
+                cells.add(other.fish_post_pos)
             if cells:
                 self._tick_claim_by_villager[other.id] = cells
                 self._tick_claim_cells |= cells
@@ -4464,7 +4772,7 @@ class Game:
             ):
                 self._update_leftover_build_mats(villager)
                 continue
-            # Finish an in-progress haul (general haulers only).
+            # Finish an in-progress haul (general haulers, or workplace helpers).
             if (
                 villager.state == VillagerState.HAULING
                 or (
@@ -4472,7 +4780,7 @@ class Game:
                     and villager.haul_building_id is not None
                 )
             ):
-                if self._is_general_hauler(villager):
+                if self._uses_general_haul_update(villager):
                     self._update_hauler(villager)
                 else:
                     building = self.buildings.get(villager.building_id)
@@ -4512,6 +4820,11 @@ class Game:
                             and self._assigned_transport_has_work(villager, building)
                         ):
                             self._update_assigned_transport(villager, building)
+                            acted = True
+                            break
+                        # Workplace quiet (e.g. frozen lake): help village haul.
+                        if self._transport_has_work(villager):
+                            self._update_hauler(villager)
                             acted = True
                             break
             if self._is_general_hauler(villager) and self._try_idle_transport(villager):
@@ -4708,6 +5021,14 @@ class Game:
         """Unassigned / home haulers — handle all village transport."""
         return villager.building_id is None
 
+    def _uses_general_haul_update(self, villager: Villager) -> bool:
+        """True when mid-haul should use the village hauler state machine."""
+        if self._is_general_hauler(villager):
+            return True
+        # Workplace helper hauling a foreign building (not own assigned transport).
+        hid = villager.haul_building_id
+        return hid is not None and hid != villager.building_id
+
     def _building_can_produce(self, building: Building) -> bool:
         """True while the station can still run a recipe from current stock."""
         if building.is_processor():
@@ -4806,6 +5127,8 @@ class Game:
                     out.add(other.hunt_meat_pos)
                 if other.fish_catch_pos is not None:
                     out.add(other.fish_catch_pos)
+                if other.fish_post_pos is not None:
+                    out.add(other.fish_post_pos)
             return out
         mine = self._tick_claim_by_villager.get(exclude_id)
         if not mine:
@@ -4954,6 +5277,7 @@ class Game:
         villager.hunt_meat_pos = None
         villager.fish_target_id = None
         villager.fish_catch_pos = None
+        villager.fish_post_pos = None
         villager.forage_colony_id = None
         self._clear_villager_path(villager)
 
@@ -5016,7 +5340,11 @@ class Game:
             return True
         if villager.forage_colony_id is not None:
             return True
-        if villager.fish_target_id is not None or villager.fish_catch_pos is not None:
+        if (
+            villager.fish_target_id is not None
+            or villager.fish_catch_pos is not None
+            or villager.fish_post_pos is not None
+        ):
             if fishing_allowed(self.calendar_day):
                 return True
 
@@ -5041,11 +5369,30 @@ class Game:
                 return self._tool_fetchable(villager, "spear")
             if villager.inventory.is_full:
                 return False
-            return (
-                self._find_hunt_target(villager, building) is not None
-                or self._find_hunt_colony(villager, building) is not None
-                or self._find_meat_in_hunt_areas(building, villager.id) is not None
-            )
+            # Cheap: stickies or any prey/meat in search radius (no pathfinding).
+            if (
+                villager.hunt_animal_id is not None
+                or villager.hunt_colony_id is not None
+                or villager.hunt_meat_pos is not None
+            ):
+                return True
+            origin = (villager.x, villager.y)
+            if any(
+                building.allows_hunt_kind(a.kind.name)
+                and self._within_work_search(origin, (a.x, a.y))
+                for a in self.wildlife.animals
+            ):
+                return True
+            from wildlife import AnimalKind
+
+            if building.allows_hunt_kind("rabbit") and any(
+                c.kind == AnimalKind.RABBIT
+                and c.can_harvest()
+                and self._within_work_search(origin, (c.x, c.y))
+                for c in self.wildlife.colonies
+            ):
+                return True
+            return self._meat_deposit_available(building, villager.id)
 
         if building.kind == BuildingKind.FISHER:
             if not fishing_allowed(self.calendar_day):
@@ -5054,10 +5401,12 @@ class Game:
                 return self._tool_fetchable(villager, "fishing_rod")
             if villager.inventory.is_full:
                 return False
-            return (
-                self._find_fish_target(villager, building) is not None
-                or self._find_fish_in_fish_areas(building, villager.id) is not None
-            )
+            # Cheap availability only — full shore pathfinding runs in update.
+            if villager.fish_post_pos is not None or villager.fish_catch_pos is not None:
+                return True
+            if self._fisher_candidate_fish(villager, building):
+                return True
+            return self._fish_deposit_available(building, villager.id)
 
         if building.kind == BuildingKind.FARM:
             if not villager.inventory.has_equipped_tool("hoe"):
@@ -5127,9 +5476,27 @@ class Game:
     def _assigned_transport_destination(
         self, villager: Villager, building: Building
     ) -> tuple[int, int]:
-        if building.can_accept_from(villager.inventory):
+        """Where an assigned worker should drop personal cargo.
+
+        Processors/splitters take inputs at the station. Gather workplaces must
+        not take their own outputs back (withdraw → redeposit loops); those
+        go to the storehouse. Plant stock still returns to the workplace.
+        """
+        home = self.world.home_pos
+        inv = villager.inventory
+        if building.is_processor() or building.is_splitter():
+            if building.can_accept_from(inv):
+                return building.center_cell()
+            return home
+        if (
+            building.kind == BuildingKind.FORESTER
+            and building.work_mode == WorkMode.SPLIT
+            and building.can_accept_from(inv)
+        ):
             return building.center_cell()
-        return self.world.home_pos
+        if building.allows_planting() and building.holding_only_plantables(inv):
+            return building.center_cell()
+        return home
 
     def _withdraw_workplace_recipe_output(
         self, villager: Villager, building: Building
@@ -6365,8 +6732,19 @@ class Game:
                 self._clear_villager_path(villager)
             return
 
-        # Rabbit colonies: one level → 3 meat, then return.
+        # Rabbit colony vs free animal: chase whichever is nearer to the hunter.
         colony = self._resolve_hunt_colony(villager, building)
+        animal = self._resolve_hunt_animal(villager, building)
+        if colony is not None and animal is not None:
+            dc = abs(colony.x - villager.x) + abs(colony.y - villager.y)
+            da = abs(animal.x - villager.x) + abs(animal.y - villager.y)
+            if da < dc:
+                villager.hunt_colony_id = None
+                colony = None
+            else:
+                villager.hunt_animal_id = None
+                animal = None
+
         if colony is not None:
             villager.state = VillagerState.WORKING
             dist = max(abs(colony.x - villager.x), abs(colony.y - villager.y))
@@ -6402,7 +6780,6 @@ class Game:
                 self._clear_villager_path(villager)
             return
 
-        animal = self._resolve_hunt_animal(villager, building)
         if animal is None:
             self._maybe_assigned_transport(villager, building)
             return
@@ -6434,6 +6811,13 @@ class Game:
             villager.hunt_animal_id = None
             self._clear_villager_path(villager)
 
+    def _within_work_search(
+        self, origin: tuple[int, int], pos: tuple[int, int]
+    ) -> bool:
+        ox, oy = origin
+        px, py = pos
+        return abs(px - ox) + abs(py - oy) <= WORK_SEARCH_RADIUS
+
     def _find_hunt_colony(self, villager: Villager, building: Building):
         from wildlife import AnimalKind
 
@@ -6458,17 +6842,25 @@ class Game:
                     if area.contains(c.x, c.y):
                         filtered.append(c)
             colonies = filtered
-            ox, oy = villager.x, villager.y
-        else:
-            ox, oy = building.center_cell()
-        if not colonies:
-            return None
-        return min(colonies, key=lambda c: abs(c.x - ox) + abs(c.y - oy))
+        origin = (villager.x, villager.y)
+        return self._pick_nearest_reachable(
+            origin,
+            colonies,
+            pos_fn=lambda c: (c.x, c.y),
+            prefer_adjacent=True,
+            villager=villager,
+        )
 
     def _resolve_hunt_colony(self, villager: Villager, building: Building):
         if villager.hunt_colony_id is not None:
             colony = self.wildlife.colony_by_id(villager.hunt_colony_id)
-            if colony is not None and colony.can_harvest():
+            if (
+                colony is not None
+                and colony.can_harvest()
+                and self._within_work_search(
+                    (villager.x, villager.y), (colony.x, colony.y)
+                )
+            ):
                 return colony
             villager.hunt_colony_id = None
         colony = self._find_hunt_colony(villager, building)
@@ -6484,25 +6876,32 @@ class Game:
                 if area.task_type != TaskType.HUNT:
                     continue
                 animals.extend(self.wildlife.animals_in_area(area.contains))
-            ox, oy = villager.x, villager.y
         else:
             animals = list(self.wildlife.animals)
-            ox, oy = building.center_cell()
         taken = self._claimed_animal_ids(villager.id)
         animals = [
             a
             for a in animals
             if building.allows_hunt_kind(a.kind.name) and a.id not in taken
         ]
-        if not animals:
-            return None
-        return min(animals, key=lambda a: abs(a.x - ox) + abs(a.y - oy))
+        origin = (villager.x, villager.y)
+        return self._pick_nearest_reachable(
+            origin,
+            animals,
+            pos_fn=lambda a: (a.x, a.y),
+            prefer_adjacent=True,
+            villager=villager,
+        )
 
     def _resolve_hunt_animal(self, villager: Villager, building: Building):
         if villager.hunt_animal_id is not None:
             for animal in self.wildlife.animals:
                 if animal.id == villager.hunt_animal_id:
-                    return animal
+                    if self._within_work_search(
+                        (villager.x, villager.y), (animal.x, animal.y)
+                    ):
+                        return animal
+                    break
             villager.hunt_animal_id = None
         animal = self._find_hunt_target(villager, building)
         if animal is not None:
@@ -6514,6 +6913,7 @@ class Game:
         self, building: Building, exclude_villager_id: int = -1
     ) -> tuple[int, int] | None:
         claimed = self._claimed_work_cells(exclude_villager_id)
+        cells: list[tuple[int, int]] = []
         if building.areas:
             for area in building.areas:
                 if area.task_type != TaskType.HUNT:
@@ -6523,28 +6923,66 @@ class Game:
                         continue
                     cell = self.world.get_cell(x, y)
                     if cell is not None and cell.meat_deposit > 0:
-                        return (x, y)
-            return None
-        best: tuple[int, int] | None = None
-        best_d = 10**9
+                        cells.append((x, y))
+            origin = building.center_cell()
+            # Prefer nearest to a hunter currently looking — use building centre.
+        else:
+            for y in range(self.world.rows):
+                for x in range(self.world.cols):
+                    if (x, y) in claimed:
+                        continue
+                    if self.world.cells[y][x].meat_deposit > 0:
+                        cells.append((x, y))
+            origin = building.center_cell()
+        villager = self._get_villager(exclude_villager_id)
+        if villager is not None:
+            origin = (villager.x, villager.y)
+        return self._pick_nearest_reachable(
+            origin,
+            cells,
+            pos_fn=lambda p: p,
+            prefer_adjacent=False,
+            villager=villager,
+        )
+
+    def _meat_deposit_available(
+        self, building: Building, exclude_villager_id: int = -1
+    ) -> bool:
+        """True if any unclaimed meat pile exists (no pathfinding)."""
+        claimed = self._claimed_work_cells(exclude_villager_id)
+        if building.areas:
+            for area in building.areas:
+                if area.task_type != TaskType.HUNT:
+                    continue
+                for x, y in area.cells():
+                    if (x, y) in claimed:
+                        continue
+                    cell = self.world.get_cell(x, y)
+                    if cell is not None and cell.meat_deposit > 0:
+                        return True
+            return False
+        villager = self._get_villager(exclude_villager_id)
+        origin = (
+            (villager.x, villager.y)
+            if villager is not None
+            else building.center_cell()
+        )
         for y in range(self.world.rows):
             for x in range(self.world.cols):
                 if (x, y) in claimed:
                     continue
-                cell = self.world.cells[y][x]
-                if cell.meat_deposit <= 0:
+                if self.world.cells[y][x].meat_deposit <= 0:
                     continue
-                d = abs(x - building.x) + abs(y - building.y)
-                if d < best_d:
-                    best_d = d
-                    best = (x, y)
-        return best
+                if self._within_work_search(origin, (x, y)):
+                    return True
+        return False
 
     def _update_fisher(self, villager: Villager, building: Building) -> None:
-        """Fish in areas, or nearest fish if no area is drawn."""
+        """Collect shore deposits, else stand at a dense shoreline and wait for fish."""
         if not fishing_allowed(self.calendar_day):
             self._maybe_assigned_transport(villager, building)
             villager.fish_target_id = None
+            villager.fish_post_pos = None
             return
 
         if villager.inventory.is_full or self._gather_cargo_needs_delivery(
@@ -6558,6 +6996,9 @@ class Game:
             return
         if self._maybe_assigned_transport(villager, building):
             return
+
+        # Never chase swimming fish — clear any legacy sticky target.
+        villager.fish_target_id = None
 
         catch_pos = villager.fish_catch_pos
         if catch_pos is not None:
@@ -6590,75 +7031,86 @@ class Game:
                 villager.fish_catch_pos = recovered
             return
 
-        target = self._resolve_fish_target(villager, building)
-        if target is None:
+        post = self._resolve_fish_post(villager, building)
+        if post is None:
             self._maybe_assigned_transport(villager, building)
             return
 
         villager.state = VillagerState.WORKING
-        approach = None
-        for ny, nx in self.world.neighbourhood(target.x, target.y, radius=1):
-            if self.world.is_walkable(nx, ny):
-                if approach is None or abs(nx - villager.x) + abs(ny - villager.y) < abs(
-                    approach[0] - villager.x
-                ) + abs(approach[1] - villager.y):
-                    approach = (nx, ny)
-        if approach is None:
-            villager.fish_target_id = None
-            villager.state = VillagerState.IDLE
+        if (villager.x, villager.y) != post:
+            if not self._step_villager_toward(villager, post):
+                villager.fish_post_pos = None
+                self._clear_villager_path(villager)
             return
 
-        dist = max(abs(target.x - villager.x), abs(target.y - villager.y))
-        if dist <= 1:
-            if villager.work_cooldown == 0:
-                pos = self.fish.kill_fish(target.id)
-                villager.fish_target_id = None
-                if pos is not None:
-                    deposit_at = self.world.add_fish_deposit(pos[0], pos[1], FISH_YIELD)
-                    shore = self._find_fish_in_fish_areas(building, villager.id)
-                    villager.fish_catch_pos = (
-                        shore if shore is not None else deposit_at if deposit_at is not None else pos
-                    )
-                    self._register_field_claim(villager, villager.fish_catch_pos)
-                villager.work_cooldown = self._villager_work_interval(villager)
+        # At the post: catch any fish that swim within Chebyshev range 1.
+        # Fish go straight into inventory (no shore drop → pick-up loop).
+        if villager.work_cooldown != 0:
             return
+        if not villager.inventory.can_add(FISH_YIELD, key="fish"):
+            self._force_assigned_delivery(villager, building)
+            return
+        taken = self._claimed_fish_ids(villager.id)
+        catchable = [
+            f
+            for f in self._fisher_candidate_fish(villager, building)
+            if f.id not in taken
+            and self.world.is_adjacent_chebyshev(
+                villager.x, villager.y, f.x, f.y, radius=1
+            )
+        ]
+        if not catchable:
+            return
+        target = min(
+            catchable,
+            key=lambda f: abs(f.x - villager.x) + abs(f.y - villager.y),
+        )
+        pos = self.fish.kill_fish(target.id)
+        if pos is None:
+            return
+        villager.inventory.add_fish(FISH_YIELD)
+        self.record_produced("fish", FISH_YIELD)
+        self.world.apply_extraction_disturbance(pos[0], pos[1])
+        self._refresh_indicators()
+        villager.work_cooldown = self._villager_work_interval(villager)
+        if villager.inventory.is_full or self._gather_cargo_needs_delivery(
+            villager, building
+        ):
+            self._force_assigned_delivery(villager, building)
 
-        if not self._step_villager_toward(villager, approach):
-            villager.fish_target_id = None
-            self._clear_villager_path(villager)
+    def _is_fishing_shore(self, x: int, y: int) -> bool:
+        """Walkable land tile that touches water (a place to stand and fish)."""
+        if not self.world.is_walkable(x, y):
+            return False
+        for ny, nx in self.world.neighbourhood(x, y, radius=1):
+            if (nx, ny) == (x, y):
+                continue
+            cell = self.world.get_cell(nx, ny)
+            if cell is not None and is_water_terrain(cell.terrain):
+                return True
+        return False
 
-    def _find_fish_target(self, villager: Villager, building: Building):
-        found = []
+    def _fisher_candidate_fish(self, villager: Villager, building: Building):
+        """Fish the workplace may target (area filter + search radius from villager)."""
         if building.areas:
+            found = []
             for area in building.areas:
                 if area.task_type != TaskType.FISH:
                     continue
                 found.extend(self.fish.fish_in_area(area.contains))
-            ox, oy = villager.x, villager.y
         else:
             found = list(self.fish.fish)
-            ox, oy = building.center_cell()
-        taken = self._claimed_fish_ids(villager.id)
-        found = [f for f in found if f.id not in taken]
-        if not found:
-            return None
-        return min(found, key=lambda f: abs(f.x - ox) + abs(f.y - oy))
+        origin = (villager.x, villager.y)
+        return [
+            f
+            for f in found
+            if self._within_work_search(origin, (f.x, f.y))
+        ]
 
-    def _resolve_fish_target(self, villager: Villager, building: Building):
-        if villager.fish_target_id is not None:
-            for item in self.fish.fish:
-                if item.id == villager.fish_target_id:
-                    return item
-            villager.fish_target_id = None
-        item = self._find_fish_target(villager, building)
-        if item is not None:
-            villager.fish_target_id = item.id
-            self._register_fish_claim(item.id)
-        return item
-
-    def _find_fish_in_fish_areas(
+    def _fish_deposit_available(
         self, building: Building, exclude_villager_id: int = -1
-    ) -> tuple[int, int] | None:
+    ) -> bool:
+        """True if any unclaimed shore fish pile exists (no pathfinding)."""
         claimed = self._claimed_work_cells(exclude_villager_id)
         if building.areas:
             for area in building.areas:
@@ -6669,9 +7121,7 @@ class Game:
                         continue
                     cell = self.world.get_cell(x, y)
                     if cell is not None and cell.fish_deposit > 0:
-                        return (x, y)
-                for x, y in area.cells():
-                    cell = self.world.get_cell(x, y)
+                        return True
                     if cell is None or not is_water_terrain(cell.terrain):
                         continue
                     for ny, nx in self.world.neighbourhood(x, y, radius=1):
@@ -6679,22 +7129,169 @@ class Game:
                             continue
                         ncell = self.world.get_cell(nx, ny)
                         if ncell is not None and ncell.fish_deposit > 0:
-                            return (nx, ny)
-            return None
-        best: tuple[int, int] | None = None
-        best_d = 10**9
+                            return True
+            return False
         for y in range(self.world.rows):
             for x in range(self.world.cols):
                 if (x, y) in claimed:
                     continue
-                cell = self.world.cells[y][x]
-                if cell.fish_deposit <= 0:
+                if self.world.cells[y][x].fish_deposit > 0:
+                    return True
+        return False
+
+    def _fish_post_density(
+        self, shore: tuple[int, int], fish_list: list
+    ) -> int:
+        sx, sy = shore
+        r = FISH_POST_SCORE_RADIUS
+        return sum(
+            1
+            for f in fish_list
+            if max(abs(f.x - sx), abs(f.y - sy)) <= r
+        )
+
+    def _find_fish_post(
+        self, villager: Villager, building: Building
+    ) -> tuple[int, int] | None:
+        """Best walkable shore near a concentration of fish."""
+        fish_list = self._fisher_candidate_fish(villager, building)
+        if not fish_list:
+            return None
+        origin = (villager.x, villager.y)
+        claimed = self._claimed_work_cells(villager.id)
+        shore_scores: dict[tuple[int, int], int] = {}
+        r = FISH_POST_SCORE_RADIUS
+        for item in fish_list:
+            for ny, nx in self.world.neighbourhood(item.x, item.y, radius=r):
+                shore = (nx, ny)
+                if shore in claimed or shore in shore_scores:
                     continue
-                d = abs(x - building.x) + abs(y - building.y)
-                if d < best_d:
-                    best_d = d
-                    best = (x, y)
-        return best
+                if not self._within_work_search(origin, shore):
+                    continue
+                if not self._is_fishing_shore(nx, ny):
+                    continue
+                dens = self._fish_post_density(shore, fish_list)
+                if dens >= FISH_POST_MIN_FISH:
+                    shore_scores[shore] = dens
+        if not shore_scores:
+            # Fallback: any shore adjacent to a single fish.
+            for item in fish_list:
+                for ny, nx in self.world.neighbourhood(item.x, item.y, radius=1):
+                    shore = (nx, ny)
+                    if shore in claimed:
+                        continue
+                    if not self._is_fishing_shore(nx, ny):
+                        continue
+                    if not self._within_work_search(origin, shore):
+                        continue
+                    shore_scores[shore] = max(shore_scores.get(shore, 0), 1)
+        if not shore_scores:
+            return None
+
+        def pick_from(cands: dict[tuple[int, int], int]):
+            best_dens = max(cands.values())
+            top = [s for s, d in cands.items() if d >= best_dens - 1]
+            return self._pick_nearest_reachable(
+                origin,
+                top,
+                pos_fn=lambda p: p,
+                prefer_adjacent=False,
+                villager=villager,
+            )
+
+        local = {
+            s: d
+            for s, d in shore_scores.items()
+            if abs(s[0] - origin[0]) + abs(s[1] - origin[1]) <= FISH_POST_LOCAL_RADIUS
+        }
+        if local:
+            chosen = pick_from(local)
+            if chosen is not None:
+                return chosen
+        return pick_from(shore_scores)
+
+    def _resolve_fish_post(
+        self, villager: Villager, building: Building
+    ) -> tuple[int, int] | None:
+        """Keep a shore post while fish still concentrate nearby; else re-pick."""
+        post = villager.fish_post_pos
+        if post is not None:
+            if (
+                self._is_fishing_shore(*post)
+                and self._within_work_search((villager.x, villager.y), post)
+            ):
+                fish_list = self._fisher_candidate_fish(villager, building)
+                if self._fish_post_density(post, fish_list) >= FISH_POST_MIN_FISH:
+                    return post
+            villager.fish_post_pos = None
+            self._clear_villager_path(villager)
+        post = self._find_fish_post(villager, building)
+        if post is not None:
+            villager.fish_post_pos = post
+            self._register_field_claim(villager, post)
+        return post
+
+    def _find_fish_target(self, villager: Villager, building: Building):
+        """Legacy helper: nearest fish (availability / debug). Prefer shore posts."""
+        found = self._fisher_candidate_fish(villager, building)
+        taken = self._claimed_fish_ids(villager.id)
+        found = [f for f in found if f.id not in taken]
+        return self._pick_nearest_reachable(
+            (villager.x, villager.y),
+            found,
+            pos_fn=lambda f: (f.x, f.y),
+            prefer_adjacent=True,
+            villager=None,
+        )
+
+    def _resolve_fish_target(self, villager: Villager, building: Building):
+        """Unused by shore-post fishing; kept for save compatibility / tools."""
+        villager.fish_target_id = None
+        return None
+
+    def _find_fish_in_fish_areas(
+        self, building: Building, exclude_villager_id: int = -1
+    ) -> tuple[int, int] | None:
+        claimed = self._claimed_work_cells(exclude_villager_id)
+        cells: list[tuple[int, int]] = []
+        if building.areas:
+            for area in building.areas:
+                if area.task_type != TaskType.FISH:
+                    continue
+                for x, y in area.cells():
+                    if (x, y) in claimed:
+                        continue
+                    cell = self.world.get_cell(x, y)
+                    if cell is not None and cell.fish_deposit > 0:
+                        cells.append((x, y))
+                for x, y in area.cells():
+                    cell = self.world.get_cell(x, y)
+                    if cell is None or not is_water_terrain(cell.terrain):
+                        continue
+                    for ny, nx in self.world.neighbourhood(x, y, radius=1):
+                        if (nx, ny) in claimed or (nx, ny) in cells:
+                            continue
+                        ncell = self.world.get_cell(nx, ny)
+                        if ncell is not None and ncell.fish_deposit > 0:
+                            cells.append((nx, ny))
+        else:
+            for y in range(self.world.rows):
+                for x in range(self.world.cols):
+                    if (x, y) in claimed:
+                        continue
+                    if self.world.cells[y][x].fish_deposit > 0:
+                        cells.append((x, y))
+        origin = building.center_cell()
+        villager = self._get_villager(exclude_villager_id)
+        if villager is not None:
+            origin = (villager.x, villager.y)
+        return self._pick_nearest_reachable(
+            origin,
+            cells,
+            pos_fn=lambda p: p,
+            prefer_adjacent=False,
+            villager=villager,
+        )
 
     def _update_hauler(self, villager: Villager) -> None:
         if self._construction_delivery_active(villager):
@@ -7077,6 +7674,105 @@ class Game:
         ox, oy = origin
         return min(cells, key=lambda p: abs(p[0] - ox) + abs(p[1] - oy))
 
+    @staticmethod
+    def _path_detour_ok(straight: int, path_len: int) -> bool:
+        """True if BFS path length is not an extreme detour vs Manhattan."""
+        limit = max(
+            int(straight * PATH_DETOUR_RATIO),
+            straight + PATH_DETOUR_SLACK,
+        )
+        return path_len <= limit
+
+    def _walk_goal_for_target(
+        self,
+        tx: int,
+        ty: int,
+        *,
+        prefer_adjacent: bool = False,
+        from_pos: tuple[int, int] | None = None,
+    ) -> tuple[int, int] | None:
+        """Walkable cell to path to for a target (cell itself or best neighbour)."""
+        if not prefer_adjacent and self.world.is_walkable(tx, ty):
+            return (tx, ty)
+        ox, oy = from_pos if from_pos is not None else (tx, ty)
+        best: tuple[int, int] | None = None
+        best_d = 10**9
+        for ny, nx in self.world.neighbourhood(tx, ty, radius=1):
+            if not self.world.is_walkable(nx, ny):
+                continue
+            d = abs(nx - ox) + abs(ny - oy)
+            if d < best_d:
+                best_d = d
+                best = (nx, ny)
+        if best is not None:
+            return best
+        if self.world.is_walkable(tx, ty):
+            return (tx, ty)
+        return None
+
+    def _pick_nearest_reachable(
+        self,
+        origin: tuple[int, int],
+        candidates: list,
+        *,
+        pos_fn,
+        prefer_adjacent: bool = False,
+        max_radius: int | None = None,
+        villager: Villager | None = None,
+    ):
+        """Nearest candidate by Manhattan rings with path-detour rejection.
+
+        Searches expanding Manhattan distance up to ``max_radius``. Within each
+        ring, prefers the shortest acceptable BFS path. Optionally seeds the
+        villager path cache for the chosen approach goal.
+        """
+        if not candidates:
+            return None
+        ox, oy = origin
+        r_max = WORK_SEARCH_RADIUS if max_radius is None else max(0, int(max_radius))
+        by_dist: dict[int, list] = {}
+        for item in candidates:
+            px, py = pos_fn(item)
+            d = abs(px - ox) + abs(py - oy)
+            if d > r_max:
+                continue
+            by_dist.setdefault(d, []).append(item)
+
+        for d in sorted(by_dist):
+            best_item = None
+            best_len = 10**9
+            best_goal: tuple[int, int] | None = None
+            best_path: list[tuple[int, int]] | None = None
+            for item in by_dist[d]:
+                px, py = pos_fn(item)
+                goal = self._walk_goal_for_target(
+                    px, py, prefer_adjacent=prefer_adjacent, from_pos=origin
+                )
+                if goal is None:
+                    continue
+                path = self.world.find_path(origin, goal)
+                if path is None:
+                    continue
+                plen = len(path)
+                straight = abs(goal[0] - ox) + abs(goal[1] - oy)
+                if not self._path_detour_ok(straight, plen):
+                    continue
+                if plen < best_len:
+                    best_len = plen
+                    best_item = item
+                    best_goal = goal
+                    best_path = path
+            if best_item is not None:
+                if (
+                    villager is not None
+                    and best_goal is not None
+                    and best_path is not None
+                ):
+                    villager._path_cache = list(best_path)  # type: ignore[attr-defined]
+                    villager._path_goal = best_goal  # type: ignore[attr-defined]
+                return best_item
+        return None
+
     def _find_work_in_building(
         self, villager: Villager, building: Building
     ) -> tuple[int, int] | None:
@@ -7265,15 +7961,14 @@ class Game:
         building: Building,
         exclude_cells: set[tuple[int, int]] | None = None,
         areas: list | None = None,
+        villager: Villager | None = None,
     ) -> tuple[int, int] | None:
-        """Closest cell yielding forage ``key`` (respects drawn areas when present)."""
+        """Closest reachable forage ``key`` cell (radius + path-detour gate)."""
         if key == "honey":
             return None
-        best: tuple[int, int] | None = None
-        best_d = 10**9
+        cells: list[tuple[int, int]] = []
 
         def consider(x: int, y: int) -> None:
-            nonlocal best, best_d
             if exclude_cells and (x, y) in exclude_cells:
                 return
             cell = self.world.get_cell(x, y)
@@ -7283,10 +7978,7 @@ class Game:
                 return
             if not self._building_allows_cell(building, cell):
                 return
-            d = abs(x - ox) + abs(y - oy)
-            if d < best_d:
-                best_d = d
-                best = (x, y)
+            cells.append((x, y))
 
         if areas:
             for area in areas:
@@ -7299,25 +7991,24 @@ class Game:
                     continue
                 for x, y in area.cells():
                     consider(x, y)
-            return best
+        else:
+            for x, y in self._forage_cells_for_key(key):
+                if exclude_cells and (x, y) in exclude_cells:
+                    continue
+                cell = self.world.cells[y][x]
+                if not self.world.is_walkable(x, y):
+                    continue
+                if not self._building_allows_cell(building, cell):
+                    continue
+                cells.append((x, y))
 
-        # Whole-map forager: use the per-tick index instead of scanning every cell
-        # for every recipe / availability check.
-        for x, y in self._forage_cells_for_key(key):
-            if exclude_cells and (x, y) in exclude_cells:
-                continue
-            cell = self.world.cells[y][x]
-            if not self.world.is_walkable(x, y):
-                continue
-            if not self._building_allows_cell(building, cell):
-                continue
-            d = abs(x - ox) + abs(y - oy)
-            if d < best_d:
-                best_d = d
-                best = (x, y)
-                if best_d == 0:
-                    return best
-        return best
+        return self._pick_nearest_reachable(
+            (ox, oy),
+            cells,
+            pos_fn=lambda p: p,
+            prefer_adjacent=False,
+            villager=villager,
+        )
 
     def _pick_forager_target(
         self,
@@ -7420,8 +8111,15 @@ class Game:
             colonies = filtered
         if not colonies:
             return None
-        ox, oy = origin if origin is not None else building.center_cell()
-        return min(colonies, key=lambda c: abs(c.x - ox) + abs(c.y - oy))
+        ox, oy = origin if origin is not None else (villager.x, villager.y)
+        # Do not seed path cache here: forager may compare several recipes first.
+        return self._pick_nearest_reachable(
+            (ox, oy),
+            colonies,
+            pos_fn=lambda c: (c.x, c.y),
+            prefer_adjacent=True,
+            villager=None,
+        )
 
     def _invalidate_forage_index(self) -> None:
         self._forage_cell_index = None
@@ -7935,7 +8633,9 @@ class Game:
     def _draw(self) -> None:
         self.screen.fill(COLOUR_BG)
         self._draw_world()
-        if self.overlay_mode != OverlayMode.NONE:
+        if self.height_edit_mode:
+            self._draw_height_edit_overlay()
+        elif self.overlay_mode != OverlayMode.NONE:
             self._draw_overlay()
         self._draw_task_areas()
         self._draw_animals()
@@ -7969,6 +8669,12 @@ class Game:
             calendar_day=self.calendar_day,
             selected_habitat_kind=self.selected_habitat_kind,
             selected_habitat_id=self.selected_habitat_id,
+            map_edit_mode=self.height_edit_mode,
+            map_edit_tool=self.map_edit_tool,
+            map_edit_terrain=self.map_edit_terrain,
+            height_paint_value=self.height_paint_value,
+            height_delta_step=self.height_delta_step,
+            height_brush_radius=self.height_brush_radius,
         )
         self.resource_bar.draw(
             self.screen,
@@ -8130,6 +8836,8 @@ class Game:
         self._season_mute_key = None
         self._ice_overlay = None
         self._ice_overlay_key = None
+        self._lake_ice_mask = None
+        self._lake_ice_mask_key = None
         self._season_period_overlay = None
         self._season_mask_period_key = None
         self._season_compose_source = None
@@ -8216,11 +8924,16 @@ class Game:
             self.world.terrain_dirty.clear()
             self._ice_overlay = None
             self._ice_overlay_key = None
+            self._lake_ice_mask = None
+            self._lake_ice_mask_key = None
             self._season_mute = None
             self._season_mute_key = None
             self._season_period_overlay = None
             self._season_mask_period_key = None
-            # Terrain paint changed — remask only; keep fleck atlas.
+            # Flat terrain rebuilt. Keep the height warp cache: a full rebake here
+            # (~700ms) fires on every env-sample day and is brutal at low ticks/day.
+            # Warp colours may lag forest-floor/hardscape until the next height edit
+            # or H toggle; geometry is unchanged.
             return (
                 self._terrain_base,
                 self._terrain_water_mask,
@@ -8235,11 +8948,21 @@ class Game:
             dirty.clear()
             for x, y in cells:
                 self._paint_terrain_cell(x, y, farm_cells)
-            # Ice / season mask geometry may have changed on patched edges.
-            self._ice_overlay = None
-            self._ice_overlay_key = None
-            self._season_period_overlay = None
-            self._season_mask_period_key = None
+            # Only drop ice/fleck caches when non-hardscape terrain changed.
+            # Path dirties every day — wiping flecks forced a full remask hitch.
+            hardscape = (TerrainType.PATH, TerrainType.URBAN)
+            if any(
+                self.world.in_bounds(x, y)
+                and self.world.cells[y][x].terrain not in hardscape
+                for x, y in cells
+            ):
+                self._ice_overlay = None
+                self._ice_overlay_key = None
+                self._lake_ice_mask = None
+                self._lake_ice_mask_key = None
+                self._season_period_overlay = None
+                self._season_mask_period_key = None
+            self._patch_height_warp_cells(cells)
         assert (
             self._terrain_base is not None
             and self._terrain_water_mask is not None
@@ -8252,48 +8975,52 @@ class Game:
             self._terrain_grass_mask,
             self._terrain_soil_mask,
         )
-    def _ensure_season_mute(self, vibrancy: float) -> pygame.Surface | None:
-        """RGB multiply tint; lower vibrancy → cooler / duller map."""
-        bucket = round(vibrancy, 2)
-        if bucket >= 0.995:
+    def _ensure_season_mute(self, vibrancy: float) -> tuple[int, int, int] | None:
+        """Uniform RGB multiply tint colour, or None when vibrancy is full."""
+        bucket = round(vibrancy, 1)
+        if bucket >= 0.95:
             return None
-        if self._season_mute is not None and self._season_mute_key == bucket:
-            return self._season_mute
         t = bucket
-        mute = pygame.Surface(
-            (self.world.cols * CELL_SIZE, self.world.rows * CELL_SIZE)
+        return (
+            int(140 + 115 * t),
+            int(148 + 107 * t),
+            int(158 + 97 * t),
         )
-        mute.fill(
-            (
-                int(140 + 115 * t),
-                int(148 + 107 * t),
-                int(158 + 97 * t),
-            )
-        )
-        self._season_mute = mute
-        self._season_mute_key = bucket
-        return mute
+
+    def _ensure_lake_ice_mask(self) -> pygame.Surface:
+        """Full-res alpha mask of standing WATER only (rivers excluded). Cached."""
+        rev = self.world.terrain_revision
+        if self._lake_ice_mask is not None and self._lake_ice_mask_key == rev:
+            return self._lake_ice_mask
+        size = (self.world.cols * CELL_SIZE, self.world.rows * CELL_SIZE)
+        mask = pygame.Surface(size, pygame.SRCALPHA)
+        mask.fill((0, 0, 0, 0))
+        for y in range(self.world.rows):
+            for x in range(self.world.cols):
+                if self.world.cells[y][x].terrain == TerrainType.WATER:
+                    mask.fill(
+                        (255, 255, 255, 255),
+                        pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE),
+                    )
+        self._lake_ice_mask = mask
+        self._lake_ice_mask_key = rev
+        return mask
 
     def _ensure_ice_overlay(
         self, freeze: float, water_mask: pygame.Surface
     ) -> pygame.Surface | None:
         """Ice only on standing WATER (lakes). Rivers stay open."""
-        bucket = round(freeze, 2)
-        if bucket < 0.02:
+        del water_mask  # lake mask is authoritative; water_mask includes rivers
+        # Coarse bucket — freeze ramps slowly; avoid rebuilds every 0.1 change.
+        bucket = round(freeze * 5.0) / 5.0
+        if bucket < 0.05:
             return None
         if self._ice_overlay is not None and self._ice_overlay_key == bucket:
             return self._ice_overlay
-        ice = pygame.Surface(water_mask.get_size(), pygame.SRCALPHA)
+        lake = self._ensure_lake_ice_mask()
+        ice = pygame.Surface(lake.get_size(), pygame.SRCALPHA)
         ice.fill((210, 228, 240, int(min(1.0, bucket) * 200)))
-        ice.blit(water_mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-        # Strip river cells so only the lake freezes (mask also covers RIVER visuals).
-        for y in range(self.world.rows):
-            for x in range(self.world.cols):
-                if self.world.cells[y][x].terrain == TerrainType.RIVER:
-                    ice.fill(
-                        (0, 0, 0, 0),
-                        pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE),
-                    )
+        ice.blit(lake, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
         self._ice_overlay = ice
         self._ice_overlay_key = bucket
         return ice
@@ -9029,23 +9756,27 @@ class Game:
 
         origin = (0, MAP_OFFSET_Y)
         mute = self._ensure_season_mute(vibrancy)
-        self._refresh_season_masks(grass_mask, soil_mask, water_mask)
-        ice = self._ensure_ice_overlay(freeze, water_mask)
 
         if self.height_sample_enabled and self.height_sample is not None:
-            # Height path composites stable layers into the bake — skip flat blits.
+            # Warp path: do not run season fleck fade / ice (expensive, and we do not
+            # blit them under warp). Day-length fade rebuilds were the low-ticks hitch.
             self.screen.fill(COLOUR_BG, map_clip)
-            self._draw_height_sample(base, self._season_period_overlay, ice)
-            # Mute stays out of the bake so vibrancy drift does not rebake.
+            self._draw_height_sample(base)
             if mute is not None:
-                self._blit_camera_world_surface(
-                    mute, origin, special_flags=pygame.BLEND_RGB_MULT
+                tint = pygame.Surface((map_clip.w, map_clip.h))
+                tint.fill(mute)
+                self.screen.blit(
+                    tint, map_clip.topleft, special_flags=pygame.BLEND_RGB_MULT
                 )
         else:
+            self._refresh_season_masks(grass_mask, soil_mask, water_mask)
+            ice = self._ensure_ice_overlay(freeze, water_mask)
             self._blit_camera_world_surface(base, origin)
             if mute is not None:
-                self._blit_camera_world_surface(
-                    mute, origin, special_flags=pygame.BLEND_RGB_MULT
+                tint = pygame.Surface((map_clip.w, map_clip.h))
+                tint.fill(mute)
+                self.screen.blit(
+                    tint, map_clip.topleft, special_flags=pygame.BLEND_RGB_MULT
                 )
             if self._season_period_overlay is not None:
                 self._blit_camera_world_surface(self._season_period_overlay, origin)
@@ -9160,21 +9891,15 @@ class Game:
     def _draw_height_sample(
         self,
         base: pygame.Surface,
-        season_overlay: pygame.Surface | None = None,
-        ice: pygame.Surface | None = None,
     ) -> None:
-        """Blit a cached warped viewport of the full-map heightfield."""
+        """Blit a cached full-map height warp of the terrain base."""
         if not self.height_sample_enabled or self.height_sample is None:
             return
         region = self._height_view_region()
         if region is None or region.width <= 0 or region.height <= 0:
             return
 
-        # Coarse ice bucket (~0.1) so freeze drift does not stutter every frame.
-        ice_bucket = None if ice is None else round(float(self._ice_overlay_key or 0.0), 1)
-        layer_key = (self._season_mask_period_key, ice_bucket)
         cache_key = (
-            self.world.terrain_revision,
             CELL_SIZE,
             region.x0,
             region.y0,
@@ -9182,18 +9907,13 @@ class Game:
             region.height,
             id(self.height_sample),
             round(self.height_sample.max_height, 2),
-            layer_key,
         )
         if (
             self._height_sample_cache is None
             or self._height_sample_cache_key != cache_key
         ):
-            ground = self._height_sample_ground_composite(
-                base, season_overlay, ice, region=region
-            )
-            self._ensure_height_sample_cache(
-                ground, layer_key=layer_key, region=region
-            )
+            ground = self._height_sample_ground_composite(base, region=region)
+            self._ensure_height_sample_cache(ground, region=region)
 
         cache = self._height_sample_cache
         if cache is None:
@@ -9213,6 +9933,8 @@ class Game:
             max(1, br[0] - tl[0]),
             max(1, br[1] - tl[1]),
         )
+        wipe.y = min(wipe.y, MAP_OFFSET_Y)
+        wipe.height = max(wipe.height, MAP_OFFSET_Y + map_view_height() - wipe.y)
         wipe = wipe.clip(pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height()))
         if wipe.w > 0 and wipe.h > 0:
             self.screen.fill(COLOUR_BG, wipe)
@@ -9226,8 +9948,8 @@ class Game:
         sy = self.camera.y * CELL_SIZE - world_oy
         sw = mw / max(1e-6, zoom)
         sh = mh / max(1e-6, zoom)
-        ix = max(0, int(sx))
-        iy = max(0, int(sy))
+        ix = max(0, int(math.floor(sx)))
+        iy = max(0, int(math.floor(sy)))
         src = pygame.Rect(ix, iy, int(sw) + 2, int(sh) + 2).clip(cache.get_rect())
         if src.w <= 0 or src.h <= 0:
             return
@@ -9255,6 +9977,115 @@ class Game:
             colour = (220, 180, 60)
         fill = pygame.Rect(bar.x, bar.y, max(0, int(bar.w * min(1.0, frac))), bar.h)
         pygame.draw.rect(self.screen, colour, fill)
+
+    def _draw_height_edit_overlay(self) -> None:
+        """Edit-mode overlay: height heatmap for height tools; brush for all tools."""
+        map_clip = pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())
+        self.screen.set_clip(map_clip)
+        x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
+        vc = self.camera.view_cell_px()
+        show_numbers = vc >= 18
+        font = self.ui.font_small if vc >= 28 else self.ui.font_icon
+        tool = self.map_edit_tool
+        show_height = tool in (
+            MapEditTool.HEIGHT_SET,
+            MapEditTool.HEIGHT_RAISE,
+            MapEditTool.HEIGHT_LOWER,
+        )
+
+        hover = self._map_cell_from_pos(pygame.mouse.get_pos())
+        if show_height:
+            peak = max(1.0, HEIGHT_EDIT_VALUE_MAX * 0.5)
+            if self.height_sample is not None and self.height_sample.max_height > peak:
+                peak = self.height_sample.max_height
+            # Also include paint value so the scale stays readable while editing high.
+            peak = max(peak, self.height_paint_value, 1.0)
+            for y in range(y0, y1 + 1):
+                for x in range(x0, x1 + 1):
+                    if not self.world.in_bounds(x, y):
+                        continue
+                    h = self.world.height_at_cell(x, y)
+                    rect = self.camera.cell_rect(x, y)
+                    t = max(0.0, min(1.0, h / peak))
+                    heat = self._height_heatmap_colour(t)
+                    tint = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+                    tint.fill((*heat, 125))
+                    self.screen.blit(tint, rect.topleft)
+                    if show_numbers and (hover is None or (x, y) != hover):
+                        # Dark text on bright yellows; light text on deep blues.
+                        lum = 0.299 * heat[0] + 0.587 * heat[1] + 0.114 * heat[2]
+                        ink = (20, 20, 24) if lum > 140 else (245, 245, 240)
+                        label = f"{h:.0f}"
+                        text = font.render(label, True, ink)
+                        tw, th = text.get_size()
+                        self.screen.blit(
+                            text,
+                            (rect.centerx - tw // 2, rect.centery - th // 2),
+                        )
+
+        # Brush preview: ring + centre shows tool target / current.
+        if hover is not None:
+            hx, hy = hover
+            r = self.height_brush_radius
+            for y in range(hy - r, hy + r + 1):
+                for x in range(hx - r, hx + r + 1):
+                    if not self.world.in_bounds(x, y):
+                        continue
+                    if max(abs(x - hx), abs(y - hy)) > r:
+                        continue
+                    if (x, y) == (hx, hy):
+                        continue
+                    rect = self.camera.cell_rect(x, y)
+                    edge = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+                    edge.fill((255, 255, 255, 40))
+                    self.screen.blit(edge, rect.topleft)
+            core = self.camera.cell_rect(hx, hy)
+            pygame.draw.rect(self.screen, (255, 255, 255), core, 2)
+            cur = self.world.height_at_cell(hx, hy)
+            if tool == MapEditTool.HEIGHT_SET:
+                top = f"→{self.height_paint_value:.0f}"
+                bot = f"{cur:.0f}"
+            elif tool == MapEditTool.HEIGHT_RAISE:
+                top = f"↑{self.height_delta_step:.0f}"
+                bot = f"{cur:.0f}"
+            elif tool == MapEditTool.HEIGHT_LOWER:
+                top = f"↓{self.height_delta_step:.0f}"
+                bot = f"{cur:.0f}"
+            elif tool == MapEditTool.TERRAIN_PAINT:
+                top = TERRAIN_EDIT_LABELS.get(
+                    self.map_edit_terrain, self.map_edit_terrain.name.title()
+                )
+                bot = TERRAIN_EDIT_LABELS.get(
+                    self.world.cells[hy][hx].terrain,
+                    self.world.cells[hy][hx].terrain.name.title(),
+                )
+            else:
+                top = "Forest"
+                bot = TERRAIN_EDIT_LABELS.get(
+                    self.world.cells[hy][hx].terrain,
+                    self.world.cells[hy][hx].terrain.name.title(),
+                )
+            if vc >= 22:
+                line1 = font.render(top, True, (255, 255, 255))
+                line2 = font.render(bot, True, (230, 230, 235))
+                gap = 1 if vc < 32 else 2
+                total_h = line1.get_height() + line2.get_height() + gap
+                ty = core.centery - total_h // 2
+                self.screen.blit(line1, (core.centerx - line1.get_width() // 2, ty))
+                self.screen.blit(
+                    line2,
+                    (core.centerx - line2.get_width() // 2, ty + line1.get_height() + gap),
+                )
+            else:
+                label = font.render(f"{top}/{bot}", True, (255, 255, 255))
+                self.screen.blit(
+                    label,
+                    (
+                        core.centerx - label.get_width() // 2,
+                        core.centery - label.get_height() // 2,
+                    ),
+                )
+        self.screen.set_clip(None)
 
     def _draw_overlay(self) -> None:
         """Draw indicator overlay for the camera viewport (world-sized values)."""

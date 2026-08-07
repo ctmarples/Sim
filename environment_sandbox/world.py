@@ -173,6 +173,61 @@ class FeatureType(Enum):
     REED = auto()  # riparian reeds (forage, no seeds)
 
 
+# Buildings / pads — map-edit brushes must not overwrite these.
+STRUCTURE_FEATURES: frozenset[FeatureType] = frozenset(
+    {
+        FeatureType.HOME,
+        FeatureType.WORKSTATION,
+        FeatureType.FORESTER,
+        FeatureType.MASON,
+        FeatureType.HUNTER,
+        FeatureType.FORAGER,
+        FeatureType.FISHER,
+        FeatureType.FARM,
+        FeatureType.FIELD,
+        FeatureType.MILL,
+        FeatureType.KITCHEN,
+        FeatureType.CRAFT_BENCH,
+        FeatureType.ALCHEMIST,
+        FeatureType.CONSTRUCTION_SITE,
+        FeatureType.STRUCTURE_PAD,
+    }
+)
+
+# Terrains available in the map-edit paint tool.
+EDIT_PAINTABLE_TERRAIN: tuple[TerrainType, ...] = (
+    TerrainType.SOIL,
+    TerrainType.FOREST_FLOOR,
+    TerrainType.GRASS,
+    TerrainType.MEADOW,
+    TerrainType.RIPARIAN,
+    TerrainType.WATER,
+    TerrainType.RIVER,
+    TerrainType.ROCK,
+)
+
+TERRAIN_EDIT_LABELS: dict[TerrainType, str] = {
+    TerrainType.SOIL: "Soil",
+    TerrainType.FOREST_FLOOR: "Floor",
+    TerrainType.GRASS: "Grass",
+    TerrainType.MEADOW: "Meadow",
+    TerrainType.RIPARIAN: "Riparian",
+    TerrainType.WATER: "Lake",
+    TerrainType.RIVER: "River",
+    TerrainType.ROCK: "Rock",
+}
+
+
+class MapEditTool(Enum):
+    """Side-panel tools available while map-edit mode (Y) is active."""
+
+    HEIGHT_SET = "height_set"
+    HEIGHT_RAISE = "height_raise"
+    HEIGHT_LOWER = "height_lower"
+    TERRAIN_PAINT = "terrain_paint"
+    SEED_FOREST = "seed_forest"
+
+
 @dataclass
 class Cell:
     """Single grid cell. Indicators are derived elsewhere from live state."""
@@ -275,6 +330,227 @@ class World:
         self.lake_ry = 1.0
         self.height_corners: list[list[float]] = []
         self.generate()
+
+    def ensure_height_corners(self) -> None:
+        """Guarantee a full corner grid exists (rows+1 × cols+1)."""
+        need_h = self.rows + 1
+        need_w = self.cols + 1
+        if (
+            len(self.height_corners) == need_h
+            and self.height_corners
+            and len(self.height_corners[0]) == need_w
+        ):
+            return
+        self.height_corners = [[0.0] * need_w for _ in range(need_h)]
+
+    def height_at_cell(self, x: int, y: int) -> float:
+        """Mean of the four corners for cell (x, y)."""
+        self.ensure_height_corners()
+        if not (0 <= x < self.cols and 0 <= y < self.rows):
+            return 0.0
+        c = self.height_corners
+        return (c[y][x] + c[y][x + 1] + c[y + 1][x] + c[y + 1][x + 1]) * 0.25
+
+    def paint_height(
+        self,
+        cx: int,
+        cy: int,
+        value: float,
+        radius: int,
+    ) -> None:
+        """Soft-brush paint toward ``value`` at cell (cx, cy), then smooth edges.
+
+        ``radius`` is Chebyshev brush size in cells (0 = single cell). Corners
+        within the brush are blended with a smooth falloff so the stamp does not
+        leave vertical cliffs; a short Laplacian pass finishes the edges.
+        """
+        self.ensure_height_corners()
+        value = float(value)
+        radius = max(0, int(radius))
+        # Affect corners covering cells within radius, plus a 1-cell feather.
+        feather = radius + 1.5
+        cx_f = float(cx) + 0.5
+        cy_f = float(cy) + 0.5
+        lx0 = max(0, cx - radius - 1)
+        ly0 = max(0, cy - radius - 1)
+        lx1 = min(self.cols, cx + radius + 2)
+        ly1 = min(self.rows, cy + radius + 2)
+        for ly in range(ly0, ly1 + 1):
+            for lx in range(lx0, lx1 + 1):
+                # Distance from brush centre to this corner.
+                dist = math.hypot(float(lx) - cx_f, float(ly) - cy_f)
+                if dist > feather:
+                    continue
+                t = 1.0 - dist / feather
+                t = t * t * (3.0 - 2.0 * t)  # smoothstep
+                old = self.height_corners[ly][lx]
+                self.height_corners[ly][lx] = old + (value - old) * t
+        self._smooth_height_region(lx0, ly0, lx1, ly1, passes=2)
+
+    def paint_height_delta(
+        self,
+        cx: int,
+        cy: int,
+        delta: float,
+        radius: int,
+        *,
+        min_h: float = 0.0,
+        max_h: float = 80.0,
+    ) -> None:
+        """Soft-brush raise/lower: add ``delta`` (signed) with falloff, then smooth."""
+        self.ensure_height_corners()
+        delta = float(delta)
+        if abs(delta) < 1e-9:
+            return
+        radius = max(0, int(radius))
+        feather = radius + 1.5
+        cx_f = float(cx) + 0.5
+        cy_f = float(cy) + 0.5
+        lx0 = max(0, cx - radius - 1)
+        ly0 = max(0, cy - radius - 1)
+        lx1 = min(self.cols, cx + radius + 2)
+        ly1 = min(self.rows, cy + radius + 2)
+        for ly in range(ly0, ly1 + 1):
+            for lx in range(lx0, lx1 + 1):
+                dist = math.hypot(float(lx) - cx_f, float(ly) - cy_f)
+                if dist > feather:
+                    continue
+                t = 1.0 - dist / feather
+                t = t * t * (3.0 - 2.0 * t)
+                old = self.height_corners[ly][lx]
+                self.height_corners[ly][lx] = max(
+                    min_h, min(max_h, old + delta * t)
+                )
+        self._smooth_height_region(lx0, ly0, lx1, ly1, passes=2)
+
+    def paint_terrain(
+        self,
+        cx: int,
+        cy: int,
+        terrain: TerrainType,
+        radius: int,
+        *,
+        clear_features: bool = True,
+    ) -> bool:
+        """Paint ``terrain`` in a Chebyshev brush. Skips structure footprints.
+
+        Returns True if any cell changed.
+        """
+        radius = max(0, int(radius))
+        changed = False
+        for y in range(cy - radius, cy + radius + 1):
+            for x in range(cx - radius, cx + radius + 1):
+                if not self.in_bounds(x, y):
+                    continue
+                if max(abs(x - cx), abs(y - cy)) > radius:
+                    continue
+                cell = self.cells[y][x]
+                if cell.feature in STRUCTURE_FEATURES:
+                    continue
+                if clear_features and cell.feature != FeatureType.NONE:
+                    cell.feature = FeatureType.NONE
+                    cell.deposit = 0
+                    cell.growth_ticks = 0
+                    cell.crop_kind = None
+                    cell.tree_species = None
+                    cell.icon_variant = None
+                    changed = True
+                if cell.terrain != terrain:
+                    cell.terrain = terrain
+                    self.mark_terrain_dirty(x, y)
+                    changed = True
+        if changed:
+            self.terrain_revision += 1
+        return changed
+
+    def seed_forest(
+        self,
+        cx: int,
+        cy: int,
+        radius: int,
+        rng: random.Random | None = None,
+    ) -> bool:
+        """Stamp a mixed forest: forest floor + mature trees (density by distance)."""
+        rng = rng or random.Random()
+        radius = max(0, int(radius))
+        changed = False
+        for y in range(cy - radius, cy + radius + 1):
+            for x in range(cx - radius, cx + radius + 1):
+                if not self.in_bounds(x, y):
+                    continue
+                dist = max(abs(x - cx), abs(y - cy))
+                if dist > radius:
+                    continue
+                cell = self.cells[y][x]
+                if cell.feature in STRUCTURE_FEATURES:
+                    continue
+                if is_water_terrain(cell.terrain):
+                    continue
+                # Clear light vegetation; keep existing trees.
+                if cell.feature not in (
+                    FeatureType.NONE,
+                    FeatureType.TREE,
+                    FeatureType.SAPLING,
+                ):
+                    cell.feature = FeatureType.NONE
+                    cell.deposit = 0
+                    cell.growth_ticks = 0
+                    cell.crop_kind = None
+                    cell.tree_species = None
+                    cell.icon_variant = None
+                    changed = True
+                if cell.terrain != TerrainType.FOREST_FLOOR:
+                    cell.terrain = TerrainType.FOREST_FLOOR
+                    self.mark_terrain_dirty(x, y)
+                    changed = True
+                if cell.feature in (FeatureType.TREE, FeatureType.SAPLING):
+                    continue
+                chance = 0.9 if dist <= 0 else 0.75 if dist <= 1 else 0.55 if dist <= 2 else 0.35
+                if radius > 0 and dist == radius:
+                    chance *= 0.7
+                if rng.random() >= chance:
+                    continue
+                species = pick_tree_species(rng)
+                tree = resolve_tree(species)
+                cell.feature = FeatureType.TREE
+                cell.tree_species = species
+                cell.deposit = tree.yield_amount
+                cell.growth_ticks = 0
+                cell.icon_variant = None
+                changed = True
+        if changed:
+            self.terrain_revision += 1
+        return changed
+
+    def _smooth_height_region(
+        self,
+        lx0: int,
+        ly0: int,
+        lx1: int,
+        ly1: int,
+        *,
+        passes: int = 2,
+    ) -> None:
+        """Laplacian smooth on a corner rectangle (inclusive)."""
+        self.ensure_height_corners()
+        for _ in range(max(1, passes)):
+            nxt = [row[:] for row in self.height_corners]
+            for ly in range(ly0, ly1 + 1):
+                for lx in range(lx0, lx1 + 1):
+                    total = self.height_corners[ly][lx]
+                    n = 1
+                    for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                        nx, ny = lx + dx, ly + dy
+                        if 0 <= nx <= self.cols and 0 <= ny <= self.rows:
+                            total += self.height_corners[ny][nx]
+                            n += 1
+                    # Blend toward neighbourhood mean (keeps centre bias of paint).
+                    mean = total / n
+                    cur = self.height_corners[ly][lx]
+                    nxt[ly][lx] = cur * 0.35 + mean * 0.65
+            for ly in range(ly0, ly1 + 1):
+                for lx in range(lx0, lx1 + 1):
+                    self.height_corners[ly][lx] = nxt[ly][lx]
 
     def bump_terrain(self) -> None:
         """Force a full terrain layer rebuild (generation / load)."""

@@ -236,21 +236,34 @@ HONEY_PER_BEE_LEVEL: int = 5
 RABBIT_MOVE_PAUSE: int = 120
 
 
-BERRY_BUSH_YIELD: int = 5
+BERRY_BUSH_YIELD: int = 4
 BERRY_REGEN_TICKS: int = 2400
-BERRY_SEED_DROP_CHANCE: float = 0.08
+BERRY_SEED_DROP_CHANCE: float = 0.05
 
-MUSHROOM_YIELD: int = 5  # per mushroom tile foraged
+MUSHROOM_YIELD: int = 4  # per mushroom tile foraged
 REED_YIELD: int = 3
 WOOD_BUSH_YIELD: int = 1  # processed wood from bush tiles
 # Chance an empty neighbour of a tree gets fallen wood when forests are seeded.
-WOOD_BUSH_SEED_CHANCE: float = 0.28
+WOOD_BUSH_SEED_CHANCE: float = 0.1
 # Peak chance per mushroom-tick for fallen wood to appear next to a tree (autumn).
-WOOD_BUSH_SPAWN_RATE_PEAK: float = 0.022
+WOOD_BUSH_SPAWN_RATE_PEAK: float = 0.01
 
 # Forager target pick: within each N-tile band, prefer recipe priority 1→3;
 # only look further out when nothing nearer is available.
 FORAGER_PRIORITY_BAND: int = 8
+# Workplace gather/hunt/fish: only consider targets within this Manhattan radius
+# of the search origin (villager if areas drawn, else building).
+WORK_SEARCH_RADIUS: int = 48
+# Reject a BFS path if it is much longer than the Manhattan straight-line:
+# path_len > max(straight * RATIO, straight + SLACK).
+PATH_DETOUR_RATIO: float = 2.0
+PATH_DETOUR_SLACK: int = 10
+# Fisher: walk to a shore near fish density and wait; catch when fish pass.
+# Chebyshev radius used when scoring how many fish a shore "covers".
+FISH_POST_SCORE_RADIUS: int = 8
+FISH_POST_MIN_FISH: int = 2
+# Prefer a local school when one exists; otherwise walk farther for density.
+FISH_POST_LOCAL_RADIUS: int = 16
 
 WILD_PRODUCE_YIELD: int = 3  # wild crop / herb produce per harvest
 FARM_PRODUCE_YIELD: int = 9  # farmed crop produce per harvest
