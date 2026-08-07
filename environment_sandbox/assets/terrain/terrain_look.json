@@ -1,0 +1,338 @@
+{
+  "version": 1,
+  "mottle": {
+    "GRASS": {
+      "coarse_scale": 0.035,
+      "mid_scale": 0.11,
+      "fine_scale": 0.38,
+      "coarse_amp": 0.5,
+      "mid_amp": 0.12,
+      "fine_amp": 0.07,
+      "speckle": 0.14,
+      "palette_mix": 0.65,
+      "gaussian": false,
+      "smooth_resample": true,
+      "seed": 51
+    },
+    "MEADOW": {
+      "coarse_scale": 0.035,
+      "mid_scale": 0.11,
+      "fine_scale": 0.38,
+      "coarse_amp": 0.22,
+      "mid_amp": 0.12,
+      "fine_amp": 0.07,
+      "speckle": 0.14,
+      "palette_mix": 0.65,
+      "gaussian": false,
+      "smooth_resample": true,
+      "seed": 68
+    },
+    "SOIL": {
+      "coarse_scale": 0.035,
+      "mid_scale": 0.11,
+      "fine_scale": 0.38,
+      "coarse_amp": 0.22,
+      "mid_amp": 0.12,
+      "fine_amp": 0.07,
+      "speckle": 0.14,
+      "palette_mix": 0.65,
+      "gaussian": false,
+      "smooth_resample": true,
+      "seed": 17
+    },
+    "FOREST_FLOOR": {
+      "coarse_scale": 0.035,
+      "mid_scale": 0.11,
+      "fine_scale": 0.38,
+      "coarse_amp": 0.22,
+      "mid_amp": 0.12,
+      "fine_amp": 0.07,
+      "speckle": 0.14,
+      "palette_mix": 0.65,
+      "gaussian": false,
+      "smooth_resample": true,
+      "seed": 34
+    },
+    "RIPARIAN": {
+      "coarse_scale": 0.035,
+      "mid_scale": 0.11,
+      "fine_scale": 0.38,
+      "coarse_amp": 0.22,
+      "mid_amp": 0.12,
+      "fine_amp": 0.07,
+      "speckle": 0.14,
+      "palette_mix": 0.65,
+      "gaussian": false,
+      "smooth_resample": true,
+      "seed": 85
+    },
+    "ROCK": {
+      "coarse_scale": 0.035,
+      "mid_scale": 0.11,
+      "fine_scale": 0.38,
+      "coarse_amp": 0.05,
+      "mid_amp": 0.12,
+      "fine_amp": 0.07,
+      "speckle": 0.14,
+      "palette_mix": 0.65,
+      "gaussian": false,
+      "smooth_resample": true,
+      "seed": 136
+    },
+    "PATH": {
+      "coarse_scale": 0.035,
+      "mid_scale": 0.11,
+      "fine_scale": 0.38,
+      "coarse_amp": 0.22,
+      "mid_amp": 0.12,
+      "fine_amp": 0.07,
+      "speckle": 0.14,
+      "palette_mix": 0.65,
+      "gaussian": false,
+      "smooth_resample": true,
+      "seed": 170
+    },
+    "URBAN": {
+      "coarse_scale": 0.035,
+      "mid_scale": 0.11,
+      "fine_scale": 0.38,
+      "coarse_amp": 0.22,
+      "mid_amp": 0.12,
+      "fine_amp": 0.07,
+      "speckle": 0.14,
+      "palette_mix": 0.65,
+      "gaussian": false,
+      "smooth_resample": true,
+      "seed": 153
+    },
+    "WATER": {
+      "coarse_scale": 0.035,
+      "mid_scale": 0.11,
+      "fine_scale": 0.38,
+      "coarse_amp": 0.22,
+      "mid_amp": 0.12,
+      "fine_amp": 0.07,
+      "speckle": 0.14,
+      "palette_mix": 0.65,
+      "gaussian": false,
+      "smooth_resample": true,
+      "seed": 102
+    },
+    "RIVER": {
+      "coarse_scale": 0.035,
+      "mid_scale": 0.11,
+      "fine_scale": 0.38,
+      "coarse_amp": 0.22,
+      "mid_amp": 0.12,
+      "fine_amp": 0.07,
+      "speckle": 0.14,
+      "palette_mix": 0.65,
+      "gaussian": false,
+      "smooth_resample": true,
+      "seed": 119
+    }
+  },
+  "overlays": {
+    "GRASS": {
+      "rocks": false,
+      "foliage": false,
+      "pebbles": true,
+      "rocks_density": 0.35,
+      "foliage_density": 0.45,
+      "pebbles_density": 0.528,
+      "scale": 0.358,
+      "opacity": 0.608,
+      "seed": 69
+    },
+    "MEADOW": {
+      "rocks": false,
+      "foliage": false,
+      "pebbles": true,
+      "rocks_density": 0.35,
+      "foliage_density": 0.45,
+      "pebbles_density": 0.276,
+      "scale": 0.403,
+      "opacity": 0.552,
+      "seed": 92
+    },
+    "SOIL": {
+      "rocks": false,
+      "foliage": false,
+      "pebbles": true,
+      "rocks_density": 0.35,
+      "foliage_density": 0.45,
+      "pebbles_density": 0.324,
+      "scale": 0.475,
+      "opacity": 0.504,
+      "seed": 1280
+    },
+    "FOREST_FLOOR": {
+      "rocks": false,
+      "foliage": true,
+      "pebbles": true,
+      "rocks_density": 0.35,
+      "foliage_density": 0.45,
+      "pebbles_density": 1.056,
+      "scale": 0.46599999999999997,
+      "opacity": 0.66,
+      "seed": 1120
+    },
+    "RIPARIAN": {
+      "rocks": false,
+      "foliage": false,
+      "pebbles": true,
+      "rocks_density": 0.35,
+      "foliage_density": 0.45,
+      "pebbles_density": 0.25,
+      "scale": 0.421,
+      "opacity": 0.6,
+      "seed": 2600
+    },
+    "ROCK": {
+      "rocks": true,
+      "foliage": false,
+      "pebbles": true,
+      "rocks_density": 0.636,
+      "foliage_density": 0.45,
+      "pebbles_density": 0.5640000000000001,
+      "scale": 0.493,
+      "opacity": 0.596,
+      "seed": 600
+    },
+    "PATH": {
+      "rocks": false,
+      "foliage": false,
+      "pebbles": true,
+      "rocks_density": 0.35,
+      "foliage_density": 0.45,
+      "pebbles_density": 0.552,
+      "scale": 0.421,
+      "opacity": 0.612,
+      "seed": 230
+    },
+    "URBAN": {
+      "rocks": false,
+      "foliage": false,
+      "pebbles": false,
+      "rocks_density": 0.35,
+      "foliage_density": 0.45,
+      "pebbles_density": 0.25,
+      "scale": 1.0,
+      "opacity": 1.0,
+      "seed": 207
+    },
+    "WATER": {
+      "rocks": false,
+      "foliage": false,
+      "pebbles": false,
+      "rocks_density": 0.35,
+      "foliage_density": 0.45,
+      "pebbles_density": 0.25,
+      "scale": 0.313,
+      "opacity": 1.0,
+      "seed": 138
+    },
+    "RIVER": {
+      "rocks": false,
+      "foliage": false,
+      "pebbles": false,
+      "rocks_density": 0.35,
+      "foliage_density": 0.45,
+      "pebbles_density": 0.25,
+      "scale": 1.0,
+      "opacity": 1.0,
+      "seed": 161
+    }
+  },
+  "flecks": {
+    "0": {
+      "enabled": true,
+      "clusters_enabled": true,
+      "speckle_density": 1.0,
+      "cluster_density": 1.0,
+      "speckle_alpha": 1.0,
+      "cluster_alpha": 1.0,
+      "cluster_spread": 1.0,
+      "seed": 0
+    },
+    "1": {
+      "enabled": true,
+      "clusters_enabled": true,
+      "speckle_density": 1.0,
+      "cluster_density": 1.0,
+      "speckle_alpha": 1.0,
+      "cluster_alpha": 1.0,
+      "cluster_spread": 1.0,
+      "seed": 101
+    },
+    "2": {
+      "enabled": true,
+      "clusters_enabled": true,
+      "speckle_density": 1.908,
+      "cluster_density": 1.464,
+      "speckle_alpha": 1.266,
+      "cluster_alpha": 1.0,
+      "cluster_spread": 1.0,
+      "seed": 202
+    },
+    "3": {
+      "enabled": true,
+      "clusters_enabled": false,
+      "speckle_density": 2.0,
+      "cluster_density": 2.064,
+      "speckle_alpha": 1.0,
+      "cluster_alpha": 0.954,
+      "cluster_spread": 1.454,
+      "seed": 5839
+    },
+    "4": {
+      "enabled": true,
+      "clusters_enabled": true,
+      "speckle_density": 1.488,
+      "cluster_density": 2.016,
+      "speckle_alpha": 1.146,
+      "cluster_alpha": 1.08,
+      "cluster_spread": 1.0,
+      "seed": 404
+    },
+    "5": {
+      "enabled": true,
+      "clusters_enabled": true,
+      "speckle_density": 2.292,
+      "cluster_density": 3.0,
+      "speckle_alpha": 1.1520000000000001,
+      "cluster_alpha": 1.5,
+      "cluster_spread": 1.67,
+      "seed": 5759
+    },
+    "6": {
+      "enabled": true,
+      "clusters_enabled": true,
+      "speckle_density": 1.0,
+      "cluster_density": 1.0,
+      "speckle_alpha": 1.0,
+      "cluster_alpha": 1.0,
+      "cluster_spread": 1.0,
+      "seed": 606
+    },
+    "7": {
+      "enabled": true,
+      "clusters_enabled": true,
+      "speckle_density": 3.0,
+      "cluster_density": 3.0,
+      "speckle_alpha": 0.684,
+      "cluster_alpha": 0.9059999999999999,
+      "cluster_spread": 2.0,
+      "seed": 6479
+    }
+  },
+  "animation": {
+    "fade_days": 3.0,
+    "fade_ease": 1.0,
+    "intro_delay": 0.8,
+    "exit_hold": 0.1,
+    "opacity": 1.0,
+    "autoplay": false,
+    "autoplay_speed": 4.0
+  }
+}

@@ -568,6 +568,10 @@ def paint_cell(
     rgb, wmask, mask, fg, bg = compose_cell_fills(
         tl, tr, br, bl, cell_x=x, cell_y=y, size=size
     )
+    # Alpha stamps (rocks/foliage/…) for this cell's terrain — after mottling.
+    from terrain_overlays import stamp_cell_overlays
+
+    stamp_cell_overlays(rgb, terrain_at(x, y), x, y)
     dest = (x * size, y * size)
     layer.blit(rgb, dest)
     water_mask.fill((0, 0, 0, 0), pygame.Rect(dest[0], dest[1], size, size))

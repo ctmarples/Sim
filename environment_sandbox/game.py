@@ -307,6 +307,12 @@ AREA_DRAW_KINDS = {
 class Game:
     def __init__(self, *, headless: bool = False) -> None:
         self.headless = headless
+        try:
+            from terrain_settings import load_settings
+
+            load_settings()
+        except Exception:
+            pass
         if headless:
             self.screen = pygame.Surface((max(1, WINDOW_WIDTH), max(1, WINDOW_HEIGHT)))
         else:
@@ -8827,7 +8833,7 @@ class Game:
             self.world.terrain_revision,
             active_fill_mode(),
             # Bump when soft-join math changes so in-session rebakes pick it up.
-            "ms-soft-mottle-v1",
+            "ms-soft-mottle-v2",
         )
 
     def _invalidate_terrain_layer(self) -> None:
@@ -9073,6 +9079,14 @@ class Game:
     _SEASON_FLECK_SCALE: int = 2
     # Crossfade / colour-lerp duration in in-game days (scales with sim_speed).
     _SEASON_FADE_DAYS: float = 2.5
+
+    def _season_fade_days(self) -> float:
+        try:
+            from terrain_settings import get_anim_params
+
+            return max(0.05, float(get_anim_params().fade_days))
+        except Exception:
+            return self._SEASON_FADE_DAYS
 
     @staticmethod
     def _scramble(i: int, salt: int) -> int:
@@ -9396,8 +9410,28 @@ class Game:
             return self._tree_halo_mask(radius=halo_radius)
         if tag == "grass":
             return self._types_mask(frozenset({TerrainType.GRASS, TerrainType.MEADOW}))
+        if tag == "grass_meadow":
+            return self._types_mask(frozenset({TerrainType.GRASS, TerrainType.MEADOW}))
+        if tag == "meadow":
+            return self._types_mask(frozenset({TerrainType.MEADOW}))
         if tag == "soil":
             return self._types_mask(frozenset({TerrainType.SOIL}))
+        if tag == "forest":
+            return self._types_mask(frozenset({TerrainType.FOREST_FLOOR}))
+        if tag == "rock":
+            return self._types_mask(frozenset({TerrainType.ROCK}))
+        if tag == "path":
+            return self._types_mask(frozenset({TerrainType.PATH}))
+        if tag == "riparian":
+            return self._types_mask(frozenset({TerrainType.RIPARIAN}))
+        if tag == "urban":
+            return self._types_mask(frozenset({TerrainType.URBAN}))
+        if tag == "water":
+            return self._types_mask(frozenset({TerrainType.WATER, TerrainType.RIVER}))
+        if tag == "all_land":
+            from terrain_flecks import MASK_TYPES
+
+            return self._types_mask(MASK_TYPES["all_land"])
         if tag == "open":
             return self._types_mask(
                 frozenset(
@@ -9444,59 +9478,14 @@ class Game:
     def _period_recipe(
         self, period: int
     ) -> dict[str, tuple[tuple[int, int, int], str]]:
-        """field_key -> (rgb, mask_tag) for one of the 8 year halves."""
-        W, Y, G, B, O = (
-            self._COLOUR_WHITE,
-            self._COLOUR_YELLOW,
-            self._COLOUR_GREEN,
-            self._COLOUR_BROWN,
-            self._COLOUR_ORANGE,
-        )
-        # Columns: speckle L/M/H, cluster L/M/H
-        if period == 0:
-            return {"speckle_light": (W, "open")}
-        if period == 1:
-            return {"speckle_light": (W, "grass")}
-        if period == 2:
-            return {"speckle_med": (Y, "grass")}
-        if period == 3:
-            return {
-                "speckle_light": (Y, "soil"),
-                "speckle_heavy": (Y, "grass"),
-                "cluster_light": (G, "grass"),
-            }
-        if period == 4:
-            return {
-                "speckle_light": (O, "halo"),
-                "speckle_med": (Y, "halo"),
-                "cluster_med": (B, "halo"),
-            }
-        if period == 5:
-            return {
-                "speckle_med": (O, "halo"),
-                "speckle_heavy": (Y, "halo"),
-                "cluster_heavy": (B, "halo"),
-            }
-        if period == 6:
-            return {
-                "speckle_med": (W, "open"),
-                "cluster_med": (W, "open_water"),
-            }
-        # period 7
-        return {
-            "speckle_light": (W, "hard"),
-            "speckle_heavy": (W, "open_water"),
-            "cluster_light": (W, "open_water"),
-            "cluster_med": (W, "open_water"),
-            "cluster_heavy": (W, "open_water"),
-        }
+        from terrain_flecks import period_recipe
+
+        return period_recipe(period)
 
     def _halo_radius_for_period(self, period: int) -> int:
-        if period == 4:
-            return 5
-        if period == 5:
-            return 10
-        return 5
+        from terrain_flecks import halo_radius_for_period
+
+        return halo_radius_for_period(period)
 
     def _tint_density(
         self, density: pygame.Surface, rgb: tuple[int, int, int]
@@ -9522,8 +9511,33 @@ class Game:
         overlay = pygame.Surface(size, pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 0))
         skip = exclude or set()
+        fleck_on = True
+        clusters_on = True
+        master = 1.0
+        cluster_mul = 1.0
+        try:
+            from terrain_settings import get_anim_params, get_fleck
+
+            period = self._season_fade_to
+            if period is None:
+                period = self._season_mask_period(self.calendar_day)
+            fleck = get_fleck(int(period))
+            anim = get_anim_params()
+            fleck_on = bool(fleck.enabled)
+            clusters_on = bool(fleck.clusters_enabled)
+            master = float(anim.opacity) * max(0.0, float(fleck.speckle_alpha))
+            if fleck.speckle_alpha > 1e-6:
+                cluster_mul = max(0.0, float(fleck.cluster_alpha)) / float(fleck.speckle_alpha)
+            else:
+                cluster_mul = max(0.0, float(fleck.cluster_alpha))
+        except Exception:
+            pass
+        if not fleck_on:
+            return overlay
         for field, (rgb, tag) in recipe.items():
             if field in skip:
+                continue
+            if field.startswith("cluster") and not clusters_on:
                 continue
             density = self._season_densities[field]
             if density is None:
@@ -9531,8 +9545,11 @@ class Game:
             layer = self._tint_density(density, rgb)
             mask = self._mask_for(tag, water_mask, halo_radius=halo_radius)
             layer.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-            if alpha_scale < 0.999:
-                layer.set_alpha(max(0, min(255, int(255 * alpha_scale))))
+            scale = alpha_scale * master
+            if field.startswith("cluster"):
+                scale *= cluster_mul
+            if scale < 0.999:
+                layer.set_alpha(max(0, min(255, int(255 * scale))))
             overlay.blit(layer, (0, 0))
         return overlay
 
@@ -9626,7 +9643,7 @@ class Game:
         speed = max(0, int(self.sim_speed))
         if speed <= 0:
             return False
-        total = max(1, int(self.ticks_per_day * self._SEASON_FADE_DAYS))
+        total = max(1, int(self.ticks_per_day * self._season_fade_days()))
         self._season_fade_tick += speed
         t = min(1.0, self._season_fade_tick / total)
         present = int(t * 20)
@@ -9692,7 +9709,7 @@ class Game:
         period = self._season_mask_period(self.calendar_day)
         tree_sig = self._season_tree_sig
         key = (period, self.world.terrain_revision, CELL_SIZE, tree_sig)
-        total = max(1, int(self.ticks_per_day * self._SEASON_FADE_DAYS))
+        total = max(1, int(self.ticks_per_day * self._season_fade_days()))
         fading = (
             self._season_fade_to == period
             and self._season_fade_tick < total
@@ -9776,10 +9793,8 @@ class Game:
         mute = self._ensure_season_mute(vibrancy)
 
         if self.height_sample_enabled and self.height_sample is not None:
-            # Warp path: do not run season fleck fade / ice (expensive, and we do not
-            # blit them under warp). Day-length fade rebuilds were the low-ticks hitch.
-            # Grass, not COLOUR_BG: warp seams / wipe gaps must not read as
-            # black stair-step "terrain transitions".
+            self._refresh_season_masks(grass_mask, soil_mask, water_mask)
+            # Grass underfill so warp gaps don't read as black seams.
             self.screen.fill(COLOUR_GRASS, map_clip)
             self._draw_height_sample(base)
             if mute is not None:
@@ -9788,6 +9803,8 @@ class Game:
                 self.screen.blit(
                     tint, map_clip.topleft, special_flags=pygame.BLEND_RGB_MULT
                 )
+            if self._season_period_overlay is not None:
+                self._blit_camera_world_surface(self._season_period_overlay, origin)
         else:
             self._refresh_season_masks(grass_mask, soil_mask, water_mask)
             ice = self._ensure_ice_overlay(freeze, water_mask)

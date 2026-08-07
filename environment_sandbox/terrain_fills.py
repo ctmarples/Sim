@@ -66,8 +66,10 @@ PREVIEW_TERRAINS: tuple[TerrainType, ...] = (
     TerrainType.GRASS,
     TerrainType.MEADOW,
     TerrainType.SOIL,
+    TerrainType.FOREST_FLOOR,
     TerrainType.RIPARIAN,
     TerrainType.ROCK,
+    TerrainType.PATH,
     TerrainType.WATER,
 )
 

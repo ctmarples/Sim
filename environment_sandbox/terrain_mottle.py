@@ -145,6 +145,16 @@ def get_params() -> MottleParams:
     return PARAMS
 
 
+def get_params_for(terrain: TerrainType) -> MottleParams:
+    """Per-biome mottling (from terrain_settings); falls back to global PARAMS."""
+    try:
+        from terrain_settings import get_mottle
+
+        return get_mottle(terrain)
+    except Exception:
+        return PARAMS
+
+
 def set_params(params: MottleParams) -> None:
     global PARAMS
     PARAMS = params
@@ -306,7 +316,7 @@ def sample_mottle(
     params: MottleParams | None = None,
 ) -> Colour:
     """Opaque mottled colour at unique world pixel (no tiling)."""
-    p = PARAMS if params is None else params
+    p = get_params_for(terrain) if params is None else params
     base = _COLOURS.get(terrain, COLOUR_GRASS)
     salt = 1000 + terrain.value * 97 + int(p.seed) * 13
 
@@ -493,7 +503,7 @@ def world_mottle_surface(
     params: MottleParams | None = None,
 ) -> pygame.Surface:
     """``size``×``size`` unique world-UV mottling for one game cell (chunk-backed)."""
-    p = PARAMS if params is None else params
+    p = get_params_for(terrain) if params is None else params
     wx0 = cell_x * size
     wy0 = cell_y * size
     out = pygame.Surface((size, size))
@@ -529,7 +539,7 @@ def world_mottle_region(
     params: MottleParams | None = None,
 ) -> pygame.Surface:
     """Continuous mottling over a world-pixel rectangle (preview / diagnostics)."""
-    p = PARAMS if params is None else params
+    p = get_params_for(terrain) if params is None else params
     key = (terrain, x0, y0, width, height, _params_key(p))
     hit = _REGION_CACHE.get(key)
     if hit is not None:
