@@ -24,6 +24,7 @@ _BUILDING_RECIPE_ATTR: dict[str, str] = {
     "mill": "MILL_RECIPES",
     "craft_bench": "CRAFT_BENCH_RECIPES",
     "alchemist": "ALCHEMIST_RECIPES",
+    "tailor": "TAILOR_RECIPES",
     "forester": "FORESTER_RECIPES",
     "forester_split": "FORESTER_SPLIT_RECIPES",
     "hunter": "HUNTER_RECIPES",
@@ -84,6 +85,8 @@ CRAFT_BENCH_RECIPES: tuple[Recipe, ...] = (
 )
 
 ALCHEMIST_RECIPES: tuple[Recipe, ...] = ()
+
+TAILOR_RECIPES: tuple[Recipe, ...] = ()
 
 # Gather toggles (chop trees → logs / hardwood logs).
 FORESTER_RECIPES: tuple[Recipe, ...] = (
@@ -192,6 +195,7 @@ def _apply_recipe_metadata(data: dict, recipe: Recipe) -> None:
 def _load_directory_recipes() -> None:
     """Merge ``recipes_data/<building>/*.json`` into the matching recipe tuples."""
     global MILL_RECIPES, KITCHEN_RECIPES, CRAFT_BENCH_RECIPES, ALCHEMIST_RECIPES
+    global TAILOR_RECIPES
     global FORESTER_RECIPES, FORESTER_SPLIT_RECIPES, HUNTER_RECIPES, FORAGER_RECIPES
 
     if not _RECIPES_DATA_DIR.is_dir():
@@ -248,6 +252,8 @@ CRAFT_BENCH_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(CRAFT_BENCH_REC
 CRAFT_BENCH_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(CRAFT_BENCH_RECIPES)
 ALCHEMIST_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(ALCHEMIST_RECIPES)
 ALCHEMIST_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(ALCHEMIST_RECIPES)
+TAILOR_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(TAILOR_RECIPES)
+TAILOR_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(TAILOR_RECIPES)
 KITCHEN_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(KITCHEN_RECIPES)
 KITCHEN_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(KITCHEN_RECIPES)
 
@@ -259,6 +265,7 @@ PROCESSED_KEYS: tuple[str, ...] = tuple(
             *KITCHEN_OUTPUT_KEYS,
             *CRAFT_BENCH_OUTPUT_KEYS,
             *ALCHEMIST_OUTPUT_KEYS,
+            *TAILOR_OUTPUT_KEYS,
         )
     )
 )

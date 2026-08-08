@@ -224,12 +224,6 @@
       "width": 160,
       "height": 160
     },
-    "home": {
-      "anchor_x": 80,
-      "anchor_y": 80,
-      "width": 160,
-      "height": 160
-    },
     "honey": {
       "anchor_x": 80,
       "anchor_y": 80,
@@ -519,6 +513,12 @@
       "height": 160
     },
     "workstation": {
+      "anchor_x": 80,
+      "anchor_y": 80,
+      "width": 160,
+      "height": 160
+    },
+    "storehouse": {
       "anchor_x": 80,
       "anchor_y": 80,
       "width": 160,

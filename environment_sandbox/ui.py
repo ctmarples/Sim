@@ -47,6 +47,7 @@ from settings import (
     COLOUR_KITCHEN,
     COLOUR_CRAFT_BENCH,
     COLOUR_ALCHEMIST,
+    COLOUR_TAILOR,
     COLOUR_MASON,
     COLOUR_MEADOW,
     COLOUR_MEAT,
@@ -1091,6 +1092,7 @@ class UI:
             (COLOUR_KITCHEN, "Kitchen"),
             (COLOUR_CRAFT_BENCH, "Craft bench"),
             (COLOUR_ALCHEMIST, "Alchemist"),
+            (COLOUR_TAILOR, "Tailor"),
             ((90, 90, 70), "Site"),
             (COLOUR_PLAYER, "Player"),
             (COLOUR_VILLAGER, "Villager"),
@@ -1410,13 +1412,29 @@ def _iso_building_recolour(
     accent2: tuple[int, int, int] | None = None,
     stem: tuple[int, int, int] | None = None,
     vibrancy: float = 1.0,
+    baked: bool = False,
 ) -> dict[str, tuple[int, int, int]]:
-    """Map building SVG face classes to shaded colours from a wall/roof base."""
+    """Map building SVG face classes to shaded colours from a wall/roof base.
+
+    When ``baked`` is True (cabin-style icons with fills in the SVG), only
+    accent / accent2 / stem are remapped so wall and roof colours from the
+    file are preserved.
+    """
     from seasons import adjust_colour
+
+    if baked:
+        out: dict[str, tuple[int, int, int]] = {}
+        if accent is not None:
+            out["accent"] = adjust_colour(accent, vibrancy)
+        if accent2 is not None:
+            out["accent2"] = adjust_colour(accent2, vibrancy)
+        if stem is not None:
+            out["stem"] = adjust_colour(stem, vibrancy)
+        return out
 
     w = adjust_colour(wall, vibrancy)
     r = adjust_colour(roof if roof is not None else wall, vibrancy)
-    out: dict[str, tuple[int, int, int]] = {
+    out = {
         "wall_l": _iso_shade(w, -0.28),
         "wall_r": _iso_shade(w, 0.14),
         "body": _iso_shade(w, -0.1),
@@ -1469,6 +1487,7 @@ def draw_feature(
         ICON_KITCHEN,
         ICON_CRAFT_BENCH,
         ICON_ALCHEMIST,
+        ICON_TAILOR,
         ICON_MASON,
         ICON_MILL,
         ICON_MUSHROOM,
@@ -1483,7 +1502,12 @@ def draw_feature(
         ICON_WORKSTATION,
         blit_icon,
     )
+    from settings import ICON_BUILDING_STIPPLE
     from trees import resolve_tree
+
+    def blit_building(*args, **kwargs):
+        kwargs.setdefault("stipple", bool(ICON_BUILDING_STIPPLE))
+        return blit_icon(*args, **kwargs)
 
     trunk = adjust_colour(COLOUR_TREE_TRUNK, vibrancy)
     v = icon_variant
@@ -1534,7 +1558,7 @@ def draw_feature(
             recolour={"body": COLOUR_ROCK_FEATURE},
         )
     elif feature == FeatureType.HOME:
-        blit_icon(
+        blit_building(
             surface,
             ICON_HOME,
             cx,
@@ -1542,11 +1566,12 @@ def draw_feature(
             size,
             variant=v,
             recolour=_iso_building_recolour(
-                COLOUR_HOME, roof=COLOUR_HOME_ROOF, vibrancy=vibrancy
+                COLOUR_HOME, roof=COLOUR_HOME_ROOF, vibrancy=vibrancy,
+                baked=True,
             ),
         )
     elif feature == FeatureType.WORKSTATION:
-        blit_icon(
+        blit_building(
             surface,
             ICON_WORKSTATION,
             cx,
@@ -1557,10 +1582,11 @@ def draw_feature(
                 COLOUR_WORKSTATION,
                 accent=(255, 220, 80),
                 vibrancy=vibrancy,
+                baked=True,
             ),
         )
     elif feature == FeatureType.FORESTER:
-        blit_icon(
+        blit_building(
             surface,
             ICON_FORESTER,
             cx,
@@ -1573,10 +1599,11 @@ def draw_feature(
                 accent=COLOUR_TREE_CANOPY,
                 accent2=(46, 154, 60),
                 vibrancy=vibrancy,
+                baked=True,
             ),
         )
     elif feature == FeatureType.MASON:
-        blit_icon(
+        blit_building(
             surface,
             ICON_MASON,
             cx,
@@ -1587,10 +1614,11 @@ def draw_feature(
                 COLOUR_MASON,
                 accent=COLOUR_ROCK_FEATURE,
                 vibrancy=vibrancy,
+                baked=True,
             ),
         )
     elif feature == FeatureType.HUNTER:
-        blit_icon(
+        blit_building(
             surface,
             ICON_HUNTER,
             cx,
@@ -1602,10 +1630,11 @@ def draw_feature(
                 roof=(120, 50, 40),
                 accent=COLOUR_MEAT,
                 vibrancy=vibrancy,
+                baked=True,
             ),
         )
     elif feature == FeatureType.FORAGER:
-        blit_icon(
+        blit_building(
             surface,
             ICON_FORAGER,
             cx,
@@ -1618,10 +1647,11 @@ def draw_feature(
                 accent=COLOUR_BERRY,
                 accent2=COLOUR_MUSHROOM,
                 vibrancy=vibrancy,
+                baked=True,
             ),
         )
     elif feature == FeatureType.CONSTRUCTION_SITE:
-        blit_icon(
+        blit_building(
             surface,
             ICON_CONSTRUCTION,
             cx,
@@ -1632,10 +1662,11 @@ def draw_feature(
                 (90, 90, 70),
                 accent=(180, 160, 80),
                 vibrancy=vibrancy,
+                baked=True,
             ),
         )
     elif feature == FeatureType.FISHER:
-        blit_icon(
+        blit_building(
             surface,
             ICON_FISHER,
             cx,
@@ -1647,10 +1678,11 @@ def draw_feature(
                 roof=(40, 70, 110),
                 accent=COLOUR_FISH,
                 vibrancy=vibrancy,
+                baked=True,
             ),
         )
     elif feature == FeatureType.FARM:
-        blit_icon(
+        blit_building(
             surface,
             ICON_FARM,
             cx,
@@ -1662,10 +1694,11 @@ def draw_feature(
                 roof=(140, 90, 50),
                 stem=COLOUR_CROP,
                 vibrancy=vibrancy,
+                baked=True,
             ),
         )
     elif feature == FeatureType.FIELD:
-        blit_icon(
+        blit_building(
             surface,
             ICON_FIELD,
             cx,
@@ -1676,10 +1709,11 @@ def draw_feature(
                 COLOUR_FIELD,
                 accent=(200, 180, 90),
                 vibrancy=vibrancy,
+                baked=True,
             ),
         )
     elif feature == FeatureType.MILL:
-        blit_icon(
+        blit_building(
             surface,
             ICON_MILL,
             cx,
@@ -1691,10 +1725,11 @@ def draw_feature(
                 roof=(106, 80, 56),
                 accent=(216, 192, 144),
                 vibrancy=vibrancy,
+                baked=True,
             ),
         )
     elif feature == FeatureType.KITCHEN:
-        blit_icon(
+        blit_building(
             surface,
             ICON_KITCHEN,
             cx,
@@ -1704,12 +1739,14 @@ def draw_feature(
             recolour=_iso_building_recolour(
                 COLOUR_KITCHEN,
                 roof=(120, 50, 40),
-                accent=(220, 160, 80),
+                accent=(232, 120, 64),
+                accent2=(240, 192, 96),
                 vibrancy=vibrancy,
+                baked=True,
             ),
         )
     elif feature == FeatureType.CRAFT_BENCH:
-        blit_icon(
+        blit_building(
             surface,
             ICON_CRAFT_BENCH,
             cx,
@@ -1721,10 +1758,11 @@ def draw_feature(
                 roof=(100, 70, 45),
                 accent=(200, 170, 110),
                 vibrancy=vibrancy,
+                baked=True,
             ),
         )
     elif feature == FeatureType.ALCHEMIST:
-        blit_icon(
+        blit_building(
             surface,
             ICON_ALCHEMIST,
             cx,
@@ -1736,6 +1774,23 @@ def draw_feature(
                 roof=(70, 40, 100),
                 accent=(200, 160, 230),
                 vibrancy=vibrancy,
+                baked=True,
+            ),
+        )
+    elif feature == FeatureType.TAILOR:
+        blit_building(
+            surface,
+            ICON_TAILOR,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour=_iso_building_recolour(
+                COLOUR_TAILOR,
+                roof=(50, 70, 100),
+                accent=(180, 200, 220),
+                vibrancy=vibrancy,
+                baked=True,
             ),
         )
     elif feature == FeatureType.MUSHROOM:

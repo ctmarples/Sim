@@ -1,13 +1,16 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="400" height="400"
-     data-home="0,0,40" data-anchor="20,20">
-  <title>fisher</title>
-  <desc>Isometric building; front two walls toward viewer. Classes: wall_l wall_r roof roof_dark door trim accent accent2 stem.</desc>
-  <g id="fisher">
-    <path id="wall_l" class="wall_l" d="M 8.80,33.00 L 20.00,38.60 L 20.00,30.15 L 8.80,24.55 Z" fill="#5a4030"/>
-    <path id="wall_r" class="wall_r" d="M 31.20,33.00 L 20.00,38.60 L 20.00,30.15 L 31.20,24.55 Z" fill="#8a6a48"/>
-    <path id="roof_dark" class="roof_dark" d="M 20.00,18.95 L 31.20,24.55 L 25.60,22.80 L 14.40,17.20 Z" fill="#6a3028"/>
-    <path id="roof" class="roof" d="M 8.80,24.55 L 20.00,30.15 L 25.60,22.80 L 14.40,17.20 Z" fill="#aa3c32"/>
-    <path id="accent" class="accent" d="M 27.70,30.52 L 24.55,33.08 L 22.10,33.32 L 24.55,31.13 Z" fill="#50a0c8"/>
-  </g>
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" viewBox="0 0 40 40" width="400" height="400" data-home="0,0,40" data-anchor="20,20" version="1.1" id="svg8" sodipodi:docname="fisher.svg" inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)">
+  <defs id="defs8" />
+  <sodipodi:namedview id="namedview8" pagecolor="#ffffff" bordercolor="#000000" borderopacity="0.25" inkscape:showpageshadow="2" inkscape:pageopacity="0.0" inkscape:pagecheckerboard="0" inkscape:deskcolor="#d1d1d1" inkscape:zoom="0.96891163" inkscape:cx="8.7727299" inkscape:cy="208.99739" inkscape:window-width="1470" inkscape:window-height="836" inkscape:window-x="0" inkscape:window-y="33" inkscape:window-maximized="1" inkscape:current-layer="svg8" />
+  <title id="title1">fisher</title>
+  <desc id="desc1">Simple cabin style (home/farm). Classes: wall_l wall_r roof roof_dark door accent accent2 body trim.</desc>
+  <path id="rect9" style="fill:#1e1602;fill-opacity:0.689815;stroke-width:0.1257" d="M 8.4631043,24.666852 35.090919,20.641717 28.382361,32.820331 H 8.4631043 Z" sodipodi:nodetypes="ccccc" fill="#1e1602" fill-opacity="0.689815" />
+  <path id="rect8" style="fill:#e2a20c;stroke-width:0.190785" d="M 8.7298149,15.010472 22.266099,16.731127 20.58711,23.443378 3.3570519,22.961595 Z" sodipodi:nodetypes="ccccc" fill="#e2a20c" />
+  <path d="M 4.1874899,22.89296 20.92996,23.26912 V 36.071512 L 4.6187369,34.174861 Z" fill="#587088" id="path3" style="stroke-width:1.14012" sodipodi:nodetypes="ccccc" />
+  <path id="rect5" style="fill:#7890a0;stroke-width:0.921138" d="m 20.296463,17.382814 4.228445,1.180184 1.434276,17.312984 -5.662721,0.416536 z" sodipodi:nodetypes="ccccc" fill="#7890a0" />
+  <path id="rect5-5" style="fill:#42535e;fill-opacity:1;stroke-width:0.921138" d="m 24.335574,18.575698 1.685863,-1.110762 2.21661,15.507997 -2.53339,2.846328 z" sodipodi:nodetypes="ccccc" fill="#42535e" fill-opacity="1" />
+  <path d="M 9.2670489,28.887841 H 13.07646 l -0.325971,6.237174 -3.4834401,-0.403859 z" fill="#452905" id="path7" style="stroke-width:1.03051" sodipodi:nodetypes="ccccc" />
+  <path d="m 22.492853,16.620653 3.679024,0.833072 -1.564667,1.516438 -4.461355,-1.306353 z" fill="#452905" id="path7-3" style="stroke-width:1.03051" sodipodi:nodetypes="ccccc" />
+  <ellipse class="accent" cx="10.853829" cy="26.091358" rx="1.437113" ry="1.0352299" fill="#50a0c8" id="ellipse7" style="stroke-width:0.53905" />
+  <path class="accent" d="m 12.111302,26.09136 0.988014,-0.970528 v 1.941057 z" fill="#50a0c8" id="path8" style="stroke-width:0.53905" />
 </svg>

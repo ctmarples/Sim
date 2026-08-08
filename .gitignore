@@ -37,3 +37,6 @@ Thumbs.db
 # Game saves
 saves/*.json
 !saves/.gitkeep
+
+# Runtime building stipple bake (regenerated on load)
+environment_sandbox/assets/icons/_stipple_tmp/

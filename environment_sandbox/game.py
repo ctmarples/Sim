@@ -45,7 +45,7 @@ from resource_balance import (
     FIELD_PEST_BOOST_MAX,
     INSECT_REPELLANT_PEST_BOOST,
     MINERAL_POWDER_PEST_BOOST,
-    RABBIT_MEAT_PER_LEVEL,
+    RABBIT_MEAT_PER_LEVEL, RABBIT_FUR_PER_LEVEL, GRAIN_STRAW_YIELD,
     REED_YIELD,
     SAPLING_DROP_CHANCE,
     STARTING_FOOD,
@@ -122,6 +122,7 @@ from settings import (
     COLOUR_KITCHEN,
     COLOUR_CRAFT_BENCH,
     COLOUR_ALCHEMIST,
+    COLOUR_TAILOR,
     COLOUR_MASON,
     COLOUR_MEAT,
     COLOUR_MILL,
@@ -161,6 +162,8 @@ from settings import (
     CRAFT_BENCH_COST_ROCK,
     ALCHEMIST_COST_WOOD,
     ALCHEMIST_COST_ROCK,
+    TAILOR_COST_WOOD,
+    TAILOR_COST_ROCK,
     CRAFT_BENCH_COST_WOOD,
     MASON_COST_ROCK,
     MASON_COST_WOOD,
@@ -287,6 +290,7 @@ FEATURE_FOR_BUILDING = {
     BuildingKind.KITCHEN: FeatureType.KITCHEN,
     BuildingKind.CRAFT_BENCH: FeatureType.CRAFT_BENCH,
     BuildingKind.ALCHEMIST: FeatureType.ALCHEMIST,
+    BuildingKind.TAILOR: FeatureType.TAILOR,
 }
 
 BUILDING_FEATURES = frozenset(FEATURE_FOR_BUILDING.values()) | {
@@ -318,9 +322,10 @@ class Game:
         else:
             self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
             pygame.display.set_caption("Environmental Farming Sandbox")
-        from icons import ALL_ICON_NAMES, preload
+        from icons import ALL_ICON_NAMES, preload, preload_building_stipple
 
         preload(ALL_ICON_NAMES, sizes=(CELL_SIZE,))
+        preload_building_stipple()
         self.clock = pygame.time.Clock()
         self.ui = UI()
         self.toolbar = Toolbar()
@@ -2022,6 +2027,7 @@ class Game:
             BuildingKind.KITCHEN,
             BuildingKind.CRAFT_BENCH,
             BuildingKind.ALCHEMIST,
+            BuildingKind.TAILOR,
             None,
         ]
         if self.place_kind not in order:
@@ -2055,6 +2061,11 @@ class Game:
                 ALCHEMIST_COST_WOOD,
                 ALCHEMIST_COST_ROCK,
                 "Alchemist",
+            ),
+            BuildingKind.TAILOR: (
+                TAILOR_COST_WOOD,
+                TAILOR_COST_ROCK,
+                "Tailor",
             ),
         }
         if self.place_kind is None:
@@ -2831,7 +2842,7 @@ class Game:
                     * POLLINATION_YIELD_HIGH
                 )
             ),
-        )
+        ) + GRAIN_STRAW_YIELD
 
     def _sync_habitat_selection(self) -> None:
         """Drop habitat highlight if that breeding ground vanished on refresh."""
@@ -3719,6 +3730,7 @@ class Game:
                     BuildingKind.KITCHEN: COLOUR_KITCHEN,
                     BuildingKind.CRAFT_BENCH: COLOUR_CRAFT_BENCH,
                     BuildingKind.ALCHEMIST: COLOUR_ALCHEMIST,
+                    BuildingKind.TAILOR: COLOUR_TAILOR,
                 }.get(building.kind, COLOUR_VILLAGER)
         return COLOUR_VILLAGER
 
@@ -3766,6 +3778,7 @@ class Game:
             FeatureType.KITCHEN,
             FeatureType.CRAFT_BENCH,
             FeatureType.ALCHEMIST,
+            FeatureType.TAILOR,
             FeatureType.WORKSTATION,
             FeatureType.STRUCTURE_PAD,
         ):
@@ -3939,6 +3952,8 @@ class Game:
             return CRAFT_BENCH_COST_WOOD, CRAFT_BENCH_COST_ROCK, TaskType.FULL_FORAGE
         if kind == BuildingKind.ALCHEMIST:
             return ALCHEMIST_COST_WOOD, ALCHEMIST_COST_ROCK, TaskType.FULL_FORAGE
+        if kind == BuildingKind.TAILOR:
+            return TAILOR_COST_WOOD, TAILOR_COST_ROCK, TaskType.FULL_FORAGE
         return FORAGER_COST_WOOD, FORAGER_COST_ROCK, TaskType.FULL_FORAGE
 
     def _place_field_site(
@@ -3963,6 +3978,7 @@ class Game:
             FeatureType.KITCHEN,
             FeatureType.CRAFT_BENCH,
             FeatureType.ALCHEMIST,
+            FeatureType.TAILOR,
             FeatureType.CONSTRUCTION_SITE,
             FeatureType.STRUCTURE_PAD,
             FeatureType.TREE,
@@ -4464,11 +4480,12 @@ class Game:
             return False
         crop = CROP_BY_KEY.get(cell.crop_kind or "sage", CROP_BY_KEY["sage"])
         yield_n = self._farm_produce_yield_at(x, y)
+        straw_n = GRAIN_STRAW_YIELD if crop.key in ("wheat", "rye") else 0
         # Must fit the full harvest before clearing the tile.
-        if not inventory.can_add(yield_n, key=crop.produce_key):
+        if not inventory.can_add(yield_n + straw_n):
             if status:
                 self._set_status(
-                    f"Need {yield_n} free cargo slots to harvest "
+                    f"Need {yield_n + straw_n} free cargo slots to harvest "
                     f"{crop.label.lower()}."
                 )
             return False
@@ -4478,11 +4495,16 @@ class Game:
                 self._set_status("Crop not ready.")
             return False
         crop = CROP_BY_KEY.get(crop_key, CROP_BY_KEY["sage"])
+        straw_n = GRAIN_STRAW_YIELD if crop.key in ("wheat", "rye") else 0
         if not inventory.add_item(crop.produce_key, yield_n):
             if status:
                 self._set_status("Could not store harvest.")
             return False
         self.record_produced(crop.produce_key, yield_n)
+        straw_msg = ""
+        if straw_n and inventory.add_item("straw", straw_n):
+            self.record_produced("straw", straw_n)
+            straw_msg = f" +{straw_n} straw"
         seed_msg = ""
         # Farm: always 1, 2, or 3 seeds (capped by seed carry space).
         amounts = crop.farm_seed_amounts or FARM_SEED_AMOUNTS
@@ -4500,7 +4522,7 @@ class Game:
         self._refresh_indicators()
         if status:
             qty = f" ×{yield_n}" if yield_n != 1 else ""
-            self._set_status(f"Harvested farm {crop.label.lower()}{qty}{seed_msg}.")
+            self._set_status(f"Harvested farm {crop.label.lower()}{qty}{seed_msg}{straw_msg}.")
         return True
 
     def _forester_needs_axe(self, building: Building) -> bool:
@@ -5306,6 +5328,7 @@ class Game:
             BuildingKind.KITCHEN,
             BuildingKind.CRAFT_BENCH,
             BuildingKind.ALCHEMIST,
+            BuildingKind.TAILOR,
         ):
             tool = WORKPLACE_TOOL.get(building.kind)
             if tool and not villager.inventory.has_equipped_tool(tool):
@@ -6106,6 +6129,7 @@ class Game:
             BuildingKind.KITCHEN,
             BuildingKind.CRAFT_BENCH,
             BuildingKind.ALCHEMIST,
+            BuildingKind.TAILOR,
         ):
             self._update_processor(villager, building)
             return
@@ -6578,6 +6602,7 @@ class Game:
                             FeatureType.KITCHEN,
                             FeatureType.CRAFT_BENCH,
                             FeatureType.ALCHEMIST,
+            FeatureType.TAILOR,
                             FeatureType.CONSTRUCTION_SITE,
                             FeatureType.STRUCTURE_PAD,
                         ):
@@ -6759,7 +6784,8 @@ class Game:
             dist = max(abs(colony.x - villager.x), abs(colony.y - villager.y))
             if dist <= 1:
                 if villager.work_cooldown == 0:
-                    if not villager.inventory.can_add(RABBIT_MEAT_PER_LEVEL, key="meat"):
+                    need = RABBIT_MEAT_PER_LEVEL + RABBIT_FUR_PER_LEVEL
+                    if not villager.inventory.can_add(need):
                         villager.hunt_colony_id = None
                         self._force_assigned_delivery(villager, building)
                         return
@@ -6771,6 +6797,9 @@ class Game:
                         _kind, amount = result
                         villager.inventory.add_item("meat", amount)
                         self.record_produced("meat", amount)
+                        if RABBIT_FUR_PER_LEVEL > 0:
+                            villager.inventory.add_item("fur", RABBIT_FUR_PER_LEVEL)
+                            self.record_produced("fur", RABBIT_FUR_PER_LEVEL)
                         self.world.apply_extraction_disturbance(colony.x, colony.y)
                         self._refresh_indicators()
                         villager.work_cooldown = self._villager_work_interval(villager)
@@ -6832,7 +6861,7 @@ class Game:
 
         if not building.allows_hunt_kind("rabbit"):
             return None
-        if not villager.inventory.can_add(RABBIT_MEAT_PER_LEVEL, key="meat"):
+        if not villager.inventory.can_add(RABBIT_MEAT_PER_LEVEL + RABBIT_FUR_PER_LEVEL):
             return None
         taken = self._claimed_colony_ids(villager.id)
         colonies = [
@@ -10503,6 +10532,7 @@ class Game:
         from settings import (
             COLOUR_CRAFT_BENCH,
             COLOUR_ALCHEMIST,
+    COLOUR_TAILOR,
             COLOUR_FARM,
             COLOUR_FIELD,
             COLOUR_FISHER,
@@ -10530,6 +10560,7 @@ class Game:
             BuildingKind.KITCHEN: COLOUR_KITCHEN,
             BuildingKind.CRAFT_BENCH: COLOUR_CRAFT_BENCH,
             BuildingKind.ALCHEMIST: COLOUR_ALCHEMIST,
+            BuildingKind.TAILOR: COLOUR_TAILOR,
         }
         for building in self.buildings.values():
             cx, cy = building.center_cell()

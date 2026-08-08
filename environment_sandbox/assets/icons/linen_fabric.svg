@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="400" height="400">
+  <title>linen_fabric</title>
+  <path class="body" d="M 8,12 L 32,10 L 30,30 L 10,32 Z" fill="#e0d0a8"/>
+  <path class="body" d="M 10,14 L 28,12.5 L 27,28 L 12,29.5 Z" fill="#c8b888"/>
+  <path d="M 12,18 L 26,16.5" stroke="#b0a070" stroke-width="0.8"/>
+  <path d="M 12,22 L 26,20.5" stroke="#b0a070" stroke-width="0.8"/>
+  <path d="M 12,26 L 26,24.5" stroke="#b0a070" stroke-width="0.8"/>
+</svg>

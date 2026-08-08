@@ -1,14 +1,101 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="400" height="400"
-     data-home="0,0,40" data-anchor="20,20">
-  <title>mill</title>
-  <desc>Isometric mill. Classes: wall_l wall_r roof roof_dark door trim accent.</desc>
-  <g id="mill">
-    <path id="wall_l" class="wall_l" d="M 8.80,33.00 L 20.00,38.60 L 20.00,24.00 L 8.80,18.40 Z" fill="#8a7a58"/>
-    <path id="wall_r" class="wall_r" d="M 31.20,33.00 L 20.00,38.60 L 20.00,24.00 L 31.20,18.40 Z" fill="#b0a070"/>
-    <path id="roof" class="roof" d="M 20.00,10.00 L 33.00,16.50 L 20.00,23.00 L 7.00,16.50 Z" fill="#6a5038"/>
-    <path id="roof_dark" class="roof_dark" d="M 20.00,10.00 L 33.00,16.50 L 20.00,14.00 Z" fill="#4a3828"/>
-    <ellipse id="accent" class="accent" cx="20" cy="14" rx="3.2" ry="3.2" fill="#d8c090"/>
-    <path id="door" class="door" d="M 17.5,38.0 L 20.0,39.2 L 20.0,32.5 L 17.5,31.3 Z" fill="#3a2a18"/>
-  </g>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 40 40"
+   width="400"
+   height="400"
+   data-home="0,0,40"
+   data-anchor="20,20"
+   version="1.1"
+   id="svg7"
+   sodipodi:docname="craft_bench.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs7" />
+  <sodipodi:namedview
+     id="namedview7"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="1.1066072"
+     inkscape:cx="235.85604"
+     inkscape:cy="241.72985"
+     inkscape:window-width="1083"
+     inkscape:window-height="836"
+     inkscape:window-x="0"
+     inkscape:window-y="33"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg7" />
+  <title
+     id="title1">craft_bench</title>
+  <desc
+     id="desc1">Cabin style variant. Accent classes only so baked fills are preserved.</desc>
+  <path
+     d="m 25.529254,12.898992 12.58359,8.109084 -7.524286,9.541795 -20.6082782,-3.451832 z"
+     fill="#1e1602"
+     fill-opacity="0.5"
+     id="path1"
+     sodipodi:nodetypes="ccccc" />
+  <path
+     id="rect7-2"
+     class="accent"
+     style="fill:#8a6840"
+     d="M 9.7397566,22.916944 11.668872,21.065668 10.599246,27.739734 9.4517803,27.410618 Z"
+     sodipodi:nodetypes="ccccc" />
+  <path
+     d="m 30.47285,23.035282 5.179089,-1.035373 -0.903753,4.721293 -3.965927,4.183501 z"
+     fill="#807050"
+     id="path2"
+     sodipodi:nodetypes="ccccc" />
+  <path
+     d="m 13.69768,18.624699 4.452958,-2.041163 0.321169,8.732963 -5.67295,-1.089415 z"
+     fill="#a09070"
+     id="path3"
+     sodipodi:nodetypes="ccccc"
+     style="fill:#665b44;fill-opacity:1" />
+  <path
+     d="m 17.796439,17.214113 13.255276,5.64822 0.01764,7.923554 -13.868213,-2.404704 z"
+     fill="#a09070"
+     id="path3-1"
+     sodipodi:nodetypes="ccccc" />
+  <path
+     d="M 17.016432,17.214113 18.941196,13.5 l 18.117608,8.547043 -5.35299,2.505881 z"
+     fill="#5a4030"
+     id="path4"
+     sodipodi:nodetypes="ccccc" />
+  <path
+     d="M 13.570565,18.222346 18.947076,13.797648 17.34002,17.50588 9,23.6541 Z"
+     fill="#c8a060"
+     id="path5"
+     sodipodi:nodetypes="ccccc" />
+  <path
+     id="rect6"
+     class="accent"
+     style="fill:#8a6840"
+     d="m 5.0070901,31.255276 h 1.6 l -0.4936736,4 H 5.0070901 Z"
+     sodipodi:nodetypes="ccccc" />
+  <path
+     id="rect7"
+     class="accent"
+     style="fill:#8a6840"
+     d="m 13.507089,31.255276 1.024047,-0.123418 0.287977,4.164557 -1.312024,-0.04114 z"
+     sodipodi:nodetypes="ccccc" />
+  <path
+     id="rect5"
+     class="accent"
+     style="fill:#c8a870"
+     d="M 3.8836717,29.995786 15.102021,30.654018 14.896324,31.70781 4.0070901,31.502113 Z"
+     sodipodi:nodetypes="ccccc" />
+  <path
+     id="rect8"
+     style="fill:#e7cb90;stroke-width:0.1257;fill-opacity:1"
+     d="M 5.8006647,28.386231 14.974765,27.974837 15.221602,30.772321 3.9905282,30.03181 Z"
+     sodipodi:nodetypes="ccccc" />
 </svg>

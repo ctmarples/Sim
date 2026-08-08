@@ -47,6 +47,8 @@ _BASE_STORAGE_KEYS = (
     "berries",
     "berry_seeds",
     "reeds",
+    "straw",
+    "fur",
     "twine",
     "axe",
     "spear",
@@ -570,6 +572,7 @@ def _migrate_building_footprints(game: Game) -> None:
         BuildingKind.KITCHEN: FeatureType.KITCHEN,
         BuildingKind.CRAFT_BENCH: FeatureType.CRAFT_BENCH,
         BuildingKind.ALCHEMIST: FeatureType.ALCHEMIST,
+        BuildingKind.TAILOR: FeatureType.TAILOR,
     }
 
     for building in list(game.buildings.values()):
@@ -739,6 +742,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             BuildingKind.KITCHEN: TaskType.FULL_FORAGE,
             BuildingKind.CRAFT_BENCH: TaskType.FULL_FORAGE,
             BuildingKind.ALCHEMIST: TaskType.FULL_FORAGE,
+            BuildingKind.TAILOR: TaskType.FULL_FORAGE,
         }.get(kind, TaskType.FULL_MANAGE)
         raw_task = bdata.get("draw_task_type")
         if raw_task is None:

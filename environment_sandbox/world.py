@@ -161,6 +161,7 @@ class FeatureType(Enum):
     KITCHEN = auto()
     CRAFT_BENCH = auto()
     ALCHEMIST = auto()
+    TAILOR = auto()
     CONSTRUCTION_SITE = auto()
     # Invisible reserved cells of a multi-cell building footprint (not the glyph cell).
     STRUCTURE_PAD = auto()
@@ -189,6 +190,7 @@ STRUCTURE_FEATURES: frozenset[FeatureType] = frozenset(
         FeatureType.KITCHEN,
         FeatureType.CRAFT_BENCH,
         FeatureType.ALCHEMIST,
+        FeatureType.TAILOR,
         FeatureType.CONSTRUCTION_SITE,
         FeatureType.STRUCTURE_PAD,
     }

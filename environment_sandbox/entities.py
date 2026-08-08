@@ -25,6 +25,9 @@ from recipes import (
     MILL_OUTPUT_KEYS,
     MILL_RECIPES,
     PROCESSED_KEYS,
+    TAILOR_INPUT_KEYS,
+    TAILOR_OUTPUT_KEYS,
+    TAILOR_RECIPES,
     Recipe,
     apply_recipe,
     can_craft,
@@ -148,6 +151,7 @@ class BuildingKind(Enum):
     KITCHEN = auto()
     CRAFT_BENCH = auto()
     ALCHEMIST = auto()
+    TAILOR = auto()
 
 
 # Tool required in the equipped slot for workplace actions.
@@ -174,6 +178,7 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
     BuildingKind.KITCHEN: "Kitchen",
     BuildingKind.CRAFT_BENCH: "Craft bench",
     BuildingKind.ALCHEMIST: "Alchemist",
+    BuildingKind.TAILOR: "Tailor",
 }
 
 
@@ -321,6 +326,8 @@ class Inventory:
     berries: int = 0
     berry_seeds: int = 0
     reeds: int = 0
+    straw: int = 0
+    fur: int = 0
     wheat: int = 0
     flax: int = 0
     sage: int = 0
@@ -397,6 +404,8 @@ class Inventory:
             + self.honey
             + self.berries
             + self.reeds
+            + self.straw
+            + self.fur
             + self.twine
             + self.axe
             + sum(getattr(self, key) for key in PRODUCE_KEYS)
@@ -561,6 +570,8 @@ class Inventory:
             "berries": self.berries,
             "berry_seeds": self.berry_seeds,
             "reeds": self.reeds,
+            "straw": self.straw,
+            "fur": self.fur,
             "twine": self.twine,
             "axe": self.axe,
             **{key: getattr(self, key) for key in SAPLING_ITEM_KEYS},
@@ -575,6 +586,7 @@ class Inventory:
     def reset(self) -> None:
         self.logs = self.hardwood_logs = self.wood = self.rock = self.meat = self.fish = 0
         self.mushrooms = self.honey = self.berries = self.berry_seeds = self.reeds = 0
+        self.straw = self.fur = 0
         self.twine = self.axe = self.spear = self.fishing_rod = self.hoe = self.knife = 0
         self.equipped_tool = None
         for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS:
@@ -598,6 +610,8 @@ class HomeStorage:
     berries: int = 0
     berry_seeds: int = 0
     reeds: int = 0
+    straw: int = 0
+    fur: int = 0
     wheat: int = 0
     flax: int = 0
     sage: int = 0
@@ -668,6 +682,7 @@ class HomeStorage:
     def reset(self) -> None:
         self.logs = self.hardwood_logs = self.wood = self.rock = self.meat = self.fish = 0
         self.mushrooms = self.honey = self.berries = self.berry_seeds = self.reeds = 0
+        self.straw = self.fur = 0
         self.twine = self.axe = self.spear = self.fishing_rod = self.hoe = self.knife = 0
         for key in TOOL_KEYS:
             if key not in ("axe",):
@@ -963,6 +978,8 @@ class Building:
     berries: int = 0
     berry_seeds: int = 0
     reeds: int = 0
+    straw: int = 0
+    fur: int = 0
     wheat: int = 0
     flax: int = 0
     sage: int = 0
@@ -1242,6 +1259,8 @@ class Building:
             + self.honey
             + self.berries
             + self.reeds
+            + self.straw
+            + self.fur
             + self.twine
             + self.axe
             + sum(getattr(self, key) for key in PRODUCE_KEYS)
@@ -1267,6 +1286,7 @@ class Building:
             BuildingKind.KITCHEN,
             BuildingKind.CRAFT_BENCH,
             BuildingKind.ALCHEMIST,
+            BuildingKind.TAILOR,
         )
 
     def is_splitter(self) -> bool:
@@ -1294,6 +1314,8 @@ class Building:
             return CRAFT_BENCH_RECIPES
         if self.kind == BuildingKind.ALCHEMIST:
             return ALCHEMIST_RECIPES
+        if self.kind == BuildingKind.TAILOR:
+            return TAILOR_RECIPES
         if self.kind == BuildingKind.FORESTER:
             return FORESTER_RECIPES
         if self.kind == BuildingKind.HUNTER:
@@ -1541,6 +1563,8 @@ class Building:
             return CRAFT_BENCH_INPUT_KEYS
         if self.kind == BuildingKind.ALCHEMIST:
             return ALCHEMIST_INPUT_KEYS
+        if self.kind == BuildingKind.TAILOR:
+            return TAILOR_INPUT_KEYS
         return ()
 
     def processor_output_keys(self) -> tuple[str, ...]:
@@ -1552,6 +1576,8 @@ class Building:
             return CRAFT_BENCH_OUTPUT_KEYS
         if self.kind == BuildingKind.ALCHEMIST:
             return ALCHEMIST_OUTPUT_KEYS
+        if self.kind == BuildingKind.TAILOR:
+            return TAILOR_OUTPUT_KEYS
         return ()
 
     def input_stored_total(self) -> int:
@@ -1846,6 +1872,8 @@ class Building:
                 "berries",
                 "berry_seeds",
                 "reeds",
+                "straw",
+                "fur",
                 "twine",
                 "axe",
             ) + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS
@@ -1856,13 +1884,13 @@ class Building:
         if self.kind == BuildingKind.MASON:
             return ("rock",)
         if self.kind == BuildingKind.HUNTER:
-            return ("meat",)
+            return ("meat", "fur")
         if self.kind == BuildingKind.FISHER:
             return ("fish",)
         if self.kind == BuildingKind.FORAGER:
             return ("wood", *_FORAGE_KEYS)
         if self.kind == BuildingKind.FARM:
-            return PRODUCE_KEYS + SEED_KEYS
+            return PRODUCE_KEYS + SEED_KEYS + ("straw",)
         if self.kind == BuildingKind.MILL:
             return MILL_INPUT_KEYS + MILL_OUTPUT_KEYS
         if self.kind == BuildingKind.KITCHEN:
@@ -1871,6 +1899,8 @@ class Building:
             return CRAFT_BENCH_INPUT_KEYS + CRAFT_BENCH_OUTPUT_KEYS
         if self.kind == BuildingKind.ALCHEMIST:
             return ALCHEMIST_INPUT_KEYS + ALCHEMIST_OUTPUT_KEYS
+        if self.kind == BuildingKind.TAILOR:
+            return TAILOR_INPUT_KEYS + TAILOR_OUTPUT_KEYS
         if self.kind == BuildingKind.FIELD:
             return ()
         return ()
@@ -1886,7 +1916,7 @@ class Building:
         if self.kind == BuildingKind.FORAGER:
             return ("wood", *_FORAGE_KEYS)
         if self.kind == BuildingKind.FARM:
-            return PRODUCE_KEYS
+            return PRODUCE_KEYS + ("straw",)
         if self.is_processor():
             # Produce first, then inputs no enabled recipe uses. Do NOT haul excess
             # stock of active ingredients — that fights supply stockpiling.
@@ -2036,6 +2066,7 @@ class Building:
             BuildingKind.KITCHEN,
             BuildingKind.CRAFT_BENCH,
             BuildingKind.ALCHEMIST,
+            BuildingKind.TAILOR,
         ):
             return ()
         if self.kind == BuildingKind.FORESTER:

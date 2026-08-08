@@ -44,6 +44,10 @@ TERRAIN_FILL_MODE: str = "procedural"
 # False (default), runtime uses SVG so class recolour / omit / scale work;
 # PNG export + shade pipeline stays available via export_icons_png.py.
 ICON_USE_PNG: bool = False
+# After rasterising building SVGs, bake stipple once at full-zoom size
+# (CELL_SIZE * ZOOM_MAX * BUILDING_FOOTPRINT) into _stipple_tmp/; lower zooms
+# nearest-neighbour scale that bake so max zoom stays 1:1 sharp.
+ICON_BUILDING_STIPPLE: bool = True
 
 # Camera
 ZOOM_MIN: float = 0.35
@@ -174,6 +178,11 @@ BUILDING_STORAGE: dict[str, BuildingStorageSpec] = {
         input_capacity=_PROC_IN,
         output_capacity=_PROC_OUT,
     ),
+    "tailor": BuildingStorageSpec(
+        capacity=_PROC_IN + _PROC_OUT,
+        input_capacity=_PROC_IN,
+        output_capacity=_PROC_OUT,
+    ),
 }
 
 
@@ -196,6 +205,8 @@ CRAFT_BENCH_INPUT_CAPACITY: int = BUILDING_STORAGE["craft_bench"].input_capacity
 CRAFT_BENCH_OUTPUT_CAPACITY: int = BUILDING_STORAGE["craft_bench"].output_capacity
 ALCHEMIST_INPUT_CAPACITY: int = BUILDING_STORAGE["alchemist"].input_capacity
 ALCHEMIST_OUTPUT_CAPACITY: int = BUILDING_STORAGE["alchemist"].output_capacity
+TAILOR_INPUT_CAPACITY: int = BUILDING_STORAGE["tailor"].input_capacity
+TAILOR_OUTPUT_CAPACITY: int = BUILDING_STORAGE["tailor"].output_capacity
 FARM_SEED_CAPACITY: int = BUILDING_STORAGE["farm"].seed_capacity
 
 FORESTER_COST_WOOD: int = 2
@@ -222,6 +233,8 @@ CRAFT_BENCH_COST_WOOD: int = 2
 CRAFT_BENCH_COST_ROCK: int = 2
 ALCHEMIST_COST_WOOD: int = 2
 ALCHEMIST_COST_ROCK: int = 2
+TAILOR_COST_WOOD: int = 2
+TAILOR_COST_ROCK: int = 2
 # Chebyshev distance from Farm to a Field plot for workers to manage it.
 FARM_FIELD_RADIUS: int = 20
 
@@ -313,12 +326,12 @@ COLOUR_BOAR: Colour = (90, 70, 55)
 COLOUR_BEE: Colour = (110, 89, 56)  # match bee / hive SVG browns
 COLOUR_RABBIT: Colour = (110, 89, 56)  # match rabbit / burrow SVG browns
 COLOUR_REED: Colour = (70, 120, 80)
-COLOUR_WORKSTATION: Colour = (90, 90, 140)
-COLOUR_FORESTER: Colour = (40, 110, 55)
-COLOUR_MASON: Colour = (120, 115, 100)
-COLOUR_HUNTER: Colour = (140, 70, 50)
-COLOUR_FORAGER: Colour = (70, 130, 90)
-COLOUR_FISHER: Colour = (50, 100, 150)
+COLOUR_WORKSTATION: Colour = (106, 100, 128)  # match workstation.svg walls
+COLOUR_FORESTER: Colour = (106, 122, 90)
+COLOUR_MASON: Colour = (136, 136, 128)
+COLOUR_HUNTER: Colour = (154, 128, 112)
+COLOUR_FORAGER: Colour = (106, 120, 96)
+COLOUR_FISHER: Colour = (88, 112, 136)
 COLOUR_MEAT: Colour = (180, 60, 70)
 COLOUR_FISH: Colour = (80, 160, 200)
 COLOUR_MUSHROOM: Colour = (200, 170, 140)
@@ -335,12 +348,13 @@ COLOUR_TASK_HUNT: Colour = (200, 90, 70)
 COLOUR_TASK_FORAGE: Colour = (100, 160, 120)
 COLOUR_TASK_FISH: Colour = (60, 140, 190)
 COLOUR_TASK_FARM: Colour = (150, 130, 60)
-COLOUR_FARM: Colour = (160, 130, 70)
-COLOUR_FIELD: Colour = (140, 120, 55)
-COLOUR_MILL: Colour = (170, 150, 100)
-COLOUR_KITCHEN: Colour = (180, 100, 70)
-COLOUR_CRAFT_BENCH: Colour = (150, 120, 80)
-COLOUR_ALCHEMIST: Colour = (120, 90, 150)
+COLOUR_FARM: Colour = (177, 147, 105)  # match farm.svg
+COLOUR_FIELD: Colour = (176, 160, 96)
+COLOUR_MILL: Colour = (176, 160, 112)
+COLOUR_KITCHEN: Colour = (160, 112, 88)
+COLOUR_CRAFT_BENCH: Colour = (160, 144, 112)
+COLOUR_ALCHEMIST: Colour = (154, 120, 184)
+COLOUR_TAILOR: Colour = (122, 152, 176)
 COLOUR_CROP: Colour = (110, 190, 80)
 
 COLOUR_TOOLBAR_BG: Colour = (36, 38, 44)
@@ -376,8 +390,8 @@ COLOUR_TREE_CANOPY: Colour = (34, 120, 45)
 COLOUR_TREE_TRUNK: Colour = (90, 55, 30)
 COLOUR_SAPLING: Colour = (140, 210, 90)
 COLOUR_ROCK_FEATURE: Colour = (130, 130, 140)
-COLOUR_HOME: Colour = (150, 90, 50)
-COLOUR_HOME_ROOF: Colour = (170, 60, 50)
+COLOUR_HOME: Colour = (158, 151, 142)  # match home/storehouse wall
+COLOUR_HOME_ROOF: Colour = (240, 161, 60)
 
 OVERLAY_ALPHA: int = 110
 COLOUR_DIVERSITY_LOW: Colour = (40, 40, 80)

@@ -68,6 +68,8 @@ RESOURCES: list[ResourceDef] = [
     ResourceDef("spices", "Spices", "wares", "spc"),
     ResourceDef("rock", "Rock", "wares", "rock"),
     ResourceDef("reeds", "Reeds", "wares", "reed"),
+    ResourceDef("straw", "Straw", "wares", "strw"),
+    ResourceDef("fur", "Fur", "wares", "fur"),
     *_CROP_PRODUCE_WARES,
     ResourceDef("wheat_flour", "Wheat flour", "wares", "w.fl"),
     ResourceDef("rye_flour", "Rye flour", "wares", "r.fl"),

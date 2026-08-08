@@ -1,13 +1,13 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="400" height="400"
-     data-home="0,0,40" data-anchor="20,20">
-  <title>hunter</title>
-  <desc>Isometric building; front two walls toward viewer. Classes: wall_l wall_r roof roof_dark door trim accent accent2 stem.</desc>
-  <g id="hunter">
-    <path id="wall_l" class="wall_l" d="M 8.80,33.00 L 20.00,38.60 L 20.00,29.83 L 8.80,24.23 Z" fill="#5a4030"/>
-    <path id="wall_r" class="wall_r" d="M 31.20,33.00 L 20.00,38.60 L 20.00,29.83 L 31.20,24.23 Z" fill="#8a6a48"/>
-    <path id="roof_dark" class="roof_dark" d="M 20.00,18.62 L 31.20,24.23 L 25.60,21.82 L 14.40,16.22 Z" fill="#6a3028"/>
-    <path id="roof" class="roof" d="M 8.80,24.23 L 20.00,29.83 L 25.60,21.82 L 14.40,16.22 Z" fill="#aa3c32"/>
-    <path id="accent" class="accent" d="M 24.20,33.25 L 22.45,35.10 L 22.45,30.88 L 24.20,29.35 Z" fill="#b43c46"/>
-  </g>
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" viewBox="0 0 40 40" width="400" height="400" data-home="0,0,40" data-anchor="20,20" version="1.1" id="svg8" sodipodi:docname="hunter.svg" inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)">
+  <defs id="defs8" />
+  <sodipodi:namedview id="namedview8" pagecolor="#ffffff" bordercolor="#000000" borderopacity="0.25" inkscape:showpageshadow="2" inkscape:pageopacity="0.0" inkscape:pagecheckerboard="0" inkscape:deskcolor="#d1d1d1" inkscape:zoom="2.1651451" inkscape:cx="234.6263" inkscape:cy="172.96762" inkscape:window-width="1083" inkscape:window-height="836" inkscape:window-x="0" inkscape:window-y="33" inkscape:window-maximized="0" inkscape:current-layer="svg8" />
+  <title id="title1">hunter</title>
+  <desc id="desc1">Simple cabin style (home/farm). Classes: wall_l wall_r roof roof_dark door accent accent2 body trim.</desc>
+  <path id="rect9" style="fill:#1e1602;fill-opacity:0.689815;stroke-width:0.1257" d="M 8.8606615,18.903932 29.767291,14.821157 25.870183,29.487171 6.7402833,29.06805 Z" sodipodi:nodetypes="ccccc" fill="#1e1602" fill-opacity="0.689815" />
+  <path d="M 7.8369112,16.507018 16.05761,16.524723 14.726276,32.497209 6.5350034,29.260966 Z" fill="#9a8070" id="path3" sodipodi:nodetypes="ccccc" style="fill:#9a8070;fill-opacity:1" fill-opacity="1" />
+  <path id="rect4" style="fill:#7d6658;fill-opacity:1" d="m 14.24456,20.06086 12.691022,-1.806816 -0.85586,11.238402 -11.549875,2.852867 z m 19.3,4.9" sodipodi:nodetypes="ccccc" fill="#7d6658" fill-opacity="1" />
+  <path d="m 18.726434,24.998088 3.719617,-1.046051 -0.0951,6.460764 -2.673566,0.62153 z" fill="#452905" id="path7" sodipodi:nodetypes="ccccc" />
+  <path class="accent" d="m 18.984456,13.094514 2.5,1.7 v -4.7 l -2.5,-1.2999996 z" fill="#b43c46" id="path8" />
+  <path id="rect8" style="fill:#8c9a70;fill-opacity:1;stroke-width:0.1257" d="M 7.5004556,16.282096 19.06926,12.528415 27.539674,18.59551 13.693765,20.981543 Z" sodipodi:nodetypes="ccccc" fill="#8c9a70" fill-opacity="1" />
 </svg>

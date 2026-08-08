@@ -11,6 +11,11 @@ Coordinate convention (Y down, matching the game)
 * PNGs are baked with ``python export_icons_png.py`` (see ``_png_anchors.json``).
   With ``settings.ICON_USE_PNG`` (default False), map/UI use SVG. Set True to
   prefer baked ``.png`` (recolour / omit / scale ignored for that blit).
+  Buildings can get a soft per-shape TL→BR stipple gradient via
+  ``settings.ICON_BUILDING_STIPPLE``. Stipple is baked once at full-zoom
+  building size (``CELL_SIZE * ZOOM_MAX * BUILDING_FOOTPRINT``) into
+  ``assets/icons/_stipple_tmp/``; lower zooms nearest-neighbour scale that
+  bake so max zoom stays 1:1 pixel-sharp.
 
 Icon variants (folder discovery)
 --------------------------------
@@ -46,6 +51,7 @@ import pygame
 
 _ICONS_DIR = Path(__file__).resolve().parent / "assets" / "icons"
 _PNG_MANIFEST_PATH = _ICONS_DIR / "_png_anchors.json"
+_STIPPLE_TMP_DIR = _ICONS_DIR / "_stipple_tmp"
 
 # One map cell in SVG / export units (home-cell edge).
 ICON_CELL: float = 40.0
@@ -286,9 +292,24 @@ def _blit_paint(
     surf: pygame.Surface,
     draw,
     paint: Paint | None,
+    *,
+    stipple: bool = False,
 ) -> None:
-    """Draw with optional alpha onto an SRCALPHA surface."""
+    """Draw with optional alpha onto an SRCALPHA surface.
+
+    When ``stipple`` is True the paint is drawn to a temp buffer, soft
+    TL→BR stipple-shaded as its own shape, then composited.
+    """
     if paint is None:
+        return
+    if stipple:
+        tmp = pygame.Surface(surf.get_size(), pygame.SRCALPHA)
+        if paint[3] >= 255:
+            draw(tmp, paint[:3])
+        else:
+            draw(tmp, paint)
+        tmp = stipple_shade_surface(tmp)
+        surf.blit(tmp, (0, 0))
         return
     if paint[3] >= 255:
         draw(surf, paint[:3])
@@ -743,6 +764,8 @@ def _rasterise_svg(
     recolour: Recolour,
     class_scales: dict[str, float],
     omit_classes: set[str],
+    *,
+    stipple: bool = False,
 ) -> IconImage:
     tree = ET.parse(path)
     root = tree.getroot()
@@ -804,7 +827,9 @@ def _rasterise_svg(
             xs = [p[0] for p in corners]
             ys = [p[1] for p in corners]
             rect = pygame.Rect(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
-            _blit_paint(surf, lambda s, c: pygame.draw.rect(s, c, rect), fill)
+            _blit_paint(
+                surf, lambda s, c: pygame.draw.rect(s, c, rect), fill, stipple=stipple
+            )
             if stroke is not None:
                 sw = _stroke_width(elem, scale)
                 _blit_paint(
@@ -820,7 +845,12 @@ def _rasterise_svg(
             # Approximate radius under uniform scale; non-uniform transforms use avg.
             edge = map_xy(cx + r, cy)
             pr = max(1, int(round(math.hypot(edge[0] - c[0], edge[1] - c[1]))))
-            _blit_paint(surf, lambda s, col: pygame.draw.circle(s, col, c, pr), fill)
+            _blit_paint(
+                surf,
+                lambda s, col: pygame.draw.circle(s, col, c, pr),
+                fill,
+                stipple=stipple,
+            )
             if stroke is not None:
                 sw = _stroke_width(elem, scale)
                 _blit_paint(
@@ -841,7 +871,12 @@ def _rasterise_svg(
             prx = max(1, int(round(abs(ex[0] - c[0]))))
             pry = max(1, int(round(abs(ey[1] - c[1]))))
             rect = pygame.Rect(c[0] - prx, c[1] - pry, prx * 2, pry * 2)
-            _blit_paint(surf, lambda s, col: pygame.draw.ellipse(s, col, rect), fill)
+            _blit_paint(
+                surf,
+                lambda s, col: pygame.draw.ellipse(s, col, rect),
+                fill,
+                stipple=stipple,
+            )
             if stroke is not None:
                 sw = _stroke_width(elem, scale)
                 _blit_paint(
@@ -876,7 +911,12 @@ def _rasterise_svg(
             if len(pts) < 2:
                 return
             if tag == "polygon":
-                _blit_paint(surf, lambda s, col: pygame.draw.polygon(s, col, pts), fill)
+                _blit_paint(
+                    surf,
+                    lambda s, col: pygame.draw.polygon(s, col, pts),
+                    fill,
+                    stipple=stipple,
+                )
                 if stroke is not None:
                     sw = _stroke_width(elem, scale)
                     _blit_paint(
@@ -913,6 +953,7 @@ def _rasterise_svg(
                         surf,
                         lambda s, col, _pts=pts: pygame.draw.polygon(s, col, _pts),
                         fill,
+                        stipple=stipple,
                     )
                 if stroke is not None:
                     _blit_paint(
@@ -941,6 +982,112 @@ def _rasterise_svg(
     return IconImage(surface=surf, anchor_x=ax, anchor_y=ay)
 
 
+def stipple_shade_surface(surf: pygame.Surface) -> pygame.Surface:
+    """Soft TL→BR stipple gradient over a filled shape's own bounds.
+
+    Light speckles denser toward the top-left, dark speckles toward the
+    bottom-right. Transition is continuous (smoothstep) so there is no hard
+    lighting edge. Baked fill luminance still modulates intensity.
+    """
+    import numpy as np
+
+    w, h = surf.get_size()
+    if w < 2 or h < 2:
+        return surf
+
+    rgba = pygame.surfarray.array3d(surf).transpose(1, 0, 2).astype(np.float32)
+    alpha = pygame.surfarray.array_alpha(surf).T.astype(np.float32) / 255.0
+    mask = alpha > (24.0 / 255.0)
+    if int(mask.sum()) < 8:
+        return surf
+
+    yy, xx = np.mgrid[0:h, 0:w]
+    ys = yy[mask]
+    xs = xx[mask]
+    min_x = float(xs.min())
+    max_x = float(xs.max())
+    min_y = float(ys.min())
+    max_y = float(ys.max())
+    span_x = max(1.0, max_x - min_x)
+    span_y = max(1.0, max_y - min_y)
+    # 0 at top-left of this shape, 1 at bottom-right.
+    u = np.clip((xx.astype(np.float32) - min_x) / span_x, 0.0, 1.0)
+    v = np.clip((yy.astype(np.float32) - min_y) / span_y, 0.0, 1.0)
+    t = 0.5 * (u + v)
+    # Soften the diagonal so midtones blend — no hard light/dark cut.
+    t = t * t * (3.0 - 2.0 * t)
+
+    tone = (
+        0.299 * rgba[:, :, 0] + 0.587 * rgba[:, :, 1] + 0.114 * rgba[:, :, 2]
+    ) / 255.0
+
+    def _noise(salt: int) -> np.ndarray:
+        n = ((xx * 374761393 + yy * 668265263 + salt * 982451653) & 0xFFFFFFFF).astype(
+            np.uint32
+        )
+        n = ((n ^ (n >> 13)) * np.uint32(1274126177)) & 0xFFFFFFFF
+        return (n & 0xFFFFFF).astype(np.float32) / float(0xFFFFFF)
+
+    n1 = _noise(11)
+    n2 = _noise(29)
+    n3 = _noise(7)
+
+    # Continuous bright/dark probabilities: overlap in the middle, fade at ends.
+    bright_p = 0.38 * ((1.0 - t) ** 1.55) * (0.30 + 0.70 * tone)
+    dark_p = 0.42 * (t ** 1.55) * (0.40 + 0.60 * (1.0 - tone))
+    light_hit = mask & (n1 < bright_p)
+    dark_hit = mask & (n2 < dark_p)
+
+    out = rgba.copy()
+    # Brighten toward white with a slight warm bias (stronger near TL).
+    amt = (0.10 + 0.26 * (1.0 - t)) * (0.45 + 0.55 * (n3 > 0.45).astype(np.float32))
+    for c, warm in ((0, 1.0), (1, 0.92), (2, 0.78)):
+        out[:, :, c] = np.where(
+            light_hit,
+            np.clip(rgba[:, :, c] + (255.0 - rgba[:, :, c]) * amt * warm, 0, 255),
+            out[:, :, c],
+        )
+    hot = light_hit & (n3 > 0.90) & (t < 0.45)
+    out[:, :, 0] = np.where(hot, np.clip(out[:, :, 0] + 14, 0, 255), out[:, :, 0])
+    out[:, :, 1] = np.where(hot, np.clip(out[:, :, 1] + 9, 0, 255), out[:, :, 1])
+
+    # Darken toward shade (stronger near BR); keep a touch of blue in deep dots.
+    dark = (0.08 + 0.30 * t) * (0.50 + 0.50 * (n3 < 0.55).astype(np.float32))
+    out[:, :, 0] = np.where(
+        dark_hit, np.clip(out[:, :, 0] * (1.0 - dark), 0, 255), out[:, :, 0]
+    )
+    out[:, :, 1] = np.where(
+        dark_hit, np.clip(out[:, :, 1] * (1.0 - dark * 0.95), 0, 255), out[:, :, 1]
+    )
+    out[:, :, 2] = np.where(
+        dark_hit, np.clip(out[:, :, 2] * (1.0 - dark * 0.85), 0, 255), out[:, :, 2]
+    )
+
+    # Soften a fraction of stipple pixels so grain isn't pure salt-and-pepper.
+    soft = out.copy()
+    blur = mask & (n3 >= 0.62)
+    for c in range(3):
+        acc = np.zeros((h, w), dtype=np.float32)
+        cnt = np.zeros((h, w), dtype=np.float32)
+        ch = out[:, :, c]
+        for dy in (-1, 0, 1):
+            for dx_ in (-1, 0, 1):
+                rolled = np.roll(np.roll(ch, dy, axis=0), dx_, axis=1)
+                mroll = np.roll(
+                    np.roll(mask.astype(np.float32), dy, axis=0), dx_, axis=1
+                )
+                acc += rolled * mroll
+                cnt += mroll
+        mean = np.where(cnt > 0, acc / np.maximum(cnt, 1.0), ch)
+        soft[:, :, c] = np.where(blur, 0.75 * ch + 0.25 * mean, ch)
+
+    result = surf.copy()
+    pix = pygame.surfarray.pixels3d(result)
+    pix[:, :, :] = soft.transpose(1, 0, 2).astype(np.uint8)
+    del pix
+    return result
+
+
 def _cache_key(
     name: str,
     cell_px: int,
@@ -948,11 +1095,106 @@ def _cache_key(
     class_scales: dict[str, float] | None,
     omit_classes: frozenset[str] | None,
     mtime_ns: int,
+    *,
+    stipple: bool = False,
 ) -> tuple:
     rc = tuple(sorted((k, v) for k, v in (recolour or {}).items()))
     sc = tuple(sorted((k, round(v, 3)) for k, v in (class_scales or {}).items()))
     oc = tuple(sorted(omit_classes or ()))
-    return (name, cell_px, rc, sc, oc, mtime_ns)
+    return (name, cell_px, rc, sc, oc, mtime_ns, bool(stipple))
+
+
+def _stipple_native_px() -> int:
+    """Bake size for building stipple — 1:1 at full zoom (footprint draw size)."""
+    try:
+        from settings import BUILDING_FOOTPRINT, CELL_SIZE, ZOOM_MAX
+
+        return max(
+            4,
+            int(round(float(CELL_SIZE) * float(ZOOM_MAX) * float(BUILDING_FOOTPRINT))),
+        )
+    except Exception:
+        return max(4, int(ICON_CELL) * 3)
+
+
+def _stipple_variant_token(
+    recolour: Recolour | None,
+    class_scales: dict[str, float] | None,
+    omit_classes: frozenset[str] | None,
+) -> str:
+    """Stable short id for tmp PNG filenames (recolour / scale / omit)."""
+    import hashlib
+
+    payload = json.dumps(
+        {
+            "rc": sorted((k, list(v)) for k, v in (recolour or {}).items()),
+            "sc": sorted((k, round(v, 3)) for k, v in (class_scales or {}).items()),
+            "oc": sorted(omit_classes or ()),
+        },
+        separators=(",", ":"),
+    )
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:10]
+
+
+def _stipple_tmp_paths(
+    name: str, mtime_ns: int, token: str, *, tile_px: int
+) -> tuple[Path, Path]:
+    stem = f"{name}_{mtime_ns}_{int(tile_px)}_{token}"
+    return _STIPPLE_TMP_DIR / f"{stem}.png", _STIPPLE_TMP_DIR / f"{stem}.json"
+
+
+def _scale_icon_image(icon: IconImage, cell_px: int, native_px: int) -> IconImage:
+    """Nearest-neighbour scale so stipple pixels stay sharp (no smooth blur)."""
+    scale = float(cell_px) / float(max(1, native_px))
+    if abs(scale - 1.0) <= 1e-6:
+        return icon
+    tw = max(1, int(round(icon.surface.get_width() * scale)))
+    th = max(1, int(round(icon.surface.get_height() * scale)))
+    surf = pygame.transform.scale(icon.surface, (tw, th))
+    return IconImage(
+        surface=surf,
+        anchor_x=int(round(icon.anchor_x * scale)),
+        anchor_y=int(round(icon.anchor_y * scale)),
+    )
+
+
+def _load_stipple_tmp(
+    png_path: Path, meta_path: Path, *, tile_px: int
+) -> IconImage | None:
+    if not png_path.is_file() or not meta_path.is_file():
+        return None
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        if int(meta.get("tile_px", -1)) != int(tile_px):
+            return None
+        surf = pygame.image.load(str(png_path)).convert_alpha()
+    except (OSError, ValueError, json.JSONDecodeError, pygame.error, TypeError):
+        return None
+    return IconImage(
+        surface=surf,
+        anchor_x=int(meta.get("anchor_x", surf.get_width() // 2)),
+        anchor_y=int(meta.get("anchor_y", surf.get_height() // 2)),
+    )
+
+
+def _save_stipple_tmp(icon: IconImage, png_path: Path, meta_path: Path, *, tile_px: int) -> None:
+    try:
+        _STIPPLE_TMP_DIR.mkdir(parents=True, exist_ok=True)
+        pygame.image.save(icon.surface, str(png_path))
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "anchor_x": icon.anchor_x,
+                    "anchor_y": icon.anchor_y,
+                    "tile_px": int(tile_px),
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
 
 
 _SURFACE_CACHE: dict[tuple, IconImage] = {}
@@ -1078,6 +1320,7 @@ def get_icon(
     class_scales: dict[str, float] | None = None,
     omit_classes: Iterable[str] | None = None,
     prefer_png: bool | None = None,
+    stipple: bool = False,
 ) -> IconImage:
     """Return a cached icon for ``name`` at ``cell_px`` pixels per map cell.
 
@@ -1086,12 +1329,18 @@ def get_icon(
     (baked colours; class tint / omit / scale do not apply). When False,
     ``.svg`` is preferred whenever present so the SVG pipeline runs; PNG is
     only a fallback if no SVG exists.
+
+    ``stipple`` bakes a soft per-shape TL→BR gradient once at full-zoom
+    building size, writing ``_stipple_tmp`` PNGs, then nearest-neighbour
+    scales for lower zoom (max zoom stays 1:1).
     """
     cell_px = max(4, int(cell_px))
     omit = frozenset(omit_classes) if omit_classes else None
     png_path = _ICONS_DIR / f"{name}.png"
     svg_path = _ICONS_DIR / f"{name}.svg"
     want_png = _prefer_png() if prefer_png is None else bool(prefer_png)
+    want_stipple = bool(stipple)
+    tile_px = _stipple_native_px() if want_stipple else cell_px
 
     if want_png and png_path.is_file():
         path = png_path
@@ -1112,14 +1361,66 @@ def get_icon(
     if path.stat().st_size == 0:
         raise FileNotFoundError(f"Icon file is empty: {path}")
     mtime_ns = path.stat().st_mtime_ns
-    key = _cache_key(f"{source}:{name}", cell_px, recolour, class_scales, omit, mtime_ns)
+
+    # Stipple: serve from a single tile-resolution bake; scale for zoom.
+    if want_stipple and cell_px != tile_px:
+        base = get_icon(
+            name,
+            tile_px,
+            recolour=recolour,
+            class_scales=class_scales,
+            omit_classes=omit,
+            prefer_png=prefer_png,
+            stipple=True,
+        )
+        key = _cache_key(
+            f"{source}:{name}",
+            cell_px,
+            recolour,
+            class_scales,
+            omit,
+            mtime_ns,
+            stipple=True,
+        )
+        cached = _SURFACE_CACHE.get(key)
+        if cached is not None:
+            return cached
+        icon = _scale_icon_image(base, cell_px, tile_px)
+        _SURFACE_CACHE[key] = icon
+        return icon
+
+    key = _cache_key(
+        f"{source}:{name}",
+        cell_px,
+        recolour,
+        class_scales,
+        omit,
+        mtime_ns,
+        stipple=want_stipple,
+    )
     cached = _SURFACE_CACHE.get(key)
     if cached is not None:
         return cached
+
+    if want_stipple:
+        token = _stipple_variant_token(recolour, class_scales, omit)
+        tmp_png, tmp_meta = _stipple_tmp_paths(
+            f"{source}_{name}", mtime_ns, token, tile_px=tile_px
+        )
+        loaded = _load_stipple_tmp(tmp_png, tmp_meta, tile_px=tile_px)
+        if loaded is not None:
+            _SURFACE_CACHE[key] = loaded
+            return loaded
+
     if source == "png":
         icon = _load_png_icon(name, cell_px)
         if icon is None:
             raise FileNotFoundError(f"Icon PNG failed to load: {path}")
+        if want_stipple:
+            shaded = stipple_shade_surface(icon.surface)
+            icon = IconImage(
+                surface=shaded, anchor_x=icon.anchor_x, anchor_y=icon.anchor_y
+            )
     else:
         try:
             icon = _rasterise_svg(
@@ -1128,11 +1429,21 @@ def get_icon(
                 recolour or {},
                 class_scales or {},
                 set(omit) if omit else set(),
+                stipple=want_stipple,
             )
         except ET.ParseError as exc:
             raise FileNotFoundError(f"Icon SVG is invalid ({path.name}): {exc}") from exc
+
+    if want_stipple:
+        token = _stipple_variant_token(recolour, class_scales, omit)
+        tmp_png, tmp_meta = _stipple_tmp_paths(
+            f"{source}_{name}", mtime_ns, token, tile_px=tile_px
+        )
+        _save_stipple_tmp(icon, tmp_png, tmp_meta, tile_px=tile_px)
+
     _SURFACE_CACHE[key] = icon
     return icon
+
 
 
 def blit_icon(
@@ -1147,6 +1458,7 @@ def blit_icon(
     class_scales: dict[str, float] | None = None,
     omit_classes: Iterable[str] | None = None,
     prefer_png: bool | None = None,
+    stipple: bool = False,
 ) -> pygame.Rect:
     """Blit icon so its anchor lands on (cx, cy).
 
@@ -1162,6 +1474,7 @@ def blit_icon(
             class_scales=class_scales,
             omit_classes=omit_classes,
             prefer_png=prefer_png,
+            stipple=stipple,
         )
     except (FileNotFoundError, OSError):
         return pygame.Rect(cx, cy, 0, 0)
@@ -1207,6 +1520,43 @@ def preload(
     return len(_SURFACE_CACHE) - before
 
 
+def preload_building_stipple(
+    names: Iterable[str] | None = None,
+    *,
+    tile_px: int | None = None,
+) -> int:
+    """Bake building stipple PNGs once at full-zoom pixel size.
+
+    Writes ``assets/icons/_stipple_tmp/`` and warms the surface cache so zoom
+    only nearest-neighbour scales. No-op when ``ICON_BUILDING_STIPPLE`` is False.
+    """
+    try:
+        from settings import ICON_BUILDING_STIPPLE
+    except Exception:
+        ICON_BUILDING_STIPPLE = True
+    if not ICON_BUILDING_STIPPLE:
+        return 0
+    px = max(4, int(tile_px if tile_px is not None else _stipple_native_px()))
+    refresh_variant_index()
+    bases = tuple(names) if names is not None else BUILDING_ICON_NAMES
+    targets: list[str] = []
+    seen: set[str] = set()
+    for base in bases:
+        variants = variant_names(base)
+        stems = variants if variants else ((base,) if _has_icon_file(base) else ())
+        for stem in stems:
+            if stem not in seen:
+                targets.append(stem)
+                seen.add(stem)
+    before = len(_SURFACE_CACHE)
+    for name in targets:
+        try:
+            get_icon(name, px, stipple=True)
+        except (FileNotFoundError, OSError):
+            continue
+    return len(_SURFACE_CACHE) - before
+
+
 # Logical icon ids used by draw code (bases; numbered variants are discovered).
 ICON_TREE_ROUND = "tree_round"
 ICON_TREE_CONE = "tree_cone"
@@ -1221,7 +1571,7 @@ ICON_CROP = "crop_plant"
 ICON_CROP_DENSE = "crop_plant_dense"
 ICON_FLOWER = "flower_plant"
 ICON_FLOWER_DENSE = "flower_plant_dense"
-ICON_HOME = "home"
+ICON_HOME = "storehouse"
 ICON_WORKSTATION = "workstation"
 ICON_FORESTER = "forester"
 ICON_MASON = "mason"
@@ -1234,7 +1584,28 @@ ICON_MILL = "mill"
 ICON_KITCHEN = "kitchen"
 ICON_CRAFT_BENCH = "craft_bench"
 ICON_ALCHEMIST = "alchemist"
+ICON_TAILOR = "tailor"
 ICON_CONSTRUCTION = "construction_site"
+
+# Buildings that use stipple; baked at CELL_SIZE on map/game load.
+BUILDING_ICON_NAMES: tuple[str, ...] = (
+    ICON_HOME,
+    ICON_WORKSTATION,
+    ICON_FORESTER,
+    ICON_MASON,
+    ICON_HUNTER,
+    ICON_FORAGER,
+    ICON_FISHER,
+    ICON_FARM,
+    ICON_FIELD,
+    ICON_MILL,
+    ICON_KITCHEN,
+    ICON_CRAFT_BENCH,
+    ICON_ALCHEMIST,
+    ICON_TAILOR,
+    ICON_CONSTRUCTION,
+)
+
 ICON_DEER_MALE = "deer_male"
 ICON_DEER_FEMALE = "deer_female"
 ICON_BOAR_MALE = "boar_male"
@@ -1292,6 +1663,7 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_KITCHEN,
     ICON_CRAFT_BENCH,
     ICON_ALCHEMIST,
+    ICON_TAILOR,
     ICON_CONSTRUCTION,
     ICON_DEER_MALE,
     ICON_DEER_FEMALE,
@@ -1375,6 +1747,7 @@ def icon_base_for_feature(
         FeatureType.KITCHEN: ICON_KITCHEN,
         FeatureType.CRAFT_BENCH: ICON_CRAFT_BENCH,
         FeatureType.ALCHEMIST: ICON_ALCHEMIST,
+        FeatureType.TAILOR: ICON_TAILOR,
         FeatureType.CONSTRUCTION_SITE: ICON_CONSTRUCTION,
         FeatureType.MUSHROOM: ICON_MUSHROOM,
         FeatureType.WOOD_BUSH: ICON_WOOD,

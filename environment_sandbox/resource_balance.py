@@ -230,6 +230,10 @@ COLONY_RABBIT_CROP_EAT_CHANCE: float = 0.30
 COLONY_HARVEST_COOLDOWN: int = 8
 # Hunter: one level drop yields this much meat (one hunt = one level).
 RABBIT_MEAT_PER_LEVEL: int = 3
+# Hunter: fur from each rabbit colony level drop (alongside meat).
+RABBIT_FUR_PER_LEVEL: int = 1
+# Farm: straw byproduct when harvesting wheat or rye.
+GRAIN_STRAW_YIELD: int = 2
 # Forager: one level drop yields this much honey (one collect = one level).
 HONEY_PER_BEE_LEVEL: int = 5
 # Rabbit members: pause this many ticks after each one-tile hop.

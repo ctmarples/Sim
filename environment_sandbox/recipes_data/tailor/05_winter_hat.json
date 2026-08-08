@@ -1,0 +1,12 @@
+{
+  "name": "winter_hat",
+  "label": "Winter hat",
+  "inputs": {"fur": 1, "linen_fabric": 1},
+  "outputs": {"winter_hat": 1},
+  "icon_key": "winter_hat",
+  "resource": {
+    "label": "Winter hat",
+    "group": "wares",
+    "short": "w.hat"
+  }
+}

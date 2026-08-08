@@ -1,0 +1,12 @@
+{
+  "name": "sun_hat",
+  "label": "Sun hat",
+  "inputs": {"linen_thread": 1, "straw": 2},
+  "outputs": {"sun_hat": 1},
+  "icon_key": "sun_hat",
+  "resource": {
+    "label": "Sun hat",
+    "group": "wares",
+    "short": "s.hat"
+  }
+}

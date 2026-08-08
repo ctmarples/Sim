@@ -1,0 +1,12 @@
+{
+  "name": "linen_fabric",
+  "label": "Linen fabric",
+  "inputs": {"linen_thread": 4},
+  "outputs": {"linen_fabric": 1},
+  "icon_key": "linen_fabric",
+  "resource": {
+    "label": "Linen fabric",
+    "group": "wares",
+    "short": "l.fab"
+  }
+}

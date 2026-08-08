@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="400" height="400"
+     data-home="0,0,40" data-anchor="20,20">
+  <title>fisher</title>
+  <desc>Isometric building; front two walls toward viewer. Classes: wall_l wall_r roof roof_dark door trim accent accent2 stem.</desc>
+  <g id="fisher">
+    <path id="wall_l" class="wall_l" d="M 8.80,33.00 L 20.00,38.60 L 20.00,30.15 L 8.80,24.55 Z" fill="#5a4030"/>
+    <path id="wall_r" class="wall_r" d="M 31.20,33.00 L 20.00,38.60 L 20.00,30.15 L 31.20,24.55 Z" fill="#8a6a48"/>
+    <path id="roof_dark" class="roof_dark" d="M 20.00,18.95 L 31.20,24.55 L 25.60,22.80 L 14.40,17.20 Z" fill="#6a3028"/>
+    <path id="roof" class="roof" d="M 8.80,24.55 L 20.00,30.15 L 25.60,22.80 L 14.40,17.20 Z" fill="#aa3c32"/>
+    <path id="accent" class="accent" d="M 27.70,30.52 L 24.55,33.08 L 22.10,33.32 L 24.55,31.13 Z" fill="#50a0c8"/>
+  </g>
+</svg>

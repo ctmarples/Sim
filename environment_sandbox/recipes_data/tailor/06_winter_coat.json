@@ -1,0 +1,12 @@
+{
+  "name": "winter_coat",
+  "label": "Winter coat",
+  "inputs": {"fur": 2, "linen_fabric": 2},
+  "outputs": {"winter_coat": 1},
+  "icon_key": "winter_coat",
+  "resource": {
+    "label": "Winter coat",
+    "group": "wares",
+    "short": "coat"
+  }
+}

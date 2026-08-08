@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="400" height="400">
+  <title>sun_hat</title>
+  <ellipse class="body" cx="20" cy="26" rx="14" ry="4" fill="#d8c070"/>
+  <ellipse class="body" cx="20" cy="22" rx="8" ry="5" fill="#e8d898"/>
+  <ellipse class="body" cx="20" cy="20" rx="5" ry="2.5" fill="#c8b060"/>
+</svg>

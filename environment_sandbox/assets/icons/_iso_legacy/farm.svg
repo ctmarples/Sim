@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="400" height="400"
+     data-home="0,0,40" data-anchor="20,20">
+  <title>farm</title>
+  <desc>Isometric building; front two walls toward viewer. Classes: wall_l wall_r roof roof_dark door trim accent accent2 stem.</desc>
+  <g id="farm">
+    <path id="wall_l" class="wall_l" d="M 8.80,33.00 L 20.00,38.60 L 20.00,28.52 L 8.80,22.92 Z" fill="#5a4030"/>
+    <path id="wall_r" class="wall_r" d="M 31.20,33.00 L 20.00,38.60 L 20.00,28.52 L 31.20,22.92 Z" fill="#8a6a48"/>
+    <path id="roof_dark" class="roof_dark" d="M 20.00,17.32 L 31.20,22.92 L 25.60,18.57 L 14.40,12.97 Z" fill="#6a3028"/>
+    <path id="roof" class="roof" d="M 8.80,22.92 L 20.00,28.52 L 25.60,18.57 L 14.40,12.97 Z" fill="#aa3c32"/>
+    <path id="door" class="door" d="M 13.35,35.27 L 16.85,37.03 L 16.85,30.53 L 13.35,28.77 Z" fill="#4a3820"/>
+    <path id="stem_0" class="stem" d="M 22.10,36.57 L 22.10,30.72" fill="none" stroke="#6ebe50" stroke-width="1.5" stroke-linecap="round"/>
+    <path id="stem_1" class="stem" d="M 21.05,37.10 L 21.05,31.58" fill="none" stroke="#6ebe50" stroke-width="1.5" stroke-linecap="round"/>
+  </g>
+</svg>

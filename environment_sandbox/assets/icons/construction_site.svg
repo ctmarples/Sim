@@ -1,17 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="400" height="400"
      data-home="0,0,40" data-anchor="20,20">
-  <title>construction site</title>
-  <desc>Isometric building; front two walls toward viewer. Classes: wall_l wall_r roof roof_dark door trim accent accent2 stem.</desc>
-  <g id="construction_site">
-    <path id="body" class="body" d="M 20.00,27.07 L 31.20,32.67 L 20.00,38.27 L 8.80,32.67 Z" fill="#6a6a50"/>
-    <path id="post_0" class="accent" d="M 20.00,27.40 L 20.00,15.70" fill="none" stroke="#b4a050" stroke-width="1.6" stroke-linecap="round"/>
-    <path id="post_1" class="accent" d="M 31.20,33.00 L 31.20,21.30" fill="none" stroke="#b4a050" stroke-width="1.6" stroke-linecap="round"/>
-    <path id="post_2" class="accent" d="M 8.80,33.00 L 8.80,21.30" fill="none" stroke="#b4a050" stroke-width="1.6" stroke-linecap="round"/>
-    <path id="post_3" class="accent" d="M 20.00,38.60 L 20.00,26.90" fill="none" stroke="#b4a050" stroke-width="1.6" stroke-linecap="round"/>
-    <path id="beam_0" class="trim" d="M 20.00,15.70 L 31.20,21.30" fill="none" stroke="#8a8040" stroke-width="1.3" stroke-linecap="round"/>
-    <path id="beam_1" class="trim" d="M 31.20,21.30 L 20.00,26.90" fill="none" stroke="#8a8040" stroke-width="1.3" stroke-linecap="round"/>
-    <path id="beam_2" class="trim" d="M 20.00,26.90 L 8.80,21.30" fill="none" stroke="#8a8040" stroke-width="1.3" stroke-linecap="round"/>
-    <path id="beam_3" class="trim" d="M 8.80,21.30 L 20.00,15.70" fill="none" stroke="#8a8040" stroke-width="1.3" stroke-linecap="round"/>
-  </g>
+  <title>construction_site</title>
+  <desc>Cabin style variant. Accent classes only so baked fills are preserved.</desc>
+
+  <path d="M 9.0,18.0 L 31.0,15.5 L 30.0,33.0 L 9.0,34.0 Z" fill="#6a6a50" fill-opacity="0.3"/>
+  <path class="accent" d="M 10.5,33.5 L 10.5,13.5" stroke="#b4a050" stroke-width="1.8" stroke-linecap="round"/>
+  <path class="accent" d="M 20.0,34.0 L 20.0,10.0" stroke="#b4a050" stroke-width="1.6" stroke-linecap="round"/>
+  <path class="accent" d="M 29.5,32.5 L 29.5,12.0" stroke="#b4a050" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M 10.5,13.5 L 20.0,10.0 L 29.5,12.0" stroke="#8a8040" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+  <path d="M 10.5,20.5 L 29.5,18.5" stroke="#8a8040" stroke-width="1.3" stroke-linecap="round"/>
+  <path d="M 17.5,7.5 L 22.5,8.2 L 21.0,12.5 L 16.5,11.8 Z" fill="#f0a13c"/>
 </svg>

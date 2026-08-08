@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="400" height="400">
+  <title>winter_hat</title>
+  <ellipse class="body" cx="20" cy="28" rx="10" ry="3" fill="#8a6040"/>
+  <path class="body" d="M 10,26 Q 20,8 30,26 Z" fill="#a87850"/>
+  <circle class="body" cx="20" cy="10" r="3" fill="#c89870"/>
+  <ellipse class="body" cx="20" cy="26" rx="9" ry="2.5" fill="#6a4830"/>
+</svg>
