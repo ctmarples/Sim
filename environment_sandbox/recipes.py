@@ -108,6 +108,7 @@ HUNTER_RECIPES: tuple[Recipe, ...] = (
 
 FORAGER_RECIPES: tuple[Recipe, ...] = (
     Recipe("wood", {}, {"wood": 1}),
+    Recipe("rock", {}, {"rock": 1}),
     Recipe("berries", {}, {"berries": 1}),
     Recipe("mushrooms", {}, {"mushrooms": 1}),
     Recipe("honey", {}, {"honey": 1}),
@@ -138,6 +139,7 @@ RECIPE_LABELS: dict[str, str] = {
     "logs": "Logs",
     "hardwood_logs": "Hardwood logs",
     "wood": "Wood",
+    "rock": "Rock",
     "deer": "Deer",
     "boar": "Boar",
     "rabbit": "Rabbit",

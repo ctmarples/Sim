@@ -799,7 +799,8 @@ class World:
         self.bump_terrain()
 
     def _seed_wood_near_trees(self, rng: random.Random) -> None:
-        """Place fallen wood on empty soil-like tiles adjacent to trees."""
+        """Place fallen wood on empty tiles adjacent to trees (forest edges)."""
+        plantable = SOIL_LIKE + (TerrainType.GRASS, TerrainType.MEADOW)
         tree_tiles = [
             (x, y)
             for y in range(self.rows)
@@ -813,7 +814,7 @@ class World:
                 cell = self.cells[ny][nx]
                 if (
                     cell.feature == FeatureType.NONE
-                    and cell.terrain in SOIL_LIKE
+                    and cell.terrain in plantable
                     and rng.random() < WOOD_BUSH_SEED_CHANCE
                 ):
                     cell.feature = FeatureType.WOOD_BUSH

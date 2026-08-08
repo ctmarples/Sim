@@ -220,26 +220,35 @@ HUNTER_COST_ROCK: int = 2
 FORAGER_COST_WOOD: int = 2
 FORAGER_COST_ROCK: int = 2
 FISHER_COST_WOOD: int = 2
-FISHER_COST_ROCK: int = 2
+FISHER_COST_ROCK: int = 4
 FARM_COST_WOOD: int = 2
-FARM_COST_ROCK: int = 2
+FARM_COST_ROCK: int = 4
 FIELD_COST_WOOD: int = 1
 FIELD_COST_ROCK: int = 0
 MILL_COST_WOOD: int = 2
-MILL_COST_ROCK: int = 2
+MILL_COST_ROCK: int = 4
 KITCHEN_COST_WOOD: int = 2
-KITCHEN_COST_ROCK: int = 2
+KITCHEN_COST_ROCK: int = 4
 CRAFT_BENCH_COST_WOOD: int = 2
 CRAFT_BENCH_COST_ROCK: int = 2
-ALCHEMIST_COST_WOOD: int = 2
-ALCHEMIST_COST_ROCK: int = 2
-TAILOR_COST_WOOD: int = 2
-TAILOR_COST_ROCK: int = 2
+ALCHEMIST_COST_WOOD: int = 0
+ALCHEMIST_COST_ROCK: int = 4
+ALCHEMIST_COST_HARDWOOD: int = 4
+TAILOR_COST_WOOD: int = 0
+TAILOR_COST_ROCK: int = 4
+TAILOR_COST_HARDWOOD: int = 4
+WORKSTATION_COST_WOOD: int = 2
+WORKSTATION_COST_ROCK: int = 4
 # Chebyshev distance from Farm to a Field plot for workers to manage it.
 FARM_FIELD_RADIUS: int = 20
 
-STARTING_WOOD: int = 2
+STARTING_WOOD: int = 2  # processed wood (not logs)
 STARTING_ROCK: int = 2
+STARTING_TWINE: int = 5
+STARTING_VILLAGERS: int = 3
+# Fresh game boots from this save (terrain / height / wildlife), then strips
+# to storehouse-only + starting villagers.
+AUTOLOAD_SAVE: str = "valley_trial.json"
 BUILD_SECONDS_PER_ITEM: float = 2.0
 # Ticks of construction work required per wood/rock unit (at simulation ×1).
 BUILD_TICKS_PER_ITEM: int = int(FPS * BUILD_SECONDS_PER_ITEM)

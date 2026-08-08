@@ -6,6 +6,10 @@ from dataclasses import dataclass
 
 import pygame
 
+from building_unlock import (
+    building_cost,
+    visible_build_order,
+)
 from entities import (
     BUILDING_LABELS,
     WORK_MODE_LABELS,
@@ -28,35 +32,21 @@ from settings import (
     WINDOW_WIDTH,
 )
 
-BUILD_ORDER: list[BuildingKind | None] = [
-    BuildingKind.FORESTER,
-    BuildingKind.MASON,
-    BuildingKind.HUNTER,
-    BuildingKind.FORAGER,
-    BuildingKind.FISHER,
-    BuildingKind.FARM,
-    BuildingKind.FIELD,
-    BuildingKind.MILL,
-    BuildingKind.KITCHEN,
-    BuildingKind.CRAFT_BENCH,
-    BuildingKind.ALCHEMIST,
-    BuildingKind.TAILOR,
-    None,
-]
-
-_BUILD_SHORT: dict[BuildingKind, str] = {
-    BuildingKind.FORESTER: "For",
-    BuildingKind.MASON: "Mas",
-    BuildingKind.HUNTER: "Hunt",
-    BuildingKind.FORAGER: "Fora",
-    BuildingKind.FISHER: "Fish",
-    BuildingKind.FARM: "Farm",
-    BuildingKind.FIELD: "Field",
-    BuildingKind.MILL: "Mill",
-    BuildingKind.KITCHEN: "Kit",
-    BuildingKind.CRAFT_BENCH: "Crft",
-    BuildingKind.ALCHEMIST: "Alch",
-    BuildingKind.TAILOR: "Tail",
+# Icon stem per placeable building (matches assets/icons).
+_BUILD_ICON: dict[BuildingKind, str] = {
+    BuildingKind.FORAGER: "forager",
+    BuildingKind.CRAFT_BENCH: "craft_bench",
+    BuildingKind.HUNTER: "hunter",
+    BuildingKind.FORESTER: "forester",
+    BuildingKind.MASON: "mason",
+    BuildingKind.WORKSTATION: "workstation",
+    BuildingKind.FISHER: "fisher",
+    BuildingKind.FARM: "farm",
+    BuildingKind.FIELD: "field",
+    BuildingKind.KITCHEN: "kitchen",
+    BuildingKind.MILL: "mill",
+    BuildingKind.ALCHEMIST: "alchemist",
+    BuildingKind.TAILOR: "tailor",
 }
 
 
@@ -66,6 +56,7 @@ class ToolbarButton:
     label: str
     rect: pygame.Rect
     group: str = ""
+    kind: BuildingKind | None = None
 
 
 class Toolbar:
@@ -74,30 +65,67 @@ class Toolbar:
         self.font_small = pygame.font.SysFont("menlo", 12)
         self.file_menu_open = False
         self._hover: str | None = None
+        self._hover_kind: BuildingKind | None = None
         self._buttons: list[ToolbarButton] = []
         self._menu_buttons: list[ToolbarButton] = []
+        self._built_kinds: set[BuildingKind] = set()
+        self._icon_cache: dict[str, pygame.Surface] = {}
+        self._rebuild_static()
+
+    def set_built_kinds(self, built: set[BuildingKind]) -> None:
+        """Refresh build buttons when unlock state changes."""
+        if built == self._built_kinds:
+            return
+        self._built_kinds = set(built)
         self._rebuild_static()
 
     def _make_btn(
-        self, action: str, label: str, x: int, y: int, w: int, h: int, group: str = ""
+        self,
+        action: str,
+        label: str,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        group: str = "",
+        kind: BuildingKind | None = None,
     ) -> ToolbarButton:
-        return ToolbarButton(action, label, pygame.Rect(x, y, w, h), group)
+        return ToolbarButton(action, label, pygame.Rect(x, y, w, h), group, kind)
+
+    def _build_icon(self, stem: str, size: int = 20) -> pygame.Surface | None:
+        key = f"{stem}:{size}"
+        cached = self._icon_cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            from icons import get_icon
+
+            icon = get_icon(stem, size)
+            self._icon_cache[key] = icon.surface
+            return icon.surface
+        except (FileNotFoundError, OSError, Exception):
+            return None
 
     def _rebuild_static(self) -> None:
         self._buttons = []
         x = 8
         y = 6
-        h = 22
+        h = 28
         self._buttons.append(self._make_btn("file_toggle", "File", x, y, 44, h, "file"))
         x += 52
-        for kind in BUILD_ORDER:
+        order = visible_build_order(self._built_kinds)
+        for kind in order:
             if kind is None:
                 label, action = "Off", "build_off"
-            else:
-                label = _BUILD_SHORT.get(kind, BUILDING_LABELS[kind][:4])
-                action = f"build_{kind.name.lower()}"
-            w = max(40, 8 + self.font_small.size(label)[0])
-            self._buttons.append(self._make_btn(action, label, x, y, w, h, "build"))
+                w = 36
+                self._buttons.append(self._make_btn(action, label, x, y, w, h, "build"))
+                x += w + 4
+                continue
+            action = f"build_{kind.name.lower()}"
+            w = 32
+            self._buttons.append(
+                self._make_btn(action, "", x, y, w, h, "build", kind=kind)
+            )
             x += w + 4
 
         speed_x = WINDOW_WIDTH - 8
@@ -240,7 +268,11 @@ class Toolbar:
         field_crop: str = "sage",
         selected_field_id: int | None = None,
         farm_draw_mode: str = "field",
+        built_kinds: set[BuildingKind] | None = None,
     ) -> None:
+        if built_kinds is not None:
+            self.set_built_kinds(built_kinds)
+
         bar = pygame.Rect(0, 0, WINDOW_WIDTH, TOOLBAR_HEIGHT)
         pygame.draw.rect(surface, COLOUR_TOOLBAR_BG, bar)
         pygame.draw.line(
@@ -252,6 +284,7 @@ class Toolbar:
         )
 
         self._hover = None
+        self._hover_kind = None
         active_build = (
             "build_off"
             if place_kind is None
@@ -274,6 +307,7 @@ class Toolbar:
             hovered = btn.rect.collidepoint(mouse_pos)
             if hovered:
                 self._hover = btn.action
+                self._hover_kind = btn.kind
             active = (
                 btn.action == active_build
                 or btn.action == active_mode
@@ -297,6 +331,9 @@ class Toolbar:
                 hovered = btn.rect.collidepoint(mouse_pos)
                 self._draw_button(surface, btn, active=False, hovered=hovered)
 
+        if self._hover_kind is not None:
+            self._draw_build_tooltip(surface, self._hover_kind, mouse_pos)
+
     def _draw_button(
         self,
         surface: pygame.Surface,
@@ -313,11 +350,56 @@ class Toolbar:
             colour = COLOUR_TOOLBAR_BTN
         pygame.draw.rect(surface, colour, btn.rect, border_radius=3)
         pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, btn.rect, 1, border_radius=3)
+        if btn.kind is not None:
+            stem = _BUILD_ICON.get(btn.kind)
+            icon = self._build_icon(stem, 22) if stem else None
+            if icon is not None:
+                ix = btn.rect.centerx - icon.get_width() // 2
+                iy = btn.rect.centery - icon.get_height() // 2
+                surface.blit(icon, (ix, iy))
+                return
         text = self.font_small.render(btn.label, True, COLOUR_TEXT)
         surface.blit(
             text,
             (
-                btn.rect.x + (btn.rect.w - text.get_width()) // 2,
-                btn.rect.y + (btn.rect.h - text.get_height()) // 2,
+                btn.rect.centerx - text.get_width() // 2,
+                btn.rect.centery - text.get_height() // 2,
             ),
         )
+
+    def _draw_build_tooltip(
+        self,
+        surface: pygame.Surface,
+        kind: BuildingKind,
+        mouse_pos: tuple[int, int],
+    ) -> None:
+        cost = building_cost(kind)
+        name = BUILDING_LABELS.get(kind, kind.name.title())
+        title = self.font.render(name, True, COLOUR_TEXT)
+        parts = cost.as_parts()
+        icon_size = 18
+        gap = 6
+        row_h = max(icon_size, self.font_small.get_height()) + 4
+        width = max(title.get_width(), 8)
+        for key, amount in parts:
+            label = self.font_small.render(f"×{amount}", True, COLOUR_TEXT)
+            width = max(width, icon_size + 4 + label.get_width())
+        pad = 8
+        box_w = width + pad * 2
+        box_h = pad * 2 + title.get_height() + (row_h * len(parts) if parts else 0) + 4
+        mx, my = mouse_pos
+        x = min(max(4, mx + 12), WINDOW_WIDTH - box_w - 4)
+        y = min(max(4, my + 14), TOOLBAR_HEIGHT + 120)
+        box = pygame.Rect(x, y, box_w, box_h)
+        pygame.draw.rect(surface, COLOUR_MENU_BG, box, border_radius=4)
+        pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, box, 1, border_radius=4)
+        surface.blit(title, (x + pad, y + pad))
+        cy = y + pad + title.get_height() + 4
+        for key, amount in parts:
+            icon = self._build_icon(key, icon_size)
+            if icon is not None:
+                surface.blit(icon, (x + pad, cy))
+            label = self.font_small.render(f"×{amount}", True, COLOUR_TEXT)
+            lx = x + pad + (icon_size + 4 if icon is not None else 0)
+            surface.blit(label, (lx, cy + (icon_size - label.get_height()) // 2))
+            cy += row_h

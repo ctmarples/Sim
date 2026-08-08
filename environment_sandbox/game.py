@@ -177,6 +177,9 @@ from settings import (
     SIM_SPEEDS,
     STARTING_ROCK,
     STARTING_WOOD,
+    STARTING_TWINE,
+    STARTING_VILLAGERS,
+    AUTOLOAD_SAVE,
     STATUS_MESSAGE_FRAMES,
     TICKS_PER_DAY_OPTIONS,
     REFERENCE_TICKS_PER_DAY,
@@ -234,6 +237,11 @@ from seasons import (
     water_frozen,
 )
 from toolbar import Toolbar
+from building_unlock import (
+    building_cost as unlock_building_cost,
+    built_kinds as unlock_built_kinds,
+    visible_build_order,
+)
 from ui import UI, draw_feature
 from terrain_tiles import (
     CASE_NAMES,
@@ -414,14 +422,10 @@ class Game:
         # Villager wear map: cell → cumulative traffic (decayed on env sample).
         self._path_traffic: dict[tuple[int, int], float] = {}
 
-        self._give_starting_resources()
-        self._ensure_core_buildings()
-        self.wildlife.refresh_habitats(self.world)
-        self.wildlife.seed_breeding_grounds(self.world)
-        self._sample_environment()
+        self._start_fresh_game()
         self.status_message = (
-            "Hire from Hiring hall popup. Toolbar builds place construction sites. "
-            "Unassigned villagers build & transport by priority."
+            "Valley ready. Build a Forager first — hover build icons for costs. "
+            "Hiring hall unlocks later."
         )
         self.status_timer = STATUS_MESSAGE_FRAMES
         self.running = True
@@ -480,12 +484,125 @@ class Game:
         self._diag_backup_cells: list[list] | None = None
 
     def _give_starting_resources(self) -> None:
-        self.home_storage.logs = STARTING_WOOD
+        self.home_storage.wood = STARTING_WOOD
         self.home_storage.rock = STARTING_ROCK
+        self.home_storage.twine = STARTING_TWINE
         self.home_storage.berries = STARTING_FOOD
 
+    def _autoload_save_path(self):
+        from pathlib import Path
+
+        name = AUTOLOAD_SAVE
+        candidates = (
+            Path(__file__).resolve().parents[1] / "saves" / name,
+            Path(__file__).resolve().parent / "data" / name,
+            Path(__file__).resolve().parent / "saves" / name,
+        )
+        for path in candidates:
+            if path.is_file():
+                return path
+        return None
+
+    def _spawn_starting_villagers(self, count: int | None = None) -> None:
+        n = STARTING_VILLAGERS if count is None else max(0, int(count))
+        hx, hy = self.world.home_pos
+        spots = [(hx, hy)]
+        spots.extend(
+            (nx, ny) for ny, nx in self.world.neighbourhood(hx, hy, radius=2)
+            if (nx, ny) != (hx, hy)
+        )
+        for i in range(n):
+            sx, sy = spots[i % len(spots)]
+            villager = Villager(id=self.next_villager_id, x=sx, y=sy)
+            villager.priorities = list(DEFAULT_PRIORITIES_UNASSIGNED)
+            self.villagers.append(villager)
+            self.next_villager_id += 1
+
+    def _apply_new_game_strip(self) -> None:
+        """Keep valley terrain/wildlife; storehouse only; clear paths; 3 villagers."""
+        home = next(
+            (b for b in self.buildings.values() if b.kind == BuildingKind.HOME), None
+        )
+        keep_id = home.id if home is not None else None
+        for bid in list(self.buildings.keys()):
+            if bid != keep_id:
+                del self.buildings[bid]
+        self.construction_sites.clear()
+
+        home_cells: set[tuple[int, int]] = set()
+        if home is not None:
+            home_cells = set(home.plot_cells())
+            self.world.home_pos = home.center_cell()
+
+        clear_features = BUILDING_FEATURES | {
+            FeatureType.STRUCTURE_PAD,
+            FeatureType.CONSTRUCTION_SITE,
+        }
+        for y in range(self.world.rows):
+            for x in range(self.world.cols):
+                cell = self.world.cells[y][x]
+                if cell.terrain == TerrainType.PATH:
+                    cell.terrain = TerrainType.GRASS
+                if (x, y) in home_cells:
+                    continue
+                if cell.feature in clear_features:
+                    cell.feature = FeatureType.NONE
+                    cell.deposit = 0
+
+        if home is not None:
+            self.world.claim_structure_footprint(
+                home.x, home.y, home.plot_w, home.plot_h, FeatureType.HOME
+            )
+            cx, cy = home.center_cell()
+            # Placeholder until a hiring hall is built.
+            self.world.workstation_pos = (
+                min(self.world.cols - 1, cx + max(3, home.plot_w)),
+                cy,
+            )
+
+        self.villagers.clear()
+        self.next_villager_id = 1
+        if self.buildings:
+            self.next_building_id = max(b.id for b in self.buildings.values()) + 1
+        else:
+            self.next_building_id = 1
+        self.next_construction_id = 1
+        self.calendar_day = 0
+        self.day_tick = self.ticks_per_day
+        set_ticks_per_day(self.ticks_per_day)
+        self.home_storage.reset()
+        self._give_starting_resources()
+        self._spawn_starting_villagers()
+        self._clear_selection()
+        self.place_kind = None
+        self._path_traffic.clear()
+        self.player.reset(self.world.start_pos[0], self.world.start_pos[1])
+        self.camera.center_on(
+            self.player.x, self.player.y, self.world.cols, self.world.rows
+        )
+        self._refresh_hardscape_terrain()
+        self._invalidate_height_sample_cache()
+        # Fallen wood beside trees so foragers have something to gather at start.
+        self.world._seed_wood_near_trees(random.Random(int(self.world.seed) ^ 0xA70D))
+        self._refresh_indicators()
+
+    def _start_fresh_game(self) -> None:
+        path = self._autoload_save_path()
+        if path is not None:
+            from save_load import load_from_path
+
+            load_from_path(self, str(path))
+            self._apply_new_game_strip()
+            return
+        self._give_starting_resources()
+        self._ensure_core_buildings()
+        self._spawn_starting_villagers()
+        self.wildlife.refresh_habitats(self.world)
+        self.wildlife.seed_breeding_grounds(self.world)
+        self._sample_environment()
+
     def _ensure_core_buildings(self) -> None:
-        """Ensure HOME and WORKSTATION buildings exist at their world positions."""
+        """Ensure the storehouse exists at the world home position."""
         pw, ph = default_building_plot(BuildingKind.HOME)
         half_w, half_h = pw // 2, ph // 2
 
@@ -514,18 +631,7 @@ class Game:
             self.world.claim_structure_footprint(ox, oy, pw, ph, feature)
             return building
 
-        # Keep hiring hall clear of the storehouse footprint on legacy saves.
-        hx, hy = self.world.home_pos
-        sx, sy = self.world.workstation_pos
-        if max(abs(sx - hx), abs(sy - hy)) < pw:
-            sx = hx + pw
-            if sx + half_w >= self.world.cols:
-                sx = hx - pw
-            sy = hy
-            self.world.workstation_pos = (sx, sy)
-
         _sync_core(BuildingKind.HOME, self.world.home_pos)
-        _sync_core(BuildingKind.WORKSTATION, self.world.workstation_pos)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -569,35 +675,6 @@ class Game:
             self.camera.pan_continuous(dx, dy, dt, self.world.cols, self.world.rows)
 
     def reset(self) -> None:
-        self.world.reset()
-        self.height_sample = generate_height_sample(
-            self.world.cols,
-            self.world.rows,
-            seed=self.world.seed,
-            corners=self.world.height_corners,
-        )
-        self._invalidate_height_sample_cache()
-        self.height_edit_mode = False
-        self._height_painting = False
-        self._height_paint_last = None
-        self.player.reset(self.world.start_pos[0], self.world.start_pos[1])
-        self.camera.center_on(self.player.x, self.player.y, self.world.cols, self.world.rows)
-        self.home_storage.reset()
-        self.villagers.clear()
-        self.buildings.clear()
-        self.construction_sites.clear()
-        self.wildlife.reset()
-        self.fish.reset()
-        self.next_villager_id = 1
-        self.next_building_id = 1
-        self.next_construction_id = 1
-        self._clear_selection()
-        self.place_kind = None
-        self.field_crop_kind = "sage"
-        self.calendar_day = 0
-        self.day_tick = self.ticks_per_day
-        set_ticks_per_day(self.ticks_per_day)
-        self.resource_history.reset()
         self.file_dialog.close()
         self.field_plan_dialog.close()
         self.building_inspect.close()
@@ -612,17 +689,35 @@ class Game:
         self._mouse_down_cell = None
         self._placing_field = False
         self.overlay_mode = OverlayMode.NONE
+        self.resource_history.reset()
+        self.height_edit_mode = False
+        self._height_painting = False
+        self._height_paint_last = None
+        self._food_rng.seed(99)
+        self._start_fresh_game()
+        if self.height_sample is None or (
+            self.height_sample.cols != self.world.cols
+            or self.height_sample.rows != self.world.rows
+        ):
+            self.height_sample = generate_height_sample(
+                self.world.cols,
+                self.world.rows,
+                seed=self.world.seed,
+                corners=self.world.height_corners,
+            )
+        else:
+            self.height_sample = generate_height_sample(
+                self.world.cols,
+                self.world.rows,
+                seed=self.world.seed,
+                corners=self.world.height_corners,
+            )
+        self._invalidate_height_sample_cache()
         self.env_maps.resize(self.world.rows, self.world.cols)
         self._biodiversity_samples = self.env_maps.biodiversity_samples
         self._biodiversity_average = self.env_maps.biodiversity
-        self._give_starting_resources()
-        self._ensure_core_buildings()
-        self._food_rng.seed(99)
-        self.wildlife.refresh_habitats(self.world)
-        self.wildlife.seed_breeding_grounds(self.world)
         self._sample_environment()
-        self._refresh_indicators()
-        self._set_status("World reset.")
+        self._set_status("World reset to valley start.")
 
     def _clear_selection(self) -> None:
         self.selected_building_id = None
@@ -2015,70 +2110,40 @@ class Game:
         self._set_status(f"Villager {villager.id} → Home (hauler)")
 
     def _cycle_place_kind(self) -> None:
-        order: list[BuildingKind | None] = [
-            BuildingKind.FORESTER,
-            BuildingKind.MASON,
-            BuildingKind.HUNTER,
-            BuildingKind.FORAGER,
-            BuildingKind.FISHER,
-            BuildingKind.FARM,
-            BuildingKind.FIELD,
-            BuildingKind.MILL,
-            BuildingKind.KITCHEN,
-            BuildingKind.CRAFT_BENCH,
-            BuildingKind.ALCHEMIST,
-            BuildingKind.TAILOR,
-            None,
-        ]
+        order = visible_build_order(unlock_built_kinds(self.buildings))
         if self.place_kind not in order:
-            self.place_kind = BuildingKind.FORESTER
+            self.place_kind = order[0] if order else None
         else:
             idx = order.index(self.place_kind)
             self.place_kind = order[(idx + 1) % len(order)]
         self._announce_place_kind()
 
     def _set_place_kind(self, kind: BuildingKind | None) -> None:
+        if kind is not None:
+            allowed = unlock_built_kinds(self.buildings)
+            from building_unlock import unlocked_kinds
+
+            if kind not in unlocked_kinds(allowed):
+                self._set_status(f"{BUILDING_LABELS[kind]} is still locked.")
+                return
         self.place_kind = kind
         self._announce_place_kind()
 
     def _announce_place_kind(self) -> None:
-        costs = {
-            BuildingKind.FORESTER: (FORESTER_COST_WOOD, FORESTER_COST_ROCK, "Forester"),
-            BuildingKind.MASON: (MASON_COST_WOOD, MASON_COST_ROCK, "Mason"),
-            BuildingKind.HUNTER: (HUNTER_COST_WOOD, HUNTER_COST_ROCK, "Hunter"),
-            BuildingKind.FORAGER: (FORAGER_COST_WOOD, FORAGER_COST_ROCK, "Forager"),
-            BuildingKind.FISHER: (FISHER_COST_WOOD, FISHER_COST_ROCK, "Fisher"),
-            BuildingKind.FARM: (FARM_COST_WOOD, FARM_COST_ROCK, "Farm"),
-            BuildingKind.FIELD: (FIELD_COST_WOOD, FIELD_COST_ROCK, "Field"),
-            BuildingKind.MILL: (MILL_COST_WOOD, MILL_COST_ROCK, "Mill"),
-            BuildingKind.KITCHEN: (KITCHEN_COST_WOOD, KITCHEN_COST_ROCK, "Kitchen"),
-            BuildingKind.CRAFT_BENCH: (
-                CRAFT_BENCH_COST_WOOD,
-                CRAFT_BENCH_COST_ROCK,
-                "Craft bench",
-            ),
-            BuildingKind.ALCHEMIST: (
-                ALCHEMIST_COST_WOOD,
-                ALCHEMIST_COST_ROCK,
-                "Alchemist",
-            ),
-            BuildingKind.TAILOR: (
-                TAILOR_COST_WOOD,
-                TAILOR_COST_ROCK,
-                "Tailor",
-            ),
-        }
         if self.place_kind is None:
             self._set_status("Build mode off.")
-        elif self.place_kind == BuildingKind.FIELD:
-            w, r, name = costs[self.place_kind]
+            return
+        cost = unlock_building_cost(self.place_kind)
+        name = BUILDING_LABELS[self.place_kind]
+        bits = cost.summary_bits()
+        cost_txt = ", ".join(bits) if bits else "free"
+        if self.place_kind == BuildingKind.FIELD:
             self._set_status(
-                f"Build: {name} ({w}w {r}r). Drag a rectangle on soil/grass to size the field."
+                f"Build: {name} ({cost_txt}). Drag a rectangle on soil/grass to size the field."
             )
         else:
-            w, r, name = costs[self.place_kind]
             self._set_status(
-                f"Build: {name} ({w}w {r}r). Click empty soil/grass to place a site."
+                f"Build: {name} ({cost_txt}). Click empty soil/grass to place a site."
             )
 
     def _set_building_task(self, task: TaskType) -> None:
@@ -3828,10 +3893,20 @@ class Game:
                 self._set_status("Broken construction site.")
                 return
             delivered = False
-            while site.wood_needed > 0 and self.player.inventory.logs > 0:
-                self.player.inventory.logs -= 1
+            while site.wood_needed > 0 and self.player.inventory.wood > 0:
+                self.player.inventory.wood -= 1
                 site.have_wood += 1
+                self.record_consumed("wood", 1)
+                delivered = True
+            while site.logs_needed > 0 and self.player.inventory.logs > 0:
+                self.player.inventory.logs -= 1
+                site.have_logs += 1
                 self.record_consumed("logs", 1)
+                delivered = True
+            while site.hardwood_needed > 0 and self.player.inventory.hardwood_logs > 0:
+                self.player.inventory.hardwood_logs -= 1
+                site.have_hardwood += 1
+                self.record_consumed("hardwood_logs", 1)
                 delivered = True
             while site.rock_needed > 0 and self.player.inventory.rock > 0:
                 self.player.inventory.rock -= 1
@@ -3840,8 +3915,10 @@ class Game:
                 delivered = True
             if delivered:
                 self._set_status(
-                    f"Delivered to site. Now {site.have_wood}/{site.need_wood}w "
-                    f"{site.have_rock}/{site.need_rock}r."
+                    f"Delivered to site. Now {site.have_wood}/{site.need_wood} wood "
+                    f"{site.have_logs}/{site.need_logs} logs "
+                    f"{site.have_hardwood}/{site.need_hardwood} hwood "
+                    f"{site.have_rock}/{site.need_rock} rock."
                 )
                 return
             pct = 0
@@ -3849,7 +3926,10 @@ class Game:
                 pct = int(100 * site.build_progress / max(1, site.build_required_ticks()))
             self._set_status(
                 f"{BUILDING_LABELS[site.kind]} site: "
-                f"{site.have_wood}/{site.need_wood}w {site.have_rock}/{site.need_rock}r"
+                f"{site.have_wood}/{site.need_wood} wood "
+                f"{site.have_logs}/{site.need_logs} logs "
+                f"{site.have_hardwood}/{site.need_hardwood} hwood "
+                f"{site.have_rock}/{site.need_rock} rock"
                 + (f" · build {pct}%" if site.materials_ready else "")
             )
             return
@@ -3931,30 +4011,9 @@ class Game:
         self.player.inventory.rock -= need_r
         return True
 
-    def _building_cost(self, kind: BuildingKind) -> tuple[int, int, TaskType]:
-        if kind == BuildingKind.FORESTER:
-            return FORESTER_COST_WOOD, FORESTER_COST_ROCK, TaskType.FULL_MANAGE
-        if kind == BuildingKind.MASON:
-            return MASON_COST_WOOD, MASON_COST_ROCK, TaskType.COLLECT_ROCKS
-        if kind == BuildingKind.HUNTER:
-            return HUNTER_COST_WOOD, HUNTER_COST_ROCK, TaskType.HUNT
-        if kind == BuildingKind.FISHER:
-            return FISHER_COST_WOOD, FISHER_COST_ROCK, TaskType.FISH
-        if kind == BuildingKind.FARM:
-            return FARM_COST_WOOD, FARM_COST_ROCK, TaskType.FARM_FIELD
-        if kind == BuildingKind.FIELD:
-            return FIELD_COST_WOOD, FIELD_COST_ROCK, TaskType.FARM_FIELD
-        if kind == BuildingKind.MILL:
-            return MILL_COST_WOOD, MILL_COST_ROCK, TaskType.FULL_FORAGE
-        if kind == BuildingKind.KITCHEN:
-            return KITCHEN_COST_WOOD, KITCHEN_COST_ROCK, TaskType.FULL_FORAGE
-        if kind == BuildingKind.CRAFT_BENCH:
-            return CRAFT_BENCH_COST_WOOD, CRAFT_BENCH_COST_ROCK, TaskType.FULL_FORAGE
-        if kind == BuildingKind.ALCHEMIST:
-            return ALCHEMIST_COST_WOOD, ALCHEMIST_COST_ROCK, TaskType.FULL_FORAGE
-        if kind == BuildingKind.TAILOR:
-            return TAILOR_COST_WOOD, TAILOR_COST_ROCK, TaskType.FULL_FORAGE
-        return FORAGER_COST_WOOD, FORAGER_COST_ROCK, TaskType.FULL_FORAGE
+    def _building_cost(self, kind: BuildingKind):
+        cost = unlock_building_cost(kind)
+        return cost.wood, cost.rock, cost.logs, cost.hardwood, cost.task
 
     def _place_field_site(
         self, start: tuple[int, int], end: tuple[int, int]
@@ -4017,7 +4076,7 @@ class Game:
                     cell.deposit = 0
                     cell.growth_ticks = 0
                     cell.crop_kind = None
-        cost_w, cost_r, _ = self._building_cost(BuildingKind.FIELD)
+        cost_w, cost_r, cost_l, cost_h, _ = self._building_cost(BuildingKind.FIELD)
         site = ConstructionSite(
             id=self.next_construction_id,
             x=x0,
@@ -4025,6 +4084,8 @@ class Game:
             kind=BuildingKind.FIELD,
             need_wood=cost_w,
             need_rock=cost_r,
+            need_logs=cost_l,
+            need_hardwood=cost_h,
             plot_w=plot_w,
             plot_h=plot_h,
         )
@@ -4074,7 +4135,7 @@ class Game:
         if reason is not None:
             self._set_status(reason)
             return False
-        cost_w, cost_r, _ = self._building_cost(kind)
+        cost_w, cost_r, cost_l, cost_h, _ = self._building_cost(kind)
         site = ConstructionSite(
             id=self.next_construction_id,
             x=ox,
@@ -4082,6 +4143,8 @@ class Game:
             kind=kind,
             need_wood=cost_w,
             need_rock=cost_r,
+            need_logs=cost_l,
+            need_hardwood=cost_h,
             plot_w=plot_w,
             plot_h=plot_h,
         )
@@ -4094,9 +4157,11 @@ class Game:
         self.world.apply_disturbance(x, y)
         self._refresh_indicators()
         self.place_kind = None
+        bits = unlock_building_cost(kind).summary_bits()
+        need_txt = ", ".join(bits) if bits else "no materials"
         self._set_status(
             f"Construction site: {BUILDING_LABELS[kind]} "
-            f"(needs {cost_w}w {cost_r}r). Villagers will deliver & build."
+            f"(needs {need_txt}). Villagers will deliver & build."
         )
         return True
 
@@ -4105,7 +4170,7 @@ class Game:
         cell = self.world.get_cell(cx, cy)
         if cell is None:
             return
-        _, _, default_task = self._building_cost(site.kind)
+        _, _, _, _, default_task = self._building_cost(site.kind)
         plot_w = max(1, site.plot_w)
         plot_h = max(1, site.plot_h)
         if site.kind != BuildingKind.FIELD:
@@ -4162,14 +4227,21 @@ class Game:
             )
             self._wake_all_farm_workers()
         else:
+            if site.kind == BuildingKind.WORKSTATION:
+                self.world.workstation_pos = building.center_cell()
             self._set_status(f"Finished {BUILDING_LABELS[site.kind]} #{building.id}.")
         self._refresh_hardscape_terrain()
+        # Rebuild toolbar unlocks when a new building completes.
+        self.toolbar.set_built_kinds(unlock_built_kinds(self.buildings))
 
     def _try_build(self, kind: BuildingKind, x: int, y: int) -> None:
         # Legacy Enter/E path also places a construction site.
         self._place_construction_site(kind, x, y)
 
     def _hire_villager(self) -> None:
+        if not any(b.kind == BuildingKind.WORKSTATION for b in self.buildings.values()):
+            self._set_status("Build a Hiring hall before hiring villagers.")
+            return
         if len(self.villagers) >= MAX_VILLAGERS:
             self._set_status(f"Work station full ({MAX_VILLAGERS} villagers).")
             return
@@ -5808,10 +5880,9 @@ class Game:
                 villager.construction_id = None
             return False
 
-        # Carrying wood/rock only counts if some site still needs it.
-        # Otherwise release the claim so transport can clear leftover cargo
-        # (e.g. extra wood after a site's wood quota is already full).
-        if villager.inventory.logs > 0 or villager.inventory.rock > 0:
+        # Carrying build mats only counts if some site still needs them.
+        # Otherwise release the claim so transport can clear leftover cargo.
+        if self._carrying_build_mats(villager):
             if self._find_site_needing_materials(villager) is not None:
                 return True
             if villager.construction_id is not None:
@@ -5824,8 +5895,11 @@ class Game:
                 villager.construction_id = None
             elif site.materials_ready:
                 return True
-            elif (site.wood_needed > 0 and self._material_available("logs")) or (
-                site.rock_needed > 0 and self._material_available("rock")
+            elif (
+                (site.wood_needed > 0 and self._material_available("wood"))
+                or (site.logs_needed > 0 and self._material_available("logs"))
+                or (site.hardwood_needed > 0 and self._material_available("hardwood_logs"))
+                or (site.rock_needed > 0 and self._material_available("rock"))
             ):
                 return True
             else:
@@ -5834,7 +5908,11 @@ class Game:
 
         for site in self.construction_sites.values():
             if not site.materials_ready:
-                if site.wood_needed > 0 and self._material_available("logs"):
+                if site.wood_needed > 0 and self._material_available("wood"):
+                    return True
+                if site.logs_needed > 0 and self._material_available("logs"):
+                    return True
+                if site.hardwood_needed > 0 and self._material_available("hardwood_logs"):
                     return True
                 if site.rock_needed > 0 and self._material_available("rock"):
                     return True
@@ -5851,7 +5929,13 @@ class Game:
         return False
 
     def _carrying_build_mats(self, villager: Villager) -> bool:
-        return villager.inventory.logs > 0 or villager.inventory.rock > 0
+        inv = villager.inventory
+        return (
+            inv.wood > 0
+            or inv.logs > 0
+            or inv.rock > 0
+            or inv.hardwood_logs > 0
+        )
 
     def _leftover_build_mats_need_home(self, villager: Villager) -> bool:
         """True when carrying construction mats no site can still accept."""
@@ -5896,7 +5980,7 @@ class Game:
 
         carrying = self._carrying_build_mats(villager)
 
-        # Deliver carried wood/rock to a needing site.
+        # Deliver carried wood/rock/hardwood to a needing site.
         if carrying:
             useful = self._find_site_needing_materials(villager)
             if useful is None:
@@ -5905,8 +5989,10 @@ class Game:
                 return
             # Prefer current site only if it can still take what we carry.
             if site is None or not (
-                (site.wood_needed > 0 and villager.inventory.logs > 0)
+                (site.wood_needed > 0 and villager.inventory.wood > 0)
+                or (site.logs_needed > 0 and villager.inventory.logs > 0)
                 or (site.rock_needed > 0 and villager.inventory.rock > 0)
+                or (site.hardwood_needed > 0 and villager.inventory.hardwood_logs > 0)
             ):
                 site = useful
                 villager.construction_id = site.id
@@ -5922,8 +6008,14 @@ class Game:
                 # After a partial drop, keep going (fetch remainder / other site)
                 # instead of parking on the scaffold with useless leftover cargo.
                 if self._carrying_build_mats(villager):
-                    if (site.wood_needed > 0 and villager.inventory.logs > 0) or (
-                        site.rock_needed > 0 and villager.inventory.rock > 0
+                    if (
+                        (site.wood_needed > 0 and villager.inventory.wood > 0)
+                        or (site.logs_needed > 0 and villager.inventory.logs > 0)
+                        or (site.rock_needed > 0 and villager.inventory.rock > 0)
+                        or (
+                            site.hardwood_needed > 0
+                            and villager.inventory.hardwood_logs > 0
+                        )
                     ):
                         return  # still depositing next tick (cooldown)
                     other = self._find_site_needing_materials(villager)
@@ -5964,9 +6056,13 @@ class Game:
             return
 
         # Fetch materials from storage.
-        need_wood = site.wood_needed
-        need_rock = site.rock_needed
-        source = self._find_material_source(villager, need_wood > 0, need_rock > 0)
+        source = self._find_material_source(
+            villager,
+            site.wood_needed > 0,
+            site.rock_needed > 0,
+            site.hardwood_needed > 0,
+            site.logs_needed > 0,
+        )
         if source is None:
             villager.construction_id = None
             villager.state = VillagerState.IDLE
@@ -5977,7 +6073,7 @@ class Game:
             villager.state = VillagerState.BUILDING
             return
         self._withdraw_build_materials(villager, site, source)
-        if villager.inventory.logs > 0 or villager.inventory.rock > 0:
+        if self._carrying_build_mats(villager):
             villager.state = VillagerState.DELIVERING
             villager.target = site.center_cell()
         else:
@@ -5985,11 +6081,14 @@ class Game:
             villager.state = VillagerState.IDLE
 
     def _find_site_needing_materials(self, villager: Villager) -> ConstructionSite | None:
+        inv = villager.inventory
         candidates = [
             s
             for s in self.construction_sites.values()
-            if (s.wood_needed > 0 and villager.inventory.logs > 0)
-            or (s.rock_needed > 0 and villager.inventory.rock > 0)
+            if (s.wood_needed > 0 and inv.wood > 0)
+            or (s.logs_needed > 0 and inv.logs > 0)
+            or (s.rock_needed > 0 and inv.rock > 0)
+            or (s.hardwood_needed > 0 and inv.hardwood_logs > 0)
         ]
         if not candidates:
             return None
@@ -6012,8 +6111,10 @@ class Game:
             for s in self.construction_sites.values()
             if not s.materials_ready
             and (
-                (s.wood_needed > 0 and self._material_available("logs"))
+                (s.wood_needed > 0 and self._material_available("wood"))
+                or (s.logs_needed > 0 and self._material_available("logs"))
                 or (s.rock_needed > 0 and self._material_available("rock"))
+                or (s.hardwood_needed > 0 and self._material_available("hardwood_logs"))
             )
         ]
         if not needing:
@@ -6025,15 +6126,29 @@ class Game:
         )
 
     def _find_material_source(
-        self, villager: Villager, want_wood: bool, want_rock: bool
+        self,
+        villager: Villager,
+        want_wood: bool,
+        want_rock: bool,
+        want_hardwood: bool = False,
+        want_logs: bool = False,
     ) -> tuple[int, int, str] | None:
-        """Return (x, y, 'home'|'bID') for nearest wood/rock stock."""
+        """Return (x, y, 'home'|'bID') for nearest build-material stock."""
         options: list[tuple[int, int, str, int]] = []
         hx, hy = self.world.home_pos
-        if (want_wood and self.home_storage.logs > 0) or (want_rock and self.home_storage.rock > 0):
+
+        def stock_ok(storage) -> bool:
+            return (
+                (want_wood and getattr(storage, "wood", 0) > 0)
+                or (want_logs and getattr(storage, "logs", 0) > 0)
+                or (want_rock and getattr(storage, "rock", 0) > 0)
+                or (want_hardwood and getattr(storage, "hardwood_logs", 0) > 0)
+            )
+
+        if stock_ok(self.home_storage):
             options.append((hx, hy, "home", abs(hx - villager.x) + abs(hy - villager.y)))
         for building in self.buildings.values():
-            if (want_wood and building.logs > 0) or (want_rock and building.rock > 0):
+            if stock_ok(building):
                 cx, cy = building.center_cell()
                 options.append(
                     (
@@ -6053,44 +6168,49 @@ class Game:
         self, villager: Villager, site: ConstructionSite, source: tuple[int, int, str]
     ) -> None:
         _, _, kind = source
-        take_wood = min(site.wood_needed, villager.inventory.capacity - villager.inventory.cargo_total)
-        take_rock = min(site.rock_needed, villager.inventory.capacity - villager.inventory.cargo_total)
 
         def pull(storage, key: str, amount: int) -> int:
             got = 0
-            while got < amount and getattr(storage, key) > 0 and villager.inventory.can_add(1, key=key):
+            while (
+                got < amount
+                and getattr(storage, key) > 0
+                and villager.inventory.can_add(1, key=key)
+            ):
                 setattr(storage, key, getattr(storage, key) - 1)
                 setattr(villager.inventory, key, getattr(villager.inventory, key) + 1)
                 got += 1
             return got
 
-        if kind == "home":
-            if site.wood_needed > 0:
-                pull(self.home_storage, "logs", take_wood)
-            if site.rock_needed > 0:
-                pull(
-                    self.home_storage,
-                    "rock",
-                    min(take_rock, villager.inventory.capacity - villager.inventory.cargo_total),
-                )
-        elif kind.startswith("b"):
-            bid = int(kind[1:])
-            building = self.buildings.get(bid)
-            if building is None:
-                return
-            if site.wood_needed > 0:
-                pull(building, "logs", take_wood)
-            if site.rock_needed > 0:
-                pull(
-                    building,
-                    "rock",
-                    min(take_rock, villager.inventory.capacity - villager.inventory.cargo_total),
-                )
+        def remaining_cap() -> int:
+            return villager.inventory.capacity - villager.inventory.cargo_total
+
+        storage = self.home_storage if kind == "home" else None
+        if kind.startswith("b"):
+            storage = self.buildings.get(int(kind[1:]))
+        if storage is None:
+            return
+        if site.wood_needed > 0:
+            pull(storage, "wood", min(site.wood_needed, remaining_cap()))
+        if site.logs_needed > 0:
+            pull(storage, "logs", min(site.logs_needed, remaining_cap()))
+        if site.hardwood_needed > 0:
+            pull(storage, "hardwood_logs", min(site.hardwood_needed, remaining_cap()))
+        if site.rock_needed > 0:
+            pull(storage, "rock", min(site.rock_needed, remaining_cap()))
+
     def _deposit_materials_at_site(self, villager: Villager, site: ConstructionSite) -> None:
-        while site.wood_needed > 0 and villager.inventory.logs > 0:
-            villager.inventory.logs -= 1
+        while site.wood_needed > 0 and villager.inventory.wood > 0:
+            villager.inventory.wood -= 1
             site.have_wood += 1
+            self.record_consumed("wood", 1)
+        while site.logs_needed > 0 and villager.inventory.logs > 0:
+            villager.inventory.logs -= 1
+            site.have_logs += 1
             self.record_consumed("logs", 1)
+        while site.hardwood_needed > 0 and villager.inventory.hardwood_logs > 0:
+            villager.inventory.hardwood_logs -= 1
+            site.have_hardwood += 1
+            self.record_consumed("hardwood_logs", 1)
         while site.rock_needed > 0 and villager.inventory.rock > 0:
             villager.inventory.rock -= 1
             site.have_rock += 1
@@ -8254,6 +8374,8 @@ class Game:
         """Inventory key a forager would collect from this cell, if any."""
         if cell.feature == FeatureType.MUSHROOM:
             return "mushrooms"
+        if cell.feature == FeatureType.ROCK and cell.deposit > 0:
+            return "rock"
         if cell.feature == FeatureType.WOOD_BUSH and cell.deposit > 0:
             return "wood"
         if cell.feature == FeatureType.BERRY_BUSH and cell.deposit > 0:
@@ -8336,6 +8458,8 @@ class Game:
         if task_type == TaskType.FULL_FORAGE:
             if cell.feature == FeatureType.MUSHROOM:
                 return True
+            if cell.feature == FeatureType.ROCK and cell.deposit > 0:
+                return True
             if cell.feature == FeatureType.WOOD_BUSH and cell.deposit > 0:
                 return True
             if cell.feature == FeatureType.BERRY_BUSH and cell.deposit > 0:
@@ -8409,7 +8533,9 @@ class Game:
             and self._building_allows_cell(building, cell)
         ):
             self._chop_tree(x, y, inv, status=False, require_axe=require_axe)
-        elif allow_collect and cell.feature == FeatureType.ROCK and TaskType.COLLECT_ROCKS in tasks:
+        elif allow_collect and cell.feature == FeatureType.ROCK and (
+            TaskType.COLLECT_ROCKS in tasks or TaskType.FULL_FORAGE in tasks
+        ) and self._building_allows_cell(building, cell):
             self._collect_rock(x, y, inv, status=False)
         elif (
             allow_collect
@@ -8730,6 +8856,7 @@ class Game:
             mouse,
             season_label=format_date(self.calendar_day),
             field_crop=self.field_crop_kind,
+            built_kinds=unlock_built_kinds(self.buildings),
         )
         self.file_dialog.draw(self.screen)
         field_b = self._field_plan_building()

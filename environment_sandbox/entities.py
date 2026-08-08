@@ -1888,7 +1888,7 @@ class Building:
         if self.kind == BuildingKind.FISHER:
             return ("fish",)
         if self.kind == BuildingKind.FORAGER:
-            return ("wood", *_FORAGE_KEYS)
+            return ("wood", "rock", *_FORAGE_KEYS)
         if self.kind == BuildingKind.FARM:
             return PRODUCE_KEYS + SEED_KEYS + ("straw",)
         if self.kind == BuildingKind.MILL:
@@ -1914,7 +1914,7 @@ class Building:
                 return ("wood",)
             return ("logs", "hardwood_logs", "wood")
         if self.kind == BuildingKind.FORAGER:
-            return ("wood", *_FORAGE_KEYS)
+            return ("wood", "rock", *_FORAGE_KEYS)
         if self.kind == BuildingKind.FARM:
             return PRODUCE_KEYS + ("straw",)
         if self.is_processor():
@@ -2171,10 +2171,14 @@ class ConstructionSite:
     x: int
     y: int
     kind: BuildingKind
-    need_wood: int
-    need_rock: int
+    need_wood: int = 0  # processed wood
+    need_rock: int = 0
+    need_logs: int = 0  # softwood logs
+    need_hardwood: int = 0
     have_wood: int = 0
     have_rock: int = 0
+    have_logs: int = 0
+    have_hardwood: int = 0
     build_progress: int = 0
     plot_w: int = 1
     plot_h: int = 1
@@ -2205,12 +2209,25 @@ class ConstructionSite:
         return max(0, self.need_rock - self.have_rock)
 
     @property
+    def logs_needed(self) -> int:
+        return max(0, self.need_logs - self.have_logs)
+
+    @property
+    def hardwood_needed(self) -> int:
+        return max(0, self.need_hardwood - self.have_hardwood)
+
+    @property
     def materials_ready(self) -> bool:
-        return self.have_wood >= self.need_wood and self.have_rock >= self.need_rock
+        return (
+            self.have_wood >= self.need_wood
+            and self.have_rock >= self.need_rock
+            and self.have_logs >= self.need_logs
+            and self.have_hardwood >= self.need_hardwood
+        )
 
     @property
     def total_items(self) -> int:
-        return self.need_wood + self.need_rock
+        return self.need_wood + self.need_rock + self.need_logs + self.need_hardwood
 
     def build_required_ticks(self) -> int:
         from settings import BUILD_TICKS_PER_ITEM
