@@ -41,6 +41,8 @@ class Recipe:
     outputs: dict[str, int]
     # Inventory / animal icon key for UI (defaults to first output key).
     icon_key: str | None = None
+    # Minimum related workplace skill level required to craft this recipe.
+    min_skill: int = 1
 
     def display_icon_key(self) -> str:
         if self.icon_key:
@@ -158,7 +160,8 @@ def _recipe_from_json(data: dict) -> Recipe:
     icon_key = data.get("icon_key")
     if icon_key is not None:
         icon_key = str(icon_key)
-    return Recipe(name, inputs, outputs, icon_key=icon_key)
+    min_skill = max(1, min(10, int(data.get("min_skill", 1))))
+    return Recipe(name, inputs, outputs, icon_key=icon_key, min_skill=min_skill)
 
 
 def _apply_recipe_metadata(data: dict, recipe: Recipe) -> None:

@@ -535,7 +535,9 @@ class UI:
         assign_workplace_mode: bool,
         local_mouse: tuple[int, int] | None,
     ) -> int:
-        row_h = 22
+        from villager_roster import draw_portrait, draw_status_bar
+
+        row_h = 36
         row = pygame.Rect(x - 4, y - 1, PANEL_WIDTH - 20, row_h)
         if selected:
             pygame.draw.rect(surface, (55, 70, 55), row, border_radius=3)
@@ -553,53 +555,55 @@ class UI:
         if selected:
             trailing = self._inline_priority_buttons(villager, assign_workplace_mode) + trailing
 
-        # Ration button is wider for "×1" / "½".
         btn_space = 0
         for glyph, _a, _t, _act in trailing:
             btn_w = max(self._ICON_SIZE, 8 + self.font_small.size(glyph)[0])
             btn_space += btn_w + 3
         btn_space += 4
-        bar_w = 36
-        gap = 6
-        max_text_w = PANEL_WIDTH - 28 - btn_space - bar_w - gap
+        draw_portrait(
+            surface,
+            x + 10,
+            y + row_h // 2,
+            int(getattr(villager, "portrait_seed", 0) or villager.id * 9973),
+            size=20,
+        )
+        text_x = x + 24
+        max_text_w = PANEL_WIDTH - 48 - btn_space
         text = label
         while self.font_small.size(text)[0] > max_text_w and len(text) > 4:
             text = text[:-2] + "…"
 
         colour = COLOUR_TEXT if selected else COLOUR_TEXT_DIM
-        surface.blit(self.font_small.render(text, True, colour), (x, y + 3))
+        surface.blit(self.font_small.render(text, True, colour), (text_x, y + 2))
         self.list_hits.append((row, "villager", villager.id))
 
-        text_w = self.font_small.size(text)[0]
-        bar_x = x + text_w + 6
-        bar_y = y + (row_h - 7) // 2
-        self._draw_hunger_bar(surface, bar_x, bar_y, bar_w, 7, villager.satiation)
-        tip = f"Hunger {int(villager.satiation * 100)}%"
-        buff_bits: list[str] = []
-        if abs(villager.food_walk_mult - 1.0) > 0.01:
-            buff_bits.append(f"walk ×{villager.food_walk_mult:g}")
-        if abs(villager.food_work_mult - 1.0) > 0.01:
-            buff_bits.append(f"work ×{villager.food_work_mult:g}")
-        if abs(villager.food_hunger_mult - 1.0) > 0.01:
-            buff_bits.append(f"hunger ×{villager.food_hunger_mult:g}")
-        if buff_bits:
-            tip = f"{tip} · {', '.join(buff_bits)}"
-        bar_rect = pygame.Rect(bar_x, bar_y, bar_w, 7)
+        bar_y = y + 20
+        draw_status_bar(surface, text_x, bar_y, 32, 5, villager.energy, kind="energy")
+        draw_status_bar(
+            surface, text_x + 36, bar_y, 32, 5, villager.satiation, kind="sat"
+        )
+        draw_status_bar(
+            surface, text_x + 72, bar_y, 32, 5, villager.happiness, kind="happy"
+        )
+        tip = (
+            f"E {int(villager.energy * 100)}% · "
+            f"Sat {int(villager.satiation * 100)}% · "
+            f"Happy {int(villager.happiness * 100)}%"
+        )
+        bar_rect = pygame.Rect(text_x, bar_y, 104, 5)
         if local_mouse is not None and bar_rect.collidepoint(local_mouse):
             self._tooltip = (tip, (bar_rect.centerx, bar_rect.top))
 
-        bx = row.right - 4
+        bx = x + PANEL_WIDTH - 28
         for glyph, action, tip, active in reversed(trailing):
-            btn_w = max(self._ICON_SIZE, 8 + self.font_small.size(glyph)[0])
-            bx -= btn_w
-            rect = pygame.Rect(bx, y + (row_h - self._ICON_SIZE) // 2, btn_w, self._ICON_SIZE)
+            bw = max(self._ICON_SIZE, 8 + self.font_small.size(glyph)[0])
+            bx -= bw + 3
+            rect = pygame.Rect(bx, y + (row_h - self._ICON_SIZE) // 2, bw, self._ICON_SIZE)
             hovered = local_mouse is not None and rect.collidepoint(local_mouse)
             self._draw_icon_button(surface, rect, glyph, active=active, hovered=hovered)
             self.action_hits.append((rect, action, tip))
             if hovered:
                 self._tooltip = (tip, (rect.centerx, rect.top))
-            bx -= 3
-
         return y + row_h + 2
 
     def _draw_normal_panel_body(
@@ -786,13 +790,30 @@ class UI:
 
         # Villagers
         y = _blit_text(content, self.font_title, "Villagers", (x, y))
+        from society import housed_count
+
+        housed = housed_count(villagers)
         y = _blit_text(
             content,
             self.font_small,
-            f"Hired {len(villagers)}/{MAX_VILLAGERS}",
+            f"Hired {len(villagers)}/{MAX_VILLAGERS}  ·  Housing {housed}/{len(villagers)}",
             (x, y),
             COLOUR_TEXT_DIM,
         )
+        open_w = 12 + self.font_small.size("Table…")[0]
+        self._draw_labelled_tool_button(
+            content,
+            x,
+            y,
+            open_w,
+            18,
+            "Table…",
+            "open_villager_roster",
+            "Open sortable villager table",
+            active=False,
+            local_mouse=local_mouse,
+        )
+        y += 22
         for v in villagers:
             if v.assigned_to_home:
                 job = "home"
@@ -802,10 +823,11 @@ class UI:
                 job = "free"
             selected = selected_villager_id == v.id
             state = "EAT" if v.seeking_food else v.state.name[:4]
+            name = getattr(v, "name", None) or f"#{v.id}"
             y = self._draw_villager_row(
                 content,
                 v,
-                f"#{v.id} {state} → {job}",
+                f"{name} {state} → {job}",
                 x,
                 y,
                 selected=selected,
@@ -1795,6 +1817,14 @@ def draw_feature(
                 baked=True,
             ),
         )
+    elif feature == FeatureType.TENT:
+        blit_building(surface, "tent", cx, cy, size, variant=v)
+    elif feature == FeatureType.HOUSE_SMALL:
+        blit_building(surface, "house_small", cx, cy, size, variant=v)
+    elif feature == FeatureType.HOUSE:
+        blit_building(surface, "house", cx, cy, size, variant=v)
+    elif feature == FeatureType.COMMUNITY:
+        blit_building(surface, "tent", cx, cy, size, variant=v)
     elif feature == FeatureType.MUSHROOM:
         blit_icon(
             surface,

@@ -9,11 +9,14 @@ from entities import BuildingKind, TaskType
 # Menu order (icons left→right). Hidden until unlocked.
 BUILD_MENU_ORDER: tuple[BuildingKind, ...] = (
     BuildingKind.FORAGER,
+    BuildingKind.TENT,
     BuildingKind.CRAFT_BENCH,
     BuildingKind.HUNTER,
     BuildingKind.FORESTER,
     BuildingKind.MASON,
     BuildingKind.WORKSTATION,
+    BuildingKind.HOUSE_SMALL,
+    BuildingKind.HOUSE,
     BuildingKind.FISHER,
     BuildingKind.FARM,
     BuildingKind.FIELD,
@@ -26,7 +29,7 @@ BUILD_MENU_ORDER: tuple[BuildingKind, ...] = (
 # Sequential unlock groups: next group opens when any building in the
 # previous group has been completed (tier 0 is always available).
 UNLOCK_TIERS: tuple[frozenset[BuildingKind], ...] = (
-    frozenset({BuildingKind.FORAGER}),
+    frozenset({BuildingKind.FORAGER, BuildingKind.TENT}),
     frozenset(
         {
             BuildingKind.CRAFT_BENCH,
@@ -35,7 +38,7 @@ UNLOCK_TIERS: tuple[frozenset[BuildingKind], ...] = (
             BuildingKind.MASON,
         }
     ),
-    frozenset({BuildingKind.WORKSTATION}),
+    frozenset({BuildingKind.WORKSTATION, BuildingKind.HOUSE_SMALL}),
     frozenset(
         {
             BuildingKind.FISHER,
@@ -43,12 +46,13 @@ UNLOCK_TIERS: tuple[frozenset[BuildingKind], ...] = (
             BuildingKind.FIELD,
             BuildingKind.KITCHEN,
             BuildingKind.MILL,
+            BuildingKind.HOUSE,
         }
     ),
     frozenset({BuildingKind.ALCHEMIST, BuildingKind.TAILOR}),
 )
 
-# Tier-4 production set used to unlock alchemist/tailor (Field alone does not).
+# Tier-4 production set used to unlock alchemist/tailor (Field/House alone does not).
 _TIER4_GATE: frozenset[BuildingKind] = frozenset(
     {
         BuildingKind.FISHER,
@@ -115,6 +119,9 @@ BUILD_COSTS: dict[BuildingKind, BuildCost] = {
     BuildingKind.MILL: BuildCost(logs=2, rock=4, task=TaskType.FULL_FORAGE),
     BuildingKind.ALCHEMIST: BuildCost(hardwood=4, rock=4, task=TaskType.FULL_FORAGE),
     BuildingKind.TAILOR: BuildCost(hardwood=4, rock=4, task=TaskType.FULL_FORAGE),
+    BuildingKind.TENT: BuildCost(wood=2, rock=0, task=TaskType.FULL_FORAGE),
+    BuildingKind.HOUSE_SMALL: BuildCost(logs=2, rock=2, task=TaskType.FULL_FORAGE),
+    BuildingKind.HOUSE: BuildCost(logs=4, rock=4, task=TaskType.FULL_FORAGE),
 }
 
 

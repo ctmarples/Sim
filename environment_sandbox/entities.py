@@ -152,6 +152,9 @@ class BuildingKind(Enum):
     CRAFT_BENCH = auto()
     ALCHEMIST = auto()
     TAILOR = auto()
+    TENT = auto()
+    HOUSE_SMALL = auto()  # 1×2
+    HOUSE = auto()  # 2×2
 
 
 # Tool required in the equipped slot for workplace actions.
@@ -179,13 +182,22 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
     BuildingKind.CRAFT_BENCH: "Craft bench",
     BuildingKind.ALCHEMIST: "Alchemist",
     BuildingKind.TAILOR: "Tailor",
+    BuildingKind.TENT: "Tent",
+    BuildingKind.HOUSE_SMALL: "Cottage",
+    BuildingKind.HOUSE: "House",
 }
 
 
 def default_building_plot(kind: BuildingKind) -> tuple[int, int]:
-    """Default footprint size. Fields are drag-sized; all other buildings are square."""
+    """Default footprint size. Fields are drag-sized; housing uses custom plots."""
     if kind == BuildingKind.FIELD:
         return 1, 1
+    if kind == BuildingKind.TENT:
+        return 1, 1
+    if kind == BuildingKind.HOUSE_SMALL:
+        return 1, 2
+    if kind == BuildingKind.HOUSE:
+        return 2, 2
     n = max(1, int(BUILDING_FOOTPRINT))
     return n, n
 
@@ -226,6 +238,7 @@ class VillagerState(Enum):
     DELIVERING = auto()
     HAULING = auto()
     BUILDING = auto()
+    SLEEPING = auto()
 
 
 class WorkPriority(Enum):
@@ -1709,12 +1722,16 @@ class Building:
             label += f"  · fuel {self.fuel_wood}/{self.fuel_capacity}"
         return label
 
-    def craftable_recipe(self) -> Recipe | None:
+    def craftable_recipe(
+        self, *, worker_skill_level: int | None = None
+    ) -> Recipe | None:
         """Pick an enabled recipe that can run now.
 
         Respects recipe priority (1 before 2 before 3). At the same priority,
         prefer richer recipes (more input units) so e.g. spiced stew beats
         grilled meat when both are stocked.
+
+        ``worker_skill_level`` gates recipes by ``Recipe.min_skill`` when set.
         """
         from recipes import recipe_output_fits, recipe_ready
 
@@ -1728,6 +1745,10 @@ class Building:
         best_key: tuple[int, int, int] | None = None
         for recipe in recipes:
             if not recipe.inputs:
+                continue
+            if worker_skill_level is not None and int(
+                getattr(recipe, "min_skill", 1) or 1
+            ) > int(worker_skill_level):
                 continue
             if not recipe_ready(self, recipe):
                 continue
@@ -1756,10 +1777,20 @@ class Building:
         )
         return self._recipes_by_priority(enabled)
 
-    def craftable_split_recipe(self) -> Recipe | None:
+    def craftable_split_recipe(
+        self, *, worker_skill_level: int | None = None
+    ) -> Recipe | None:
         recipes = self.enabled_split_recipes()
         if not recipes:
             return None
+        if worker_skill_level is not None:
+            recipes = tuple(
+                r
+                for r in recipes
+                if int(getattr(r, "min_skill", 1) or 1) <= int(worker_skill_level)
+            )
+            if not recipes:
+                return None
         return can_craft(self, recipes, capacity=self.capacity)
 
     def advance_recipe_progress(self, recipe: Recipe, *, split: bool = False) -> bool:
@@ -2272,6 +2303,46 @@ class Villager:
     food_walk_mult: float = 1.0
     food_work_mult: float = 1.0
     food_hunger_mult: float = 1.0
+    # Society / wellbeing.
+    name: str = ""
+    energy: float = 1.0
+    happiness: float = 0.7
+    housed: bool = False
+    housing_id: int | None = None
+    housing_need: int = 1
+    required_foods: list[str] = field(default_factory=lambda: ["meat"])
+    favourite_foods: list[str] = field(default_factory=list)
+    favourite_is_junk: bool = False
+    join_fee_paid: bool = False
+    seasons_without_reqs: int = 0
+    low_happiness_days: float = 0.0
+    skills: dict = field(default_factory=dict)
+    community_id: int | None = None
+    virtues: list[str] = field(default_factory=list)
+    vices: list[str] = field(default_factory=list)
+    portrait_seed: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.skills:
+            from society import blank_skills
+
+            self.skills = blank_skills()
+        if not self.name:
+            from society import random_name
+            import random
+
+            self.name = random_name(random.Random(self.id * 7919 + 17))
+        if not self.portrait_seed:
+            self.portrait_seed = self.id * 9973 + (hash(self.name) % 10000)
+        if not self.virtues and not self.vices:
+            from society import pick_traits
+            import random
+
+            self.virtues, self.vices = pick_traits(
+                random.Random(self.portrait_seed ^ 0xA5A5)
+            )
+            if self.favourite_is_junk and "Glutton" not in self.vices:
+                self.vices = (self.vices + ["Glutton"])[:2]
 
     def clear_assignment(self) -> None:
         self.building_id = None

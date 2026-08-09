@@ -162,6 +162,9 @@ class FeatureType(Enum):
     CRAFT_BENCH = auto()
     ALCHEMIST = auto()
     TAILOR = auto()
+    TENT = auto()
+    HOUSE_SMALL = auto()
+    HOUSE = auto()
     CONSTRUCTION_SITE = auto()
     # Invisible reserved cells of a multi-cell building footprint (not the glyph cell).
     STRUCTURE_PAD = auto()
@@ -172,6 +175,7 @@ class FeatureType(Enum):
     WILD_CROP = auto()  # wild crop patches (any CropDef key)
     CROP_HERB = auto()  # farmed crop (growth_ticks > 0 while growing)
     REED = auto()  # riparian reeds (forage, no seeds)
+    COMMUNITY = auto()  # map camp marker (decorative / clickable)
 
 
 # Buildings / pads — map-edit brushes must not overwrite these.
@@ -191,6 +195,9 @@ STRUCTURE_FEATURES: frozenset[FeatureType] = frozenset(
         FeatureType.CRAFT_BENCH,
         FeatureType.ALCHEMIST,
         FeatureType.TAILOR,
+        FeatureType.TENT,
+        FeatureType.HOUSE_SMALL,
+        FeatureType.HOUSE,
         FeatureType.CONSTRUCTION_SITE,
         FeatureType.STRUCTURE_PAD,
     }

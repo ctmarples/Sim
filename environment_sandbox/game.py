@@ -242,6 +242,45 @@ from building_unlock import (
     built_kinds as unlock_built_kinds,
     visible_build_order,
 )
+from society import (
+    Community,
+    HireCandidate,
+    SkillType,
+    ENERGY_SLEEP_GAIN,
+    ENERGY_SLEEP_THRESHOLD,
+    ENERGY_WORK_DRAIN,
+    HAPPINESS_FAVOURITE_MISS_PENALTY,
+    HAPPINESS_FOOD_VARIETY_BONUS,
+    HAPPINESS_HOUSING_BONUS_PER_LEVEL,
+    HAPPINESS_LEAVE_DAYS,
+    HAPPINESS_LEAVE_THRESHOLD,
+    HAPPINESS_MISSING_REQ_PENALTY,
+    PAY_TO_JOIN_LOGS,
+    PAY_TO_JOIN_WOOD,
+    SEASON_MISSING_REQ_PAY_LOGS,
+    free_housing_beds,
+    gain_skill,
+    generate_communities,
+    housed_count,
+    housing_beds_of,
+    housing_level_of,
+    is_housing_kind,
+    max_housing_level,
+    skill_efficiency,
+    skill_for_building,
+    skills_from_dict,
+    skills_to_dict,
+    staple_food_available,
+    tick_skill_decay,
+    total_housing_beds,
+    villager_meets_skill,
+    villager_skill_level,
+)
+from villager_roster import (
+    VillagerRosterDialog,
+    entry_from_candidate,
+    entry_from_villager,
+)
 from ui import UI, draw_feature
 from terrain_tiles import (
     CASE_NAMES,
@@ -299,6 +338,9 @@ FEATURE_FOR_BUILDING = {
     BuildingKind.CRAFT_BENCH: FeatureType.CRAFT_BENCH,
     BuildingKind.ALCHEMIST: FeatureType.ALCHEMIST,
     BuildingKind.TAILOR: FeatureType.TAILOR,
+    BuildingKind.TENT: FeatureType.TENT,
+    BuildingKind.HOUSE_SMALL: FeatureType.HOUSE_SMALL,
+    BuildingKind.HOUSE: FeatureType.HOUSE,
 }
 
 BUILDING_FEATURES = frozenset(FEATURE_FOR_BUILDING.values()) | {
@@ -343,6 +385,7 @@ class Game:
         self.habitat_inspect = HabitatInspectDialog()
         self.building_inspect = BuildingInspectDialog()
         self.villager_inspect = VillagerInspectDialog()
+        self.villager_roster = VillagerRosterDialog()
         self.resource_inspect = ResourceInspectDialog()
         self.resource_tracker = ResourceTrackerDialog()
         self.balance_dialog = BalanceDialog()
@@ -379,6 +422,11 @@ class Game:
         self.camera.center_on(self.player.x, self.player.y, self.world.cols, self.world.rows)
         self.home_storage = HomeStorage()
         self.villagers: list[Villager] = []
+        self.communities: list[Community] = []
+        self.hire_candidates: list[HireCandidate] = []
+        self.next_hire_id = 1
+        self.next_community_id = 1
+        self._last_season_for_hire_reqs: object | None = None
         self.buildings: dict[int, Building] = {}
         self.construction_sites: dict[int, ConstructionSite] = {}
         self.wildlife = WildlifeManager()
@@ -584,6 +632,7 @@ class Game:
         self._invalidate_height_sample_cache()
         # Fallen wood beside trees so foragers have something to gather at start.
         self.world._seed_wood_near_trees(random.Random(int(self.world.seed) ^ 0xA70D))
+        self._seed_map_communities()
         self._refresh_indicators()
 
     def _start_fresh_game(self) -> None:
@@ -768,6 +817,9 @@ class Game:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
+            elif self.villager_roster.open and self.villager_roster.handle_event(event):
+                self._apply_roster_action()
+                continue
             elif event.type == pygame.KEYDOWN:
                 if self.file_dialog.open:
                     self.file_dialog.handle_keydown(event)
@@ -1782,7 +1834,10 @@ class Game:
             self._cycle_selected_building_work_mode()
             return True
         if action == "hire_villager":
-            self._hire_villager()
+            self.villager_roster.open_hire()
+            return True
+        if action == "open_villager_roster":
+            self.villager_roster.open_roster()
             return True
         if action == "assign_workplace":
             if self.selected_villager_id is None:
@@ -1974,33 +2029,63 @@ class Game:
         building = self.buildings.get(self.selected_building_id)
         if building is None:
             return
-        # Special handling for HOME: assign as home hauler
-        if building.kind == BuildingKind.HOME:
-            free = next(
-                (
-                    v
-                    for v in self.villagers
-                    if v.building_id is None and not v.assigned_to_home
-                ),
-                None,
-            )
-            if free is None:
-                self._set_status("No unassigned villagers available.")
-                return
-            self._assign_villager_to_home(free.id)
+        if building.kind == BuildingKind.WORKSTATION:
+            self.villager_roster.open_hire()
             return
-        free = next(
-            (
-                v
-                for v in self.villagers
-                if v.building_id is None and not v.assigned_to_home
-            ),
-            None,
+        if is_housing_kind(building.kind):
+            self._set_status("Housing is assigned automatically when beds are free.")
+            return
+        if building.kind == BuildingKind.FIELD:
+            self._set_status("Assign workers to a Farm — Fields only define crop areas.")
+            return
+        self.villager_roster.open_assign(building.id)
+        self._set_status(
+            f"Pick a villager to assign to {BUILDING_LABELS[building.kind]} #{building.id}."
         )
-        if free is None:
-            self._set_status("No unassigned villagers available.")
+
+    def _roster_entries_for_villagers(self) -> list:
+        entries = []
+        for v in self.villagers:
+            if v.assigned_to_home:
+                job = "hauler"
+            elif v.building_id and v.building_id in self.buildings:
+                job = BUILDING_LABELS[self.buildings[v.building_id].kind]
+            else:
+                job = "free"
+            state = "EAT" if v.seeking_food else v.state.name.title()
+            entries.append(entry_from_villager(v, job=job, status=state))
+        return entries
+
+    def _apply_roster_action(self) -> None:
+        action = self.villager_roster.take_action()
+        if action is None:
             return
-        self._assign_villager_to_building(free.id, building.id)
+        if action.startswith("assign_pick:"):
+            vid = int(action.split(":")[1])
+            bid = self.villager_roster.assign_building_id
+            if bid is None:
+                return
+            building = self.buildings.get(bid)
+            if building is None:
+                return
+            if building.kind == BuildingKind.HOME:
+                self._assign_villager_to_home(vid)
+            else:
+                self._assign_villager_to_building(vid, bid)
+            self.villager_roster.close()
+            return
+        if action.startswith("select_villager:"):
+            vid = int(action.split(":")[1])
+            villager = self._get_villager(vid)
+            if villager is not None:
+                self._open_villager_inspect(villager)
+            return
+        if action.startswith("hire_cand:"):
+            self._hire_candidate(int(action.split(":")[1]))
+            return
+        if action.startswith("pay_cand:"):
+            self._hire_candidate(int(action.split(":")[1]), pay=True)
+            return
 
     def _unassign_worker_from_selected_building(self) -> None:
         building = self._selected_building()
@@ -2080,6 +2165,9 @@ class Game:
         if building.kind == BuildingKind.WORKSTATION:
             self._set_status("Hiring hall does not take workers — hire there, then assign elsewhere.")
             return
+        if is_housing_kind(building.kind):
+            self._set_status("Housing is assigned automatically when beds are free.")
+            return
         villager = self._get_villager(villager_id)
         if villager is None:
             return
@@ -2092,7 +2180,7 @@ class Game:
         self.selected_building_id = building_id
         self._open_building_inspect(building)
         self._set_status(
-            f"Villager {villager.id} → {BUILDING_LABELS[building.kind]}"
+            f"{villager.name} → {BUILDING_LABELS[building.kind]}"
         )
         self._wake_building_workers(building_id)
 
@@ -2440,6 +2528,7 @@ class Game:
             if self.season == Season.WINTER:
                 self.world.clear_mushrooms()
             self.wildlife.on_season_change(self.world, self.season)
+            self._apply_seasonal_hire_requirement_fees()
             self._set_status(f"{format_date(self.calendar_day)} begins.")
         # Environmental layers: sample at season start (day 0) and midpoint.
         if is_env_sample_day(self.calendar_day):
@@ -3113,6 +3202,15 @@ class Game:
         action = self.building_inspect.take_action()
         if action is None:
             return
+        if action == "hire_villager":
+            self.villager_roster.open_hire()
+            return
+        if action.startswith("hire_cand:"):
+            self._hire_candidate(int(action.split(":")[1]))
+            return
+        if action.startswith("pay_cand:"):
+            self._hire_candidate(int(action.split(":")[1]), pay=True)
+            return
         if action.startswith("xfer_to_player:"):
             self._transfer_inspect_to_player(action.split(":", 1)[1])
             return
@@ -3132,13 +3230,17 @@ class Game:
             self._clear_selected_building_areas()
             return
         if action == "assign_villager":
+            # Prefer the inspected building so Assign from the floating window works.
+            inspect_b = self._inspect_building()
+            if inspect_b is not None:
+                self.selected_building_id = inspect_b.id
             self._assign_unassigned_to_selected_building()
             return
         if action == "unassign_villager":
+            inspect_b = self._inspect_building()
+            if inspect_b is not None:
+                self.selected_building_id = inspect_b.id
             self._unassign_worker_from_selected_building()
-            return
-        if action == "hire_villager":
-            self._hire_villager()
             return
         if action.startswith("toggle_recipe:"):
             building = self._inspect_building()
@@ -4229,6 +4331,8 @@ class Game:
         else:
             if site.kind == BuildingKind.WORKSTATION:
                 self.world.workstation_pos = building.center_cell()
+            if is_housing_kind(site.kind):
+                self._rehouse_villagers()
             self._set_status(f"Finished {BUILDING_LABELS[site.kind]} #{building.id}.")
         self._refresh_hardscape_terrain()
         # Rebuild toolbar unlocks when a new building completes.
@@ -4238,28 +4342,285 @@ class Game:
         # Legacy Enter/E path also places a construction site.
         self._place_construction_site(kind, x, y)
 
-    def _hire_villager(self) -> None:
+    def _seed_map_communities(self) -> None:
+        """Place hireable camps around the valley."""
+        rng = random.Random(int(getattr(self.world, "seed", 0) or 0) ^ 0xC0A1)
+        communities, candidates = generate_communities(
+            self.world,
+            rng,
+            count=3,
+            candidates_per=(2, 4),
+            avoid=self.world.start_pos,
+        )
+        self.communities = communities
+        self.hire_candidates = candidates
+        self.next_community_id = max((c.id for c in communities), default=0) + 1
+        self.next_hire_id = max((c.id for c in candidates), default=0) + 1
+        for camp in communities:
+            cell = self.world.get_cell(camp.x, camp.y)
+            if cell is not None and cell.feature == FeatureType.NONE:
+                cell.feature = FeatureType.COMMUNITY
+
+    def _village_food_amounts(self) -> dict[str, int]:
+        from resources import amounts_from_obj, merge_amounts
+
+        parts = [amounts_from_obj(self.home_storage)]
+        parts.extend(amounts_from_obj(b) for b in self.buildings.values())
+        return merge_amounts(*parts)
+
+    def _hire_requirements_met(
+        self, cand: HireCandidate, *, allow_pay: bool = False
+    ) -> tuple[bool, str]:
+        missing: list[str] = []
+        if free_housing_beds(self.buildings, self.villagers) <= 0:
+            missing.append("free bed")
+        if max_housing_level(self.buildings) < cand.housing_need:
+            missing.append(f"housing level {cand.housing_need}")
+        foods = self._village_food_amounts()
+        if not staple_food_available(foods, cand.required_foods):
+            missing.append("staples (" + "/".join(cand.required_foods) + ")")
+        if not missing:
+            return True, "ok"
+        if allow_pay or cand.join_fee_paid:
+            return True, "fee covers: " + ", ".join(missing)
+        return False, "Needs " + ", ".join(missing) + "."
+
+    def _pay_hire_fee(self) -> bool:
+        if self.home_storage.logs >= PAY_TO_JOIN_LOGS:
+            self.home_storage.logs -= PAY_TO_JOIN_LOGS
+            return True
+        if self.home_storage.wood >= PAY_TO_JOIN_WOOD:
+            self.home_storage.wood -= PAY_TO_JOIN_WOOD
+            return True
+        return False
+
+    def _assign_housing(self, villager: Villager) -> bool:
+        """Claim a free bed in the best available house."""
+        houses = sorted(
+            (
+                b
+                for b in self.buildings.values()
+                if is_housing_kind(b.kind)
+                and housing_level_of(b.kind) >= villager.housing_need
+            ),
+            key=lambda b: (-housing_level_of(b.kind), b.id),
+        )
+        for house in houses:
+            beds = housing_beds_of(house.kind)
+            used = sum(
+                1
+                for v in self.villagers
+                if v.housed and v.housing_id == house.id and v.id != villager.id
+            )
+            if used < beds:
+                villager.housed = True
+                villager.housing_id = house.id
+                return True
+        # Fallback: any free bed regardless of preference level.
+        for house in sorted(
+            (b for b in self.buildings.values() if is_housing_kind(b.kind)),
+            key=lambda b: (-housing_level_of(b.kind), b.id),
+        ):
+            beds = housing_beds_of(house.kind)
+            used = sum(
+                1
+                for v in self.villagers
+                if v.housed and v.housing_id == house.id and v.id != villager.id
+            )
+            if used < beds:
+                villager.housed = True
+                villager.housing_id = house.id
+                return True
+        villager.housed = False
+        villager.housing_id = None
+        return False
+
+    def _rehouse_villagers(self) -> None:
+        for v in self.villagers:
+            v.housed = False
+            v.housing_id = None
+        for v in sorted(self.villagers, key=lambda x: (-x.housing_need, x.id)):
+            self._assign_housing(v)
+
+    def _hire_candidate(self, candidate_id: int, *, pay: bool = False) -> None:
         if not any(b.kind == BuildingKind.WORKSTATION for b in self.buildings.values()):
             self._set_status("Build a Hiring hall before hiring villagers.")
             return
         if len(self.villagers) >= MAX_VILLAGERS:
-            self._set_status(f"Work station full ({MAX_VILLAGERS} villagers).")
+            self._set_status(f"Village full ({MAX_VILLAGERS} villagers).")
             return
+        cand = next((c for c in self.hire_candidates if c.id == candidate_id), None)
+        if cand is None:
+            self._set_status("That traveller is no longer available.")
+            return
+        ok, reason = self._hire_requirements_met(cand, allow_pay=pay)
+        if not ok:
+            self._set_status(
+                f"Cannot hire {cand.name}: {reason} "
+                f"Use Pay ({PAY_TO_JOIN_LOGS} logs / {PAY_TO_JOIN_WOOD} wood) to join anyway."
+            )
+            return
+        # Fee only when requirements are waived.
+        if reason.startswith("fee covers") and not cand.join_fee_paid:
+            if not self._pay_hire_fee():
+                self._set_status(
+                    f"Cannot hire {cand.name}: {reason} "
+                    f"(need {PAY_TO_JOIN_LOGS} logs or {PAY_TO_JOIN_WOOD} wood)."
+                )
+                return
+            cand.join_fee_paid = True
+
         wx, wy = self.world.workstation_pos
-        spawn = self.world.workstation_pos
+        spawn = (wx, wy)
         for ny, nx in self.world.neighbourhood(wx, wy, radius=1):
-            if (nx, ny) == (wx, wy):
-                continue
-            if self.world.is_walkable(nx, ny):
+            if (nx, ny) != (wx, wy) and self.world.is_walkable(nx, ny):
                 spawn = (nx, ny)
                 break
-        villager = Villager(id=self.next_villager_id, x=spawn[0], y=spawn[1])
+        villager = Villager(
+            id=self.next_villager_id,
+            x=spawn[0],
+            y=spawn[1],
+            name=cand.name,
+            skills=dict(cand.skills),
+            housing_need=cand.housing_need,
+            required_foods=list(cand.required_foods),
+            favourite_foods=list(cand.favourite_foods),
+            favourite_is_junk=cand.favourite_is_junk,
+            join_fee_paid=cand.join_fee_paid,
+            community_id=cand.community_id,
+            virtues=list(cand.virtues),
+            vices=list(cand.vices),
+            portrait_seed=cand.portrait_seed,
+            energy=cand.energy,
+            happiness=cand.happiness,
+            satiation=cand.satiation,
+        )
         villager.priorities = list(DEFAULT_PRIORITIES_UNASSIGNED)
         self.next_villager_id += 1
         self.villagers.append(villager)
+        self.hire_candidates = [c for c in self.hire_candidates if c.id != cand.id]
+        self._assign_housing(villager)
         self._set_status(
-            f"Hired villager {villager.id}. Click them, then a building or home."
+            f"Hired {villager.name}. "
+            + ("Housed. " if villager.housed else "No bed yet. ")
+            + "Click them, then a building or home."
         )
+
+    def _hire_villager(self) -> None:
+        """Hire the first candidate who meets requirements (legacy Hire button)."""
+        for cand in list(self.hire_candidates):
+            ok, _ = self._hire_requirements_met(cand)
+            if ok:
+                self._hire_candidate(cand.id)
+                return
+        if self.hire_candidates:
+            self._set_status(
+                "No travellers meet housing/food requirements. "
+                "Select one and pay the join fee, or build housing/stock staples."
+            )
+        else:
+            self._set_status("No hireable travellers left in nearby camps.")
+
+    def _update_villager_wellbeing(self, villager: Villager, day_frac: float) -> None:
+        """Energy drain, happiness drift, skill decay, leave check."""
+        if villager.state == VillagerState.SLEEPING:
+            house = self.buildings.get(villager.housing_id or -1)
+            at_home = (
+                house is not None
+                and (villager.x, villager.y) == house.center_cell()
+            )
+            if at_home:
+                villager.energy = min(1.0, villager.energy + ENERGY_SLEEP_GAIN)
+                if villager.energy >= 0.95:
+                    villager.state = VillagerState.IDLE
+                    villager.target = None
+            elif house is not None:
+                villager.target = house.center_cell()
+            else:
+                # No bed — cannot sleep; wake and keep draining slowly.
+                villager.state = VillagerState.IDLE
+                villager.target = None
+        else:
+            # Energy is spent only when work ticks fire (_spend_work_energy).
+            if villager.energy <= ENERGY_SLEEP_THRESHOLD:
+                house = self.buildings.get(villager.housing_id or -1)
+                if villager.housed and house is not None:
+                    villager.state = VillagerState.SLEEPING
+                    villager.target = house.center_cell()
+                    villager.seeking_food = False
+                    return
+
+        # Happiness from housing + recent meal variety.
+        target = 0.45
+        if villager.housed:
+            house = self.buildings.get(villager.housing_id or -1)
+            lvl = housing_level_of(house.kind) if house else 0
+            target += HAPPINESS_HOUSING_BONUS_PER_LEVEL * lvl
+        else:
+            target -= HAPPINESS_MISSING_REQ_PENALTY
+        target += HAPPINESS_FOOD_VARIETY_BONUS * min(3, len(villager.last_meal))
+        foods = self._village_food_amounts()
+        if not staple_food_available(foods, villager.required_foods):
+            if not villager.join_fee_paid:
+                target -= HAPPINESS_MISSING_REQ_PENALTY
+        if villager.favourite_foods and not any(
+            f in villager.last_meal for f in villager.favourite_foods
+        ):
+            target -= HAPPINESS_FAVOURITE_MISS_PENALTY
+        villager.happiness += (target - villager.happiness) * min(1.0, day_frac * 3.0)
+        villager.happiness = max(0.0, min(1.0, villager.happiness))
+
+        tick_skill_decay(villager, day_frac)
+
+        if villager.happiness < HAPPINESS_LEAVE_THRESHOLD:
+            villager.low_happiness_days += day_frac
+        else:
+            villager.low_happiness_days = max(0.0, villager.low_happiness_days - day_frac)
+        if villager.low_happiness_days >= HAPPINESS_LEAVE_DAYS:
+            self._villager_leaves(villager)
+
+    def _villager_leaves(self, villager: Villager) -> None:
+        name = villager.name or f"Villager {villager.id}"
+        self.villagers = [v for v in self.villagers if v.id != villager.id]
+        self._set_status(f"{name} left the village (unhappy).")
+
+    def _apply_seasonal_hire_requirement_fees(self) -> None:
+        """Charge upkeep when hired villagers lack housing/staple requirements."""
+        foods = self._village_food_amounts()
+        fee_total = 0
+        for villager in self.villagers:
+            missing = False
+            if not villager.housed:
+                missing = True
+            else:
+                house = self.buildings.get(villager.housing_id or -1)
+                if house is None or housing_level_of(house.kind) < villager.housing_need:
+                    missing = True
+            if not staple_food_available(foods, villager.required_foods):
+                missing = True
+            if not missing:
+                villager.seasons_without_reqs = 0
+                continue
+            villager.seasons_without_reqs += 1
+            if self.home_storage.logs >= SEASON_MISSING_REQ_PAY_LOGS:
+                self.home_storage.logs -= SEASON_MISSING_REQ_PAY_LOGS
+                fee_total += SEASON_MISSING_REQ_PAY_LOGS
+            else:
+                villager.happiness = max(
+                    0.0, villager.happiness - HAPPINESS_MISSING_REQ_PENALTY
+                )
+        if fee_total > 0:
+            self._set_status(
+                f"Paid {fee_total} logs in seasonal upkeep for unmet hire requirements."
+            )
+
+    def _spend_work_energy(self, villager: Villager) -> None:
+        """Spend energy on an actual work tick (extract / process / build)."""
+        villager.energy = max(0.0, villager.energy - ENERGY_WORK_DRAIN)
+
+    def _gain_job_skill(self, villager: Villager, kind_name: str) -> None:
+        skill, _ = skill_for_building(kind_name)
+        gain_skill(villager, skill)
 
     def _chop_tree(
         self,
@@ -4666,11 +5027,16 @@ class Game:
         """One split work tick at the forester. Returns True if work was done."""
         if not villager.inventory.has_equipped_tool("axe"):
             return False
-        recipe = building.craftable_split_recipe()
+        skill, _ = skill_for_building(building.kind.name)
+        recipe = building.craftable_split_recipe(
+            worker_skill_level=villager_skill_level(villager, skill)
+        )
         if recipe is None or villager.work_cooldown > 0:
             return False
+        self._spend_work_energy(villager)
         if building.advance_recipe_progress(recipe, split=True):
             self._apply_recipe_tracked(building, recipe)
+            self._gain_job_skill(villager, building.kind.name)
         villager.work_cooldown = self._villager_work_interval(villager)
         return True
 
@@ -4818,11 +5184,25 @@ class Game:
             if other.fish_target_id is not None:
                 self._tick_claim_fish.add(other.fish_target_id)
 
-        for villager in self.villagers:
+        for villager in list(self.villagers):
             if villager.move_cooldown > 0:
                 villager.move_cooldown -= 1
             if villager.work_cooldown > 0:
                 villager.work_cooldown -= 1
+
+            day_frac = 1.0 / max(1, self.ticks_per_day)
+            self._update_villager_wellbeing(villager, day_frac)
+            if villager.id not in {v.id for v in self.villagers}:
+                continue
+            if villager.state == VillagerState.SLEEPING:
+                if (
+                    villager.target is not None
+                    and (villager.x, villager.y) != villager.target
+                    and villager.move_cooldown == 0
+                ):
+                    self._step_villager_toward(villager, villager.target)
+                    villager.move_cooldown = self._villager_move_interval(villager)
+                continue
 
             villager.satiation = max(
                 0.0,
@@ -4960,18 +5340,35 @@ class Game:
         return 0.4 + 0.6 * s
 
     def _villager_move_interval(self, villager: Villager) -> int:
-        factor = self._satiation_speed_factor(villager) * max(
-            0.1, villager.food_walk_mult
+        factor = (
+            self._satiation_speed_factor(villager)
+            * max(0.1, villager.food_walk_mult)
+            * (0.7 + 0.3 * max(0.0, min(1.0, villager.happiness)))
+            * (0.55 + 0.45 * max(0.0, min(1.0, villager.energy)))
         )
         scaled = self.balance.get_int("VILLAGER_MOVE_INTERVAL") * self._day_length_scale()
-        return max(4, int(round(scaled / factor)))
+        return max(4, int(round(scaled / max(0.15, factor))))
 
     def _villager_work_interval(self, villager: Villager) -> int:
-        factor = self._satiation_speed_factor(villager) * max(
-            0.1, villager.food_work_mult
+        skill_mult = 1.0
+        if villager.building_id is not None:
+            building = self.buildings.get(villager.building_id)
+            if building is not None:
+                skill, _ = skill_for_building(building.kind.name)
+                skill_mult = skill_efficiency(villager, skill)
+        elif villager.assigned_to_home:
+            skill_mult = skill_efficiency(villager, SkillType.TRANSPORT)
+        elif villager.state == VillagerState.BUILDING:
+            skill_mult = skill_efficiency(villager, SkillType.LABOUR)
+        factor = (
+            self._satiation_speed_factor(villager)
+            * max(0.1, villager.food_work_mult)
+            * skill_mult
+            * (0.65 + 0.35 * max(0.0, min(1.0, villager.happiness)))
+            * (0.5 + 0.5 * max(0.0, min(1.0, villager.energy)))
         )
         scaled = self.balance.get_int("VILLAGER_WORK_INTERVAL") * self._day_length_scale()
-        return max(6, int(round(scaled / factor)))
+        return max(6, int(round(scaled / max(0.15, factor))))
 
     def _food_count(self, storage) -> int:
         return sum(getattr(storage, key, 0) for key in VILLAGER_FOOD_KEYS)
@@ -5062,6 +5459,18 @@ class Game:
         if villager is not None and eaten_keys:
             villager.last_meal = list(eaten_keys)
             walk, work, hunger = combine_meal_buffs(eaten_keys)
+            # Junk favourites: get the craving but take a work rebuff.
+            if villager.favourite_is_junk and any(
+                f in eaten_keys for f in villager.favourite_foods
+            ):
+                work *= 0.85
+            # Missing hire staple in this meal lowers happiness immediately.
+            if villager.required_foods and not any(
+                f in eaten_keys for f in villager.required_foods
+            ):
+                villager.happiness = max(
+                    0.0, villager.happiness - HAPPINESS_MISSING_REQ_PENALTY * 0.5
+                )
             villager.apply_food_buffs(walk, work, hunger)
         return len(eaten_keys)
 
@@ -6049,6 +6458,8 @@ class Game:
                 return
             villager.state = VillagerState.BUILDING
             site.build_progress += 1
+            self._spend_work_energy(villager)
+            self._gain_job_skill(villager, "BUILD")
             if site.is_complete:
                 self._complete_construction(site)
                 villager.construction_id = None
@@ -6370,7 +6781,10 @@ class Game:
         """
         candidates: list[tuple[int, int, tuple[int, int], str]] = []
 
-        split_recipe = building.craftable_split_recipe()
+        skill, _ = skill_for_building(building.kind.name)
+        split_recipe = building.craftable_split_recipe(
+            worker_skill_level=villager_skill_level(villager, skill)
+        )
         if split_recipe is not None:
             candidates.append(
                 (
@@ -6606,14 +7020,19 @@ class Game:
 
         building.deposit_from_inventory(villager.inventory)
 
-        recipe = building.craftable_recipe()
+        skill, _ = skill_for_building(building.kind.name)
+        recipe = building.craftable_recipe(
+            worker_skill_level=villager_skill_level(villager, skill)
+        )
         if recipe is None or villager.work_cooldown > 0:
             return
+        self._spend_work_energy(villager)
         if building.advance_recipe_progress(recipe):
             fuel = 1 if building.kind == BuildingKind.KITCHEN else 0
             self._apply_recipe_tracked(building, recipe, fuel_wood=fuel)
             if fuel:
                 building.fuel_wood = max(0, building.fuel_wood - 1)
+            self._gain_job_skill(villager, building.kind.name)
         villager.work_cooldown = self._villager_work_interval(villager)
 
     def _find_farm_harvest(
@@ -6811,6 +7230,8 @@ class Game:
                 self.world.plough_tile(x, y)
                 self.world.apply_extraction_disturbance(x, y)
                 self._refresh_indicators()
+            self._spend_work_energy(villager)
+            self._gain_job_skill(villager, building.kind.name)
             return
 
         if not allow_plant:
@@ -6836,10 +7257,14 @@ class Game:
                 self.record_consumed(seed_key, 1)
                 self.world.apply_disturbance(x, y)
                 self._refresh_indicators()
+                self._spend_work_energy(villager)
+                self._gain_job_skill(villager, building.kind.name)
             return
         self.world.plough_tile(x, y)
         self.world.apply_extraction_disturbance(x, y)
         self._refresh_indicators()
+        self._spend_work_energy(villager)
+        self._gain_job_skill(villager, building.kind.name)
 
     def _update_hunter(self, villager: Villager, building: Building) -> None:
         """Hunt in areas, or nearest animal if no area is drawn."""
@@ -6870,7 +7295,9 @@ class Game:
             villager.state = VillagerState.WORKING
             if (villager.x, villager.y) == meat_pos:
                 if villager.work_cooldown == 0:
-                    self._collect_meat(*meat_pos, villager.inventory, status=False)
+                    if self._collect_meat(*meat_pos, villager.inventory, status=False):
+                        self._spend_work_energy(villager)
+                        self._gain_job_skill(villager, building.kind.name)
                     villager.work_cooldown = self._villager_work_interval(villager)
                     cell = self.world.get_cell(*meat_pos)
                     if cell is None or cell.meat_deposit <= 0:
@@ -6922,6 +7349,8 @@ class Game:
                             self.record_produced("fur", RABBIT_FUR_PER_LEVEL)
                         self.world.apply_extraction_disturbance(colony.x, colony.y)
                         self._refresh_indicators()
+                        self._spend_work_energy(villager)
+                        self._gain_job_skill(villager, building.kind.name)
                         villager.work_cooldown = self._villager_work_interval(villager)
                         self._force_assigned_delivery(villager, building)
                         return
@@ -6956,6 +7385,8 @@ class Game:
                     self._refresh_indicators()
                     villager.hunt_meat_pos = (x, y)
                     self._register_field_claim(villager, (x, y))
+                    self._spend_work_energy(villager)
+                    self._gain_job_skill(villager, building.kind.name)
                 villager.work_cooldown = self._villager_work_interval(villager)
             return
 
@@ -7174,7 +7605,9 @@ class Game:
             villager.state = VillagerState.WORKING
             if (villager.x, villager.y) == catch_pos:
                 if villager.work_cooldown == 0:
-                    self._collect_fish(*catch_pos, villager.inventory, status=False)
+                    if self._collect_fish(*catch_pos, villager.inventory, status=False):
+                        self._spend_work_energy(villager)
+                        self._gain_job_skill(villager, building.kind.name)
                     villager.work_cooldown = self._villager_work_interval(villager)
                     cell = self.world.get_cell(*catch_pos)
                     if cell is None or cell.fish_deposit <= 0:
@@ -7475,6 +7908,7 @@ class Game:
                 return
             if (villager.x, villager.y) == home:
                 self._deposit_home(villager.inventory, status=False)
+                self._gain_job_skill(villager, "HOME")
                 villager.haul_building_id = None
                 villager.state = VillagerState.IDLE
                 return
@@ -8524,54 +8958,64 @@ class Game:
                     self.record_produced("honey", result[1])
                     self.world.apply_extraction_disturbance(x, y)
                     villager._return_after_harvest = True  # type: ignore[attr-defined]
+                    self._spend_work_energy(villager)
+                    self._gain_job_skill(villager, building.kind.name)
                 return
 
+        did_work = False
         if (
             allow_collect
             and cell.feature == FeatureType.TREE
             and (TaskType.CHOP_TREES in tasks or TaskType.FULL_MANAGE in tasks)
             and self._building_allows_cell(building, cell)
         ):
-            self._chop_tree(x, y, inv, status=False, require_axe=require_axe)
+            if self._chop_tree(x, y, inv, status=False, require_axe=require_axe):
+                did_work = True
         elif allow_collect and cell.feature == FeatureType.ROCK and (
             TaskType.COLLECT_ROCKS in tasks or TaskType.FULL_FORAGE in tasks
         ) and self._building_allows_cell(building, cell):
-            self._collect_rock(x, y, inv, status=False)
+            if self._collect_rock(x, y, inv, status=False):
+                did_work = True
         elif (
             allow_collect
             and cell.feature == FeatureType.MUSHROOM
             and (TaskType.FORAGE_MUSHROOMS in tasks or TaskType.FULL_FORAGE in tasks)
             and self._building_allows_cell(building, cell)
         ):
-            self._collect_mushroom(x, y, inv, status=False)
+            if self._collect_mushroom(x, y, inv, status=False):
+                did_work = True
         elif (
             allow_collect
             and cell.feature == FeatureType.WOOD_BUSH
             and TaskType.FULL_FORAGE in tasks
             and self._building_allows_cell(building, cell)
         ):
-            self._collect_wood_bush(x, y, inv, status=False)
+            if self._collect_wood_bush(x, y, inv, status=False):
+                did_work = True
         elif (
             allow_collect
             and cell.feature == FeatureType.BERRY_BUSH
             and (TaskType.FORAGE_BERRIES in tasks or TaskType.FULL_FORAGE in tasks)
             and self._building_allows_cell(building, cell)
         ):
-            self._collect_berries(x, y, inv, status=False)
+            if self._collect_berries(x, y, inv, status=False):
+                did_work = True
         elif (
             allow_collect
             and cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.REED)
             and (TaskType.FORAGE_HERBS in tasks or TaskType.FULL_FORAGE in tasks)
             and self._building_allows_cell(building, cell)
         ):
-            self._collect_herb(x, y, inv, status=False)
+            if self._collect_herb(x, y, inv, status=False):
+                did_work = True
         elif (
             allow_collect
             and cell.feature == FeatureType.TREE
             and TaskType.FULL_FORAGE in tasks
             and self._building_allows_cell(building, cell)
         ):
-            self._chop_tree(x, y, inv, status=False, require_axe=require_axe)
+            if self._chop_tree(x, y, inv, status=False, require_axe=require_axe):
+                did_work = True
         elif allow_plant and cell.feature == FeatureType.NONE:
             # Prefer inventory stock (filled by storage withdraw). Fall back to remote pull.
             if building.kind == BuildingKind.FORESTER and (
@@ -8582,7 +9026,11 @@ class Game:
                         from trees import SAPLING_ITEM_KEYS
 
                         self.home_storage.withdraw_keys_to(inv, SAPLING_ITEM_KEYS)
-                self._plant(x, y, inv, status=False)
+                if self._plant(x, y, inv, status=False):
+                    did_work = True
+        if did_work:
+            self._spend_work_energy(villager)
+            self._gain_job_skill(villager, building.kind.name)
 
     def _step_villager_toward(self, villager: Villager, goal: tuple[int, int]) -> bool:
         """Step along a path toward goal. Returns False if the goal is unreachable."""
@@ -8847,6 +9295,8 @@ class Game:
             self.buildings,
             self.villagers,
             mouse,
+            housed=housed_count(self.villagers),
+            needing=len(self.villagers),
         )
         self.toolbar.draw(
             self.screen,
@@ -8895,6 +9345,7 @@ class Game:
             harvest_yield=field_harvest,
         )
         inspect_b = self._inspect_building()
+        hire_candidates = None
         if inspect_b is None:
             inspect_workers: list = []
             storage_amounts = None
@@ -8909,6 +9360,7 @@ class Game:
             inspect_workers = []
             storage_amounts = None
             hired_count = len(self.villagers)
+            hire_candidates = list(self.hire_candidates)
         else:
             inspect_workers = [v for v in self.villagers if v.building_id == inspect_b.id]
             storage_amounts = None
@@ -8922,6 +9374,10 @@ class Game:
             storage_amounts=storage_amounts,
             player_inventory=self.player.inventory,
             hired_count=hired_count,
+            hire_candidates=hire_candidates,
+            food_amounts=self._village_food_amounts(),
+            free_beds=free_housing_beds(self.buildings, self.villagers),
+            housing_level=max_housing_level(self.buildings),
         )
         inspect_v = self._get_villager(self.villager_inspect.villager_id or -1)
         self.villager_inspect.draw(
@@ -8946,6 +9402,43 @@ class Game:
             self._habitat_inspect_view(),
             mouse_pos=mouse,
         )
+        if self.villager_roster.open:
+            if self.villager_roster.mode == "hire":
+                foods = self._village_food_amounts()
+                beds = free_housing_beds(self.buildings, self.villagers)
+                lvl = max_housing_level(self.buildings)
+
+                def _can_hire(entry) -> bool:
+                    return (
+                        beds > 0
+                        and lvl >= entry.housing_need
+                        and staple_food_available(foods, entry.required_foods)
+                    )
+
+                self.villager_roster.draw(
+                    self.screen,
+                    [entry_from_candidate(c) for c in self.hire_candidates],
+                    mouse_pos=mouse,
+                    title=f"Travellers ({len(self.hire_candidates)})",
+                    subtitle=(
+                        f"Hired {len(self.villagers)}/{MAX_VILLAGERS}  ·  "
+                        f"Beds free {beds}  ·  Housing lvl {lvl}"
+                    ),
+                    show_hire_actions=True,
+                    can_hire=_can_hire,
+                )
+            else:
+                bid = self.villager_roster.assign_building_id
+                b = self.buildings.get(bid) if bid is not None else None
+                subtitle = None
+                if self.villager_roster.mode == "assign" and b is not None:
+                    subtitle = f"Assign to {BUILDING_LABELS[b.kind]} #{b.id}"
+                self.villager_roster.draw(
+                    self.screen,
+                    self._roster_entries_for_villagers(),
+                    mouse_pos=mouse,
+                    subtitle=subtitle,
+                )
         pygame.display.flip()
 
     def _farm_field_cells(self) -> set[tuple[int, int]]:

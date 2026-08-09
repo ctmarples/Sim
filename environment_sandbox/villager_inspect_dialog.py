@@ -91,8 +91,8 @@ class VillagerInspectDialog:
         self._moving = False
         self._hover_inv = None
         self._tooltip_key = None
-        self._panel_w = 520 if show_player else 300
-        self._panel_h = 360
+        self._panel_w = 520 if show_player else 320
+        self._panel_h = 420
         map_w = map_view_width()
         if screen_xy is not None:
             prefer_x = screen_xy[0] + 24
@@ -314,7 +314,9 @@ class VillagerInspectDialog:
         )
         self._title_rect = pygame.Rect(panel.x, panel.y, panel.w - 32, TITLE_BAR_H)
         surface.blit(
-            self.font_title.render(f"Villager #{villager.id}", True, COLOUR_TEXT),
+            self.font_title.render(
+                villager.name or f"Villager #{villager.id}", True, COLOUR_TEXT
+            ),
             (panel.x + 10, panel.y + 6),
         )
         self._close_rect = pygame.Rect(panel.right - 28, panel.y + 4, 22, 20)
@@ -350,14 +352,39 @@ class VillagerInspectDialog:
         if abs(villager.food_hunger_mult - 1.0) > 0.01:
             buff_parts.append(f"hunger ×{villager.food_hunger_mult:g}")
         buff_line = ", ".join(buff_parts) if buff_parts else "—"
+        house = "housed" if villager.housed else "no bed"
+        skill_bits = []
+        try:
+            from society import SKILL_LABELS, SKILL_ORDER
+
+            for sk in SKILL_ORDER:
+                st = villager.skills.get(sk)
+                if st is None:
+                    continue
+                skill_bits.append(
+                    f"{SKILL_LABELS[sk][:3]} {int(st.level)}/{int(st.potential)}"
+                )
+        except Exception:
+            skill_bits = []
+        traits = []
+        if getattr(villager, "virtues", None):
+            traits.append("+" + ",".join(villager.virtues[:2]))
+        if getattr(villager, "vices", None):
+            traits.append("-" + ",".join(villager.vices[:2]))
         for line in (
             f"State: {state}",
             f"Workplace: {assignment_label}",
+            f"Energy: {int(round(villager.energy * 100))}%  Happiness: {int(round(villager.happiness * 100))}%  ({house})",
             f"Satiation: {int(round(villager.satiation * 100))}%",
             f"Last meal: {last}",
             f"Food buffs: {buff_line}",
+            f"Skills: {', '.join(skill_bits[:3])}" if skill_bits else "Skills: —",
+            f"         {', '.join(skill_bits[3:])}" if len(skill_bits) > 3 else "",
+            f"Traits: {' '.join(traits)}" if traits else "",
         ):
-            surface.blit(self.font_small.render(line, True, COLOUR_TEXT_DIM), (x, y))
+            if not line.strip():
+                continue
+            surface.blit(self.font_small.render(line[:58], True, COLOUR_TEXT_DIM), (x, y))
             y += 16
 
         y += SECTION_GAP

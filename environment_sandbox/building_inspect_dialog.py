@@ -583,6 +583,10 @@ class BuildingInspectDialog:
         player_amounts: dict[str, int] | None = None,
         player_inventory: Inventory | None = None,
         hired_count: int = 0,
+        hire_candidates: list | None = None,
+        food_amounts: dict[str, int] | None = None,
+        free_beds: int = 0,
+        housing_level: int = 0,
     ) -> None:
         if not self.open or building is None or building.kind == BuildingKind.FIELD:
             return
@@ -619,9 +623,10 @@ class BuildingInspectDialog:
                 f"  seeds {player_inventory.seed_total}/{player_inventory.seed_capacity}"
             )
 
+        candidates = list(hire_candidates or [])
         options_h = BTN_H + 8
         if building.kind == BuildingKind.WORKSTATION:
-            options_h = BTN_H + 8
+            options_h = BTN_H + 28
         elif building.supported_work_modes():
             options_h = BTN_H * 2 + 12
         elif building.has_recipes():
@@ -674,11 +679,14 @@ class BuildingInspectDialog:
                 inner_w=layout_w,
             )
 
-        workers_content = (
-            ROW_H
-            if building.kind == BuildingKind.WORKSTATION or not workers
-            else len(workers) * (ROW_H + 2)
-        )
+        hire_row_h = ROW_H
+        if building.kind == BuildingKind.WORKSTATION:
+            workers_content = ROW_H + BTN_H + 24
+            self._panel_w = 360
+        elif not workers:
+            workers_content = ROW_H
+        else:
+            workers_content = len(workers) * (ROW_H + 2)
         workers_h = 18 + min(workers_content, MAX_WORKER_VIEW_H)
 
         if dual:
@@ -694,7 +702,7 @@ class BuildingInspectDialog:
             self._panel_w = 380 if (building.has_recipes() or supports_caps) else 300
         else:
             grid_h = 40
-            self._panel_w = 300
+            self._panel_w = 420 if building.kind == BuildingKind.WORKSTATION else 300
 
         body_h = (
             PAD
@@ -763,13 +771,22 @@ class BuildingInspectDialog:
         y += 18
         bx = x
         if building.kind == BuildingKind.WORKSTATION:
-            label = f"Hire ({hired_count}/{MAX_VILLAGERS})"
-            w = max(120, 12 + self.font_small.size(label)[0])
+            label = f"Hire first fit ({hired_count}/{MAX_VILLAGERS})"
+            w = max(140, 12 + self.font_small.size(label)[0])
             rect = pygame.Rect(bx, y, w, BTN_H)
             hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
             self._draw_button(surface, rect, label, hovered=hovered)
             self._buttons.append(("hire_villager", rect))
-            y += BTN_H + 6
+            y += BTN_H + 4
+            status = (
+                f"Beds free {free_beds}  ·  Housing lvl {housing_level}  ·  "
+                f"{len(candidates)} travellers"
+            )
+            surface.blit(
+                self.font_tiny.render(status, True, COLOUR_TEXT_DIM),
+                (x, y),
+            )
+            y += 16
         elif building.kind == BuildingKind.HOME:
             for label, action in (
                 ("Assign hauler +", "assign_villager"),
@@ -915,26 +932,31 @@ class BuildingInspectDialog:
             if craft_tip:
                 tip_key = craft_tip
 
-        # --- Workers / haulers ---
+        # --- Workers / haulers / hire pool ---
         workers_title = (
             "Haulers"
             if building.kind == BuildingKind.HOME
+            else "Travellers"
+            if building.kind == BuildingKind.WORKSTATION
             else "Workers"
-            if building.kind != BuildingKind.WORKSTATION
-            else "Note"
         )
         surface.blit(self.font.render(workers_title, True, COLOUR_TEXT), (x, y))
         y += 18
         if building.kind == BuildingKind.WORKSTATION:
             surface.blit(
                 self.font_small.render(
-                    "Hire villagers here. Assign them to workplaces.",
+                    f"{len(candidates)} travellers nearby — open roster to hire.",
                     True,
                     COLOUR_TEXT_DIM,
                 ),
                 (x, y),
             )
-            y += ROW_H
+            y += 20
+            open_r = pygame.Rect(x, y, 160, BTN_H)
+            hov = mouse_pos is not None and open_r.collidepoint(mouse_pos)
+            self._draw_button(surface, open_r, "Open travellers…", hovered=hov)
+            self._buttons.append(("hire_villager", open_r))
+            y += BTN_H + 4
         elif not workers:
             surface.blit(
                 self.font_small.render("None assigned", True, COLOUR_TEXT_DIM),

@@ -183,6 +183,9 @@ BUILDING_STORAGE: dict[str, BuildingStorageSpec] = {
         input_capacity=_PROC_IN,
         output_capacity=_PROC_OUT,
     ),
+    "tent": BuildingStorageSpec(capacity=0),
+    "house_small": BuildingStorageSpec(capacity=0),
+    "house": BuildingStorageSpec(capacity=0),
 }
 
 

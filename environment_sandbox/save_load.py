@@ -27,6 +27,12 @@ from entities import (
     WorkPriority,
 )
 from recipes import PROCESSED_KEYS
+from society import (
+    Community,
+    HireCandidate,
+    skills_from_dict,
+    skills_to_dict,
+)
 from world import Cell, FeatureType, TerrainType, World
 
 if TYPE_CHECKING:
@@ -360,6 +366,23 @@ def serialize_game(game: Game) -> dict[str, Any]:
                 "food_walk_mult": round(v.food_walk_mult, 4),
                 "food_work_mult": round(v.food_work_mult, 4),
                 "food_hunger_mult": round(v.food_hunger_mult, 4),
+                "name": v.name,
+                "energy": round(v.energy, 4),
+                "happiness": round(v.happiness, 4),
+                "housed": v.housed,
+                "housing_id": v.housing_id,
+                "housing_need": v.housing_need,
+                "required_foods": list(v.required_foods),
+                "favourite_foods": list(v.favourite_foods),
+                "favourite_is_junk": v.favourite_is_junk,
+                "join_fee_paid": v.join_fee_paid,
+                "seasons_without_reqs": v.seasons_without_reqs,
+                "low_happiness_days": round(v.low_happiness_days, 4),
+                "skills": skills_to_dict(v.skills) if v.skills else {},
+                "community_id": v.community_id,
+                "virtues": list(getattr(v, "virtues", []) or []),
+                "vices": list(getattr(v, "vices", []) or []),
+                "portrait_seed": int(getattr(v, "portrait_seed", 0) or 0),
             }
         )
     sites = [
@@ -473,6 +496,10 @@ def serialize_game(game: Game) -> dict[str, Any]:
         "next_construction_id": game.next_construction_id,
         "place_kind": game.place_kind.name if game.place_kind else None,
         "overlay_mode": game.overlay_mode.name,
+        "communities": [c.to_dict() for c in getattr(game, "communities", [])],
+        "hire_candidates": [c.to_dict() for c in getattr(game, "hire_candidates", [])],
+        "next_community_id": int(getattr(game, "next_community_id", 1)),
+        "next_hire_id": int(getattr(game, "next_hire_id", 1)),
     }
     if hasattr(game, "env_maps"):
         payload["env_maps"] = game.env_maps.to_save_dict()
@@ -577,6 +604,9 @@ def _migrate_building_footprints(game: Game) -> None:
         BuildingKind.CRAFT_BENCH: FeatureType.CRAFT_BENCH,
         BuildingKind.ALCHEMIST: FeatureType.ALCHEMIST,
         BuildingKind.TAILOR: FeatureType.TAILOR,
+        BuildingKind.TENT: FeatureType.TENT,
+        BuildingKind.HOUSE_SMALL: FeatureType.HOUSE_SMALL,
+        BuildingKind.HOUSE: FeatureType.HOUSE,
     }
 
     for building in list(game.buildings.values()):
@@ -989,6 +1019,27 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         villager.food_walk_mult = max(0.1, float(vdata.get("food_walk_mult", 1.0)))
         villager.food_work_mult = max(0.1, float(vdata.get("food_work_mult", 1.0)))
         villager.food_hunger_mult = max(0.05, float(vdata.get("food_hunger_mult", 1.0)))
+        villager.name = str(vdata.get("name") or villager.name)
+        villager.energy = max(0.0, min(1.0, float(vdata.get("energy", 1.0))))
+        villager.happiness = max(0.0, min(1.0, float(vdata.get("happiness", 0.7))))
+        villager.housed = bool(vdata.get("housed", False))
+        hid = vdata.get("housing_id")
+        villager.housing_id = int(hid) if hid is not None else None
+        villager.housing_need = int(vdata.get("housing_need", 1))
+        villager.required_foods = list(vdata.get("required_foods") or ["meat"])
+        villager.favourite_foods = list(vdata.get("favourite_foods") or [])
+        villager.favourite_is_junk = bool(vdata.get("favourite_is_junk", False))
+        villager.join_fee_paid = bool(vdata.get("join_fee_paid", False))
+        villager.seasons_without_reqs = int(vdata.get("seasons_without_reqs", 0))
+        villager.low_happiness_days = float(vdata.get("low_happiness_days", 0.0))
+        villager.skills = skills_from_dict(vdata.get("skills"))
+        cid = vdata.get("community_id")
+        villager.community_id = int(cid) if cid is not None else None
+        villager.virtues = list(vdata.get("virtues") or [])
+        villager.vices = list(vdata.get("vices") or [])
+        villager.portrait_seed = int(vdata.get("portrait_seed", 0) or 0)
+        if not villager.virtues and not villager.vices:
+            villager.__post_init__()
         game.villagers.append(villager)
 
     game.construction_sites.clear()
@@ -1108,6 +1159,26 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             max(b.id for b in game.buildings.values()) + 1,
         )
     game.next_construction_id = int(data.get("next_construction_id", 1))
+    game.communities = [
+        Community.from_dict(c) for c in data.get("communities", []) if isinstance(c, dict)
+    ]
+    game.hire_candidates = [
+        HireCandidate.from_dict(c)
+        for c in data.get("hire_candidates", [])
+        if isinstance(c, dict)
+    ]
+    game.next_community_id = int(
+        data.get(
+            "next_community_id",
+            max((c.id for c in game.communities), default=0) + 1,
+        )
+    )
+    game.next_hire_id = int(
+        data.get(
+            "next_hire_id",
+            max((c.id for c in game.hire_candidates), default=0) + 1,
+        )
+    )
     place = data.get("place_kind")
     game.place_kind = BuildingKind[place] if place else None
     game.sim_speed = int(data.get("sim_speed", 1))

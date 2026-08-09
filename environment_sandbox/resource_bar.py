@@ -99,6 +99,9 @@ class ResourceBar:
         buildings: dict[int, Building],
         villagers: list[Villager],
         mouse_pos: tuple[int, int],
+        *,
+        housed: int | None = None,
+        needing: int | None = None,
     ) -> None:
         bar = pygame.Rect(0, TOOLBAR_HEIGHT, WINDOW_WIDTH, RESOURCE_BAR_HEIGHT)
         pygame.draw.rect(surface, COLOUR_TOOLBAR_BG, bar)
@@ -136,6 +139,26 @@ class ResourceBar:
         )
 
         x = self._toggle_rect.right + 14
+
+        # Housing: housed villagers / total villagers (need beds).
+        if housed is not None and needing is not None:
+            house_text = f"Housing  {housed}/{needing}"
+            hw = self.font.size(house_text)[0] + 24
+            hrect = pygame.Rect(x, y, hw, h)
+            self._chip_rects["housing"] = hrect
+            hovered = hrect.collidepoint(mouse_pos)
+            colour = COLOUR_TOOLBAR_BTN_HOVER if hovered else COLOUR_TOOLBAR_BTN
+            pygame.draw.rect(surface, colour, hrect, border_radius=4)
+            pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, hrect, 1, border_radius=4)
+            ht = self.font.render(house_text, True, COLOUR_TEXT)
+            surface.blit(
+                ht,
+                (
+                    hrect.x + (hrect.w - ht.get_width()) // 2,
+                    hrect.y + (hrect.h - ht.get_height()) // 2,
+                ),
+            )
+            x = hrect.right + 10
 
         for group in GROUP_ORDER:
             label = GROUP_LABELS.get(group, group)
