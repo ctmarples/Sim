@@ -1386,6 +1386,25 @@ class World:
                 self.mark_terrain_dirty(x, y)
         return cx, cy
 
+    def clear_structure_footprint(
+        self, origin_x: int, origin_y: int, plot_w: int, plot_h: int
+    ) -> None:
+        """Remove construction/building glyphs from a rectangular footprint."""
+        w = max(1, plot_w)
+        h = max(1, plot_h)
+        for y in range(origin_y, origin_y + h):
+            for x in range(origin_x, origin_x + w):
+                cell = self.get_cell(x, y)
+                if cell is None:
+                    continue
+                cell.feature = FeatureType.NONE
+                cell.deposit = 0
+                cell.growth_ticks = 0
+                cell.crop_kind = None
+                cell.tree_species = None
+                cell.icon_variant = None
+                self.mark_terrain_dirty(x, y)
+
     def neighbourhood(self, x: int, y: int, radius: int) -> Iterator[tuple[int, int]]:
         """Yield (y, x) cells within Chebyshev distance `radius`, including centre."""
         for ny in range(y - radius, y + radius + 1):

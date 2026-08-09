@@ -402,6 +402,10 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "build_progress": s.build_progress,
             "plot_w": getattr(s, "plot_w", 1),
             "plot_h": getattr(s, "plot_h", 1),
+            "phase": getattr(s, "phase", "build"),
+            "relocate_pair_id": getattr(s, "relocate_pair_id", None),
+            "relocate_from_building_id": getattr(s, "relocate_from_building_id", None),
+            "source_building_id": getattr(s, "source_building_id", None),
         }
         for s in game.construction_sites.values()
     ]
@@ -1044,6 +1048,9 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
 
     game.construction_sites.clear()
     for sdata in data.get("construction_sites", []):
+        pair = sdata.get("relocate_pair_id")
+        from_b = sdata.get("relocate_from_building_id")
+        src_b = sdata.get("source_building_id")
         site = ConstructionSite(
             id=int(sdata["id"]),
             x=int(sdata["x"]),
@@ -1060,6 +1067,10 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             build_progress=int(sdata.get("build_progress", 0)),
             plot_w=max(1, int(sdata.get("plot_w", 1))),
             plot_h=max(1, int(sdata.get("plot_h", 1))),
+            phase=str(sdata.get("phase") or "build"),
+            relocate_pair_id=int(pair) if pair is not None else None,
+            relocate_from_building_id=int(from_b) if from_b is not None else None,
+            source_building_id=int(src_b) if src_b is not None else None,
         )
         game.construction_sites[site.id] = site
 

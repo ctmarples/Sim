@@ -660,16 +660,17 @@ class UI:
         else:
             if construction_sites:
                 for site in construction_sites.values():
-                    y = _blit_text(
+                    phase = site.phase_label() if hasattr(site, "phase_label") else ""
+                    y = self._draw_list_row(
                         content,
-                        self.font_small,
-                        f"Site {BUILDING_LABELS[site.kind]} "
-                        f"{site.have_wood}/{site.need_wood}wood "
-                        f"{site.have_logs}/{site.need_logs}logs "
-                        f"{site.have_hardwood}/{site.need_hardwood}hw "
-                        f"{site.have_rock}/{site.need_rock}r",
-                        (x, y),
-                        COLOUR_TEXT_DIM,
+                        f"Site {BUILDING_LABELS[site.kind]} {phase}".strip(),
+                        x,
+                        y,
+                        selected=selected_habitat_id is None
+                        and False,  # selection via Management / map
+                        hit_kind="construction",
+                        hit_id=site.id,
+                        local_mouse=local_mouse,
                     )
             for b in buildings.values():
                 selected = selected_building_id == b.id

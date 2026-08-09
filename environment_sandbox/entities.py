@@ -1723,7 +1723,10 @@ class Building:
         return label
 
     def craftable_recipe(
-        self, *, worker_skill_level: int | None = None
+        self,
+        *,
+        worker=None,
+        worker_skill_level: int | None = None,
     ) -> Recipe | None:
         """Pick an enabled recipe that can run now.
 
@@ -1731,9 +1734,11 @@ class Building:
         prefer richer recipes (more input units) so e.g. spiced stew beats
         grilled meat when both are stocked.
 
-        ``worker_skill_level`` gates recipes by ``Recipe.min_skill`` when set.
+        ``worker`` gates recipes by ``Recipe.skill_reqs`` when set.
+        ``worker_skill_level`` is a legacy single-level fallback.
         """
         from recipes import recipe_output_fits, recipe_ready
+        from society import recipe_skill_gate
 
         recipes = self.enabled_recipes()
         if not recipes:
@@ -1746,9 +1751,9 @@ class Building:
         for recipe in recipes:
             if not recipe.inputs:
                 continue
-            if worker_skill_level is not None and int(
-                getattr(recipe, "min_skill", 1) or 1
-            ) > int(worker_skill_level):
+            if not recipe_skill_gate(
+                recipe, worker=worker, worker_skill_level=worker_skill_level
+            ):
                 continue
             if not recipe_ready(self, recipe):
                 continue
@@ -1778,19 +1783,25 @@ class Building:
         return self._recipes_by_priority(enabled)
 
     def craftable_split_recipe(
-        self, *, worker_skill_level: int | None = None
+        self,
+        *,
+        worker=None,
+        worker_skill_level: int | None = None,
     ) -> Recipe | None:
+        from society import recipe_skill_gate
+
         recipes = self.enabled_split_recipes()
         if not recipes:
             return None
-        if worker_skill_level is not None:
-            recipes = tuple(
-                r
-                for r in recipes
-                if int(getattr(r, "min_skill", 1) or 1) <= int(worker_skill_level)
+        recipes = tuple(
+            r
+            for r in recipes
+            if recipe_skill_gate(
+                r, worker=worker, worker_skill_level=worker_skill_level
             )
-            if not recipes:
-                return None
+        )
+        if not recipes:
+            return None
         return can_craft(self, recipes, capacity=self.capacity)
 
     def advance_recipe_progress(self, recipe: Recipe, *, split: bool = False) -> bool:
@@ -2196,6 +2207,11 @@ class Building:
         return WorkMode.COLLECT
 
 
+# ConstructionSite.phase values
+SITE_PHASE_BUILD = "build"
+SITE_PHASE_DECONSTRUCT = "deconstruct"
+
+
 @dataclass
 class ConstructionSite:
     id: int
@@ -2213,6 +2229,14 @@ class ConstructionSite:
     build_progress: int = 0
     plot_w: int = 1
     plot_h: int = 1
+    # "build" = normal / relocate destination; "deconstruct" = old relocate site.
+    phase: str = SITE_PHASE_BUILD
+    # Paired site id for relocate (build ↔ deconstruct).
+    relocate_pair_id: int | None = None
+    # Building id that started a relocate (informational).
+    relocate_from_building_id: int | None = None
+    # On deconstruct sites: original building id before teardown.
+    source_building_id: int | None = None
 
     def plot_bounds(self) -> tuple[int, int, int, int]:
         w = max(1, self.plot_w)
@@ -2230,6 +2254,10 @@ class ConstructionSite:
     def center_cell(self) -> tuple[int, int]:
         left, top, right, bottom = self.plot_bounds()
         return (left + right) // 2, (top + bottom) // 2
+
+    @property
+    def is_deconstruct(self) -> bool:
+        return self.phase == SITE_PHASE_DECONSTRUCT
 
     @property
     def wood_needed(self) -> int:
@@ -2263,11 +2291,49 @@ class ConstructionSite:
     def build_required_ticks(self) -> int:
         from settings import BUILD_TICKS_PER_ITEM
 
-        return self.total_items * BUILD_TICKS_PER_ITEM
+        return max(1, self.total_items * BUILD_TICKS_PER_ITEM)
 
     @property
     def is_complete(self) -> bool:
         return self.materials_ready and self.build_progress >= self.build_required_ticks()
+
+    def materials_delivered_frac(self) -> float:
+        total = self.total_items
+        if total <= 0:
+            return 1.0
+        have = (
+            min(self.have_wood, self.need_wood)
+            + min(self.have_rock, self.need_rock)
+            + min(self.have_logs, self.need_logs)
+            + min(self.have_hardwood, self.need_hardwood)
+        )
+        return max(0.0, min(1.0, have / total))
+
+    def work_progress_frac(self) -> float:
+        need = self.build_required_ticks()
+        if need <= 0:
+            return 1.0
+        return max(0.0, min(1.0, self.build_progress / need))
+
+    def phase_label(self) -> str:
+        if self.is_deconstruct:
+            return "Moving — deconstruct"
+        if self.relocate_pair_id is not None:
+            return "Moving — construct"
+        return "Building"
+
+    def material_rows(self) -> list[tuple[str, int, int]]:
+        """(resource_key, have, need) for UI."""
+        rows: list[tuple[str, int, int]] = []
+        if self.need_wood or self.have_wood:
+            rows.append(("wood", self.have_wood, self.need_wood))
+        if self.need_logs or self.have_logs:
+            rows.append(("logs", self.have_logs, self.need_logs))
+        if self.need_hardwood or self.have_hardwood:
+            rows.append(("hardwood_logs", self.have_hardwood, self.need_hardwood))
+        if self.need_rock or self.have_rock:
+            rows.append(("rock", self.have_rock, self.need_rock))
+        return rows
 
 
 @dataclass

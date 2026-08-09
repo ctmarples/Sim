@@ -89,6 +89,15 @@ class BuildingInspectDialog:
         self._scroll: dict[str, int] = {}
         # name → (view_rect, content_h, view_h) rebuilt each draw.
         self._scroll_areas: dict[str, tuple[pygame.Rect, int, int]] = {}
+        self.embedded = False
+
+    def configure_embed(self, rect: pygame.Rect) -> None:
+        """Draw as an embedded pane (no close/drag chrome)."""
+        self.embedded = True
+        self._panel_x = rect.x
+        self._panel_y = rect.y
+        self._panel_w = max(120, rect.w)
+        self._panel_h = max(120, rect.h)
 
     @property
     def open(self) -> bool:
@@ -131,6 +140,7 @@ class BuildingInspectDialog:
     def close(self) -> None:
         self.building_id = None
         self.show_player = False
+        self.embedded = False
         self._moving = False
         self._pending_action = None
         self._hover_worker = None
@@ -246,7 +256,7 @@ class BuildingInspectDialog:
         if self._close_rect.collidepoint(pos):
             self.close()
             return True
-        if self._title_rect.collidepoint(pos):
+        if not self.embedded and self._title_rect.collidepoint(pos):
             self._moving = True
             self._move_offset = (pos[0] - self._panel_x, pos[1] - self._panel_y)
             return True
@@ -587,6 +597,7 @@ class BuildingInspectDialog:
         food_amounts: dict[str, int] | None = None,
         free_beds: int = 0,
         housing_level: int = 0,
+        area_draw_mode: bool = False,
     ) -> None:
         if not self.open or building is None or building.kind == BuildingKind.FIELD:
             return
@@ -680,6 +691,7 @@ class BuildingInspectDialog:
             )
 
         hire_row_h = ROW_H
+        embed_w, embed_h = self._panel_w, self._panel_h
         if building.kind == BuildingKind.WORKSTATION:
             workers_content = ROW_H + BTN_H + 24
             self._panel_w = 360
@@ -719,8 +731,12 @@ class BuildingInspectDialog:
             + 8
         )
         max_panel = WINDOW_HEIGHT - MAP_OFFSET_Y - 8
-        self._panel_h = min(TITLE_BAR_H + body_h, max_panel)
-        self._clamp_panel()
+        if self.embedded:
+            self._panel_w = embed_w
+            self._panel_h = embed_h
+        else:
+            self._panel_h = min(TITLE_BAR_H + body_h, max_panel)
+            self._clamp_panel()
         panel = self.panel_rect()
         self._scroll_areas = {}
         client_h = max(1, self._panel_h - TITLE_BAR_H)
@@ -728,13 +744,13 @@ class BuildingInspectDialog:
         client_rect = pygame.Rect(panel.x, panel.y + TITLE_BAR_H, panel.w, client_h)
         self._register_scroll("panel_body", client_rect, body_h, client_h)
 
-        shadow = panel.move(3, 4)
-        sh = pygame.Surface((shadow.w, shadow.h), pygame.SRCALPHA)
-        sh.fill((0, 0, 0, 70))
-        surface.blit(sh, shadow.topleft)
-
-        pygame.draw.rect(surface, COLOUR_MENU_BG, panel, border_radius=6)
-        pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, panel, 2, border_radius=6)
+        if not self.embedded:
+            shadow = panel.move(3, 4)
+            sh = pygame.Surface((shadow.w, shadow.h), pygame.SRCALPHA)
+            sh.fill((0, 0, 0, 70))
+            surface.blit(sh, shadow.topleft)
+            pygame.draw.rect(surface, COLOUR_MENU_BG, panel, border_radius=6)
+            pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, panel, 2, border_radius=6)
 
         title_bar = pygame.Rect(panel.x, panel.y, panel.w, TITLE_BAR_H)
         pygame.draw.rect(
@@ -750,9 +766,12 @@ class BuildingInspectDialog:
             self.font_title.render(title, True, COLOUR_TEXT),
             (panel.x + 10, panel.y + 6),
         )
-        self._close_rect = pygame.Rect(panel.right - 28, panel.y + 4, 22, 20)
-        close_hov = mouse_pos is not None and self._close_rect.collidepoint(mouse_pos)
-        self._draw_button(surface, self._close_rect, "×", hovered=close_hov)
+        if self.embedded:
+            self._close_rect = pygame.Rect(0, 0, 0, 0)
+        else:
+            self._close_rect = pygame.Rect(panel.right - 28, panel.y + 4, 22, 20)
+            close_hov = mouse_pos is not None and self._close_rect.collidepoint(mouse_pos)
+            self._draw_button(surface, self._close_rect, "×", hovered=close_hov)
 
         self._buttons = []
         self._worker_hits = []
@@ -787,6 +806,12 @@ class BuildingInspectDialog:
                 (x, y),
             )
             y += 16
+            relocate_w = max(72, 10 + self.font_small.size("Relocate")[0])
+            rect = pygame.Rect(x, y, relocate_w, BTN_H)
+            hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+            self._draw_button(surface, rect, "Relocate", hovered=hovered)
+            self._buttons.append(("relocate_building", rect))
+            y += BTN_H + 6
         elif building.kind == BuildingKind.HOME:
             for label, action in (
                 ("Assign hauler +", "assign_villager"),
@@ -798,6 +823,12 @@ class BuildingInspectDialog:
                 self._draw_button(surface, rect, label, hovered=hovered)
                 self._buttons.append((action, rect))
                 bx += w + 4
+            # Relocate for storehouse too
+            relocate_w = max(72, 10 + self.font_small.size("Relocate")[0])
+            rect = pygame.Rect(bx, y, relocate_w, BTN_H)
+            hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+            self._draw_button(surface, rect, "Relocate", hovered=hovered)
+            self._buttons.append(("relocate_building", rect))
             y += BTN_H + 6
         else:
             for mode in building.supported_work_modes():
@@ -828,6 +859,39 @@ class BuildingInspectDialog:
                 hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
                 self._draw_button(surface, rect, "Clear", hovered=hovered)
                 self._buttons.append(("task_clear", rect))
+                bx += clear_w + 4
+            if building.kind in (
+                BuildingKind.FORESTER,
+                BuildingKind.MASON,
+                BuildingKind.HUNTER,
+                BuildingKind.FORAGER,
+                BuildingKind.FISHER,
+            ):
+                draw_label = "Draw areas" if not area_draw_mode else "Drawing…"
+                draw_w = max(88, 10 + self.font_small.size(draw_label)[0])
+                if bx + draw_w > x + inner_w and bx > x:
+                    bx = x
+                    y += BTN_H + 4
+                rect = pygame.Rect(bx, y, draw_w, BTN_H)
+                hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+                self._draw_button(
+                    surface,
+                    rect,
+                    draw_label,
+                    active=area_draw_mode,
+                    hovered=hovered,
+                )
+                self._buttons.append(("toggle_area_draw", rect))
+                bx += draw_w + 4
+            relocate_w = max(72, 10 + self.font_small.size("Relocate")[0])
+            if bx + relocate_w > x + inner_w and bx > x:
+                bx = x
+                y += BTN_H + 4
+            rect = pygame.Rect(bx, y, relocate_w, BTN_H)
+            hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+            self._draw_button(surface, rect, "Relocate", hovered=hovered)
+            self._buttons.append(("relocate_building", rect))
+            bx += relocate_w + 4
             y += BTN_H + 6
             bx = x
             for label, action in (("Assign +", "assign_villager"), ("Unassign −", "unassign_villager")):

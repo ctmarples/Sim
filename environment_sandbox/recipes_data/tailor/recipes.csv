@@ -1,0 +1,7 @@
+name,label,inputs,outputs,icon_key,extraction,farming,hunting,crafting,labour,transport,resource_group,resource_short,food_satiation,food_walk_speed,food_work_efficiency,food_hunger_rate,food_edible
+linen_thread,Linen thread,flax:2,linen_thread:1,linen_thread,,,,,,,wares,l.th,,,,,
+linen_fabric,Linen fabric,linen_thread:4,linen_fabric:1,linen_fabric,,,,,,,wares,l.fab,,,,,
+light_shirt,Light shirt,linen_fabric:1,light_shirt:1,light_shirt,,,,,,,wares,shirt,,,,,
+sun_hat,Sun hat,linen_thread:1;straw:2,sun_hat:1,sun_hat,,,,,,,wares,s.hat,,,,,
+winter_hat,Winter hat,fur:1;linen_fabric:1,winter_hat:1,winter_hat,,,,,,,wares,w.hat,,,,,
+winter_coat,Winter coat,fur:2;linen_fabric:2,winter_coat:1,winter_coat,,,,,,,wares,coat,,,,,

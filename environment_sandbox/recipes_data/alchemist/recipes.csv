@@ -1,0 +1,4 @@
+name,label,inputs,outputs,icon_key,extraction,farming,hunting,crafting,labour,transport,resource_group,resource_short,food_satiation,food_walk_speed,food_work_efficiency,food_hunger_rate,food_edible
+insect_repellant,Insect repellant,mint:2;garlic:2,insect_repellant:1,insect_repellant,,,,,,,wares,rep,,,,,
+mineral_powder,Mineral powder,rock:2,mineral_powder:1,mineral_powder,,,,,,,wares,min,,,,,
+spices,Spices,garlic:1;sage:1,spices:1,spices,,,,,,,wares,spc,,,,,

@@ -270,11 +270,40 @@ def villager_skill_level(villager: Villager, skill: SkillType) -> int:
     return max(1, int(state.level))
 
 
-def villager_can_use_recipe(villager: Villager, recipe, kind_name: str) -> bool:
-    """True if the worker's workplace skill meets the recipe's min_skill."""
-    skill, _ = skill_for_building(kind_name)
-    need = max(1, int(getattr(recipe, "min_skill", 1) or 1))
-    return villager_skill_level(villager, skill) >= need
+def villager_can_use_recipe(
+    villager: Villager, recipe, kind_name: str | None = None
+) -> bool:
+    """True if the worker meets every skill requirement on the recipe."""
+    del kind_name  # workplace skill no longer gates recipes alone
+    reqs = getattr(recipe, "skill_reqs", None)
+    if not reqs:
+        # Legacy recipes with only min_skill + workplace kind.
+        need = int(getattr(recipe, "min_skill", 1) or 1)
+        if need <= 1:
+            return True
+        if kind_name:
+            skill, _ = skill_for_building(kind_name)
+            return villager_skill_level(villager, skill) >= need
+        return villager_skill_level(villager, SkillType.CRAFTING) >= need
+    for skill, need in reqs:
+        if villager_skill_level(villager, skill) < int(need):
+            return False
+    return True
+
+
+def recipe_skill_gate(
+    recipe, *, worker: Villager | None = None, worker_skill_level: int | None = None
+) -> bool:
+    """Return True if ``recipe`` is allowed for the given worker / level check."""
+    if worker is not None:
+        return villager_can_use_recipe(worker, recipe)
+    if worker_skill_level is None:
+        return True
+    # Single-level legacy: only allow when every required skill ≤ level.
+    reqs = getattr(recipe, "skill_reqs", ()) or ()
+    if not reqs:
+        return int(getattr(recipe, "min_skill", 1) or 1) <= int(worker_skill_level)
+    return all(int(need) <= int(worker_skill_level) for _, need in reqs)
 
 
 def skill_efficiency(villager: Villager, skill: SkillType) -> float:

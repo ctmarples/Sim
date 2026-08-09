@@ -46,6 +46,7 @@ PAD = 12
 BTN_H = 24
 ROW_H = 22
 SECTION_GAP = 10
+SCROLL_STEP = 28
 
 
 class VillagerInspectDialog:
@@ -73,10 +74,20 @@ class VillagerInspectDialog:
         self._title_rect = pygame.Rect(0, 0, 0, 0)
         self._hover_inv: tuple[str, str] | None = None
         self._tooltip_key: str | None = None
+        self.embedded = False
+        self._scroll: dict[str, int] = {}
+        self._scroll_areas: dict[str, tuple[pygame.Rect, int, int]] = {}
 
     @property
     def open(self) -> bool:
         return self.villager_id is not None
+
+    def configure_embed(self, rect: pygame.Rect) -> None:
+        self.embedded = True
+        self._panel_x = rect.x
+        self._panel_y = rect.y
+        self._panel_w = max(120, rect.w)
+        self._panel_h = max(120, rect.h)
 
     def open_for(
         self,
@@ -91,6 +102,8 @@ class VillagerInspectDialog:
         self._moving = False
         self._hover_inv = None
         self._tooltip_key = None
+        self._scroll = {}
+        self._scroll_areas = {}
         self._panel_w = 520 if show_player else 320
         self._panel_h = 420
         map_w = map_view_width()
@@ -109,10 +122,13 @@ class VillagerInspectDialog:
     def close(self) -> None:
         self.villager_id = None
         self.show_player = False
+        self.embedded = False
         self._moving = False
         self._pending_action = None
         self._hover_inv = None
         self._tooltip_key = None
+        self._scroll = {}
+        self._scroll_areas = {}
 
     def take_action(self) -> str | None:
         action = self._pending_action
@@ -131,6 +147,55 @@ class VillagerInspectDialog:
             MAP_OFFSET_Y, min(self._panel_y, WINDOW_HEIGHT - self._panel_h - 4)
         )
 
+    def _scroll_value(self, name: str, content_h: int, view_h: int) -> int:
+        max_s = max(0, content_h - view_h)
+        value = max(0, min(int(self._scroll.get(name, 0)), max_s))
+        self._scroll[name] = value
+        return value
+
+    def _register_scroll(
+        self, name: str, view: pygame.Rect, content_h: int, view_h: int
+    ) -> int:
+        scroll = self._scroll_value(name, content_h, view_h)
+        self._scroll_areas[name] = (view, content_h, view_h)
+        return scroll
+
+    def _draw_scrollbar(
+        self,
+        surface: pygame.Surface,
+        view: pygame.Rect,
+        content_h: int,
+        scroll: int,
+    ) -> None:
+        if content_h <= view.h:
+            return
+        track = pygame.Rect(view.right - 5, view.y, 4, view.h)
+        pygame.draw.rect(surface, (40, 42, 48), track, border_radius=2)
+        ratio = view.h / content_h
+        thumb_h = max(12, int(view.h * ratio))
+        thumb_y = view.y + int(
+            (view.h - thumb_h) * (scroll / max(1, content_h - view.h))
+        )
+        pygame.draw.rect(
+            surface,
+            (120, 130, 140),
+            pygame.Rect(track.x, thumb_y, track.w, thumb_h),
+            border_radius=2,
+        )
+
+    def handle_mousewheel(self, dy: int, pos: tuple[int, int]) -> bool:
+        if not self.open or not self.contains(pos):
+            return False
+        panel = self._scroll_areas.get("panel_body")
+        if panel is not None:
+            rect, content_h, view_h = panel
+            if content_h > view_h:
+                self._scroll["panel_body"] = (
+                    self._scroll_value("panel_body", content_h, view_h) - dy * SCROLL_STEP
+                )
+                self._scroll_value("panel_body", content_h, view_h)
+        return True
+
     def handle_keydown(self, event: pygame.event.Event) -> bool:
         if not self.open:
             return False
@@ -145,7 +210,7 @@ class VillagerInspectDialog:
         if self._close_rect.collidepoint(pos):
             self.close()
             return True
-        if self._title_rect.collidepoint(pos):
+        if not self.embedded and self._title_rect.collidepoint(pos):
             self._moving = True
             self._move_offset = (pos[0] - self._panel_x, pos[1] - self._panel_y)
             return True
@@ -257,6 +322,7 @@ class VillagerInspectDialog:
             )
 
         dual = self.show_player
+        embed_w, embed_h = self._panel_w, self._panel_h
         v_items = len(present_keys(villager_amounts, None))
         p_items = len(present_keys(player_amounts, None))
         if dual:
@@ -274,16 +340,14 @@ class VillagerInspectDialog:
         body_h = (
             PAD
             + 18
-            + 5 * 16
+            + 9 * 16  # status lines (state, workplace, bars, meal, buffs, skills×2, traits)
             + SECTION_GAP
             + 18
             + BTN_H
             + 6
             + 3 * (BTN_H + 4)
-            + SECTION_GAP
-            + 18
+            + SECTION_GAP // 2
             + BTN_H
-            + 6
             + SECTION_GAP
             + 18
             + GRID_CELL
@@ -292,17 +356,27 @@ class VillagerInspectDialog:
             + grid_h
             + PAD
         )
-        self._panel_h = TITLE_BAR_H + body_h
-        self._clamp_panel()
+        if self.embedded:
+            self._panel_w = embed_w
+            self._panel_h = embed_h
+        else:
+            max_panel = WINDOW_HEIGHT - MAP_OFFSET_Y - 8
+            self._panel_h = min(TITLE_BAR_H + body_h, max_panel)
+            self._clamp_panel()
         panel = self.panel_rect()
+        self._scroll_areas = {}
+        client_h = max(1, self._panel_h - TITLE_BAR_H)
+        panel_scroll = self._scroll_value("panel_body", body_h, client_h)
+        client_rect = pygame.Rect(panel.x, panel.y + TITLE_BAR_H, panel.w, client_h)
+        self._register_scroll("panel_body", client_rect, body_h, client_h)
 
-        shadow = panel.move(3, 4)
-        sh = pygame.Surface((shadow.w, shadow.h), pygame.SRCALPHA)
-        sh.fill((0, 0, 0, 70))
-        surface.blit(sh, shadow.topleft)
-
-        pygame.draw.rect(surface, COLOUR_MENU_BG, panel, border_radius=6)
-        pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, panel, 2, border_radius=6)
+        if not self.embedded:
+            shadow = panel.move(3, 4)
+            sh = pygame.Surface((shadow.w, shadow.h), pygame.SRCALPHA)
+            sh.fill((0, 0, 0, 70))
+            surface.blit(sh, shadow.topleft)
+            pygame.draw.rect(surface, COLOUR_MENU_BG, panel, border_radius=6)
+            pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, panel, 2, border_radius=6)
 
         title_bar = pygame.Rect(panel.x, panel.y, panel.w, TITLE_BAR_H)
         pygame.draw.rect(
@@ -319,16 +393,22 @@ class VillagerInspectDialog:
             ),
             (panel.x + 10, panel.y + 6),
         )
-        self._close_rect = pygame.Rect(panel.right - 28, panel.y + 4, 22, 20)
-        close_hov = mouse_pos is not None and self._close_rect.collidepoint(mouse_pos)
-        self._draw_button(surface, self._close_rect, "×", hovered=close_hov)
+        if self.embedded:
+            self._close_rect = pygame.Rect(0, 0, 0, 0)
+        else:
+            self._close_rect = pygame.Rect(panel.right - 28, panel.y + 4, 22, 20)
+            close_hov = mouse_pos is not None and self._close_rect.collidepoint(mouse_pos)
+            self._draw_button(surface, self._close_rect, "×", hovered=close_hov)
 
         self._buttons = []
         self._inv_hits = []
         self._tool_hits = []
         self._inv_tip_hits = []
+        old_clip = surface.get_clip()
+        body_clip = client_rect.clip(old_clip) if old_clip.width else client_rect
+        surface.set_clip(body_clip)
         x = panel.x + PAD
-        y = panel.y + TITLE_BAR_H + PAD
+        y = panel.y + TITLE_BAR_H + PAD - panel_scroll
         inner_w = panel.w - PAD * 2
 
         # --- Status ---
@@ -534,6 +614,10 @@ class VillagerInspectDialog:
             self._inv_tip_hits.extend(tips)
             if hov:
                 tip_key = hov[1]
+            y += h
+
+        surface.set_clip(old_clip)
+        self._draw_scrollbar(surface, client_rect, body_h, panel_scroll)
 
         if tip_key is not None:
             self._tooltip_key = tip_key

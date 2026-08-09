@@ -1,0 +1,9 @@
+name,label,inputs,outputs,icon_key,extraction,farming,hunting,crafting,labour,transport,resource_group,resource_short,food_satiation,food_walk_speed,food_work_efficiency,food_hunger_rate,food_edible
+stew,Stew,meat:2;onion:2;cabbage:1;carrot:1,stew:1,,,,,,,,,,,,,,
+fish_stew,Fish stew,fish:2;garlic:1,fish_stew:1,,,,,,,,,,,,,,
+grilled_meat,Grilled meat,meat:1,grilled_meat:1,,,,,,,,,,,,,,
+grilled_fish,Grilled fish,fish:1,grilled_fish:1,,,,,,,,,,,,,,
+bread_wheat,Bread (wheat),wheat_flour:2,bread:1,,,,,,,,,,,,,,
+bread_rye,Bread (rye),rye_flour:4,bread:1,,,,,,,,,,,,,,
+mushroom_stew,Mushroom stew,mushrooms:2;sage:1,mushroom_stew:1,mushroom_stew,,,,,,,food,m.stw,5.0,2.0,2.0,,
+spiced_stew,Spiced stew,meat:2;onion:1;carrot:1;spices:1,spiced_stew:1,spiced_stew,,,,,,,food,s.stw,5.0,1.75,1.75,,

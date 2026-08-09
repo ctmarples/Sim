@@ -1,0 +1,7 @@
+name,label,inputs,outputs,icon_key,extraction,farming,hunting,crafting,labour,transport,resource_group,resource_short,food_satiation,food_walk_speed,food_work_efficiency,food_hunger_rate,food_edible
+twine,Twine,hemp:1;flax:1,twine:1,,,,,,,,,,,,,,
+axe,Axe,wood:1;rock:1;twine:1,axe:1,,,,,,,,,,,,,,
+spear,Spear,wood:1,spear:1,,,,,,,,,,,,,,
+fishing_rod,Fishing rod,wood:1;twine:2,fishing_rod:1,,,,,,,,,,,,,,
+hoe,Hoe,wood:1;rock:1;twine:1,hoe:1,,,,,,,,,,,,,,
+knife,Knife,wood:1;rock:1;twine:1,knife:1,,,,,,,,,,,,,,

@@ -1,0 +1,4 @@
+name,label,inputs,outputs,icon_key,extraction,farming,hunting,crafting,labour,transport,resource_group,resource_short,food_satiation,food_walk_speed,food_work_efficiency,food_hunger_rate,food_edible
+deer,Deer,,meat:1,deer,,,,,,,,,,,,,
+boar,Boar,,meat:1,boar,,,,,,,,,,,,,
+rabbit,Rabbit,,meat:1,rabbit,,,,,,,,,,,,,

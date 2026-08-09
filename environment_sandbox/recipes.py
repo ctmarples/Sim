@@ -1,24 +1,41 @@
 """Crafting and gather recipes for workplaces.
 
-Builtin recipes live in this module. Additional recipes are loaded from
-``recipes_data/<building>/*.json`` (building folder → workplace recipe list).
-Each JSON may declare ``resource`` / ``food`` metadata so new outputs get
-catalogue entries and use ``assets/icons/<icon_key>.png`` (or ``.svg``) automatically.
+Recipes live in ``recipes_data/<building>/recipes.csv`` (one sheet per building).
+Edit those CSVs to add or tweak recipes — no Python changes needed for I/O amounts.
 
-Harvest yields and food satiation/buffs: ``resource_balance.py``.
+Columns:
+  name, label, inputs, outputs, icon_key,
+  extraction, farming, hunting, crafting, labour, transport,
+  resource_group, resource_short,
+  food_satiation, food_walk_speed, food_work_efficiency, food_hunger_rate, food_edible
+
+``inputs`` / ``outputs`` use ``key:qty;key:qty`` (empty inputs = gather toggle).
+Skill columns are minimum levels (1–10); leave blank for no requirement on that skill.
+A recipe may require several skills at once. Optional compact ``skills`` column
+also works: ``crafting:3;hunting:2``.
+
+Optional ``resource_*`` / ``food_*`` register catalogue entries for new outputs
+(icons: ``assets/icons/<icon_key or output key>.png`` / ``.svg``).
+
+Crop produce gather toggles for the forager are appended from ``crops.PRODUCE_KEYS``.
+Harvest yields and core food buffs: ``resource_balance.py``.
 """
 
 from __future__ import annotations
 
+import csv
 import json
 from dataclasses import dataclass
 from pathlib import Path
 
 from crops import PRODUCE_KEYS
+from society import SKILL_ORDER, SkillType
+
+_SKILL_CSV_COLS: tuple[str, ...] = tuple(s.name.lower() for s in SKILL_ORDER)
 
 _RECIPES_DATA_DIR = Path(__file__).resolve().parent / "recipes_data"
 
-# Folder name under recipes_data → attribute holding that building's recipes.
+# Folder name under recipes_data → module attribute holding that building's recipes.
 _BUILDING_RECIPE_ATTR: dict[str, str] = {
     "kitchen": "KITCHEN_RECIPES",
     "mill": "MILL_RECIPES",
@@ -41,8 +58,8 @@ class Recipe:
     outputs: dict[str, int]
     # Inventory / animal icon key for UI (defaults to first output key).
     icon_key: str | None = None
-    # Minimum related workplace skill level required to craft this recipe.
-    min_skill: int = 1
+    # Minimum skill levels required (empty = no skill gate).
+    skill_reqs: tuple[tuple[SkillType, int], ...] = ()
 
     def display_icon_key(self) -> str:
         if self.icon_key:
@@ -51,106 +68,143 @@ class Recipe:
             return next(iter(self.outputs))
         return self.name
 
+    def skill_req_map(self) -> dict[SkillType, int]:
+        return {skill: level for skill, level in self.skill_reqs}
 
-# 10 grain → 1 flour
-MILL_RECIPES: tuple[Recipe, ...] = (
-    Recipe("wheat_flour", {"wheat": 10}, {"wheat_flour": 1}),
-    Recipe("rye_flour", {"rye": 10}, {"rye_flour": 1}),
-)
+    @property
+    def min_skill(self) -> int:
+        """Highest required level across skills (compat / UI summary)."""
+        if not self.skill_reqs:
+            return 1
+        return max(level for _, level in self.skill_reqs)
 
-# Prefer meat stew, fish stew, grilled, then breads. Fuel wood consumed separately.
-# Extra kitchen recipes (e.g. mushroom_stew) load from recipes_data/kitchen/.
-KITCHEN_RECIPES: tuple[Recipe, ...] = (
-    Recipe(
-        "stew",
-        {"meat": 2, "onion": 2, "cabbage": 1, "carrot": 1},
-        {"stew": 1},
-    ),
-    Recipe(
-        "fish_stew",
-        {"fish": 2, "garlic": 1},
-        {"fish_stew": 1},
-    ),
-    Recipe("grilled_meat", {"meat": 1}, {"grilled_meat": 1}),
-    Recipe("grilled_fish", {"fish": 1}, {"grilled_fish": 1}),
-    Recipe("bread_wheat", {"wheat_flour": 2}, {"bread": 1}),
-    Recipe("bread_rye", {"rye_flour": 4}, {"bread": 1}),
-)
 
-CRAFT_BENCH_RECIPES: tuple[Recipe, ...] = (
-    Recipe("twine", {"hemp": 1, "flax": 1}, {"twine": 1}),
-    Recipe("axe", {"wood": 1, "rock": 1, "twine": 1}, {"axe": 1}),
-    Recipe("spear", {"wood": 1}, {"spear": 1}),
-    Recipe("fishing_rod", {"wood": 1, "twine": 2}, {"fishing_rod": 1}),
-    Recipe("hoe", {"wood": 1, "rock": 1, "twine": 1}, {"hoe": 1}),
-    Recipe("knife", {"wood": 1, "rock": 1, "twine": 1}, {"knife": 1}),
-)
-
+MILL_RECIPES: tuple[Recipe, ...] = ()
+KITCHEN_RECIPES: tuple[Recipe, ...] = ()
+CRAFT_BENCH_RECIPES: tuple[Recipe, ...] = ()
 ALCHEMIST_RECIPES: tuple[Recipe, ...] = ()
-
 TAILOR_RECIPES: tuple[Recipe, ...] = ()
+FORESTER_RECIPES: tuple[Recipe, ...] = ()
+FORESTER_SPLIT_RECIPES: tuple[Recipe, ...] = ()
+HUNTER_RECIPES: tuple[Recipe, ...] = ()
+FORAGER_RECIPES: tuple[Recipe, ...] = ()
 
-# Gather toggles (chop trees → logs / hardwood logs).
-FORESTER_RECIPES: tuple[Recipe, ...] = (
-    Recipe("logs", {}, {"logs": 1}),
-    Recipe("hardwood_logs", {}, {"hardwood_logs": 1}),
-)
-
-# Split logs at the forester building (work mode Split).
-FORESTER_SPLIT_RECIPES: tuple[Recipe, ...] = (
-    Recipe("split_log", {"logs": 1}, {"wood": 7}),
-    Recipe("split_hardwood", {"hardwood_logs": 1}, {"wood": 10}),
-)
-
-HUNTER_RECIPES: tuple[Recipe, ...] = (
-    Recipe("deer", {}, {"meat": 1}, icon_key="deer"),
-    Recipe("boar", {}, {"meat": 1}, icon_key="boar"),
-    Recipe("rabbit", {}, {"meat": 1}, icon_key="rabbit"),
-)
-
-FORAGER_RECIPES: tuple[Recipe, ...] = (
-    Recipe("wood", {}, {"wood": 1}),
-    Recipe("rock", {}, {"rock": 1}),
-    Recipe("berries", {}, {"berries": 1}),
-    Recipe("mushrooms", {}, {"mushrooms": 1}),
-    Recipe("honey", {}, {"honey": 1}),
-    *(Recipe(key, {}, {key: 1}) for key in PRODUCE_KEYS),
-)
-
-RECIPE_LABELS: dict[str, str] = {
-    "wheat_flour": "Wheat flour",
-    "rye_flour": "Rye flour",
-    "stew": "Stew",
-    "fish_stew": "Fish stew",
-    "grilled_meat": "Grilled meat",
-    "grilled_fish": "Grilled fish",
-    "bread_wheat": "Bread (wheat)",
-    "bread_rye": "Bread (rye)",
-    "twine": "Twine",
-    "axe": "Axe",
-    "spear": "Spear",
-    "fishing_rod": "Fishing rod",
-    "hoe": "Hoe",
-    "knife": "Knife",
-    "insect_repellant": "Insect repellant",
-    "mineral_powder": "Mineral powder",
-    "spices": "Spices",
-    "spiced_stew": "Spiced stew",
-    "split_log": "Split log",
-    "split_hardwood": "Split hardwood log",
-    "logs": "Logs",
-    "hardwood_logs": "Hardwood logs",
-    "wood": "Wood",
-    "rock": "Rock",
-    "deer": "Deer",
-    "boar": "Boar",
-    "rabbit": "Rabbit",
-    "berries": "Berries",
-    "mushrooms": "Mushrooms",
-    "honey": "Honey",
-}
+RECIPE_LABELS: dict[str, str] = {}
 
 KITCHEN_FUEL_KEY: str = "wood"
+
+
+def _parse_amount_map(raw: str) -> dict[str, int]:
+    """Parse ``key:qty;key:qty`` into a dict. Empty / whitespace → {}."""
+    text = (raw or "").strip()
+    if not text:
+        return {}
+    out: dict[str, int] = {}
+    for part in text.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        if ":" not in part:
+            raise ValueError(f"Bad amount pair {part!r} (expected key:qty)")
+        key, qty = part.split(":", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(f"Empty key in amount pair {part!r}")
+        out[key] = int(qty.strip())
+    return out
+
+
+def _clamp_skill_level(raw: str | int) -> int:
+    return max(1, min(10, int(raw)))
+
+
+def _parse_skill_reqs(row: dict[str, str] | dict) -> tuple[tuple[SkillType, int], ...]:
+    """Build skill requirements from per-skill columns and/or ``skills`` / ``min_skill``."""
+    reqs: dict[SkillType, int] = {}
+
+    # Per-skill columns: extraction, farming, …
+    for skill in SKILL_ORDER:
+        col = skill.name.lower()
+        raw = ""
+        if isinstance(row, dict):
+            raw = _cell(row, col, f"skill_{col}")  # type: ignore[arg-type]
+        if not raw:
+            continue
+        reqs[skill] = _clamp_skill_level(raw)
+
+    # Compact: skills=crafting:3;hunting:2
+    compact = _cell(row, "skills") if isinstance(row, dict) else ""  # type: ignore[arg-type]
+    if compact:
+        for key, qty in _parse_amount_map(compact).items():
+            try:
+                skill = SkillType[key.strip().upper()]
+            except KeyError as exc:
+                raise ValueError(f"Unknown skill {key!r} in skills column") from exc
+            reqs[skill] = _clamp_skill_level(qty)
+
+    # Legacy single min_skill → crafting (only if nothing else set).
+    if not reqs:
+        legacy = _cell(row, "min_skill") if isinstance(row, dict) else ""  # type: ignore[arg-type]
+        if legacy and int(legacy) > 1:
+            reqs[SkillType.CRAFTING] = _clamp_skill_level(legacy)
+
+    return tuple((skill, reqs[skill]) for skill in SKILL_ORDER if skill in reqs)
+
+
+def _cell(row: dict[str, str], *keys: str) -> str:
+    for key in keys:
+        if key in row and row[key] is not None and str(row[key]).strip():
+            return str(row[key]).strip()
+    return ""
+
+
+def _recipe_from_row(row: dict[str, str]) -> Recipe:
+    name = _cell(row, "name")
+    if not name:
+        raise ValueError("recipe row missing name")
+    inputs = _parse_amount_map(_cell(row, "inputs"))
+    outputs = _parse_amount_map(_cell(row, "outputs"))
+    icon_raw = _cell(row, "icon_key")
+    icon_key = icon_raw or None
+    skill_reqs = _parse_skill_reqs(row)
+    return Recipe(
+        name, inputs, outputs, icon_key=icon_key, skill_reqs=skill_reqs
+    )
+
+
+def _apply_row_metadata(row: dict[str, str], recipe: Recipe) -> None:
+    """Register labels, resource catalogue, and food defs from optional CSV fields."""
+    label = _cell(row, "label")
+    if label:
+        RECIPE_LABELS[recipe.name] = label
+
+    resource_group = _cell(row, "resource_group")
+    if resource_group and recipe.outputs:
+        from resources import register_resource
+
+        out_key = next(iter(recipe.outputs))
+        register_resource(
+            out_key,
+            label=label or RECIPE_LABELS.get(recipe.name) or out_key,
+            group=resource_group,
+            short=_cell(row, "resource_short") or out_key[:4],
+        )
+
+    satiation = _cell(row, "food_satiation")
+    if satiation and recipe.outputs:
+        from resource_balance import register_food
+
+        out_key = next(iter(recipe.outputs))
+        edible_raw = _cell(row, "food_edible").lower()
+        edible = edible_raw not in ("0", "false", "no") if edible_raw else True
+        register_food(
+            out_key,
+            satiation=float(satiation),
+            walk_speed=float(_cell(row, "food_walk_speed") or "1.0"),
+            work_efficiency=float(_cell(row, "food_work_efficiency") or "1.0"),
+            hunger_rate=float(_cell(row, "food_hunger_rate") or "1.0"),
+            edible=edible,
+        )
 
 
 def _recipe_from_json(data: dict) -> Recipe:
@@ -160,12 +214,30 @@ def _recipe_from_json(data: dict) -> Recipe:
     icon_key = data.get("icon_key")
     if icon_key is not None:
         icon_key = str(icon_key)
-    min_skill = max(1, min(10, int(data.get("min_skill", 1))))
-    return Recipe(name, inputs, outputs, icon_key=icon_key, min_skill=min_skill)
+    skill_reqs: list[tuple[SkillType, int]] = []
+    raw_skills = data.get("skills") or data.get("skill_reqs")
+    if isinstance(raw_skills, dict):
+        for key, level in raw_skills.items():
+            try:
+                skill = SkillType[str(key).strip().upper()]
+            except KeyError as exc:
+                raise ValueError(f"Unknown skill {key!r} in recipe JSON") from exc
+            skill_reqs.append((skill, _clamp_skill_level(level)))
+        skill_reqs.sort(key=lambda pair: SKILL_ORDER.index(pair[0]))
+    elif not skill_reqs:
+        # Flat per-skill keys or legacy min_skill.
+        flat = {k: str(v) for k, v in data.items() if isinstance(v, (int, float, str))}
+        skill_reqs = list(_parse_skill_reqs(flat))
+    return Recipe(
+        name,
+        inputs,
+        outputs,
+        icon_key=icon_key,
+        skill_reqs=tuple(skill_reqs),
+    )
 
 
-def _apply_recipe_metadata(data: dict, recipe: Recipe) -> None:
-    """Register labels, resource catalogue, and food defs from optional JSON fields."""
+def _apply_json_metadata(data: dict, recipe: Recipe) -> None:
     label = data.get("label")
     if label:
         RECIPE_LABELS[recipe.name] = str(label)
@@ -197,8 +269,48 @@ def _apply_recipe_metadata(data: dict, recipe: Recipe) -> None:
         )
 
 
+def _load_building_csv(folder: Path, existing: list[Recipe], seen: set[str]) -> None:
+    path = folder / "recipes.csv"
+    if not path.is_file():
+        return
+    with path.open(encoding="utf-8", newline="") as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            if not row or not _cell(row, "name"):
+                continue
+            recipe = _recipe_from_row(row)
+            if recipe.name in seen:
+                continue
+            existing.append(recipe)
+            seen.add(recipe.name)
+            _apply_row_metadata(row, recipe)
+
+
+def _load_building_json(folder: Path, existing: list[Recipe], seen: set[str]) -> None:
+    """Legacy: merge ``*.json`` if still present (CSV is preferred)."""
+    for path in sorted(folder.glob("*.json")):
+        with path.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict) or "name" not in data:
+            continue
+        recipe = _recipe_from_json(data)
+        if recipe.name in seen:
+            continue
+        existing.append(recipe)
+        seen.add(recipe.name)
+        _apply_json_metadata(data, recipe)
+
+
+def _append_forager_crop_produce(existing: list[Recipe], seen: set[str]) -> None:
+    for key in PRODUCE_KEYS:
+        if key in seen:
+            continue
+        existing.append(Recipe(key, {}, {key: 1}))
+        seen.add(key)
+
+
 def _load_directory_recipes() -> None:
-    """Merge ``recipes_data/<building>/*.json`` into the matching recipe tuples."""
+    """Load ``recipes_data/<building>/recipes.csv`` (and legacy ``*.json``) into tuples."""
     global MILL_RECIPES, KITCHEN_RECIPES, CRAFT_BENCH_RECIPES, ALCHEMIST_RECIPES
     global TAILOR_RECIPES
     global FORESTER_RECIPES, FORESTER_SPLIT_RECIPES, HUNTER_RECIPES, FORAGER_RECIPES
@@ -209,21 +321,13 @@ def _load_directory_recipes() -> None:
     g = globals()
     for building, attr in _BUILDING_RECIPE_ATTR.items():
         folder = _RECIPES_DATA_DIR / building
-        if not folder.is_dir():
-            continue
         existing: list[Recipe] = list(g[attr])
         seen = {r.name for r in existing}
-        for path in sorted(folder.glob("*.json")):
-            with path.open(encoding="utf-8") as fh:
-                data = json.load(fh)
-            if not isinstance(data, dict) or "name" not in data:
-                continue
-            recipe = _recipe_from_json(data)
-            if recipe.name in seen:
-                continue
-            existing.append(recipe)
-            seen.add(recipe.name)
-            _apply_recipe_metadata(data, recipe)
+        if folder.is_dir():
+            _load_building_csv(folder, existing, seen)
+            _load_building_json(folder, existing, seen)
+        if building == "forager":
+            _append_forager_crop_produce(existing, seen)
         g[attr] = tuple(existing)
 
 
