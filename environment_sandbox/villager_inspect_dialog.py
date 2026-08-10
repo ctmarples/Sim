@@ -6,16 +6,17 @@ menu was opened by interacting while standing on/near the villager.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pygame
 
 from entities import (
-    PRIORITY_LABELS,
     RATION_LABELS,
     Inventory,
     RationMode,
-    WorkPriority,
     Villager,
 )
+from icons import blit_icon
 from inventory_ui import (
     GRID_CELL,
     INV_PANEL_GAP,
@@ -25,7 +26,8 @@ from inventory_ui import (
     grid_height,
     present_keys,
 )
-from resources import amounts_from_obj, resource_label
+from resources import amounts_from_obj, resource_icon
+from seasons import Season
 from settings import (
     COLOUR_MENU_BG,
     COLOUR_SELECTED_ENTITY,
@@ -41,12 +43,22 @@ from settings import (
     map_view_width,
 )
 
+from villager_priority_ui import (
+    SLOT_SIZE,
+    draw_seasonal_workplace_grid,
+    draw_workplace_slot_row,
+)
+from villager_roster import SORT_LABELS, RosterSort, draw_skill_icons, draw_status_bar
+
 TITLE_BAR_H = 28
 PAD = 12
 BTN_H = 24
 ROW_H = 22
 SECTION_GAP = 10
 SCROLL_STEP = 28
+ICON_BTN = 26
+BAR_W = 72
+BAR_H = 10
 
 
 class VillagerInspectDialog:
@@ -292,12 +304,44 @@ class VillagerInspectDialog:
     def _fonts(self) -> tuple[pygame.font.Font, pygame.font.Font, pygame.font.Font]:
         return self.font, self.font_small, self.font_tiny
 
+    def _draw_icon_btn(
+        self,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        *,
+        icon: str | None = None,
+        label: str | None = None,
+        active: bool = False,
+        hovered: bool = False,
+    ) -> None:
+        if active:
+            colour = COLOUR_TOOLBAR_BTN_ACTIVE
+        elif hovered:
+            colour = COLOUR_TOOLBAR_BTN_HOVER
+        else:
+            colour = COLOUR_TOOLBAR_BTN
+        pygame.draw.rect(surface, colour, rect, border_radius=4)
+        pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1, border_radius=4)
+        if icon:
+            blit_icon(surface, icon, rect.centerx, rect.centery, min(rect.w, rect.h) - 6)
+        elif label:
+            text = self.font_small.render(label, True, COLOUR_TEXT)
+            surface.blit(
+                text,
+                (
+                    rect.x + (rect.w - text.get_width()) // 2,
+                    rect.y + (rect.h - text.get_height()) // 2,
+                ),
+            )
+
     def draw(
         self,
         surface: pygame.Surface,
         villager: Villager | None,
         *,
-        assignment_label: str = "—",
+        building_icon_for: Callable[[int | None], str | None],
+        housing_icon: str = "tent",
+        current_season: Season | None = None,
         mouse_pos: tuple[int, int] | None = None,
         player_inventory: Inventory | None = None,
     ) -> None:
@@ -337,19 +381,31 @@ class VillagerInspectDialog:
             grid_h = 18 + 16 + grid_height(v_items) + 8
             self._panel_w = 300
 
+        prio_extra = 4 * (SLOT_SIZE + 4) if villager.seasonal_priorities else (SLOT_SIZE + 8)
         body_h = (
             PAD
             + 18
-            + 9 * 16  # status lines (state, workplace, bars, meal, buffs, skills×2, traits)
-            + SECTION_GAP
-            + 18
-            + BTN_H
+            + ICON_BTN
+            + 4
+            + 16
+            + BAR_H
+            + 8
+            + ICON_BTN
+            + 4
+            + ICON_BTN
+            + 4
+            + ICON_BTN
+            + 4
+            + SLOT_SIZE
             + 6
-            + 3 * (BTN_H + 4)
-            + SECTION_GAP // 2
-            + BTN_H
             + SECTION_GAP
             + 18
+            + ICON_BTN
+            + 8
+            + prio_extra
+            + SECTION_GAP
+            + ICON_BTN
+            + 8
             + GRID_CELL
             + 26
             + SECTION_GAP
@@ -414,125 +470,194 @@ class VillagerInspectDialog:
         # --- Status ---
         surface.blit(self.font.render("Status", True, COLOUR_TEXT), (x, y))
         y += 18
+
+        draw_skill_icons(surface, x, y, villager.skills, self.font_tiny, icon_size=14)
+        y += ICON_BTN + 4
+
         state = (
             "Seeking food"
             if villager.seeking_food
             else villager.state.name.replace("_", " ").title()
         )
-        last = (
-            ", ".join(resource_label(k) for k in villager.last_meal)
-            if villager.last_meal
-            else "—"
-        )
-        buff_parts: list[str] = []
-        if abs(villager.food_walk_mult - 1.0) > 0.01:
-            buff_parts.append(f"walk ×{villager.food_walk_mult:g}")
-        if abs(villager.food_work_mult - 1.0) > 0.01:
-            buff_parts.append(f"work ×{villager.food_work_mult:g}")
-        if abs(villager.food_hunger_mult - 1.0) > 0.01:
-            buff_parts.append(f"hunger ×{villager.food_hunger_mult:g}")
-        buff_line = ", ".join(buff_parts) if buff_parts else "—"
-        house = "housed" if villager.housed else "no bed"
-        skill_bits = []
-        try:
-            from society import SKILL_LABELS, SKILL_ORDER
+        surface.blit(self.font_small.render(state, True, COLOUR_TEXT_DIM), (x, y))
+        y += 16
 
-            for sk in SKILL_ORDER:
-                st = villager.skills.get(sk)
-                if st is None:
-                    continue
-                skill_bits.append(
-                    f"{SKILL_LABELS[sk][:3]} {int(st.level)}/{int(st.potential)}"
-                )
-        except Exception:
-            skill_bits = []
-        traits = []
-        if getattr(villager, "virtues", None):
-            traits.append("+" + ",".join(villager.virtues[:2]))
-        if getattr(villager, "vices", None):
-            traits.append("-" + ",".join(villager.vices[:2]))
-        for line in (
-            f"State: {state}",
-            f"Workplace: {assignment_label}",
-            f"Energy: {int(round(villager.energy * 100))}%  Happiness: {int(round(villager.happiness * 100))}%  ({house})",
-            f"Satiation: {int(round(villager.satiation * 100))}%",
-            f"Last meal: {last}",
-            f"Food buffs: {buff_line}",
-            f"Skills: {', '.join(skill_bits[:3])}" if skill_bits else "Skills: —",
-            f"         {', '.join(skill_bits[3:])}" if len(skill_bits) > 3 else "",
-            f"Traits: {' '.join(traits)}" if traits else "",
+        # Energy / Satiation / Happiness — same order and labels as roster
+        bar_y = y
+        bx = x
+        for sort_key, kind, value in (
+            (RosterSort.ENERGY, "energy", villager.energy),
+            (RosterSort.SATIATION, "sat", villager.satiation),
+            (RosterSort.HAPPINESS, "happy", villager.happiness),
         ):
-            if not line.strip():
-                continue
-            surface.blit(self.font_small.render(line[:58], True, COLOUR_TEXT_DIM), (x, y))
-            y += 16
+            label = SORT_LABELS[sort_key]
+            surface.blit(
+                self.font_tiny.render(label, True, COLOUR_TEXT_DIM),
+                (bx, bar_y + 1),
+            )
+            draw_status_bar(
+                surface, bx + 18, bar_y, BAR_W - 18, BAR_H, value, kind=kind
+            )
+            bx += BAR_W + 6
+        y += BAR_H + 8
 
-        y += SECTION_GAP
+        # Home: housing type icon
+        surface.blit(
+            self.font_small.render("Home:", True, COLOUR_TEXT_DIM),
+            (x, y + 5),
+        )
+        home_rect = pygame.Rect(x + 52, y, ICON_BTN, ICON_BTN)
+        self._draw_icon_btn(surface, home_rect, icon=housing_icon)
+        y += ICON_BTN + 4
+
+        # Last meal icons
+        surface.blit(
+            self.font_small.render("Meal:", True, COLOUR_TEXT_DIM),
+            (x, y + 5),
+        )
+        meal_x = x + 52
+        if villager.last_meal:
+            for key in villager.last_meal[:3]:
+                ic = resource_icon(key)
+                mrect = pygame.Rect(meal_x, y, ICON_BTN, ICON_BTN)
+                self._draw_icon_btn(surface, mrect, icon=ic)
+                meal_x += ICON_BTN + 2
+        else:
+            surface.blit(
+                self.font_small.render("—", True, COLOUR_TEXT_DIM),
+                (meal_x, y + 4),
+            )
+        y += ICON_BTN + 4
+
+        # Food buff icons
+        surface.blit(
+            self.font_small.render("Buffs:", True, COLOUR_TEXT_DIM),
+            (x, y + 5),
+        )
+        buff_x = x + 52
+        buff_defs = (
+            ("villager", villager.food_walk_mult),
+            ("craft_bench", villager.food_work_mult),
+            (resource_icon("meat"), villager.food_hunger_mult),
+        )
+        any_buff = False
+        for ic, mult in buff_defs:
+            if abs(mult - 1.0) <= 0.01:
+                continue
+            any_buff = True
+            brect = pygame.Rect(buff_x, y, ICON_BTN, ICON_BTN)
+            self._draw_icon_btn(surface, brect, icon=ic)
+            mult_t = self.font_tiny.render(f"×{mult:g}", True, COLOUR_TEXT)
+            surface.blit(mult_t, (brect.right + 2, y + 8))
+            buff_x += ICON_BTN + 28
+        if not any_buff:
+            surface.blit(
+                self.font_small.render("—", True, COLOUR_TEXT_DIM),
+                (buff_x, y + 4),
+            )
+        y += ICON_BTN + 4
+
+        display_season = current_season if villager.seasonal_priorities else None
+        status_slots = villager.active_workplace_slot_ids(display_season)
+        surface.blit(
+            self.font_small.render("Workplace:", True, COLOUR_TEXT_DIM),
+            (x, y + 6),
+        )
+        draw_workplace_slot_row(
+            surface,
+            x + 82,
+            y,
+            list(status_slots),
+            icon_for_building=building_icon_for,
+            font=self.font_small,
+            interactive=False,
+        )
+        y += SLOT_SIZE + 6 + SECTION_GAP
+
         # --- Work options ---
         surface.blit(self.font.render("Work", True, COLOUR_TEXT), (x, y))
         y += 18
 
-        bx = x
-        for mode in (RationMode.HALF, RationMode.NORMAL, RationMode.DOUBLE):
-            label = RATION_LABELS[mode]
-            w = max(40, 10 + self.font_small.size(label)[0])
-            rect = pygame.Rect(bx, y, w, BTN_H)
-            active = villager.ration_mode == mode
-            hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
-            self._draw_button(surface, rect, label, active=active, hovered=hovered)
-            self._buttons.append((f"ration_{mode.name}", rect))
-            bx += w + 4
+        # Ration: meat icon buttons (½ / ×1 / ×2)
         surface.blit(
             self.font_small.render("Ration", True, COLOUR_TEXT_DIM),
-            (bx + 4, y + 4),
+            (x, y + 5),
         )
-        y += BTN_H + 6
-
-        while len(villager.priorities) < 3:
-            villager.priorities.append(WorkPriority.NONE)
-        for slot in range(3):
-            bx = x
-            surface.blit(
-                self.font_small.render(f"P{slot + 1}", True, COLOUR_TEXT_DIM),
-                (bx, y + 4),
-            )
-            bx += 22
-            for prio in (
-                WorkPriority.BUILD,
-                WorkPriority.TRANSPORT,
-                WorkPriority.WORKPLACE,
-                WorkPriority.NONE,
-            ):
-                label = PRIORITY_LABELS[prio][:4]
-                w = max(48, 8 + self.font_small.size(label)[0])
-                if bx + w > x + inner_w and bx > x + 22:
-                    break
-                rect = pygame.Rect(bx, y, w, BTN_H)
-                active = villager.priorities[slot] == prio
-                hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
-                self._draw_button(surface, rect, label, active=active, hovered=hovered)
-                self._buttons.append((f"prio:{slot}:{prio.name}", rect))
-                bx += w + 3
-            y += BTN_H + 4
-
-        y += SECTION_GAP // 2
-        bx = x
-        for label, action in (
-            ("Assign workplace", "assign_workplace"),
-            ("Unassign", "unassign"),
-        ):
-            w = max(100, 10 + self.font_small.size(label)[0])
-            rect = pygame.Rect(bx, y, w, BTN_H)
+        bx = x + 58
+        for mode in (RationMode.HALF, RationMode.NORMAL, RationMode.DOUBLE):
+            rect = pygame.Rect(bx, y, ICON_BTN, ICON_BTN)
+            active = villager.ration_mode == mode
             hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
-            self._draw_button(surface, rect, label, hovered=hovered)
-            self._buttons.append((action, rect))
-            bx += w + 4
-        y += BTN_H + SECTION_GAP
+            self._draw_icon_btn(
+                surface, rect, icon=resource_icon("meat"), active=active, hovered=hovered
+            )
+            badge = self.font_tiny.render(RATION_LABELS[mode], True, COLOUR_TEXT)
+            surface.blit(
+                badge,
+                (
+                    rect.x + (rect.w - badge.get_width()) // 2,
+                    rect.bottom - badge.get_height() - 1,
+                ),
+            )
+            self._buttons.append((f"ration_{mode.name}", rect))
+            bx += ICON_BTN + 4
+        toggle_rect = pygame.Rect(x + inner_w - ICON_BTN, y, ICON_BTN, ICON_BTN)
+        toggle_hov = mouse_pos is not None and toggle_rect.collidepoint(mouse_pos)
+        self._draw_icon_btn(
+            surface,
+            toggle_rect,
+            label="S",
+            active=villager.seasonal_priorities,
+            hovered=toggle_hov,
+        )
+        self._buttons.append(("seasonal_toggle", toggle_rect))
+        y += ICON_BTN + 8
+
+        if villager.seasonal_priorities:
+            surface.blit(
+                self.font_small.render("Seasonal", True, COLOUR_TEXT_DIM),
+                (x, y + 6),
+            )
+            villager.ensure_season_workplace_slots()
+            grid_hits, grid_h = draw_seasonal_workplace_grid(
+                surface,
+                x + 58,
+                y,
+                villager.season_workplace_slots,
+                icon_for_building=building_icon_for,
+                font=self.font_small,
+                font_small=self.font_tiny,
+                current_season=current_season,
+                mouse_pos=mouse_pos,
+            )
+            for action, rect in grid_hits:
+                self._buttons.append((action, rect))
+            y += max(grid_h, SLOT_SIZE) + 8
+        else:
+            surface.blit(
+                self.font_small.render("Priority", True, COLOUR_TEXT_DIM),
+                (x, y + 6),
+            )
+            villager.sync_workplace_slot_zero()
+            row_hits, _ = draw_workplace_slot_row(
+                surface,
+                x + 58,
+                y,
+                list(villager.workplace_slots),
+                icon_for_building=building_icon_for,
+                font=self.font_small,
+                mouse_pos=mouse_pos,
+            )
+            for action, rect in row_hits:
+                self._buttons.append((action, rect))
+            y += SLOT_SIZE + 8
+
+        y += SECTION_GAP
 
         tool_h, tool_hits, tool_tip = draw_tool_slot(
             surface,
             origin=(x, y),
-            equipped_tool=villager.inventory.equipped_tool,
+            equipped_tools=list(villager.inventory.equipped_tools),
             mouse_pos=mouse_pos,
             fonts=self._fonts(),
             interactive=True,
@@ -541,7 +666,7 @@ class VillagerInspectDialog:
         y += tool_h + SECTION_GAP
         surface.blit(
             self.font_small.render(
-                "Click slot to equip or unequip.",
+                "Click a tool slot to equip or unequip.",
                 True,
                 COLOUR_TEXT_DIM,
             ),

@@ -302,46 +302,57 @@ def draw_tool_slot(
     surface: pygame.Surface,
     *,
     origin: tuple[int, int],
-    equipped_tool: str | None,
+    equipped_tools: list[str] | None = None,
+    equipped_tool: str | None = None,
     mouse_pos: tuple[int, int] | None,
     fonts: tuple[pygame.font.Font, pygame.font.Font, pygame.font.Font],
     interactive: bool = True,
 ) -> tuple[int, list[tuple[pygame.Rect, str]], str | None]:
-    """Draw the single tool slot. Returns (height, click_hits, hovered_tool_key)."""
+    """Draw up to three tool slots. Returns (height, click_hits, hovered_tool_key)."""
+    from entities import TOOL_SLOT_MAX
+
     font, font_small, _font_tiny = fonts
     x0, y0 = origin
     y = y0
-    surface.blit(font.render("Tool", True, COLOUR_TEXT), (x0, y))
+    tools = list(equipped_tools or [])
+    if equipped_tool and equipped_tool not in tools:
+        tools.insert(0, equipped_tool)
+    surface.blit(font.render("Tools", True, COLOUR_TEXT), (x0, y))
     y += 18
-    cell = pygame.Rect(x0, y, GRID_CELL, GRID_CELL)
-    hovered = mouse_pos is not None and cell.collidepoint(mouse_pos)
-    if equipped_tool:
-        draw_resource_cell(
-            surface,
-            cell=cell,
-            key=equipped_tool,
-            fonts=fonts,
-            hovered=hovered,
-            active=True,
-        )
-    else:
-        bg = (55, 62, 50) if hovered else (36, 38, 44)
-        border = COLOUR_SELECTED_ENTITY if hovered else COLOUR_TOOLBAR_BORDER
-        pygame.draw.rect(surface, bg, cell, border_radius=4)
-        pygame.draw.rect(surface, border, cell, 1, border_radius=4)
-        dash = font_small.render("—", True, COLOUR_TEXT_DIM)
-        surface.blit(
-            dash,
-            (
-                cell.centerx - dash.get_width() // 2,
-                cell.centery - dash.get_height() // 2,
-            ),
-        )
     hits: list[tuple[pygame.Rect, str]] = []
-    if interactive:
-        if equipped_tool:
-            hits.append((cell, "tool_unequip"))
+    tip_key: str | None = None
+    for i in range(TOOL_SLOT_MAX):
+        cell = pygame.Rect(x0 + i * (GRID_CELL + GRID_GAP), y, GRID_CELL, GRID_CELL)
+        key = tools[i] if i < len(tools) else None
+        hovered = mouse_pos is not None and cell.collidepoint(mouse_pos)
+        if key:
+            draw_resource_cell(
+                surface,
+                cell=cell,
+                key=key,
+                fonts=fonts,
+                hovered=hovered,
+                active=True,
+            )
         else:
-            hits.append((cell, "tool_equip"))
-    tip_key = equipped_tool if hovered else None
+            bg = (55, 62, 50) if hovered else (36, 38, 44)
+            border = COLOUR_SELECTED_ENTITY if hovered else COLOUR_TOOLBAR_BORDER
+            pygame.draw.rect(surface, bg, cell, border_radius=4)
+            pygame.draw.rect(surface, border, cell, 1, border_radius=4)
+            dash = font_small.render("—", True, COLOUR_TEXT_DIM)
+            surface.blit(
+                dash,
+                (
+                    cell.centerx - dash.get_width() // 2,
+                    cell.centery - dash.get_height() // 2,
+                ),
+            )
+        if interactive:
+            if key:
+                hits.append((cell, f"tool_unequip:{key}"))
+            elif len(tools) < TOOL_SLOT_MAX and i == len(tools):
+                hits.append((cell, "tool_equip"))
+        if hovered and key:
+            tip_key = key
+    row_w = TOOL_SLOT_MAX * GRID_CELL + (TOOL_SLOT_MAX - 1) * GRID_GAP
     return y + GRID_CELL + 8 - y0, hits, tip_key

@@ -260,14 +260,16 @@ class ManagementWindow:
     def _layout_panel(self) -> None:
         map_w = map_view_width()
         h = min(520, max(360, WINDOW_HEIGHT - MAP_OFFSET_Y - 48))
+        list_need = _table_width(actions=self._people_actions()) + 48
+        detail_min = 300
         if self.show_detail and self.show_list:
-            w = min(920, max(560, map_w - 40))
+            w = min(map_w - 40, max(560, detail_min + 8 + list_need))
         elif self.show_detail:
             w = min(420, map_w - 40)
         elif self.tab == MgmtTab.PEOPLE:
             w = min(
                 map_w - 40,
-                max(400, _table_width(actions=self._people_actions()) + 24),
+                max(400, list_need),
             )
         elif self.tab == MgmtTab.BUILDINGS:
             w = min(400, map_w - 40)
@@ -536,9 +538,17 @@ class ManagementWindow:
         )
 
         if self.show_detail and self.show_list:
-            mid = body.w // 2 - 4
-            self._detail_rect = pygame.Rect(body.x, body.y, mid, body.h)
-            self._list_rect = pygame.Rect(body.x + mid + 8, body.y, mid, body.h)
+            list_need = _table_width(actions=self._people_actions()) + 16
+            detail_min = 280
+            gap = 8
+            if self.tab == MgmtTab.PEOPLE:
+                list_w = min(list_need, max(200, body.w - detail_min - gap))
+                detail_w = body.w - list_w - gap
+            else:
+                detail_w = body.w // 2 - 4
+                list_w = body.w - detail_w - gap
+            self._detail_rect = pygame.Rect(body.x, body.y, detail_w, body.h)
+            self._list_rect = pygame.Rect(body.x + detail_w + gap, body.y, list_w, body.h)
         elif self.show_detail:
             self._detail_rect = body.copy()
             self._list_rect = pygame.Rect(0, 0, 0, 0)

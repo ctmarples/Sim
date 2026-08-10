@@ -14,6 +14,7 @@ from recipes import (
     CRAFT_BENCH_OUTPUT_KEYS,
     CRAFT_BENCH_RECIPES,
     FORESTER_RECIPES,
+    FORESTER_PLANT_RECIPES,
     FORESTER_SPLIT_RECIPES,
     FORAGER_RECIPES,
     HUNTER_RECIPES,
@@ -49,8 +50,9 @@ from trees import SAPLING_ITEM_KEYS, sapling_item_key
 # Seeds share a dedicated carry pool (separate from wood/food/etc.).
 SEED_ITEM_KEYS: tuple[str, ...] = ("berry_seeds", *SEED_KEYS)
 
-# Tools carried in the dedicated tool slot (not general cargo stacks).
+# Tools carried in dedicated tool slots (not general cargo stacks).
 TOOL_KEYS: tuple[str, ...] = ("axe", "spear", "fishing_rod", "hoe", "knife")
+TOOL_SLOT_MAX: int = 3
 
 
 class TaskType(Enum):
@@ -262,6 +264,13 @@ PRIORITY_CYCLE: tuple[WorkPriority, ...] = (
     WorkPriority.NONE,
 )
 
+PRIORITY_ICONS: dict[WorkPriority, str] = {
+    WorkPriority.BUILD: "construction_site",
+    WorkPriority.TRANSPORT: "storehouse",
+    WorkPriority.WORKPLACE: "forager",
+    WorkPriority.NONE: "",
+}
+
 
 class RationMode(Enum):
     """How aggressively a villager tops up satiation."""
@@ -375,7 +384,7 @@ class Inventory:
     fishing_rod: int = 0
     hoe: int = 0
     knife: int = 0
-    equipped_tool: str | None = None
+    equipped_tools: list[str] = field(default_factory=list)
     capacity: int = INVENTORY_CAPACITY
     seed_capacity: int = SEED_CARRY_CAPACITY
 
@@ -509,13 +518,29 @@ class Inventory:
     def consume_herb_seed(self) -> bool:
         return self.consume_item("sage_seeds", 1)
 
+    @property
+    def equipped_tool(self) -> str | None:
+        """First equipped tool (compat)."""
+        return self.equipped_tools[0] if self.equipped_tools else None
+
+    @equipped_tool.setter
+    def equipped_tool(self, key: str | None) -> None:
+        if key is None:
+            self.equipped_tools.clear()
+        elif key in TOOL_KEYS:
+            self.equipped_tools = [key]
+
     def has_equipped_tool(self, key: str) -> bool:
-        return self.equipped_tool == key
+        return key in self.equipped_tools
+
+    def tool_slots_free(self) -> int:
+        return max(0, TOOL_SLOT_MAX - len(self.equipped_tools))
 
     def can_equip_tool(self, key: str) -> bool:
         return (
             key in TOOL_KEYS
-            and self.equipped_tool is None
+            and key not in self.equipped_tools
+            and self.tool_slots_free() > 0
             and int(getattr(self, key, 0)) > 0
         )
 
@@ -523,40 +548,48 @@ class Inventory:
         if not self.can_equip_tool(key):
             return False
         setattr(self, key, getattr(self, key) - 1)
-        self.equipped_tool = key
+        self.equipped_tools.append(key)
         return True
 
-    def unequip_tool(self) -> bool:
-        if self.equipped_tool is None:
+    def unequip_tool(self, key: str | None = None) -> bool:
+        if not self.equipped_tools:
             return False
-        key = self.equipped_tool
-        if not self.can_add(1, key=key):
+        if key is not None and key in self.equipped_tools:
+            tool = key
+        else:
+            tool = self.equipped_tools[-1]
+        if not self.can_add(1, key=tool):
             return False
-        self.equipped_tool = None
-        setattr(self, key, getattr(self, key) + 1)
+        self.equipped_tools.remove(tool)
+        setattr(self, tool, getattr(self, tool) + 1)
         return True
 
     def equip_tool_from_transfer(self, key: str) -> bool:
-        """Equip a tool moved directly into the slot (e.g. from the player)."""
-        if key not in TOOL_KEYS or self.equipped_tool is not None:
+        """Equip a tool moved directly into a slot (e.g. from storehouse)."""
+        if (
+            key not in TOOL_KEYS
+            or key in self.equipped_tools
+            or self.tool_slots_free() <= 0
+        ):
             return False
-        self.equipped_tool = key
+        self.equipped_tools.append(key)
         return True
 
-    def transfer_equipped_tool_to(self, other: Inventory) -> bool:
-        if self.equipped_tool is None:
+    def transfer_equipped_tool_to(self, other: Inventory, key: str | None = None) -> bool:
+        if not self.equipped_tools:
             return False
-        key = self.equipped_tool
-        if not other.can_add(1, key=key):
+        if key is not None and key in self.equipped_tools:
+            tool = key
+        else:
+            tool = self.equipped_tools[0]
+        if not other.can_add(1, key=tool):
             return False
-        self.equipped_tool = None
-        other.add_item(key, 1)
+        self.equipped_tools.remove(tool)
+        other.add_item(tool, 1)
         return True
 
     def try_equip_work_tools(self) -> bool:
-        """Move a tool from cargo into the tool slot when empty."""
-        if self.equipped_tool is not None:
-            return False
+        """Move tools from cargo into empty slots."""
         for key in TOOL_KEYS:
             if self.equip_tool(key):
                 return True
@@ -570,7 +603,7 @@ class Inventory:
         return cargo > 0 or self.seed_total > 0
 
     def clear(self) -> dict[str, int]:
-        saved_tool = self.equipped_tool
+        saved_tools = list(self.equipped_tools)
         deposited = {
             "logs": self.logs,
             "hardwood_logs": self.hardwood_logs,
@@ -593,7 +626,7 @@ class Inventory:
             **{key: getattr(self, key) for key in PROCESSED_KEYS},
         }
         self.reset()
-        self.equipped_tool = saved_tool
+        self.equipped_tools = saved_tools
         return deposited
 
     def reset(self) -> None:
@@ -601,7 +634,7 @@ class Inventory:
         self.mushrooms = self.honey = self.berries = self.berry_seeds = self.reeds = 0
         self.straw = self.fur = 0
         self.twine = self.axe = self.spear = self.fishing_rod = self.hoe = self.knife = 0
-        self.equipped_tool = None
+        self.equipped_tools.clear()
         for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS:
             setattr(self, key, 0)
 
@@ -1303,10 +1336,10 @@ class Building:
         )
 
     def is_splitter(self) -> bool:
-        return self.kind == BuildingKind.FORESTER and self.work_mode in (
-            WorkMode.SPLIT,
-            WorkMode.ALL,
-        )
+        """True when this forester has any split recipe enabled (logs → wood)."""
+        if self.kind != BuildingKind.FORESTER:
+            return False
+        return bool(self.enabled_split_recipes())
 
     def has_recipes(self) -> bool:
         return bool(self.known_recipes())
@@ -1342,6 +1375,11 @@ class Building:
             return FORESTER_SPLIT_RECIPES
         return ()
 
+    def plant_recipes(self) -> tuple[Recipe, ...]:
+        if self.kind == BuildingKind.FORESTER:
+            return FORESTER_PLANT_RECIPES
+        return ()
+
     def enabled_output_keys(self) -> frozenset[str]:
         """Resource keys produced by enabled recipes (gather / craft outputs)."""
         keys: set[str] = set()
@@ -1373,6 +1411,10 @@ class Building:
             self.recipe_progress.setdefault(recipe.name, 0)
             self.recipe_priority.setdefault(recipe.name, RECIPE_PRIORITY_DEFAULT)
         for recipe in self.split_recipes():
+            self.recipe_enabled.setdefault(recipe.name, True)
+            self.recipe_progress.setdefault(recipe.name, 0)
+            self.recipe_priority.setdefault(recipe.name, RECIPE_PRIORITY_DEFAULT)
+        for recipe in self.plant_recipes():
             self.recipe_enabled.setdefault(recipe.name, True)
             self.recipe_progress.setdefault(recipe.name, 0)
             self.recipe_priority.setdefault(recipe.name, RECIPE_PRIORITY_DEFAULT)
@@ -1498,6 +1540,35 @@ class Building:
                 demand[KITCHEN_FUEL_KEY] = max(
                     demand.get(KITCHEN_FUEL_KEY, 0), fuel_want
                 )
+        # Farm / forester: top up plant stock from the storehouse.
+        # Farms only request seeds with an explicit min — plan-based demand is
+        # applied by the game so unused crop seeds don't fill the pack.
+        if self.kind == BuildingKind.FORESTER:
+            for key in self.plant_keys():
+                target = max(3, int(self.item_mins.get(key, 0)))
+                have = int(getattr(self, key, 0))
+                if have >= target:
+                    continue
+                room = self.space_for_key(key)
+                if room <= 0:
+                    continue
+                want = min(target - have, room)
+                if want > 0:
+                    demand[key] = max(demand.get(key, 0), want)
+        elif self.kind == BuildingKind.FARM:
+            for key in self.plant_keys():
+                target = int(self.item_mins.get(key, 0))
+                if target <= 0:
+                    continue
+                have = int(getattr(self, key, 0))
+                if have >= target:
+                    continue
+                room = self.space_for_key(key)
+                if room <= 0:
+                    continue
+                want = min(target - have, room)
+                if want > 0:
+                    demand[key] = max(demand.get(key, 0), want)
         return demand
 
     def fuel_space_left(self) -> int:
@@ -1782,6 +1853,13 @@ class Building:
         )
         return self._recipes_by_priority(enabled)
 
+    def enabled_plant_recipes(self) -> tuple[Recipe, ...]:
+        self.ensure_recipe_state()
+        enabled = tuple(
+            r for r in self.plant_recipes() if self.recipe_enabled.get(r.name, True)
+        )
+        return self._recipes_by_priority(enabled)
+
     def craftable_split_recipe(
         self,
         *,
@@ -1824,7 +1902,7 @@ class Building:
     def deposit_from_inventory(
         self, inventory: Inventory, *, keep_plantables: bool = False
     ) -> None:
-        if self.is_processor() or self.is_splitter():
+        if self.is_processor():
             self.deposit_supply_from(inventory)
             return
         keys = self.depositable_keys()
@@ -1849,7 +1927,7 @@ class Building:
         return moved
 
     def deposit_supply_from(self, inventory: Inventory) -> int:
-        """Fill input / fuel stock from inventory up to capacity and caps."""
+        """Fill input / fuel / plant stock from inventory up to capacity and caps."""
         moved = 0
         if self.is_processor():
             for key in self.processor_input_keys():
@@ -1861,8 +1939,12 @@ class Building:
         if self.is_splitter():
             for key in ("logs", "hardwood_logs"):
                 moved += self.deposit_key_from(inventory, key)
+            # Fall through so foresters also accept sapling restocks.
+        if self.kind in (BuildingKind.FARM, BuildingKind.FORESTER):
+            for key in self.plant_keys():
+                moved += self.deposit_key_from(inventory, key)
             return moved
-        return 0
+        return moved
 
     def deposit_key_from(self, inventory: Inventory, key: str) -> int:
         """Deposit as much of one key as capacity allows. Returns amount moved."""
@@ -1950,10 +2032,7 @@ class Building:
     def haul_keys(self) -> tuple[str, ...]:
         """Items home haulers may remove. Plant stock is reserved while planting."""
         if self.kind == BuildingKind.FORESTER:
-            if self.work_mode == WorkMode.COLLECT:
-                return ("logs", "hardwood_logs", *SAPLING_ITEM_KEYS)
-            if self.work_mode == WorkMode.SPLIT:
-                return ("wood",)
+            # Always allow hauling logs / wood; mins keep a split buffer on-site.
             return ("logs", "hardwood_logs", "wood")
         if self.kind == BuildingKind.FORAGER:
             return ("wood", "rock", *_FORAGE_KEYS)
@@ -1986,11 +2065,6 @@ class Building:
 
     def can_accept_from(self, inventory: Inventory) -> bool:
         """True if inventory holds something this building can take right now."""
-        if self.is_splitter():
-            for key in ("logs", "hardwood_logs"):
-                if int(getattr(inventory, key, 0)) > 0 and self.space_for_key(key) > 0:
-                    return True
-            return False
         if self.is_processor():
             for key in self.processor_input_keys():
                 if int(getattr(inventory, key, 0)) > 0 and self.space_for_key(key) > 0:
@@ -2002,6 +2076,7 @@ class Building:
             ):
                 return True
             return False
+        # Gather / forester lodge: accept any depositable cargo with room.
         keys = self.depositable_keys()
         return any(
             int(getattr(inventory, key, 0)) > 0 and self.space_for_key(key) > 0
@@ -2009,7 +2084,12 @@ class Building:
         )
 
     def needs_supplied(self) -> bool:
-        return self.is_processor() or self.is_splitter()
+        if self.is_processor() or self.is_splitter():
+            return True
+        # Farm / forester plant stock — concrete demand is plan-aware in game code.
+        if self.kind in (BuildingKind.FARM, BuildingKind.FORESTER):
+            return True
+        return False
 
     def _take(self, inventory: Inventory, key: str) -> None:
         room = self.space_for_key(key)
@@ -2112,7 +2192,7 @@ class Building:
         ):
             return ()
         if self.kind == BuildingKind.FORESTER:
-            return WORK_MODE_CYCLE_FORESTER
+            return ()
         if self.kind == BuildingKind.FARM:
             return WORK_MODE_CYCLE_PLANTABLE
         if self.kind == BuildingKind.FIELD:
@@ -2174,7 +2254,7 @@ class Building:
 
     def default_draw_task(self) -> TaskType:
         if self.kind == BuildingKind.FORESTER:
-            return TaskType.FULL_MANAGE
+            return TaskType.CHOP_TREES
         if self.kind == BuildingKind.MASON:
             return TaskType.COLLECT_ROCKS
         if self.kind == BuildingKind.HUNTER:
@@ -2360,6 +2440,10 @@ class Villager:
     priorities: list[WorkPriority] = field(
         default_factory=lambda: list(DEFAULT_PRIORITIES_UNASSIGNED)
     )
+    seasonal_priorities: bool = False
+    season_priorities: dict[str, list[WorkPriority]] = field(default_factory=dict)
+    workplace_slots: list[int | None] = field(default_factory=lambda: [None, None, None])
+    season_workplace_slots: dict[str, list[int | None]] = field(default_factory=dict)
     satiation: float = 0.75
     ration_mode: RationMode = RationMode.NORMAL
     seeking_food: bool = False
@@ -2410,9 +2494,8 @@ class Villager:
             if self.favourite_is_junk and "Glutton" not in self.vices:
                 self.vices = (self.vices + ["Glutton"])[:2]
 
-    def clear_assignment(self) -> None:
-        self.building_id = None
-        self.assigned_to_home = False
+    def clear_work_stickies(self) -> None:
+        """Drop in-progress task state without changing workplace assignment."""
         self.haul_building_id = None
         self.hunt_animal_id = None
         self.hunt_colony_id = None
@@ -2422,20 +2505,114 @@ class Villager:
         self.fish_post_pos = None
         self.forage_colony_id = None
         self.construction_id = None
-        self.state = VillagerState.IDLE
         self.target = None
+
+    def clear_assignment(self) -> None:
+        self.building_id = None
+        self.assigned_to_home = False
+        self.clear_work_stickies()
+        self.state = VillagerState.IDLE
+        self.workplace_slots = [None, None, None]
+
+    def ensure_priorities(self) -> list[WorkPriority]:
+        while len(self.priorities) < 3:
+            self.priorities.append(WorkPriority.NONE)
+        return self.priorities
+
+    def ensure_season_priorities(
+        self, *, copy_from: list[WorkPriority] | None = None
+    ) -> None:
+        from seasons import SEASON_ORDER
+
+        template = list(copy_from if copy_from is not None else self.ensure_priorities())
+        while len(template) < 3:
+            template.append(WorkPriority.NONE)
+        for season in SEASON_ORDER:
+            key = season.name
+            if key not in self.season_priorities:
+                self.season_priorities[key] = list(template)
+            else:
+                while len(self.season_priorities[key]) < 3:
+                    self.season_priorities[key].append(WorkPriority.NONE)
+
+    def ensure_workplace_slots(self) -> list[int | None]:
+        while len(self.workplace_slots) < 3:
+            self.workplace_slots.append(None)
+        return self.workplace_slots
+
+    def ensure_season_workplace_slots(
+        self, *, copy_from: list[int | None] | None = None
+    ) -> None:
+        from seasons import SEASON_ORDER
+
+        template = list(
+            copy_from if copy_from is not None else self.ensure_workplace_slots()
+        )
+        while len(template) < 3:
+            template.append(None)
+        for season in SEASON_ORDER:
+            key = season.name
+            if key not in self.season_workplace_slots:
+                self.season_workplace_slots[key] = list(template)
+            else:
+                while len(self.season_workplace_slots[key]) < 3:
+                    self.season_workplace_slots[key].append(None)
+
+    def active_workplace_slot_ids(self, season: object | None = None) -> list[int | None]:
+        self.ensure_workplace_slots()
+        if self.seasonal_priorities and season is not None:
+            key = getattr(season, "name", str(season))
+            self.ensure_season_workplace_slots()
+            row = list(self.season_workplace_slots.get(key, [None, None, None]))
+            while len(row) < 3:
+                row.append(None)
+            if any(bid is not None for bid in row):
+                return row
+        if any(bid is not None for bid in self.workplace_slots):
+            return list(self.workplace_slots)
+        if self.building_id is not None:
+            return [self.building_id, None, None]
+        return [None, None, None]
+
+    def sync_workplace_slot_zero(self) -> None:
+        self.ensure_workplace_slots()
+        if self.building_id is not None:
+            self.workplace_slots[0] = self.building_id
+        elif self.workplace_slots[0] is not None:
+            self.building_id = self.workplace_slots[0]
+
+    def active_priorities(self, season: object | None = None) -> list[WorkPriority]:
+        self.ensure_priorities()
+        prios = list(self.priorities)
+        if self.building_id is not None or self.assigned_to_home:
+            prios = [p for p in prios if p != WorkPriority.BUILD]
+        return prios
 
     def set_default_priorities(self) -> None:
         if self.assigned_to_home:
-            self.priorities = list(DEFAULT_PRIORITIES_HOME)
+            base = list(DEFAULT_PRIORITIES_HOME)
         elif self.building_id is not None:
-            self.priorities = list(DEFAULT_PRIORITIES_WORKPLACE)
+            base = list(DEFAULT_PRIORITIES_WORKPLACE)
         else:
-            self.priorities = list(DEFAULT_PRIORITIES_UNASSIGNED)
+            base = list(DEFAULT_PRIORITIES_UNASSIGNED)
+        self.priorities = base
+        if self.seasonal_priorities:
+            self.ensure_season_workplace_slots(copy_from=self.workplace_slots)
 
-    def cycle_priority_slot(self, index: int) -> WorkPriority:
-        while len(self.priorities) < 3:
-            self.priorities.append(WorkPriority.NONE)
+    def cycle_priority_slot(
+        self, index: int, *, season: object | None = None
+    ) -> WorkPriority:
+        if self.seasonal_priorities and season is not None:
+            key = getattr(season, "name", str(season))
+            self.ensure_season_priorities()
+            row = self.season_priorities.setdefault(key, list(self.priorities))
+            while len(row) < 3:
+                row.append(WorkPriority.NONE)
+            current = row[index]
+            idx = PRIORITY_CYCLE.index(current) if current in PRIORITY_CYCLE else 0
+            row[index] = PRIORITY_CYCLE[(idx + 1) % len(PRIORITY_CYCLE)]
+            return row[index]
+        self.ensure_priorities()
         current = self.priorities[index]
         idx = PRIORITY_CYCLE.index(current) if current in PRIORITY_CYCLE else 0
         self.priorities[index] = PRIORITY_CYCLE[(idx + 1) % len(PRIORITY_CYCLE)]

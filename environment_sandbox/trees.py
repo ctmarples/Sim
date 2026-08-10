@@ -93,6 +93,15 @@ def sapling_item_key(species: str | None) -> str:
     return f"{resolve_tree(species).key}_saplings"
 
 
+def sapling_keys_for_plant_recipe(recipe_name: str) -> tuple[str, ...]:
+    """Sapling inventory keys used by a forester plant recipe."""
+    if recipe_name == "plant_softwood":
+        return tuple(f"{t.key}_saplings" for t in TREES if t.shape == "cone")
+    if recipe_name == "plant_hardwood":
+        return tuple(f"{t.key}_saplings" for t in TREES if t.shape == "round")
+    return ()
+
+
 def species_from_sapling_key(key: str) -> str:
     if key.endswith("_saplings"):
         species = key[: -len("_saplings")]

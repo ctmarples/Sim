@@ -146,7 +146,7 @@ def snapshot(game: Game, day: int) -> list[dict]:
                 "job": job_label(game, v),
                 "target": list(v.target) if v.target else None,
                 "haul": v.haul_building_id,
-                "equipped": v.inventory.equipped_tool,
+                "equipped": list(v.inventory.equipped_tools),
                 "inv": inv_summary(v),
                 "satiation": round(v.satiation, 3),
                 "seeking_food": v.seeking_food,
@@ -205,7 +205,7 @@ def print_overview(game: Game, title: str) -> None:
         reasons = diagnose_villager(game, v)
         print(
             f"  V{v.id:2} {v.state.name:11} @({v.x:2},{v.y:2}) "
-            f"{job_label(game, v):22} tgt={v.target} eq={v.inventory.equipped_tool or '—'}"
+            f"{job_label(game, v):22} tgt={v.target} eq={','.join(v.inventory.equipped_tools) or '—'}"
         )
         print(f"       inv={inv_summary(v) or '{}'} sat={v.satiation:.2f} seek={v.seeking_food}")
         print(f"       → {'; '.join(reasons)}")

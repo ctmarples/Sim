@@ -10,12 +10,15 @@ import pygame
 
 from entities import (
     BUILDING_LABELS,
+    TASK_LABELS,
     WORK_MODE_LABELS,
     Building,
     BuildingKind,
     Inventory,
+    TaskType,
     Villager,
 )
+from icons import ICON_AXE, ICON_SAPLING_CONE, ICON_TREE_ROUND, blit_icon
 from inventory_ui import (
     GRID_CELL,
     GRID_GAP,
@@ -571,6 +574,40 @@ class BuildingInspectDialog:
             ),
         )
 
+    def _draw_icon_btn(
+        self,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        *,
+        icons: tuple[str, ...] = (),
+        label: str | None = None,
+        active: bool = False,
+        hovered: bool = False,
+    ) -> None:
+        if active:
+            colour = COLOUR_TOOLBAR_BTN_ACTIVE
+        elif hovered:
+            colour = COLOUR_TOOLBAR_BTN_HOVER
+        else:
+            colour = COLOUR_TOOLBAR_BTN
+        pygame.draw.rect(surface, colour, rect, border_radius=4)
+        pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1, border_radius=4)
+        if icons:
+            pad = 4
+            slot_w = max(1, (rect.w - pad * 2) // max(1, len(icons)))
+            for i, icon in enumerate(icons):
+                cx = rect.x + pad + slot_w * i + slot_w // 2
+                blit_icon(surface, icon, cx, rect.centery, min(rect.h, slot_w) - 6)
+        elif label:
+            text = self.font_small.render(label, True, COLOUR_TEXT)
+            surface.blit(
+                text,
+                (
+                    rect.x + (rect.w - text.get_width()) // 2,
+                    rect.y + (rect.h - text.get_height()) // 2,
+                ),
+            )
+
     def _worker_label(self, villager: Villager) -> str:
         if villager.seeking_food:
             state = "EAT"
@@ -597,7 +634,7 @@ class BuildingInspectDialog:
         food_amounts: dict[str, int] | None = None,
         free_beds: int = 0,
         housing_level: int = 0,
-        area_draw_mode: bool = False,
+        area_draw_task: TaskType | None = None,
     ) -> None:
         if not self.open or building is None or building.kind == BuildingKind.FIELD:
             return
@@ -638,6 +675,8 @@ class BuildingInspectDialog:
         options_h = BTN_H + 8
         if building.kind == BuildingKind.WORKSTATION:
             options_h = BTN_H + 28
+        elif building.kind == BuildingKind.FORESTER:
+            options_h = BTN_H + 28
         elif building.supported_work_modes():
             options_h = BTN_H * 2 + 12
         elif building.has_recipes():
@@ -648,6 +687,9 @@ class BuildingInspectDialog:
         )
         split_recipes = (
             building.split_recipes() if building.kind == BuildingKind.FORESTER else ()
+        )
+        plant_recipes = (
+            building.plant_recipes() if building.kind == BuildingKind.FORESTER else ()
         )
         craft_recipes = (
             building.known_recipes()
@@ -661,6 +703,7 @@ class BuildingInspectDialog:
             content = rows * (GRID_CELL + GRID_GAP) - GRID_GAP
             recipes_h += 18 + min(content, MAX_GATHER_VIEW_H) + SECTION_GAP
         recipes_h += self._craft_recipes_block_height(len(split_recipes))
+        recipes_h += self._craft_recipes_block_height(len(plant_recipes))
         recipes_h += self._craft_recipes_block_height(len(craft_recipes))
 
         storage_items = len(present_keys(amounts, storage_keys or None))
@@ -843,7 +886,43 @@ class BuildingInspectDialog:
                 self._draw_button(surface, rect, label, active=active, hovered=hovered)
                 self._buttons.append((f"mode_{mode.name}", rect))
                 bx += w + 4
-            if building.kind not in (
+            if building.kind == BuildingKind.FORESTER:
+                clear_w = max(48, 10 + self.font_small.size("Clear")[0])
+                plant_active = area_draw_task == TaskType.PLANT_SAPLINGS
+                collect_active = area_draw_task == TaskType.CHOP_TREES
+                plant_rect = pygame.Rect(bx, y, BTN_H, BTN_H)
+                hov = mouse_pos is not None and plant_rect.collidepoint(mouse_pos)
+                self._draw_icon_btn(
+                    surface,
+                    plant_rect,
+                    icons=(ICON_SAPLING_CONE,),
+                    active=plant_active,
+                    hovered=hov,
+                )
+                self._buttons.append(("toggle_draw_plant", plant_rect))
+                bx += BTN_H + 4
+                rect = pygame.Rect(bx, y, clear_w, BTN_H)
+                hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+                self._draw_button(surface, rect, "Clear", hovered=hovered)
+                self._buttons.append(("clear_plant_areas", rect))
+                bx += clear_w + 8
+                collect_rect = pygame.Rect(bx, y, BTN_H + 18, BTN_H)
+                hov = mouse_pos is not None and collect_rect.collidepoint(mouse_pos)
+                self._draw_icon_btn(
+                    surface,
+                    collect_rect,
+                    icons=(ICON_TREE_ROUND, ICON_AXE),
+                    active=collect_active,
+                    hovered=hov,
+                )
+                self._buttons.append(("toggle_draw_collect", collect_rect))
+                bx += collect_rect.w + 4
+                rect = pygame.Rect(bx, y, clear_w, BTN_H)
+                hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+                self._draw_button(surface, rect, "Clear", hovered=hovered)
+                self._buttons.append(("clear_collect_areas", rect))
+                bx += clear_w + 4
+            elif building.kind not in (
                 BuildingKind.FARM,
                 BuildingKind.MILL,
                 BuildingKind.KITCHEN,
@@ -861,13 +940,13 @@ class BuildingInspectDialog:
                 self._buttons.append(("task_clear", rect))
                 bx += clear_w + 4
             if building.kind in (
-                BuildingKind.FORESTER,
                 BuildingKind.MASON,
                 BuildingKind.HUNTER,
                 BuildingKind.FORAGER,
                 BuildingKind.FISHER,
             ):
-                draw_label = "Draw areas" if not area_draw_mode else "Drawing…"
+                draw_task = building.default_draw_task()
+                draw_label = "Draw areas" if area_draw_task != draw_task else "Drawing…"
                 draw_w = max(88, 10 + self.font_small.size(draw_label)[0])
                 if bx + draw_w > x + inner_w and bx > x:
                     bx = x
@@ -878,7 +957,7 @@ class BuildingInspectDialog:
                     surface,
                     rect,
                     draw_label,
-                    active=area_draw_mode,
+                    active=area_draw_task == draw_task,
                     hovered=hovered,
                 )
                 self._buttons.append(("toggle_area_draw", rect))
@@ -978,6 +1057,22 @@ class BuildingInspectDialog:
             y += block_h
             if split_tip:
                 tip_key = split_tip
+        if plant_recipes:
+            block_h, plant_tip = self._draw_craft_recipes(
+                surface,
+                building=building,
+                recipes=plant_recipes,
+                title="Plant",
+                x=x,
+                y=y,
+                inner_w=inner_w,
+                mouse_pos=mouse_pos,
+                fonts=fonts,
+                scroll_name="plant_recipes",
+            )
+            y += block_h
+            if plant_tip:
+                tip_key = plant_tip
         if craft_recipes:
             block_h, craft_tip = self._draw_craft_recipes(
                 surface,

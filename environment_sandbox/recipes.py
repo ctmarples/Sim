@@ -43,6 +43,7 @@ _BUILDING_RECIPE_ATTR: dict[str, str] = {
     "alchemist": "ALCHEMIST_RECIPES",
     "tailor": "TAILOR_RECIPES",
     "forester": "FORESTER_RECIPES",
+    "forester_plant": "FORESTER_PLANT_RECIPES",
     "forester_split": "FORESTER_SPLIT_RECIPES",
     "hunter": "HUNTER_RECIPES",
     "forager": "FORAGER_RECIPES",
@@ -85,6 +86,7 @@ CRAFT_BENCH_RECIPES: tuple[Recipe, ...] = ()
 ALCHEMIST_RECIPES: tuple[Recipe, ...] = ()
 TAILOR_RECIPES: tuple[Recipe, ...] = ()
 FORESTER_RECIPES: tuple[Recipe, ...] = ()
+FORESTER_PLANT_RECIPES: tuple[Recipe, ...] = ()
 FORESTER_SPLIT_RECIPES: tuple[Recipe, ...] = ()
 HUNTER_RECIPES: tuple[Recipe, ...] = ()
 FORAGER_RECIPES: tuple[Recipe, ...] = ()
@@ -313,7 +315,8 @@ def _load_directory_recipes() -> None:
     """Load ``recipes_data/<building>/recipes.csv`` (and legacy ``*.json``) into tuples."""
     global MILL_RECIPES, KITCHEN_RECIPES, CRAFT_BENCH_RECIPES, ALCHEMIST_RECIPES
     global TAILOR_RECIPES
-    global FORESTER_RECIPES, FORESTER_SPLIT_RECIPES, HUNTER_RECIPES, FORAGER_RECIPES
+    global FORESTER_RECIPES, FORESTER_PLANT_RECIPES, FORESTER_SPLIT_RECIPES
+    global HUNTER_RECIPES, FORAGER_RECIPES
 
     if not _RECIPES_DATA_DIR.is_dir():
         return

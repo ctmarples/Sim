@@ -113,8 +113,8 @@ def list_save_files() -> list[str]:
 def _inv_to_dict(inv: Inventory) -> dict[str, int]:
     data = {key: int(getattr(inv, key, 0)) for key in _STORAGE_KEYS}
     data["capacity"] = inv.capacity
-    if inv.equipped_tool:
-        data["equipped_tool"] = inv.equipped_tool
+    if inv.equipped_tools:
+        data["equipped_tools"] = list(inv.equipped_tools)
     return data
 
 
@@ -132,9 +132,13 @@ def _inv_from_dict(data: dict[str, Any]) -> Inventory:
     inv.sage += int(data.get("herbs", 0))
     inv.sage_seeds += int(data.get("herb_seeds", 0))
     inv.oak_saplings += int(data.get("saplings", 0))
-    tool = data.get("equipped_tool")
-    if tool in TOOL_KEYS:
-        inv.equipped_tool = str(tool)
+    raw_tools = data.get("equipped_tools")
+    if isinstance(raw_tools, list):
+        inv.equipped_tools = [str(t) for t in raw_tools if t in TOOL_KEYS][:3]
+    else:
+        tool = data.get("equipped_tool")
+        if tool in TOOL_KEYS:
+            inv.equipped_tools = [str(tool)]
     return inv
 
 
@@ -359,6 +363,16 @@ def serialize_game(game: Game) -> dict[str, Any]:
                 "forage_colony_id": v.forage_colony_id,
                 "construction_id": v.construction_id,
                 "priorities": [p.name for p in v.priorities],
+                "seasonal_priorities": bool(getattr(v, "seasonal_priorities", False)),
+                "season_priorities": {
+                    k: [p.name for p in row]
+                    for k, row in getattr(v, "season_priorities", {}).items()
+                },
+                "workplace_slots": list(getattr(v, "workplace_slots", []) or []),
+                "season_workplace_slots": {
+                    k: list(row)
+                    for k, row in getattr(v, "season_workplace_slots", {}).items()
+                },
                 "satiation": round(v.satiation, 4),
                 "ration_mode": v.ration_mode.name,
                 "seeking_food": v.seeking_food,
@@ -1007,6 +1021,36 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             ]
         else:
             villager.set_default_priorities()
+        villager.seasonal_priorities = bool(vdata.get("seasonal_priorities", False))
+        raw_season_prio = vdata.get("season_priorities") or {}
+        if isinstance(raw_season_prio, dict):
+            for skey, names in raw_season_prio.items():
+                if not isinstance(names, list):
+                    continue
+                villager.season_priorities[str(skey)] = [
+                    WorkPriority[name]
+                    if name in WorkPriority.__members__
+                    else WorkPriority.NONE
+                    for name in names
+                ]
+        raw_wp = vdata.get("workplace_slots")
+        if isinstance(raw_wp, list):
+            villager.workplace_slots = [
+                int(b) if b is not None else None for b in raw_wp[:3]
+            ]
+            while len(villager.workplace_slots) < 3:
+                villager.workplace_slots.append(None)
+        villager.sync_workplace_slot_zero()
+        raw_season_wp = vdata.get("season_workplace_slots") or {}
+        if isinstance(raw_season_wp, dict):
+            for skey, ids in raw_season_wp.items():
+                if not isinstance(ids, list):
+                    continue
+                villager.season_workplace_slots[str(skey)] = [
+                    int(b) if b is not None else None for b in ids[:3]
+                ]
+        if villager.seasonal_priorities:
+            villager.ensure_season_workplace_slots(copy_from=villager.workplace_slots)
         villager.satiation = float(vdata.get("satiation", 0.75))
         villager.satiation = max(0.0, min(1.0, villager.satiation))
         raw_ration = vdata.get("ration_mode", "NORMAL")
