@@ -638,7 +638,7 @@ class VillagerInspectDialog:
                 self.font_small.render("Priority", True, COLOUR_TEXT_DIM),
                 (x, y + 6),
             )
-            villager.sync_workplace_slot_zero()
+            villager.ensure_workplace_slots()
             row_hits, _ = draw_workplace_slot_row(
                 surface,
                 x + 58,

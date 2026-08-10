@@ -43,6 +43,7 @@ _BUILD_ICON: dict[BuildingKind, str] = {
     BuildingKind.CRAFT_BENCH: "craft_bench",
     BuildingKind.ALCHEMIST: "alchemist",
     BuildingKind.TAILOR: "tailor",
+    BuildingKind.MARKET: "market",
     BuildingKind.MASON: "mason",
     BuildingKind.HUNTER: "hunter",
     BuildingKind.FISHER: "fisher",

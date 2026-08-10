@@ -71,6 +71,7 @@ RESOURCES: list[ResourceDef] = [
     ResourceDef("straw", "Straw", "wares", "strw"),
     ResourceDef("fur", "Fur", "wares", "fur"),
     *_CROP_PRODUCE_WARES,
+    ResourceDef("coins", "Coins", "wares", "coin"),
     ResourceDef("wheat_flour", "Wheat flour", "wares", "w.fl"),
     ResourceDef("rye_flour", "Rye flour", "wares", "r.fl"),
     *_TREE_SAPLINGS,
@@ -236,6 +237,11 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
     if key == "twine":
         return ResourceIconStyle(ICON_TWINE, {})
 
+    if key == "coins":
+        from icons import ICON_COINS
+
+        return ResourceIconStyle(ICON_COINS, {})
+
     if key == "axe":
         return ResourceIconStyle(ICON_AXE, {})
 
@@ -380,5 +386,8 @@ def merge_amounts(*dicts: dict[str, int]) -> dict[str, int]:
 def group_totals(amounts: dict[str, int]) -> dict[str, int]:
     totals = {group: 0 for group in GROUP_ORDER}
     for res in RESOURCES:
+        if res.key == "coins":
+            # Shown as its own resource-bar chip, not rolled into Wares.
+            continue
         totals[res.group] = totals.get(res.group, 0) + int(amounts.get(res.key, 0))
     return totals

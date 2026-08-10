@@ -102,6 +102,7 @@ class ResourceBar:
         *,
         housed: int | None = None,
         needing: int | None = None,
+        regional_wealth: int = 0,
     ) -> None:
         bar = pygame.Rect(0, TOOLBAR_HEIGHT, WINDOW_WIDTH, RESOURCE_BAR_HEIGHT)
         pygame.draw.rect(surface, COLOUR_TOOLBAR_BG, bar)
@@ -114,6 +115,8 @@ class ResourceBar:
         )
 
         amounts = self.collect_amounts(home, player, buildings, villagers)
+        # Coins are regional wealth — never cargo in storehouse / buildings.
+        amounts["coins"] = int(regional_wealth)
         totals = group_totals(amounts)
         self._chip_rects = {}
 
@@ -139,6 +142,52 @@ class ResourceBar:
         )
 
         x = self._toggle_rect.right + 14
+
+        # Regional wealth (always visible).
+        coins = int(regional_wealth)
+        try:
+            from icons import ICON_COINS, blit_icon
+
+            icon_size = max(14, h - 10)
+            num = self.font.render(str(coins), True, COLOUR_TEXT)
+            crect = pygame.Rect(x, y, 12 + icon_size // 2 + 8 + num.get_width() + 10, h)
+            self._chip_rects["coins"] = crect
+            hovered_coins = crect.collidepoint(mouse_pos)
+            colour = COLOUR_TOOLBAR_BTN_HOVER if hovered_coins else COLOUR_TOOLBAR_BTN
+            pygame.draw.rect(surface, colour, crect, border_radius=4)
+            pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, crect, 1, border_radius=4)
+            blit_icon(
+                surface,
+                ICON_COINS,
+                crect.x + 6 + icon_size // 2,
+                crect.centery,
+                icon_size,
+            )
+            surface.blit(
+                num,
+                (
+                    crect.x + 6 + icon_size + 4,
+                    crect.y + (crect.h - num.get_height()) // 2,
+                ),
+            )
+        except (FileNotFoundError, OSError, ValueError, TypeError):
+            coin_text = f"Wealth  {coins}"
+            cw = self.font.size(coin_text)[0] + 24
+            crect = pygame.Rect(x, y, cw, h)
+            self._chip_rects["coins"] = crect
+            hovered_coins = crect.collidepoint(mouse_pos)
+            colour = COLOUR_TOOLBAR_BTN_HOVER if hovered_coins else COLOUR_TOOLBAR_BTN
+            pygame.draw.rect(surface, colour, crect, border_radius=4)
+            pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, crect, 1, border_radius=4)
+            ct = self.font.render(coin_text, True, COLOUR_TEXT)
+            surface.blit(
+                ct,
+                (
+                    crect.x + (crect.w - ct.get_width()) // 2,
+                    crect.y + (crect.h - ct.get_height()) // 2,
+                ),
+            )
+        x = crect.right + 10
 
         # Housing: housed villagers / total villagers (need beds).
         if housed is not None and needing is not None:
@@ -192,8 +241,13 @@ class ResourceBar:
         chip = self._chip_rects.get(group)
         if chip is None:
             return
-        defs = dict(resources_by_group()).get(group, [])
-        lines = [f"{res.label}: {amounts.get(res.key, 0)}" for res in defs]
+        if group == "coins":
+            lines = [f"Regional wealth: {int(amounts.get('coins', 0))}"]
+        elif group == "housing":
+            return
+        else:
+            defs = dict(resources_by_group()).get(group, [])
+            lines = [f"{res.label}: {amounts.get(res.key, 0)}" for res in defs]
         if not lines:
             return
 

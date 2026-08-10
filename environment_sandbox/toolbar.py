@@ -47,6 +47,7 @@ _BUILD_ICON: dict[BuildingKind, str] = {
     BuildingKind.MILL: "mill",
     BuildingKind.ALCHEMIST: "alchemist",
     BuildingKind.TAILOR: "tailor",
+    BuildingKind.MARKET: "market",
     BuildingKind.TENT: "tent",
     BuildingKind.HOUSE_SMALL: "house_small",
     BuildingKind.HOUSE: "house",
@@ -199,6 +200,7 @@ class Toolbar:
             BuildingKind.CRAFT_BENCH,
             BuildingKind.ALCHEMIST,
             BuildingKind.TAILOR,
+            BuildingKind.MARKET,
         ):
             clear_label = "Clear"
             clear_w = max(48, 10 + self.font_small.size(clear_label)[0])

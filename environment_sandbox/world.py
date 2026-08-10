@@ -128,6 +128,12 @@ PLANTABLE_LAND: tuple[TerrainType, ...] = (
     TerrainType.MEADOW,
 )
 
+# Field plots may cover plantable land and packed paths (not urban paving).
+FIELDABLE_LAND: tuple[TerrainType, ...] = (
+    *PLANTABLE_LAND,
+    TerrainType.PATH,
+)
+
 # Where new buildings may be placed (densify over urban/path).
 BUILDABLE_LAND: tuple[TerrainType, ...] = (
     *PLANTABLE_LAND,
@@ -162,6 +168,7 @@ class FeatureType(Enum):
     CRAFT_BENCH = auto()
     ALCHEMIST = auto()
     TAILOR = auto()
+    MARKET = auto()
     TENT = auto()
     HOUSE_SMALL = auto()
     HOUSE = auto()
@@ -195,6 +202,7 @@ STRUCTURE_FEATURES: frozenset[FeatureType] = frozenset(
         FeatureType.CRAFT_BENCH,
         FeatureType.ALCHEMIST,
         FeatureType.TAILOR,
+        FeatureType.MARKET,
         FeatureType.TENT,
         FeatureType.HOUSE_SMALL,
         FeatureType.HOUSE,
@@ -2027,6 +2035,7 @@ class World:
         cell.growth_ticks = 0
         cell.deposit = 0
         cell.crop_kind = None
+        cell.tree_species = None
         self.mark_terrain_dirty(x, y)
         return True
 
@@ -2054,14 +2063,15 @@ class World:
 
     def crop_herb_ready(self, x: int, y: int) -> bool:
         cell = self.get_cell(x, y)
-        return (
-            cell is not None
-            and cell.feature == FeatureType.CROP_HERB
-            and cell.growth_ticks <= 0
-        )
+        if cell is None or cell.feature != FeatureType.CROP_HERB:
+            return False
+        return cell.growth_ticks <= 0
 
     def harvest_crop_herb(self, x: int, y: int) -> str | None:
-        """Harvest a ready farm crop; returns crop_kind or None."""
+        """Harvest a ready farm crop; returns crop_kind or None.
+
+        Clears the plant entirely (used when remaining produce is finished).
+        """
         cell = self.get_cell(x, y)
         if cell is None or cell.feature != FeatureType.CROP_HERB:
             return None
@@ -2071,6 +2081,7 @@ class World:
         cell.feature = FeatureType.NONE
         cell.growth_ticks = 0
         cell.crop_kind = None
+        cell.deposit = 0
         return kind
 
     def harvest_mushroom(self, x: int, y: int) -> bool:

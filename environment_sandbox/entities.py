@@ -154,6 +154,7 @@ class BuildingKind(Enum):
     CRAFT_BENCH = auto()
     ALCHEMIST = auto()
     TAILOR = auto()
+    MARKET = auto()
     TENT = auto()
     HOUSE_SMALL = auto()  # 1×2
     HOUSE = auto()  # 2×2
@@ -184,6 +185,7 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
     BuildingKind.CRAFT_BENCH: "Craft bench",
     BuildingKind.ALCHEMIST: "Alchemist",
     BuildingKind.TAILOR: "Tailor",
+    BuildingKind.MARKET: "Market",
     BuildingKind.TENT: "Tent",
     BuildingKind.HOUSE_SMALL: "Cottage",
     BuildingKind.HOUSE: "House",
@@ -379,6 +381,7 @@ class Inventory:
     grilled_meat: int = 0
     grilled_fish: int = 0
     twine: int = 0
+    coins: int = 0
     axe: int = 0
     spear: int = 0
     fishing_rod: int = 0
@@ -436,7 +439,8 @@ class Inventory:
 
     @property
     def total(self) -> int:
-        return self.cargo_total + self.seed_total
+        # Coins are currency: carried, but they do not consume cargo capacity.
+        return self.cargo_total + self.seed_total + self.coins
 
     @property
     def is_full(self) -> bool:
@@ -452,6 +456,8 @@ class Inventory:
         return self.total == 0
 
     def can_add(self, amount: int = 1, key: str | None = None) -> bool:
+        if key == "coins":
+            return True
         if key is not None and self.is_seed_key(key):
             return self.seed_total + amount <= self.seed_capacity
         return self.cargo_total + amount <= self.capacity
@@ -600,7 +606,7 @@ class Inventory:
         cargo = self.cargo_total
         for key in TOOL_KEYS:
             cargo -= int(getattr(self, key, 0))
-        return cargo > 0 or self.seed_total > 0
+        return cargo > 0 or self.seed_total > 0 or self.coins > 0
 
     def clear(self) -> dict[str, int]:
         saved_tools = list(self.equipped_tools)
@@ -619,6 +625,7 @@ class Inventory:
             "straw": self.straw,
             "fur": self.fur,
             "twine": self.twine,
+            "coins": self.coins,
             "axe": self.axe,
             **{key: getattr(self, key) for key in SAPLING_ITEM_KEYS},
             **{key: getattr(self, key) for key in PRODUCE_KEYS},
@@ -633,7 +640,8 @@ class Inventory:
         self.logs = self.hardwood_logs = self.wood = self.rock = self.meat = self.fish = 0
         self.mushrooms = self.honey = self.berries = self.berry_seeds = self.reeds = 0
         self.straw = self.fur = 0
-        self.twine = self.axe = self.spear = self.fishing_rod = self.hoe = self.knife = 0
+        self.twine = self.coins = 0
+        self.axe = self.spear = self.fishing_rod = self.hoe = self.knife = 0
         self.equipped_tools.clear()
         for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS:
             setattr(self, key, 0)
@@ -687,6 +695,7 @@ class HomeStorage:
     grilled_meat: int = 0
     grilled_fish: int = 0
     twine: int = 0
+    coins: int = 0
     axe: int = 0
     spear: int = 0
     fishing_rod: int = 0
@@ -729,7 +738,8 @@ class HomeStorage:
         self.logs = self.hardwood_logs = self.wood = self.rock = self.meat = self.fish = 0
         self.mushrooms = self.honey = self.berries = self.berry_seeds = self.reeds = 0
         self.straw = self.fur = 0
-        self.twine = self.axe = self.spear = self.fishing_rod = self.hoe = self.knife = 0
+        self.twine = self.coins = 0
+        self.axe = self.spear = self.fishing_rod = self.hoe = self.knife = 0
         for key in TOOL_KEYS:
             if key not in ("axe",):
                 setattr(self, key, 0)
@@ -1055,6 +1065,7 @@ class Building:
     grilled_meat: int = 0
     grilled_fish: int = 0
     twine: int = 0
+    coins: int = 0
     axe: int = 0
     spear: int = 0
     fishing_rod: int = 0
@@ -1087,6 +1098,15 @@ class Building:
     crop_health: float = 1.0
     # Field only: additive pest-control boost from alchemist treatments.
     pest_boost: float = 0.0
+    # Market: seasonal buyer demand and player-committed sell quotas.
+    market_demand: dict[str, int] = field(default_factory=dict)
+    # Enabled supply goods → storehouse reserve (units kept; surplus may sell).
+    # Mins persist across seasons while the entry remains enabled.
+    market_supply_mins: dict[str, int] = field(default_factory=dict)
+    # Enabled supply goods → units to keep stocked at the market stall.
+    # 0 means fill up to remaining seasonal demand.
+    market_supply_stocks: dict[str, int] = field(default_factory=dict)
+    market_demand_season: str | None = None
     draw_task_type: TaskType = TaskType.FULL_MANAGE
     work_mode: WorkMode = WorkMode.ALL
     crop_kind: str = "sage"  # legacy
@@ -1335,6 +1355,74 @@ class Building:
             BuildingKind.TAILOR,
         )
 
+    def is_market(self) -> bool:
+        return self.kind == BuildingKind.MARKET
+
+    def market_demand_remaining(self, key: str) -> int:
+        return max(0, int(self.market_demand.get(key, 0)))
+
+    def market_supply_enabled(self, key: str) -> bool:
+        return key in self.market_supply_mins
+
+    def market_supply_min(self, key: str) -> int:
+        return max(0, int(self.market_supply_mins.get(key, 0)))
+
+    def market_supply_stock(self, key: str) -> int:
+        return max(0, int(self.market_supply_stocks.get(key, 0)))
+
+    def market_stock_target(self, key: str) -> int:
+        """Units to keep on the stall (stock setting, or remaining demand if 0)."""
+        if not self.market_supply_enabled(key):
+            return 0
+        stock = self.market_supply_stock(key)
+        if stock > 0:
+            return stock
+        return self.market_demand_remaining(key)
+
+    def set_market_supply_enabled(self, key: str, enabled: bool) -> None:
+        """Enable/disable storehouse surplus sales for ``key`` (settings persist while on)."""
+        from market_economy import market_supply_resource_keys
+
+        if key not in market_supply_resource_keys():
+            return
+        if enabled:
+            self.market_supply_mins.setdefault(key, 0)
+            self.market_supply_stocks.setdefault(key, 0)
+        else:
+            self.market_supply_mins.pop(key, None)
+            self.market_supply_stocks.pop(key, None)
+
+    def set_market_supply_min(self, key: str, amount: int) -> int:
+        """Set storehouse reserve for an enabled supply good."""
+        from market_economy import market_supply_resource_keys
+
+        if key not in market_supply_resource_keys():
+            return 0
+        if key not in self.market_supply_mins:
+            self.set_market_supply_enabled(key, True)
+        value = max(0, int(amount))
+        self.market_supply_mins[key] = value
+        return value
+
+    def set_market_supply_stock(self, key: str, amount: int) -> int:
+        """Set stall stock target for an enabled supply good (0 = match demand)."""
+        from market_economy import market_supply_resource_keys
+
+        if key not in market_supply_resource_keys():
+            return 0
+        if key not in self.market_supply_mins:
+            self.set_market_supply_enabled(key, True)
+        value = max(0, int(amount))
+        self.market_supply_stocks[key] = value
+        return value
+
+    def adjust_market_supply_min(self, key: str, delta: int) -> int:
+        if key not in self.market_supply_mins:
+            self.set_market_supply_enabled(key, True)
+        return self.set_market_supply_min(
+            key, self.market_supply_min(key) + int(delta)
+        )
+
     def is_splitter(self) -> bool:
         """True when this forester has any split recipe enabled (logs → wood)."""
         if self.kind != BuildingKind.FORESTER:
@@ -1483,18 +1571,15 @@ class Building:
         """Ingredient keys needed by currently enabled recipes."""
         return input_keys_for_recipes(self.enabled_recipes())
 
-    def supply_demand(self) -> dict[str, int]:
-        """Units of each input still needed for enabled recipes, capped by room.
-
-        Prefer recipe gaps over blind top-ups so haulers fetch vegetables when
-        meat is already stocked (instead of filling packs with meat first).
-        Also tops up toward ``item_mins`` / recipe reserve so haulers and
-        crafters are not fighting over under-min stock.
-        """
-        from recipes import input_keys_for_recipes, missing_inputs
+    def recipe_gap_demand(self) -> dict[str, int]:
+        """Missing recipe inputs only (no reserve top-ups), capped by room."""
+        from recipes import missing_inputs
 
         demand: dict[str, int] = {}
-        for recipe in self.enabled_recipes():
+        recipes = list(self.enabled_recipes())
+        if self.is_splitter():
+            recipes.extend(self.enabled_split_recipes())
+        for recipe in recipes:
             if not recipe.inputs:
                 continue
             for key, need in missing_inputs(self, recipe).items():
@@ -1504,17 +1589,36 @@ class Building:
                 want = min(int(need), room)
                 if want > 0:
                     demand[key] = max(demand.get(key, 0), want)
-        if self.is_splitter():
-            for recipe in self.enabled_split_recipes():
-                if not recipe.inputs:
+        return demand
+
+    def supply_demand(self) -> dict[str, int]:
+        """Units of each input still needed for enabled recipes, capped by room.
+
+        Prefer recipe gaps over blind top-ups so haulers fetch vegetables when
+        meat is already stocked (instead of filling packs with meat first).
+        Also tops up toward ``item_mins`` / recipe reserve so haulers and
+        crafters are not fighting over under-min stock.
+        """
+        from recipes import input_keys_for_recipes
+
+        if self.is_market():
+            demand: dict[str, int] = {}
+            for key in self.market_supply_mins:
+                target = self.market_stock_target(key)
+                if target <= 0:
                     continue
-                for key, need in missing_inputs(self, recipe).items():
-                    room = self.space_for_key(key)
-                    if room <= 0:
-                        continue
-                    want = min(int(need), room)
-                    if want > 0:
-                        demand[key] = max(demand.get(key, 0), want)
+                have = int(getattr(self, key, 0))
+                if have >= target:
+                    continue
+                room = self.space_for_key(key)
+                if room <= 0:
+                    continue
+                need = min(target - have, room)
+                if need > 0:
+                    demand[key] = need
+            return demand
+
+        demand = self.recipe_gap_demand()
         # Top up processor / splitter inputs (and craft inputs like twine) to reserve.
         top_keys: set[str] = set()
         if self.is_processor():
@@ -1618,9 +1722,23 @@ class Building:
         have = int(getattr(self, key, 0))
         if have <= 0:
             return 0
+        if self.is_market():
+            if key == "coins":
+                return have
+            if key in self.market_supply_mins:
+                # Keep stall stock up to the target; haul excess home.
+                keep = self.market_stock_target(key)
+                return max(0, have - keep)
+            return have
         if self.is_processor():
-            # Outputs and unused inputs still honour item_mins / recipe reserve.
-            if key in self.processor_output_keys():
+            outputs = self.processor_output_keys()
+            inputs = self.processor_input_keys()
+            # Dual-role stock (craft twine): keep as an ingredient while any
+            # enabled recipe still consumes it — only clear true excess.
+            if key in outputs and key in inputs and key in self.active_supply_keys():
+                return int(self.excess_input_amounts().get(key, 0))
+            # Pure outputs and unused inputs honour item_mins / recipe reserve.
+            if key in outputs:
                 return max(0, have - self.reserve_amount(key))
             if key in self.unused_input_keys():
                 return max(0, have - self.reserve_amount(key))
@@ -1665,9 +1783,18 @@ class Building:
         return ()
 
     def input_stored_total(self) -> int:
+        if self.is_market():
+            from market_economy import market_supply_resource_keys
+
+            return sum(
+                int(getattr(self, key, 0)) for key in market_supply_resource_keys()
+            )
         return sum(int(getattr(self, key, 0)) for key in self.processor_input_keys())
 
     def output_stored_total(self) -> int:
+        if self.is_market():
+            # Coins are currency and do not fill the output pool.
+            return 0
         return sum(int(getattr(self, key, 0)) for key in self.processor_output_keys())
 
     def input_space_left(self) -> int:
@@ -1681,10 +1808,23 @@ class Building:
         return max(0, self.output_capacity - self.output_stored_total())
 
     def space_for_key(self, key: str) -> int:
+        if key == "coins":
+            # Currency is uncapped (still subject to an optional item cap).
+            room = 10**9
+            cap = self.item_caps.get(key)
+            if cap is not None:
+                have = int(getattr(self, "coins", 0))
+                room = min(room, max(0, int(cap) - have))
+            return max(0, room)
         if self.kind == BuildingKind.KITCHEN and key == KITCHEN_FUEL_KEY:
             return self.fuel_space_left()
         if self.is_seed_storage_key(key):
             room = self.seed_space_left()
+        elif self.is_market() and (self.input_capacity > 0 or self.output_capacity > 0):
+            if key in self.depositable_keys():
+                room = self.input_space_left()
+            else:
+                return 0
         elif self.is_processor() and (self.input_capacity > 0 or self.output_capacity > 0):
             if key in self.processor_input_keys():
                 room = self.input_space_left()
@@ -1775,12 +1915,19 @@ class Building:
 
     @property
     def space_left(self) -> int:
-        if self.is_processor() and (self.input_capacity > 0 or self.output_capacity > 0):
+        if (self.is_processor() or self.is_market()) and (
+            self.input_capacity > 0 or self.output_capacity > 0
+        ):
             return self.input_space_left() + self.output_space_left()
         return max(0, self.capacity - self.cargo_stored_total)
 
     def capacity_label(self) -> str:
-        if self.is_processor() and self.input_capacity > 0:
+        if self.is_market():
+            enabled = len(self.market_supply_mins)
+            demand_n = sum(1 for n in self.market_demand.values() if int(n) > 0)
+            stocked = self.input_stored_total()
+            label = f"{stocked}/{self.input_capacity} stock  · supply {enabled}  · demand {demand_n}"
+        elif self.is_processor() and self.input_capacity > 0:
             label = (
                 f"{self.input_stored_total()}/{self.input_capacity} in  "
                 f"{self.output_stored_total()}/{self.output_capacity} out"
@@ -1902,7 +2049,7 @@ class Building:
     def deposit_from_inventory(
         self, inventory: Inventory, *, keep_plantables: bool = False
     ) -> None:
-        if self.is_processor():
+        if self.is_processor() or self.is_market():
             self.deposit_supply_from(inventory)
             return
         keys = self.depositable_keys()
@@ -1929,6 +2076,10 @@ class Building:
     def deposit_supply_from(self, inventory: Inventory) -> int:
         """Fill input / fuel / plant stock from inventory up to capacity and caps."""
         moved = 0
+        if self.is_market():
+            for key in self.market_supply_mins:
+                moved += self.deposit_key_from(inventory, key)
+            return moved
         if self.is_processor():
             for key in self.processor_input_keys():
                 moved += self.deposit_key_from(inventory, key)
@@ -2025,6 +2176,10 @@ class Building:
             return ALCHEMIST_INPUT_KEYS + ALCHEMIST_OUTPUT_KEYS
         if self.kind == BuildingKind.TAILOR:
             return TAILOR_INPUT_KEYS + TAILOR_OUTPUT_KEYS
+        if self.kind == BuildingKind.MARKET:
+            from market_economy import market_supply_resource_keys
+
+            return market_supply_resource_keys()
         if self.kind == BuildingKind.FIELD:
             return ()
         return ()
@@ -2038,6 +2193,16 @@ class Building:
             return ("wood", "rock", *_FORAGE_KEYS)
         if self.kind == BuildingKind.FARM:
             return PRODUCE_KEYS + ("straw",)
+        if self.is_market():
+            from market_economy import market_supply_resource_keys
+
+            keys: list[str] = []
+            if int(getattr(self, "coins", 0)) > 0:
+                keys.append("coins")
+            for key in market_supply_resource_keys():
+                if self.haulable_amount(key) > 0:
+                    keys.append(key)
+            return tuple(keys)
         if self.is_processor():
             # Produce first, then inputs no enabled recipe uses. Do NOT haul excess
             # stock of active ingredients — that fights supply stockpiling.
@@ -2076,6 +2241,11 @@ class Building:
             ):
                 return True
             return False
+        if self.is_market():
+            return any(
+                int(getattr(inventory, key, 0)) > 0 and self.space_for_key(key) > 0
+                for key in self.depositable_keys()
+            )
         # Gather / forester lodge: accept any depositable cargo with room.
         keys = self.depositable_keys()
         return any(
@@ -2084,7 +2254,7 @@ class Building:
         )
 
     def needs_supplied(self) -> bool:
-        if self.is_processor() or self.is_splitter():
+        if self.is_processor() or self.is_splitter() or self.is_market():
             return True
         # Farm / forester plant stock — concrete demand is plan-aware in game code.
         if self.kind in (BuildingKind.FARM, BuildingKind.FORESTER):
@@ -2105,11 +2275,9 @@ class Building:
     ) -> None:
         use_keys = keys if keys is not None else self.haul_keys()
         for key in use_keys:
-            limit = (
-                self.haulable_amount(key)
-                if keys is None
-                else int(getattr(self, key, 0))
-            )
+            # Always honour haulable_amount — passing keys= must not strip
+            # reserved dual-role stock (e.g. craft-bench twine used as input).
+            limit = self.haulable_amount(key)
             taken = 0
             while (
                 taken < limit
@@ -2575,11 +2743,21 @@ class Villager:
         return [None, None, None]
 
     def sync_workplace_slot_zero(self) -> None:
+        """Legacy migrate / restore only — never overwrite assigned P1 with active work.
+
+        ``building_id`` is the AI's *current* workplace (may be P2/P3).
+        ``workplace_slots[0]`` is the player's P1 assignment and must stay put.
+        """
         self.ensure_workplace_slots()
+        has_slots = any(bid is not None for bid in self.workplace_slots)
+        if has_slots:
+            # Prefer assigned P1 when idle / unassigned; do not clobber slots from
+            # a transient building_id (e.g. working P2).
+            if self.building_id is None and self.workplace_slots[0] is not None:
+                self.building_id = self.workplace_slots[0]
+            return
         if self.building_id is not None:
             self.workplace_slots[0] = self.building_id
-        elif self.workplace_slots[0] is not None:
-            self.building_id = self.workplace_slots[0]
 
     def active_priorities(self, season: object | None = None) -> list[WorkPriority]:
         self.ensure_priorities()

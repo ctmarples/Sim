@@ -42,6 +42,7 @@ def draw_resource_cell(
     hovered: bool = False,
     dimmed: bool = False,
     active: bool = False,
+    count_label: str | None = None,
 ) -> None:
     """Draw one inventory-style resource icon cell (optional count / dim)."""
     from icons import blit_icon
@@ -98,8 +99,11 @@ def draw_resource_cell(
             ),
         )
 
-    if count is not None:
-        badge = font_tiny.render(str(count), True, COLOUR_TEXT)
+    label = count_label if count_label is not None else (
+        str(count) if count is not None else None
+    )
+    if label is not None:
+        badge = font_tiny.render(label, True, COLOUR_TEXT)
         bx = cell.right - badge.get_width() - 3
         by = cell.bottom - badge.get_height() - 2
         pygame.draw.rect(
@@ -277,9 +281,12 @@ def draw_item_tooltip(
     mouse_pos: tuple[int, int],
     key: str,
     font: pygame.font.Font,
+    extra: str | None = None,
 ) -> None:
     """Draw a small name label near the cursor for a hovered inventory item."""
     label = resource_label(key)
+    if extra:
+        label = f"{label} — {extra}"
     text = font.render(label, True, COLOUR_TEXT)
     pad = 4
     tip = pygame.Rect(

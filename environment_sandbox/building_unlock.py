@@ -24,6 +24,7 @@ BUILD_MENU_ORDER: tuple[BuildingKind, ...] = (
     BuildingKind.MILL,
     BuildingKind.ALCHEMIST,
     BuildingKind.TAILOR,
+    BuildingKind.MARKET,
 )
 
 # Sequential unlock groups: next group opens when any building in the
@@ -49,7 +50,7 @@ UNLOCK_TIERS: tuple[frozenset[BuildingKind], ...] = (
             BuildingKind.HOUSE,
         }
     ),
-    frozenset({BuildingKind.ALCHEMIST, BuildingKind.TAILOR}),
+    frozenset({BuildingKind.ALCHEMIST, BuildingKind.TAILOR, BuildingKind.MARKET}),
 )
 
 # Tier-4 production set used to unlock alchemist/tailor (Field/House alone does not).
@@ -119,6 +120,7 @@ BUILD_COSTS: dict[BuildingKind, BuildCost] = {
     BuildingKind.MILL: BuildCost(logs=2, rock=4, task=TaskType.FULL_FORAGE),
     BuildingKind.ALCHEMIST: BuildCost(hardwood=4, rock=4, task=TaskType.FULL_FORAGE),
     BuildingKind.TAILOR: BuildCost(hardwood=4, rock=4, task=TaskType.FULL_FORAGE),
+    BuildingKind.MARKET: BuildCost(logs=2, rock=4, task=TaskType.FULL_FORAGE),
     BuildingKind.TENT: BuildCost(wood=2, rock=0, task=TaskType.FULL_FORAGE),
     BuildingKind.HOUSE_SMALL: BuildCost(logs=2, rock=2, task=TaskType.FULL_FORAGE),
     BuildingKind.HOUSE: BuildCost(logs=4, rock=4, task=TaskType.FULL_FORAGE),

@@ -1585,6 +1585,7 @@ ICON_KITCHEN = "kitchen"
 ICON_CRAFT_BENCH = "craft_bench"
 ICON_ALCHEMIST = "alchemist"
 ICON_TAILOR = "tailor"
+ICON_MARKET = "market"
 ICON_TENT = "tent"
 ICON_HOUSE_SMALL = "house_small"
 ICON_HOUSE = "house"
@@ -1606,6 +1607,7 @@ BUILDING_ICON_NAMES: tuple[str, ...] = (
     ICON_CRAFT_BENCH,
     ICON_ALCHEMIST,
     ICON_TAILOR,
+    ICON_MARKET,
     ICON_TENT,
     ICON_HOUSE_SMALL,
     ICON_HOUSE,
@@ -1637,6 +1639,7 @@ ICON_KNIFE = "knife"
 ICON_HOE = "hoe"
 ICON_FISHING_ROD = "fishing_rod"
 ICON_TWINE = "twine"
+ICON_COINS = "coins"
 ICON_BERRIES = "berries"
 ICON_BREAD = "bread"
 ICON_STEW = "stew"
@@ -1670,6 +1673,7 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_CRAFT_BENCH,
     ICON_ALCHEMIST,
     ICON_TAILOR,
+    ICON_MARKET,
     ICON_CONSTRUCTION,
     ICON_DEER_MALE,
     ICON_DEER_FEMALE,
@@ -1696,6 +1700,7 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_HOE,
     ICON_FISHING_ROD,
     ICON_TWINE,
+    ICON_COINS,
     ICON_BERRIES,
     ICON_BREAD,
     ICON_STEW,
@@ -1754,6 +1759,7 @@ def icon_base_for_feature(
         FeatureType.CRAFT_BENCH: ICON_CRAFT_BENCH,
         FeatureType.ALCHEMIST: ICON_ALCHEMIST,
         FeatureType.TAILOR: ICON_TAILOR,
+        FeatureType.MARKET: ICON_MARKET,
         FeatureType.TENT: ICON_TENT,
         FeatureType.HOUSE_SMALL: ICON_HOUSE_SMALL,
         FeatureType.HOUSE: ICON_HOUSE,

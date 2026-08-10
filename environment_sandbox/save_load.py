@@ -56,6 +56,7 @@ _BASE_STORAGE_KEYS = (
     "straw",
     "fur",
     "twine",
+    "coins",
     "axe",
     "spear",
     "fishing_rod",
@@ -277,6 +278,12 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "fuel_wood": b.fuel_wood,
             "item_caps": {k: int(v) for k, v in b.item_caps.items()},
             "item_mins": {k: int(v) for k, v in b.item_mins.items()},
+            "market_demand": {k: int(v) for k, v in b.market_demand.items()},
+            "market_supply_mins": {k: int(v) for k, v in b.market_supply_mins.items()},
+            "market_supply_stocks": {
+                k: int(v) for k, v in b.market_supply_stocks.items()
+            },
+            "market_demand_season": b.market_demand_season,
             "recipe_enabled": dict(b.recipe_enabled),
             "recipe_progress": dict(b.recipe_progress),
             "recipe_priority": {k: int(v) for k, v in b.recipe_priority.items()},
@@ -496,6 +503,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "inventory": _inv_to_dict(game.player.inventory),
         },
         "home_storage": _storage_to_dict(game.home_storage),
+        "regional_wealth": int(getattr(game, "regional_wealth", 0)),
         "buildings": buildings,
         "construction_sites": sites,
         "villagers": villagers,
@@ -624,6 +632,7 @@ def _migrate_building_footprints(game: Game) -> None:
         BuildingKind.CRAFT_BENCH: FeatureType.CRAFT_BENCH,
         BuildingKind.ALCHEMIST: FeatureType.ALCHEMIST,
         BuildingKind.TAILOR: FeatureType.TAILOR,
+        BuildingKind.MARKET: FeatureType.MARKET,
         BuildingKind.TENT: FeatureType.TENT,
         BuildingKind.HOUSE_SMALL: FeatureType.HOUSE_SMALL,
         BuildingKind.HOUSE: FeatureType.HOUSE,
@@ -767,6 +776,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     world._herb_timer = int(world_data.get("herb_timer", world._herb_timer))
 
     game.world = world
+    if hasattr(game, "_invalidate_fishing_shore_cache"):
+        game._invalidate_fishing_shore_cache()
     game.height_sample = generate_height_sample(
         world.cols,
         world.rows,
@@ -780,6 +791,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     game.player.y = int(player_data["y"])
     game.player.inventory = _inv_from_dict(player_data["inventory"])
     _apply_storage(game.home_storage, data["home_storage"])
+    game.regional_wealth = max(0, int(data.get("regional_wealth", 0) or 0))
 
     game.buildings.clear()
     for bdata in data.get("buildings", []):
@@ -797,6 +809,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             BuildingKind.CRAFT_BENCH: TaskType.FULL_FORAGE,
             BuildingKind.ALCHEMIST: TaskType.FULL_FORAGE,
             BuildingKind.TAILOR: TaskType.FULL_FORAGE,
+            BuildingKind.MARKET: TaskType.FULL_FORAGE,
         }.get(kind, TaskType.FULL_MANAGE)
         raw_task = bdata.get("draw_task_type")
         if raw_task is None:
@@ -864,6 +877,37 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             from entities import default_item_mins
 
             building.item_mins = dict(default_item_mins(kind))
+        raw_demand = bdata.get("market_demand") or {}
+        raw_supply = bdata.get("market_supply_mins") or {}
+        raw_provide = bdata.get("market_provide") or {}
+        if isinstance(raw_demand, dict):
+            building.market_demand = {
+                str(k): max(0, int(v)) for k, v in raw_demand.items() if int(v) > 0
+            }
+        if isinstance(raw_supply, dict) and raw_supply:
+            building.market_supply_mins = {
+                str(k): max(0, int(v)) for k, v in raw_supply.items()
+            }
+        elif isinstance(raw_provide, dict) and raw_provide:
+            # Migrate old "provide quota" into enabled supply with min 0.
+            building.market_supply_mins = {
+                str(k): 0 for k, v in raw_provide.items() if int(v) > 0
+            }
+        raw_stocks = bdata.get("market_supply_stocks") or {}
+        if isinstance(raw_stocks, dict) and raw_stocks:
+            building.market_supply_stocks = {
+                str(k): max(0, int(v)) for k, v in raw_stocks.items()
+            }
+        # Keep stock targets aligned with enabled supply keys.
+        for key in list(building.market_supply_mins):
+            building.market_supply_stocks.setdefault(key, 0)
+        for key in list(building.market_supply_stocks):
+            if key not in building.market_supply_mins:
+                building.market_supply_stocks.pop(key, None)
+        season_name = bdata.get("market_demand_season")
+        building.market_demand_season = (
+            str(season_name) if season_name else None
+        )
         raw_enabled = bdata.get("recipe_enabled") or {}
         raw_progress = bdata.get("recipe_progress") or {}
         raw_priority = bdata.get("recipe_priority") or {}
@@ -981,6 +1025,14 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     # Promote nested Farm.fields / legacy Field areas into Field buildings.
     _migrate_legacy_fields(game)
     _migrate_building_footprints(game)
+
+    # Markets: refresh demand if missing or from another season.
+    for building in game.buildings.values():
+        if building.is_market():
+            game._ensure_market_demand(building)
+    # Coins are regional wealth — fold any leftover stock into it.
+    if hasattr(game, "_absorb_coins_to_wealth"):
+        game._absorb_coins_to_wealth()
 
     # Re-sync after migration may have spawned buildings.
     if game.buildings:

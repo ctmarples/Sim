@@ -87,8 +87,12 @@ class BuildingInspectDialog:
         self._tooltip_key: str | None = None
         self.selected_cap_key: str | None = None
         self.selected_min_key: str | None = None
+        self.selected_market_supply_key: str | None = None
         self.caps_expanded: bool = False
         self.mins_expanded: bool = False
+        self.market_demand_expanded: bool = True
+        self.market_supply_expanded: bool = True
+        self.market_supply_group: str = "food"
         self._scroll: dict[str, int] = {}
         # name → (view_rect, content_h, view_h) rebuilt each draw.
         self._scroll_areas: dict[str, tuple[pygame.Rect, int, int]] = {}
@@ -124,6 +128,7 @@ class BuildingInspectDialog:
         self._tooltip_key = None
         self.selected_cap_key = None
         self.selected_min_key = None
+        self.selected_market_supply_key = None
         self._scroll = {}
         self._scroll_areas = {}
         self._layout(building)
@@ -151,6 +156,7 @@ class BuildingInspectDialog:
         self._tooltip_key = None
         self.selected_cap_key = None
         self.selected_min_key = None
+        self.selected_market_supply_key = None
         self._scroll = {}
         self._scroll_areas = {}
 
@@ -171,7 +177,12 @@ class BuildingInspectDialog:
     def _supports_item_caps(self, building: Building) -> bool:
         return (
             building.kind
-            not in (BuildingKind.HOME, BuildingKind.WORKSTATION, BuildingKind.FIELD)
+            not in (
+                BuildingKind.HOME,
+                BuildingKind.WORKSTATION,
+                BuildingKind.FIELD,
+                BuildingKind.MARKET,
+            )
             and bool(building.depositable_keys())
         )
 
@@ -291,6 +302,32 @@ class BuildingInspectDialog:
         if recipe_count <= 0:
             return 0
         return 18 + min(recipe_count * RECIPE_ROW_H, MAX_RECIPE_VIEW_H) + SECTION_GAP
+
+    def _market_demand_block_height(
+        self, *, expanded: bool, key_count: int, inner_w: int
+    ) -> int:
+        if key_count <= 0:
+            return 18 + ROW_H + SECTION_GAP
+        if not expanded:
+            return BTN_H + SECTION_GAP
+        cols = max(1, inner_w // (GRID_CELL + GRID_GAP))
+        rows = max(1, (key_count + cols - 1) // cols)
+        content = rows * (GRID_CELL + GRID_GAP) - GRID_GAP
+        return BTN_H + 4 + min(content, MAX_CAP_VIEW_H) + SECTION_GAP
+
+    def _market_supply_block_height(
+        self, *, expanded: bool, key_count: int, inner_w: int
+    ) -> int:
+        if key_count <= 0:
+            return 0
+        if not expanded:
+            return BTN_H + SECTION_GAP
+        cell = max(GRID_CELL, 56)
+        cols = max(1, inner_w // (cell + GRID_GAP))
+        rows = max(1, (key_count + cols - 1) // cols)
+        content = rows * (cell + GRID_GAP) - GRID_GAP
+        view_h = min(content, max(MAX_CAP_VIEW_H, cell * 2 + GRID_GAP))
+        return BTN_H + 4 + BTN_H + 6 + view_h + SECTION_GAP
 
     def _stock_limit_block_height(
         self, *, expanded: bool, key_count: int, inner_w: int
@@ -635,6 +672,8 @@ class BuildingInspectDialog:
         free_beds: int = 0,
         housing_level: int = 0,
         area_draw_task: TaskType | None = None,
+        home_storage=None,
+        market_offer_fn=None,
     ) -> None:
         if not self.open or building is None or building.kind == BuildingKind.FIELD:
             return
@@ -720,6 +759,24 @@ class BuildingInspectDialog:
         layout_w = 380 - PAD * 2
         caps_h = 0
         mins_h = 0
+        market_h = 0
+        if building.kind == BuildingKind.MARKET:
+            from market_economy import demand_keys, market_supply_resource_keys
+
+            demand_n = len(demand_keys(building.market_demand))
+            market_h = self._market_demand_block_height(
+                expanded=self.market_demand_expanded,
+                key_count=max(1, demand_n),
+                inner_w=layout_w,
+            )
+            supply_n = len(
+                market_supply_resource_keys(self.market_supply_group)
+            )
+            market_h += self._market_supply_block_height(
+                expanded=self.market_supply_expanded,
+                key_count=max(1, supply_n),
+                inner_w=layout_w,
+            )
         if supports_caps and cap_keys:
             caps_h = self._stock_limit_block_height(
                 expanded=self.caps_expanded,
@@ -754,7 +811,9 @@ class BuildingInspectDialog:
             self._panel_w = 520
         elif has_storage:
             grid_h = 18 + 16 + min(grid_height(storage_items), MAX_STORAGE_BODY_H) + 8
-            self._panel_w = 380 if (building.has_recipes() or supports_caps) else 300
+            self._panel_w = 380 if (
+                building.has_recipes() or supports_caps or building.kind == BuildingKind.MARKET
+            ) else 300
         else:
             grid_h = 40
             self._panel_w = 420 if building.kind == BuildingKind.WORKSTATION else 300
@@ -768,6 +827,7 @@ class BuildingInspectDialog:
             + workers_h
             + SECTION_GAP
             + grid_h
+            + market_h
             + caps_h
             + mins_h
             + PAD
@@ -929,6 +989,7 @@ class BuildingInspectDialog:
                 BuildingKind.CRAFT_BENCH,
                 BuildingKind.ALCHEMIST,
                 BuildingKind.TAILOR,
+                BuildingKind.MARKET,
             ):
                 clear_w = max(48, 10 + self.font_small.size("Clear")[0])
                 if bx + clear_w > x + inner_w and bx > x:
@@ -1184,6 +1245,218 @@ class BuildingInspectDialog:
             y += view_h
 
         y += SECTION_GAP
+
+        if building.kind == BuildingKind.MARKET:
+            from market_economy import MARKET_PRICES, MARKET_SELLABLE_KEYS, demand_keys
+            from resources import resource_label
+
+            demand_list = demand_keys(building.market_demand)
+            y += self._draw_section_toggle(
+                surface,
+                x=x,
+                y=y,
+                inner_w=inner_w,
+                label="Season demand",
+                expanded=self.market_demand_expanded,
+                action="toggle_market_demand",
+                mouse_pos=mouse_pos,
+            )
+            if self.market_demand_expanded:
+                if not demand_list:
+                    surface.blit(
+                        self.font_small.render(
+                            "No buyer demand this season.",
+                            True,
+                            COLOUR_TEXT_DIM,
+                        ),
+                        (x, y),
+                    )
+                    y += ROW_H + SECTION_GAP
+                else:
+                    cols = max(1, inner_w // (GRID_CELL + GRID_GAP))
+                    rows = max(1, (len(demand_list) + cols - 1) // cols)
+                    content_h = rows * (GRID_CELL + GRID_GAP) - GRID_GAP
+                    view_h = min(content_h, MAX_CAP_VIEW_H)
+                    view = pygame.Rect(x, y, inner_w, view_h)
+                    scroll = self._register_scroll("market_demand", view, content_h, view_h)
+                    old_clip = surface.get_clip()
+                    surface.set_clip(view.clip(old_clip) if old_clip.width else view)
+                    for i, key in enumerate(demand_list):
+                        col = i % cols
+                        row = i // cols
+                        cell = pygame.Rect(
+                            x + col * (GRID_CELL + GRID_GAP),
+                            y + row * (GRID_CELL + GRID_GAP) - scroll,
+                            GRID_CELL,
+                            GRID_CELL,
+                        )
+                        if not cell.colliderect(view):
+                            continue
+                        hov = (
+                            view.collidepoint(mouse_pos or (-1, -1))
+                            and mouse_pos is not None
+                            and cell.collidepoint(mouse_pos)
+                        )
+                        demand_n = building.market_demand_remaining(key)
+                        offer_n = 0
+                        if market_offer_fn is not None:
+                            offer_n = int(market_offer_fn(building, key))
+                        elif building.market_supply_enabled(key) and home_storage is not None:
+                            have = int(getattr(home_storage, key, 0))
+                            surplus = max(0, have - building.market_supply_min(key))
+                            offer_n = min(surplus, demand_n)
+                        supplying = building.market_supply_enabled(key) and offer_n > 0
+                        draw_resource_cell(
+                            surface,
+                            cell=cell,
+                            key=key,
+                            count_label=f"{offer_n}/{demand_n}",
+                            fonts=fonts,
+                            hovered=hov,
+                            active=supplying,
+                            dimmed=not building.market_supply_enabled(key),
+                        )
+                        self._inv_tip_hits.append((cell, "market", key))
+                        if hov:
+                            tip_key = key
+                    surface.set_clip(old_clip)
+                    self._draw_scrollbar(surface, view, content_h, scroll)
+                    y += view_h + SECTION_GAP
+
+            y += self._draw_section_toggle(
+                surface,
+                x=x,
+                y=y,
+                inner_w=inner_w,
+                label="Supply",
+                expanded=self.market_supply_expanded,
+                action="toggle_market_supply",
+                mouse_pos=mouse_pos,
+            )
+            if self.market_supply_expanded:
+                from icons import blit_icon
+                from market_economy import market_supply_resource_keys
+                from resources import GROUP_LABELS, GROUP_ORDER, resource_icon_style
+
+                # Category filter tabs.
+                bx = x
+                for group in GROUP_ORDER:
+                    label = GROUP_LABELS.get(group, group)
+                    w = max(56, 12 + self.font_small.size(label)[0])
+                    rect = pygame.Rect(bx, y, w, BTN_H)
+                    active = self.market_supply_group == group
+                    hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+                    self._draw_button(
+                        surface, rect, label, hovered=hovered, active=active
+                    )
+                    self._buttons.append((f"market_supply_group:{group}", rect))
+                    bx += w + 4
+                y += BTN_H + 6
+
+                supply_keys = list(market_supply_resource_keys(self.market_supply_group))
+                cell_size = max(GRID_CELL, 56)
+                cols = max(1, inner_w // (cell_size + GRID_GAP))
+                rows = max(1, (len(supply_keys) + cols - 1) // cols)
+                content_h = rows * (cell_size + GRID_GAP) - GRID_GAP
+                view_h = min(content_h, max(MAX_CAP_VIEW_H, cell_size * 2 + GRID_GAP))
+                view = pygame.Rect(x, y, inner_w, view_h)
+                scroll = self._register_scroll("market_supply", view, content_h, view_h)
+                old_clip = surface.get_clip()
+                surface.set_clip(view.clip(old_clip) if old_clip.width else view)
+                for i, key in enumerate(supply_keys):
+                    col = i % cols
+                    row = i // cols
+                    cell = pygame.Rect(
+                        x + col * (cell_size + GRID_GAP),
+                        y + row * (cell_size + GRID_GAP) - scroll,
+                        cell_size,
+                        cell_size,
+                    )
+                    if not cell.colliderect(view):
+                        continue
+                    hov = (
+                        view.collidepoint(mouse_pos or (-1, -1))
+                        and mouse_pos is not None
+                        and cell.collidepoint(mouse_pos)
+                    )
+                    enabled = building.market_supply_enabled(key)
+                    selected = self.selected_market_supply_key == key
+                    if enabled or selected:
+                        bg = (40, 48, 40) if hov else (32, 38, 34)
+                        border = COLOUR_SELECTED_ENTITY
+                    elif hov:
+                        bg = (48, 50, 42)
+                        border = COLOUR_SELECTED_ENTITY
+                    else:
+                        bg = (36, 38, 42)
+                        border = COLOUR_TOOLBAR_BORDER
+                    pygame.draw.rect(surface, bg, cell, border_radius=4)
+                    pygame.draw.rect(surface, border, cell, 1, border_radius=4)
+
+                    store_n = (
+                        int(getattr(home_storage, key, 0))
+                        if home_storage is not None
+                        else 0
+                    )
+                    local_n = int(getattr(building, key, 0))
+                    stock_n = store_n + local_n
+                    reserve_n = building.market_supply_min(key) if enabled else 0
+                    text_col = COLOUR_TEXT if enabled else COLOUR_TEXT_DIM
+                    sto = self.font_tiny.render(f"Sto: {stock_n}", True, text_col)
+                    res = self.font_tiny.render(f"Res: {reserve_n}", True, text_col)
+                    sto_rect = pygame.Rect(
+                        cell.x + 2,
+                        cell.y + 2,
+                        cell.w - 4,
+                        sto.get_height() + 2,
+                    )
+                    res_rect = pygame.Rect(
+                        cell.x + 2,
+                        cell.bottom - res.get_height() - 4,
+                        cell.w - 4,
+                        res.get_height() + 2,
+                    )
+                    surface.blit(
+                        sto,
+                        (cell.centerx - sto.get_width() // 2, sto_rect.y + 1),
+                    )
+                    surface.blit(
+                        res,
+                        (cell.centerx - res.get_width() // 2, res_rect.y + 1),
+                    )
+
+                    icon_size = max(18, cell.w - 28)
+                    icon_cy = cell.centery + 1
+                    try:
+                        style = resource_icon_style(key)
+                        blit_icon(
+                            surface,
+                            style.name,
+                            cell.centerx,
+                            icon_cy,
+                            icon_size,
+                            recolour=style.recolour,
+                            class_scales=style.class_scales,
+                            omit_classes=style.omit_classes or None,
+                        )
+                    except (FileNotFoundError, OSError, ValueError, TypeError):
+                        pass
+
+                    if not enabled:
+                        overlay = pygame.Surface((cell.w, cell.h), pygame.SRCALPHA)
+                        overlay.fill((28, 30, 36, 110))
+                        surface.blit(overlay, cell.topleft)
+
+                    # Whole cell toggles; Res hit box wins via reverse scan.
+                    # Sto is display-only (storehouse + local stock).
+                    self._buttons.append((f"toggle_market_supply_key:{key}", cell))
+                    self._buttons.append((f"edit_market_reserve:{key}", res_rect))
+                    self._inv_tip_hits.append((cell, "market_supply", key))
+                    if hov:
+                        tip_key = key
+                surface.set_clip(old_clip)
+                self._draw_scrollbar(surface, view, content_h, scroll)
+                y += view_h + SECTION_GAP
 
         if dual:
             col_w = (inner_w - INV_PANEL_GAP) // 2
@@ -1496,6 +1769,34 @@ class BuildingInspectDialog:
         if tip_key is not None:
             self._tooltip_key = tip_key
         if self._tooltip_key and mouse_pos is not None:
+            extra = None
+            if building.kind == BuildingKind.MARKET:
+                from market_economy import MARKET_PRICES
+
+                price = MARKET_PRICES.get(self._tooltip_key)
+                demand = building.market_demand_remaining(self._tooltip_key)
+                enabled = building.market_supply_enabled(self._tooltip_key)
+                bits: list[str] = []
+                if demand > 0:
+                    offer = 0
+                    if market_offer_fn is not None:
+                        offer = int(market_offer_fn(building, self._tooltip_key))
+                    at_m = int(getattr(building, self._tooltip_key, 0))
+                    bits.append(f"supply {offer}/{demand}")
+                    bits.append(f"at market {at_m}")
+                if enabled:
+                    bits.append(f"stock {building.market_supply_stock(self._tooltip_key)}")
+                    bits.append(f"reserve {building.market_supply_min(self._tooltip_key)}")
+                elif self._tooltip_key in building.market_demand:
+                    bits.append("supply off")
+                if price is not None:
+                    bits.append(f"{int(price)} coin{'s' if int(price) != 1 else ''}")
+                if bits:
+                    extra = " · ".join(bits)
             draw_item_tooltip(
-                surface, mouse_pos=mouse_pos, key=self._tooltip_key, font=self.font_small
+                surface,
+                mouse_pos=mouse_pos,
+                key=self._tooltip_key,
+                font=self.font_small,
+                extra=extra,
             )

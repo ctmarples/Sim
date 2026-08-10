@@ -155,7 +155,7 @@ BUILDING_STORAGE: dict[str, BuildingStorageSpec] = {
     "hunter": BuildingStorageSpec(capacity=_CARGO),
     "forager": BuildingStorageSpec(capacity=_CARGO, seed_capacity=_SEEDS),
     "fisher": BuildingStorageSpec(capacity=_CARGO),
-    "farm": BuildingStorageSpec(capacity=_CARGO, seed_capacity=_SEEDS),
+    "farm": BuildingStorageSpec(capacity=100, seed_capacity=_SEEDS),
     "field": BuildingStorageSpec(capacity=0),
     "mill": BuildingStorageSpec(
         capacity=_PROC_IN + _PROC_OUT,
@@ -179,6 +179,11 @@ BUILDING_STORAGE: dict[str, BuildingStorageSpec] = {
         output_capacity=_PROC_OUT,
     ),
     "tailor": BuildingStorageSpec(
+        capacity=_PROC_IN + _PROC_OUT,
+        input_capacity=_PROC_IN,
+        output_capacity=_PROC_OUT,
+    ),
+    "market": BuildingStorageSpec(
         capacity=_PROC_IN + _PROC_OUT,
         input_capacity=_PROC_IN,
         output_capacity=_PROC_OUT,
@@ -367,6 +372,7 @@ COLOUR_KITCHEN: Colour = (160, 112, 88)
 COLOUR_CRAFT_BENCH: Colour = (160, 144, 112)
 COLOUR_ALCHEMIST: Colour = (154, 120, 184)
 COLOUR_TAILOR: Colour = (122, 152, 176)
+COLOUR_MARKET: Colour = (176, 120, 72)
 COLOUR_CROP: Colour = (110, 190, 80)
 
 COLOUR_TOOLBAR_BG: Colour = (36, 38, 44)
