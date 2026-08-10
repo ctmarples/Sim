@@ -151,9 +151,17 @@ def herb_despawn_rate(day: float, x: int, y: int) -> float:
 
 
 def berry_spawn_rate(day: float, x: int, y: int) -> float:
+    """Legacy envelope (natural bush spawn is disabled)."""
     d = local_day(day, x, y)
     rise = _smoothstep(26.0, 36.0, d) * (1.0 - _smoothstep(48.0, 58.0, d))
     return BERRY_SPAWN_RATE_PEAK * rise
+
+
+def berry_fruiting(day: float, x: int = 0, y: int = 0) -> bool:
+    """True while bushes carry pickable berries (late spring → early summer)."""
+    d = local_day(day, x, y)
+    rise = _smoothstep(26.0, 36.0, d) * (1.0 - _smoothstep(48.0, 58.0, d))
+    return rise > 0.05
 
 
 def berry_despawn_rate(day: float, x: int, y: int) -> float:

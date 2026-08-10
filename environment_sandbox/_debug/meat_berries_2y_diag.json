@@ -1,0 +1,2314 @@
+{
+  "elapsed_s": 432.8633610829711,
+  "stats": {
+    "find_path_calls": 10054,
+    "wild_bfs_calls": 8254,
+    "forage_index_rebuilds": 53760
+  },
+  "slow_days": [
+    {
+      "day": 0,
+      "cal": 29,
+      "dt": 2.4574,
+      "find_path": 5,
+      "wild_bfs": 50,
+      "forage_rebuilds": 240,
+      "animals": 484,
+      "dispersing": 0
+    },
+    {
+      "day": 1,
+      "cal": 30,
+      "dt": 2.0549,
+      "find_path": 8,
+      "wild_bfs": 39,
+      "forage_rebuilds": 240,
+      "animals": 484,
+      "dispersing": 0
+    },
+    {
+      "day": 2,
+      "cal": 31,
+      "dt": 1.7944,
+      "find_path": 7,
+      "wild_bfs": 8,
+      "forage_rebuilds": 240,
+      "animals": 484,
+      "dispersing": 0
+    },
+    {
+      "day": 3,
+      "cal": 32,
+      "dt": 2.0908,
+      "find_path": 46,
+      "wild_bfs": 10,
+      "forage_rebuilds": 240,
+      "animals": 444,
+      "dispersing": 38
+    },
+    {
+      "day": 4,
+      "cal": 33,
+      "dt": 2.2434,
+      "find_path": 36,
+      "wild_bfs": 22,
+      "forage_rebuilds": 240,
+      "animals": 443,
+      "dispersing": 38
+    },
+    {
+      "day": 5,
+      "cal": 34,
+      "dt": 1.6222,
+      "find_path": 1,
+      "wild_bfs": 16,
+      "forage_rebuilds": 240,
+      "animals": 443,
+      "dispersing": 38
+    },
+    {
+      "day": 6,
+      "cal": 35,
+      "dt": 2.9291,
+      "find_path": 143,
+      "wild_bfs": 16,
+      "forage_rebuilds": 240,
+      "animals": 442,
+      "dispersing": 38
+    },
+    {
+      "day": 7,
+      "cal": 36,
+      "dt": 1.3379,
+      "find_path": 2,
+      "wild_bfs": 14,
+      "forage_rebuilds": 240,
+      "animals": 442,
+      "dispersing": 38
+    },
+    {
+      "day": 8,
+      "cal": 37,
+      "dt": 2.8537,
+      "find_path": 4,
+      "wild_bfs": 16,
+      "forage_rebuilds": 240,
+      "animals": 442,
+      "dispersing": 38
+    },
+    {
+      "day": 9,
+      "cal": 38,
+      "dt": 3.1923,
+      "find_path": 158,
+      "wild_bfs": 13,
+      "forage_rebuilds": 240,
+      "animals": 442,
+      "dispersing": 38
+    },
+    {
+      "day": 10,
+      "cal": 39,
+      "dt": 2.3295,
+      "find_path": 106,
+      "wild_bfs": 13,
+      "forage_rebuilds": 240,
+      "animals": 441,
+      "dispersing": 38
+    },
+    {
+      "day": 11,
+      "cal": 40,
+      "dt": 0.9535,
+      "find_path": 6,
+      "wild_bfs": 13,
+      "forage_rebuilds": 240,
+      "animals": 427,
+      "dispersing": 60
+    },
+    {
+      "day": 12,
+      "cal": 41,
+      "dt": 2.9369,
+      "find_path": 221,
+      "wild_bfs": 24,
+      "forage_rebuilds": 240,
+      "animals": 427,
+      "dispersing": 59
+    },
+    {
+      "day": 13,
+      "cal": 42,
+      "dt": 2.4963,
+      "find_path": 140,
+      "wild_bfs": 22,
+      "forage_rebuilds": 240,
+      "animals": 426,
+      "dispersing": 59
+    },
+    {
+      "day": 14,
+      "cal": 43,
+      "dt": 0.8829,
+      "find_path": 5,
+      "wild_bfs": 17,
+      "forage_rebuilds": 240,
+      "animals": 426,
+      "dispersing": 59
+    },
+    {
+      "day": 15,
+      "cal": 44,
+      "dt": 2.3694,
+      "find_path": 168,
+      "wild_bfs": 16,
+      "forage_rebuilds": 240,
+      "animals": 426,
+      "dispersing": 59
+    },
+    {
+      "day": 16,
+      "cal": 45,
+      "dt": 2.9079,
+      "find_path": 203,
+      "wild_bfs": 19,
+      "forage_rebuilds": 240,
+      "animals": 425,
+      "dispersing": 59
+    },
+    {
+      "day": 17,
+      "cal": 46,
+      "dt": 1.1812,
+      "find_path": 3,
+      "wild_bfs": 16,
+      "forage_rebuilds": 240,
+      "animals": 425,
+      "dispersing": 59
+    },
+    {
+      "day": 18,
+      "cal": 47,
+      "dt": 1.2271,
+      "find_path": 2,
+      "wild_bfs": 12,
+      "forage_rebuilds": 240,
+      "animals": 425,
+      "dispersing": 58
+    },
+    {
+      "day": 19,
+      "cal": 48,
+      "dt": 1.3602,
+      "find_path": 16,
+      "wild_bfs": 22,
+      "forage_rebuilds": 240,
+      "animals": 444,
+      "dispersing": 78
+    },
+    {
+      "day": 20,
+      "cal": 49,
+      "dt": 1.2547,
+      "find_path": 17,
+      "wild_bfs": 25,
+      "forage_rebuilds": 240,
+      "animals": 443,
+      "dispersing": 77
+    },
+    {
+      "day": 21,
+      "cal": 50,
+      "dt": 1.1848,
+      "find_path": 31,
+      "wild_bfs": 26,
+      "forage_rebuilds": 240,
+      "animals": 443,
+      "dispersing": 77
+    },
+    {
+      "day": 22,
+      "cal": 51,
+      "dt": 10.8222,
+      "find_path": 352,
+      "wild_bfs": 19,
+      "forage_rebuilds": 240,
+      "animals": 443,
+      "dispersing": 75
+    },
+    {
+      "day": 23,
+      "cal": 52,
+      "dt": 1.0721,
+      "find_path": 59,
+      "wild_bfs": 25,
+      "forage_rebuilds": 240,
+      "animals": 443,
+      "dispersing": 74
+    },
+    {
+      "day": 24,
+      "cal": 53,
+      "dt": 0.8365,
+      "find_path": 45,
+      "wild_bfs": 19,
+      "forage_rebuilds": 240,
+      "animals": 443,
+      "dispersing": 73
+    },
+    {
+      "day": 25,
+      "cal": 54,
+      "dt": 0.8465,
+      "find_path": 4,
+      "wild_bfs": 22,
+      "forage_rebuilds": 240,
+      "animals": 443,
+      "dispersing": 73
+    },
+    {
+      "day": 26,
+      "cal": 55,
+      "dt": 0.9418,
+      "find_path": 1,
+      "wild_bfs": 17,
+      "forage_rebuilds": 240,
+      "animals": 443,
+      "dispersing": 73
+    },
+    {
+      "day": 27,
+      "cal": 56,
+      "dt": 1.4667,
+      "find_path": 2,
+      "wild_bfs": 70,
+      "forage_rebuilds": 240,
+      "animals": 448,
+      "dispersing": 91
+    },
+    {
+      "day": 28,
+      "cal": 57,
+      "dt": 1.2412,
+      "find_path": 6,
+      "wild_bfs": 68,
+      "forage_rebuilds": 240,
+      "animals": 448,
+      "dispersing": 90
+    },
+    {
+      "day": 29,
+      "cal": 58,
+      "dt": 1.1425,
+      "find_path": 3,
+      "wild_bfs": 48,
+      "forage_rebuilds": 240,
+      "animals": 448,
+      "dispersing": 89
+    },
+    {
+      "day": 30,
+      "cal": 59,
+      "dt": 1.1384,
+      "find_path": 17,
+      "wild_bfs": 47,
+      "forage_rebuilds": 240,
+      "animals": 448,
+      "dispersing": 87
+    },
+    {
+      "day": 31,
+      "cal": 60,
+      "dt": 2.7548,
+      "find_path": 203,
+      "wild_bfs": 59,
+      "forage_rebuilds": 240,
+      "animals": 447,
+      "dispersing": 84
+    },
+    {
+      "day": 32,
+      "cal": 61,
+      "dt": 1.0999,
+      "find_path": 27,
+      "wild_bfs": 36,
+      "forage_rebuilds": 240,
+      "animals": 447,
+      "dispersing": 83
+    },
+    {
+      "day": 33,
+      "cal": 62,
+      "dt": 1.3178,
+      "find_path": 34,
+      "wild_bfs": 39,
+      "forage_rebuilds": 240,
+      "animals": 447,
+      "dispersing": 83
+    },
+    {
+      "day": 34,
+      "cal": 63,
+      "dt": 1.7233,
+      "find_path": 113,
+      "wild_bfs": 44,
+      "forage_rebuilds": 240,
+      "animals": 446,
+      "dispersing": 82
+    },
+    {
+      "day": 35,
+      "cal": 64,
+      "dt": 6.2647,
+      "find_path": 89,
+      "wild_bfs": 73,
+      "forage_rebuilds": 240,
+      "animals": 458,
+      "dispersing": 96
+    },
+    {
+      "day": 36,
+      "cal": 65,
+      "dt": 8.0383,
+      "find_path": 92,
+      "wild_bfs": 47,
+      "forage_rebuilds": 240,
+      "animals": 458,
+      "dispersing": 95
+    },
+    {
+      "day": 37,
+      "cal": 66,
+      "dt": 1.0785,
+      "find_path": 20,
+      "wild_bfs": 60,
+      "forage_rebuilds": 240,
+      "animals": 457,
+      "dispersing": 92
+    },
+    {
+      "day": 38,
+      "cal": 67,
+      "dt": 1.1038,
+      "find_path": 11,
+      "wild_bfs": 49,
+      "forage_rebuilds": 240,
+      "animals": 457,
+      "dispersing": 89
+    },
+    {
+      "day": 39,
+      "cal": 68,
+      "dt": 0.9876,
+      "find_path": 20,
+      "wild_bfs": 56,
+      "forage_rebuilds": 240,
+      "animals": 457,
+      "dispersing": 87
+    },
+    {
+      "day": 40,
+      "cal": 69,
+      "dt": 0.8247,
+      "find_path": 10,
+      "wild_bfs": 43,
+      "forage_rebuilds": 240,
+      "animals": 457,
+      "dispersing": 87
+    },
+    {
+      "day": 41,
+      "cal": 70,
+      "dt": 1.16,
+      "find_path": 14,
+      "wild_bfs": 48,
+      "forage_rebuilds": 240,
+      "animals": 456,
+      "dispersing": 87
+    },
+    {
+      "day": 42,
+      "cal": 71,
+      "dt": 0.9963,
+      "find_path": 3,
+      "wild_bfs": 61,
+      "forage_rebuilds": 240,
+      "animals": 456,
+      "dispersing": 83
+    },
+    {
+      "day": 43,
+      "cal": 72,
+      "dt": 1.0399,
+      "find_path": 5,
+      "wild_bfs": 77,
+      "forage_rebuilds": 240,
+      "animals": 472,
+      "dispersing": 110
+    },
+    {
+      "day": 44,
+      "cal": 73,
+      "dt": 0.8626,
+      "find_path": 5,
+      "wild_bfs": 59,
+      "forage_rebuilds": 240,
+      "animals": 472,
+      "dispersing": 104
+    },
+    {
+      "day": 45,
+      "cal": 74,
+      "dt": 0.996,
+      "find_path": 8,
+      "wild_bfs": 60,
+      "forage_rebuilds": 240,
+      "animals": 472,
+      "dispersing": 101
+    },
+    {
+      "day": 46,
+      "cal": 75,
+      "dt": 0.9083,
+      "find_path": 19,
+      "wild_bfs": 66,
+      "forage_rebuilds": 240,
+      "animals": 472,
+      "dispersing": 98
+    },
+    {
+      "day": 47,
+      "cal": 76,
+      "dt": 0.8682,
+      "find_path": 15,
+      "wild_bfs": 62,
+      "forage_rebuilds": 240,
+      "animals": 472,
+      "dispersing": 97
+    },
+    {
+      "day": 48,
+      "cal": 77,
+      "dt": 0.8251,
+      "find_path": 21,
+      "wild_bfs": 39,
+      "forage_rebuilds": 240,
+      "animals": 472,
+      "dispersing": 96
+    },
+    {
+      "day": 49,
+      "cal": 78,
+      "dt": 0.7032,
+      "find_path": 4,
+      "wild_bfs": 46,
+      "forage_rebuilds": 240,
+      "animals": 472,
+      "dispersing": 95
+    },
+    {
+      "day": 50,
+      "cal": 79,
+      "dt": 0.7024,
+      "find_path": 1,
+      "wild_bfs": 62,
+      "forage_rebuilds": 240,
+      "animals": 472,
+      "dispersing": 91
+    },
+    {
+      "day": 51,
+      "cal": 80,
+      "dt": 0.7949,
+      "find_path": 23,
+      "wild_bfs": 71,
+      "forage_rebuilds": 240,
+      "animals": 484,
+      "dispersing": 116
+    },
+    {
+      "day": 52,
+      "cal": 81,
+      "dt": 0.8348,
+      "find_path": 10,
+      "wild_bfs": 57,
+      "forage_rebuilds": 240,
+      "animals": 483,
+      "dispersing": 113
+    },
+    {
+      "day": 53,
+      "cal": 82,
+      "dt": 0.7355,
+      "find_path": 7,
+      "wild_bfs": 81,
+      "forage_rebuilds": 240,
+      "animals": 483,
+      "dispersing": 110
+    },
+    {
+      "day": 54,
+      "cal": 83,
+      "dt": 0.6852,
+      "find_path": 5,
+      "wild_bfs": 73,
+      "forage_rebuilds": 240,
+      "animals": 483,
+      "dispersing": 107
+    },
+    {
+      "day": 55,
+      "cal": 84,
+      "dt": 0.9172,
+      "find_path": 3,
+      "wild_bfs": 14,
+      "forage_rebuilds": 240,
+      "animals": 376,
+      "dispersing": 0
+    },
+    {
+      "day": 56,
+      "cal": 85,
+      "dt": 0.5939,
+      "find_path": 2,
+      "wild_bfs": 2,
+      "forage_rebuilds": 240,
+      "animals": 376,
+      "dispersing": 0
+    },
+    {
+      "day": 57,
+      "cal": 86,
+      "dt": 0.6081,
+      "find_path": 3,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 375,
+      "dispersing": 0
+    },
+    {
+      "day": 58,
+      "cal": 87,
+      "dt": 0.4885,
+      "find_path": 7,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 375,
+      "dispersing": 0
+    },
+    {
+      "day": 59,
+      "cal": 88,
+      "dt": 0.5176,
+      "find_path": 6,
+      "wild_bfs": 2,
+      "forage_rebuilds": 240,
+      "animals": 375,
+      "dispersing": 0
+    },
+    {
+      "day": 60,
+      "cal": 89,
+      "dt": 0.5341,
+      "find_path": 14,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 374,
+      "dispersing": 0
+    },
+    {
+      "day": 61,
+      "cal": 90,
+      "dt": 0.3913,
+      "find_path": 3,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 374,
+      "dispersing": 0
+    },
+    {
+      "day": 62,
+      "cal": 91,
+      "dt": 1.3381,
+      "find_path": 95,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 374,
+      "dispersing": 0
+    },
+    {
+      "day": 63,
+      "cal": 92,
+      "dt": 1.5815,
+      "find_path": 105,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 373,
+      "dispersing": 0
+    },
+    {
+      "day": 64,
+      "cal": 93,
+      "dt": 0.8731,
+      "find_path": 6,
+      "wild_bfs": 2,
+      "forage_rebuilds": 240,
+      "animals": 373,
+      "dispersing": 0
+    },
+    {
+      "day": 65,
+      "cal": 94,
+      "dt": 1.137,
+      "find_path": 3,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 373,
+      "dispersing": 0
+    },
+    {
+      "day": 66,
+      "cal": 95,
+      "dt": 0.9785,
+      "find_path": 1,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 373,
+      "dispersing": 0
+    },
+    {
+      "day": 67,
+      "cal": 96,
+      "dt": 1.3519,
+      "find_path": 7,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 372,
+      "dispersing": 0
+    },
+    {
+      "day": 68,
+      "cal": 97,
+      "dt": 1.9368,
+      "find_path": 11,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 372,
+      "dispersing": 0
+    },
+    {
+      "day": 69,
+      "cal": 98,
+      "dt": 2.1262,
+      "find_path": 12,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 372,
+      "dispersing": 0
+    },
+    {
+      "day": 70,
+      "cal": 99,
+      "dt": 2.0651,
+      "find_path": 16,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 372,
+      "dispersing": 0
+    },
+    {
+      "day": 71,
+      "cal": 100,
+      "dt": 1.8576,
+      "find_path": 11,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 372,
+      "dispersing": 0
+    },
+    {
+      "day": 72,
+      "cal": 101,
+      "dt": 1.335,
+      "find_path": 8,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 372,
+      "dispersing": 0
+    },
+    {
+      "day": 73,
+      "cal": 102,
+      "dt": 2.0861,
+      "find_path": 3,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 372,
+      "dispersing": 0
+    },
+    {
+      "day": 74,
+      "cal": 103,
+      "dt": 2.1925,
+      "find_path": 3,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 372,
+      "dispersing": 0
+    },
+    {
+      "day": 75,
+      "cal": 104,
+      "dt": 2.2054,
+      "find_path": 3,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 372,
+      "dispersing": 0
+    },
+    {
+      "day": 76,
+      "cal": 105,
+      "dt": 2.1806,
+      "find_path": 4,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 372,
+      "dispersing": 0
+    },
+    {
+      "day": 77,
+      "cal": 106,
+      "dt": 2.9181,
+      "find_path": 211,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 372,
+      "dispersing": 0
+    },
+    {
+      "day": 78,
+      "cal": 107,
+      "dt": 2.5182,
+      "find_path": 184,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 371,
+      "dispersing": 0
+    },
+    {
+      "day": 79,
+      "cal": 108,
+      "dt": 1.3923,
+      "find_path": 7,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 371,
+      "dispersing": 0
+    },
+    {
+      "day": 80,
+      "cal": 109,
+      "dt": 1.8053,
+      "find_path": 72,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 371,
+      "dispersing": 0
+    },
+    {
+      "day": 81,
+      "cal": 110,
+      "dt": 2.5522,
+      "find_path": 250,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 371,
+      "dispersing": 0
+    },
+    {
+      "day": 82,
+      "cal": 111,
+      "dt": 2.2812,
+      "find_path": 85,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 370,
+      "dispersing": 0
+    },
+    {
+      "day": 83,
+      "cal": 0,
+      "dt": 2.1441,
+      "find_path": 7,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 370,
+      "dispersing": 0
+    },
+    {
+      "day": 84,
+      "cal": 1,
+      "dt": 1.0591,
+      "find_path": 3,
+      "wild_bfs": 2,
+      "forage_rebuilds": 240,
+      "animals": 370,
+      "dispersing": 0
+    },
+    {
+      "day": 85,
+      "cal": 2,
+      "dt": 1.2063,
+      "find_path": 75,
+      "wild_bfs": 4,
+      "forage_rebuilds": 240,
+      "animals": 369,
+      "dispersing": 0
+    },
+    {
+      "day": 86,
+      "cal": 3,
+      "dt": 0.9584,
+      "find_path": 2,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 369,
+      "dispersing": 0
+    },
+    {
+      "day": 87,
+      "cal": 4,
+      "dt": 1.0745,
+      "find_path": 66,
+      "wild_bfs": 4,
+      "forage_rebuilds": 240,
+      "animals": 369,
+      "dispersing": 0
+    },
+    {
+      "day": 88,
+      "cal": 5,
+      "dt": 1.0039,
+      "find_path": 12,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 368,
+      "dispersing": 0
+    },
+    {
+      "day": 89,
+      "cal": 6,
+      "dt": 0.9431,
+      "find_path": 0,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 368,
+      "dispersing": 0
+    },
+    {
+      "day": 90,
+      "cal": 7,
+      "dt": 0.8406,
+      "find_path": 14,
+      "wild_bfs": 5,
+      "forage_rebuilds": 240,
+      "animals": 368,
+      "dispersing": 0
+    },
+    {
+      "day": 91,
+      "cal": 8,
+      "dt": 0.897,
+      "find_path": 34,
+      "wild_bfs": 10,
+      "forage_rebuilds": 240,
+      "animals": 389,
+      "dispersing": 42
+    },
+    {
+      "day": 92,
+      "cal": 9,
+      "dt": 0.8654,
+      "find_path": 32,
+      "wild_bfs": 14,
+      "forage_rebuilds": 240,
+      "animals": 389,
+      "dispersing": 42
+    },
+    {
+      "day": 93,
+      "cal": 10,
+      "dt": 1.3642,
+      "find_path": 15,
+      "wild_bfs": 19,
+      "forage_rebuilds": 240,
+      "animals": 389,
+      "dispersing": 41
+    },
+    {
+      "day": 94,
+      "cal": 11,
+      "dt": 1.6385,
+      "find_path": 27,
+      "wild_bfs": 16,
+      "forage_rebuilds": 240,
+      "animals": 389,
+      "dispersing": 41
+    },
+    {
+      "day": 95,
+      "cal": 12,
+      "dt": 1.4694,
+      "find_path": 18,
+      "wild_bfs": 13,
+      "forage_rebuilds": 240,
+      "animals": 389,
+      "dispersing": 41
+    },
+    {
+      "day": 96,
+      "cal": 13,
+      "dt": 1.5663,
+      "find_path": 6,
+      "wild_bfs": 11,
+      "forage_rebuilds": 240,
+      "animals": 389,
+      "dispersing": 41
+    },
+    {
+      "day": 97,
+      "cal": 14,
+      "dt": 1.7578,
+      "find_path": 6,
+      "wild_bfs": 18,
+      "forage_rebuilds": 240,
+      "animals": 389,
+      "dispersing": 41
+    },
+    {
+      "day": 98,
+      "cal": 15,
+      "dt": 1.16,
+      "find_path": 15,
+      "wild_bfs": 15,
+      "forage_rebuilds": 240,
+      "animals": 389,
+      "dispersing": 41
+    },
+    {
+      "day": 99,
+      "cal": 16,
+      "dt": 0.6329,
+      "find_path": 5,
+      "wild_bfs": 20,
+      "forage_rebuilds": 240,
+      "animals": 429,
+      "dispersing": 77
+    },
+    {
+      "day": 100,
+      "cal": 17,
+      "dt": 0.6684,
+      "find_path": 27,
+      "wild_bfs": 19,
+      "forage_rebuilds": 240,
+      "animals": 429,
+      "dispersing": 77
+    },
+    {
+      "day": 101,
+      "cal": 18,
+      "dt": 1.0555,
+      "find_path": 25,
+      "wild_bfs": 30,
+      "forage_rebuilds": 240,
+      "animals": 429,
+      "dispersing": 76
+    },
+    {
+      "day": 102,
+      "cal": 19,
+      "dt": 1.19,
+      "find_path": 22,
+      "wild_bfs": 27,
+      "forage_rebuilds": 240,
+      "animals": 429,
+      "dispersing": 76
+    },
+    {
+      "day": 103,
+      "cal": 20,
+      "dt": 1.8294,
+      "find_path": 0,
+      "wild_bfs": 18,
+      "forage_rebuilds": 240,
+      "animals": 429,
+      "dispersing": 76
+    },
+    {
+      "day": 104,
+      "cal": 21,
+      "dt": 1.2261,
+      "find_path": 12,
+      "wild_bfs": 17,
+      "forage_rebuilds": 240,
+      "animals": 429,
+      "dispersing": 75
+    },
+    {
+      "day": 105,
+      "cal": 22,
+      "dt": 1.26,
+      "find_path": 11,
+      "wild_bfs": 26,
+      "forage_rebuilds": 240,
+      "animals": 429,
+      "dispersing": 75
+    },
+    {
+      "day": 106,
+      "cal": 23,
+      "dt": 2.0577,
+      "find_path": 28,
+      "wild_bfs": 24,
+      "forage_rebuilds": 240,
+      "animals": 429,
+      "dispersing": 75
+    },
+    {
+      "day": 107,
+      "cal": 24,
+      "dt": 2.1414,
+      "find_path": 33,
+      "wild_bfs": 29,
+      "forage_rebuilds": 240,
+      "animals": 454,
+      "dispersing": 107
+    },
+    {
+      "day": 108,
+      "cal": 25,
+      "dt": 2.0658,
+      "find_path": 4,
+      "wild_bfs": 24,
+      "forage_rebuilds": 240,
+      "animals": 454,
+      "dispersing": 106
+    },
+    {
+      "day": 109,
+      "cal": 26,
+      "dt": 1.7818,
+      "find_path": 7,
+      "wild_bfs": 38,
+      "forage_rebuilds": 240,
+      "animals": 453,
+      "dispersing": 106
+    },
+    {
+      "day": 110,
+      "cal": 27,
+      "dt": 2.0882,
+      "find_path": 4,
+      "wild_bfs": 33,
+      "forage_rebuilds": 240,
+      "animals": 453,
+      "dispersing": 106
+    },
+    {
+      "day": 111,
+      "cal": 28,
+      "dt": 2.5278,
+      "find_path": 146,
+      "wild_bfs": 30,
+      "forage_rebuilds": 240,
+      "animals": 452,
+      "dispersing": 106
+    },
+    {
+      "day": 112,
+      "cal": 29,
+      "dt": 2.1916,
+      "find_path": 0,
+      "wild_bfs": 29,
+      "forage_rebuilds": 240,
+      "animals": 452,
+      "dispersing": 106
+    },
+    {
+      "day": 113,
+      "cal": 30,
+      "dt": 2.2669,
+      "find_path": 25,
+      "wild_bfs": 36,
+      "forage_rebuilds": 240,
+      "animals": 452,
+      "dispersing": 105
+    },
+    {
+      "day": 114,
+      "cal": 31,
+      "dt": 3.0983,
+      "find_path": 203,
+      "wild_bfs": 31,
+      "forage_rebuilds": 240,
+      "animals": 452,
+      "dispersing": 105
+    },
+    {
+      "day": 115,
+      "cal": 32,
+      "dt": 2.4581,
+      "find_path": 55,
+      "wild_bfs": 35,
+      "forage_rebuilds": 240,
+      "animals": 481,
+      "dispersing": 150
+    },
+    {
+      "day": 116,
+      "cal": 33,
+      "dt": 2.4057,
+      "find_path": 0,
+      "wild_bfs": 39,
+      "forage_rebuilds": 240,
+      "animals": 481,
+      "dispersing": 149
+    },
+    {
+      "day": 117,
+      "cal": 34,
+      "dt": 2.2951,
+      "find_path": 4,
+      "wild_bfs": 47,
+      "forage_rebuilds": 240,
+      "animals": 481,
+      "dispersing": 147
+    },
+    {
+      "day": 118,
+      "cal": 35,
+      "dt": 2.5121,
+      "find_path": 75,
+      "wild_bfs": 39,
+      "forage_rebuilds": 240,
+      "animals": 480,
+      "dispersing": 143
+    },
+    {
+      "day": 119,
+      "cal": 36,
+      "dt": 1.6561,
+      "find_path": 1,
+      "wild_bfs": 34,
+      "forage_rebuilds": 240,
+      "animals": 480,
+      "dispersing": 142
+    },
+    {
+      "day": 120,
+      "cal": 37,
+      "dt": 1.683,
+      "find_path": 3,
+      "wild_bfs": 33,
+      "forage_rebuilds": 240,
+      "animals": 480,
+      "dispersing": 141
+    },
+    {
+      "day": 121,
+      "cal": 38,
+      "dt": 1.2124,
+      "find_path": 8,
+      "wild_bfs": 42,
+      "forage_rebuilds": 240,
+      "animals": 480,
+      "dispersing": 141
+    },
+    {
+      "day": 122,
+      "cal": 39,
+      "dt": 1.0948,
+      "find_path": 5,
+      "wild_bfs": 39,
+      "forage_rebuilds": 240,
+      "animals": 480,
+      "dispersing": 139
+    },
+    {
+      "day": 123,
+      "cal": 40,
+      "dt": 1.0743,
+      "find_path": 6,
+      "wild_bfs": 36,
+      "forage_rebuilds": 240,
+      "animals": 512,
+      "dispersing": 174
+    },
+    {
+      "day": 124,
+      "cal": 41,
+      "dt": 1.2047,
+      "find_path": 87,
+      "wild_bfs": 51,
+      "forage_rebuilds": 240,
+      "animals": 512,
+      "dispersing": 174
+    },
+    {
+      "day": 125,
+      "cal": 42,
+      "dt": 2.9676,
+      "find_path": 334,
+      "wild_bfs": 52,
+      "forage_rebuilds": 240,
+      "animals": 512,
+      "dispersing": 174
+    },
+    {
+      "day": 126,
+      "cal": 43,
+      "dt": 1.414,
+      "find_path": 159,
+      "wild_bfs": 51,
+      "forage_rebuilds": 240,
+      "animals": 511,
+      "dispersing": 173
+    },
+    {
+      "day": 127,
+      "cal": 44,
+      "dt": 0.914,
+      "find_path": 1,
+      "wild_bfs": 35,
+      "forage_rebuilds": 240,
+      "animals": 511,
+      "dispersing": 170
+    },
+    {
+      "day": 128,
+      "cal": 45,
+      "dt": 0.9579,
+      "find_path": 33,
+      "wild_bfs": 49,
+      "forage_rebuilds": 240,
+      "animals": 510,
+      "dispersing": 168
+    },
+    {
+      "day": 129,
+      "cal": 46,
+      "dt": 1.1944,
+      "find_path": 12,
+      "wild_bfs": 55,
+      "forage_rebuilds": 240,
+      "animals": 510,
+      "dispersing": 168
+    },
+    {
+      "day": 130,
+      "cal": 47,
+      "dt": 2.0986,
+      "find_path": 39,
+      "wild_bfs": 43,
+      "forage_rebuilds": 240,
+      "animals": 510,
+      "dispersing": 167
+    },
+    {
+      "day": 131,
+      "cal": 48,
+      "dt": 1.9466,
+      "find_path": 19,
+      "wild_bfs": 44,
+      "forage_rebuilds": 240,
+      "animals": 537,
+      "dispersing": 198
+    },
+    {
+      "day": 132,
+      "cal": 49,
+      "dt": 1.2107,
+      "find_path": 25,
+      "wild_bfs": 53,
+      "forage_rebuilds": 240,
+      "animals": 536,
+      "dispersing": 194
+    },
+    {
+      "day": 133,
+      "cal": 50,
+      "dt": 0.6269,
+      "find_path": 15,
+      "wild_bfs": 65,
+      "forage_rebuilds": 240,
+      "animals": 536,
+      "dispersing": 192
+    },
+    {
+      "day": 134,
+      "cal": 51,
+      "dt": 0.5558,
+      "find_path": 30,
+      "wild_bfs": 57,
+      "forage_rebuilds": 240,
+      "animals": 536,
+      "dispersing": 190
+    },
+    {
+      "day": 135,
+      "cal": 52,
+      "dt": 0.8592,
+      "find_path": 251,
+      "wild_bfs": 44,
+      "forage_rebuilds": 240,
+      "animals": 536,
+      "dispersing": 189
+    },
+    {
+      "day": 136,
+      "cal": 53,
+      "dt": 0.6685,
+      "find_path": 126,
+      "wild_bfs": 47,
+      "forage_rebuilds": 240,
+      "animals": 535,
+      "dispersing": 188
+    },
+    {
+      "day": 137,
+      "cal": 54,
+      "dt": 0.9437,
+      "find_path": 26,
+      "wild_bfs": 57,
+      "forage_rebuilds": 240,
+      "animals": 535,
+      "dispersing": 187
+    },
+    {
+      "day": 138,
+      "cal": 55,
+      "dt": 1.2689,
+      "find_path": 157,
+      "wild_bfs": 51,
+      "forage_rebuilds": 240,
+      "animals": 535,
+      "dispersing": 186
+    },
+    {
+      "day": 139,
+      "cal": 56,
+      "dt": 2.1455,
+      "find_path": 55,
+      "wild_bfs": 102,
+      "forage_rebuilds": 240,
+      "animals": 566,
+      "dispersing": 213
+    },
+    {
+      "day": 140,
+      "cal": 57,
+      "dt": 2.1719,
+      "find_path": 1,
+      "wild_bfs": 168,
+      "forage_rebuilds": 240,
+      "animals": 566,
+      "dispersing": 209
+    },
+    {
+      "day": 141,
+      "cal": 58,
+      "dt": 1.1692,
+      "find_path": 1,
+      "wild_bfs": 140,
+      "forage_rebuilds": 240,
+      "animals": 566,
+      "dispersing": 208
+    },
+    {
+      "day": 142,
+      "cal": 59,
+      "dt": 1.0853,
+      "find_path": 4,
+      "wild_bfs": 137,
+      "forage_rebuilds": 240,
+      "animals": 566,
+      "dispersing": 207
+    },
+    {
+      "day": 143,
+      "cal": 60,
+      "dt": 0.9987,
+      "find_path": 5,
+      "wild_bfs": 107,
+      "forage_rebuilds": 240,
+      "animals": 566,
+      "dispersing": 205
+    },
+    {
+      "day": 144,
+      "cal": 61,
+      "dt": 1.0113,
+      "find_path": 4,
+      "wild_bfs": 130,
+      "forage_rebuilds": 240,
+      "animals": 566,
+      "dispersing": 201
+    },
+    {
+      "day": 145,
+      "cal": 62,
+      "dt": 1.3821,
+      "find_path": 11,
+      "wild_bfs": 132,
+      "forage_rebuilds": 240,
+      "animals": 566,
+      "dispersing": 200
+    },
+    {
+      "day": 146,
+      "cal": 63,
+      "dt": 1.1934,
+      "find_path": 6,
+      "wild_bfs": 112,
+      "forage_rebuilds": 240,
+      "animals": 566,
+      "dispersing": 197
+    },
+    {
+      "day": 147,
+      "cal": 64,
+      "dt": 1.1501,
+      "find_path": 4,
+      "wild_bfs": 123,
+      "forage_rebuilds": 240,
+      "animals": 585,
+      "dispersing": 225
+    },
+    {
+      "day": 148,
+      "cal": 65,
+      "dt": 1.0955,
+      "find_path": 5,
+      "wild_bfs": 154,
+      "forage_rebuilds": 240,
+      "animals": 585,
+      "dispersing": 217
+    },
+    {
+      "day": 149,
+      "cal": 66,
+      "dt": 1.0326,
+      "find_path": 21,
+      "wild_bfs": 146,
+      "forage_rebuilds": 240,
+      "animals": 585,
+      "dispersing": 213
+    },
+    {
+      "day": 150,
+      "cal": 67,
+      "dt": 1.3015,
+      "find_path": 67,
+      "wild_bfs": 122,
+      "forage_rebuilds": 240,
+      "animals": 585,
+      "dispersing": 210
+    },
+    {
+      "day": 151,
+      "cal": 68,
+      "dt": 1.7803,
+      "find_path": 201,
+      "wild_bfs": 127,
+      "forage_rebuilds": 240,
+      "animals": 584,
+      "dispersing": 207
+    },
+    {
+      "day": 152,
+      "cal": 69,
+      "dt": 1.3323,
+      "find_path": 7,
+      "wild_bfs": 129,
+      "forage_rebuilds": 240,
+      "animals": 584,
+      "dispersing": 207
+    },
+    {
+      "day": 153,
+      "cal": 70,
+      "dt": 1.3521,
+      "find_path": 1,
+      "wild_bfs": 134,
+      "forage_rebuilds": 240,
+      "animals": 584,
+      "dispersing": 205
+    },
+    {
+      "day": 154,
+      "cal": 71,
+      "dt": 0.9919,
+      "find_path": 76,
+      "wild_bfs": 116,
+      "forage_rebuilds": 240,
+      "animals": 584,
+      "dispersing": 205
+    },
+    {
+      "day": 155,
+      "cal": 72,
+      "dt": 1.2311,
+      "find_path": 67,
+      "wild_bfs": 133,
+      "forage_rebuilds": 240,
+      "animals": 612,
+      "dispersing": 247
+    },
+    {
+      "day": 156,
+      "cal": 73,
+      "dt": 1.0669,
+      "find_path": 2,
+      "wild_bfs": 173,
+      "forage_rebuilds": 240,
+      "animals": 612,
+      "dispersing": 238
+    },
+    {
+      "day": 157,
+      "cal": 74,
+      "dt": 1.3302,
+      "find_path": 138,
+      "wild_bfs": 157,
+      "forage_rebuilds": 240,
+      "animals": 612,
+      "dispersing": 236
+    },
+    {
+      "day": 158,
+      "cal": 75,
+      "dt": 1.4282,
+      "find_path": 228,
+      "wild_bfs": 123,
+      "forage_rebuilds": 240,
+      "animals": 611,
+      "dispersing": 233
+    },
+    {
+      "day": 159,
+      "cal": 76,
+      "dt": 1.0979,
+      "find_path": 1,
+      "wild_bfs": 134,
+      "forage_rebuilds": 240,
+      "animals": 611,
+      "dispersing": 227
+    },
+    {
+      "day": 160,
+      "cal": 77,
+      "dt": 1.105,
+      "find_path": 5,
+      "wild_bfs": 140,
+      "forage_rebuilds": 240,
+      "animals": 611,
+      "dispersing": 222
+    },
+    {
+      "day": 161,
+      "cal": 78,
+      "dt": 1.0742,
+      "find_path": 1,
+      "wild_bfs": 154,
+      "forage_rebuilds": 240,
+      "animals": 611,
+      "dispersing": 220
+    },
+    {
+      "day": 162,
+      "cal": 79,
+      "dt": 1.2967,
+      "find_path": 1,
+      "wild_bfs": 128,
+      "forage_rebuilds": 240,
+      "animals": 611,
+      "dispersing": 218
+    },
+    {
+      "day": 163,
+      "cal": 80,
+      "dt": 1.2025,
+      "find_path": 0,
+      "wild_bfs": 148,
+      "forage_rebuilds": 240,
+      "animals": 628,
+      "dispersing": 247
+    },
+    {
+      "day": 164,
+      "cal": 81,
+      "dt": 1.0834,
+      "find_path": 0,
+      "wild_bfs": 141,
+      "forage_rebuilds": 240,
+      "animals": 628,
+      "dispersing": 241
+    },
+    {
+      "day": 165,
+      "cal": 82,
+      "dt": 0.9972,
+      "find_path": 3,
+      "wild_bfs": 186,
+      "forage_rebuilds": 240,
+      "animals": 628,
+      "dispersing": 239
+    },
+    {
+      "day": 166,
+      "cal": 83,
+      "dt": 0.8683,
+      "find_path": 0,
+      "wild_bfs": 145,
+      "forage_rebuilds": 240,
+      "animals": 628,
+      "dispersing": 238
+    },
+    {
+      "day": 167,
+      "cal": 84,
+      "dt": 0.7307,
+      "find_path": 3,
+      "wild_bfs": 49,
+      "forage_rebuilds": 240,
+      "animals": 391,
+      "dispersing": 0
+    },
+    {
+      "day": 168,
+      "cal": 85,
+      "dt": 0.3943,
+      "find_path": 2,
+      "wild_bfs": 2,
+      "forage_rebuilds": 240,
+      "animals": 391,
+      "dispersing": 0
+    },
+    {
+      "day": 169,
+      "cal": 86,
+      "dt": 0.327,
+      "find_path": 4,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 391,
+      "dispersing": 0
+    },
+    {
+      "day": 170,
+      "cal": 87,
+      "dt": 0.4125,
+      "find_path": 1,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 391,
+      "dispersing": 0
+    },
+    {
+      "day": 171,
+      "cal": 88,
+      "dt": 0.8654,
+      "find_path": 0,
+      "wild_bfs": 2,
+      "forage_rebuilds": 240,
+      "animals": 391,
+      "dispersing": 0
+    },
+    {
+      "day": 172,
+      "cal": 89,
+      "dt": 1.1954,
+      "find_path": 1,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 391,
+      "dispersing": 0
+    },
+    {
+      "day": 173,
+      "cal": 90,
+      "dt": 1.0847,
+      "find_path": 2,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 391,
+      "dispersing": 0
+    },
+    {
+      "day": 174,
+      "cal": 91,
+      "dt": 1.3276,
+      "find_path": 0,
+      "wild_bfs": 2,
+      "forage_rebuilds": 240,
+      "animals": 391,
+      "dispersing": 0
+    },
+    {
+      "day": 175,
+      "cal": 92,
+      "dt": 1.3888,
+      "find_path": 0,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 391,
+      "dispersing": 0
+    },
+    {
+      "day": 176,
+      "cal": 93,
+      "dt": 1.3554,
+      "find_path": 1,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 391,
+      "dispersing": 0
+    },
+    {
+      "day": 177,
+      "cal": 94,
+      "dt": 1.3625,
+      "find_path": 21,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 390,
+      "dispersing": 0
+    },
+    {
+      "day": 178,
+      "cal": 95,
+      "dt": 1.5845,
+      "find_path": 1,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 390,
+      "dispersing": 0
+    },
+    {
+      "day": 179,
+      "cal": 96,
+      "dt": 1.5897,
+      "find_path": 7,
+      "wild_bfs": 2,
+      "forage_rebuilds": 240,
+      "animals": 389,
+      "dispersing": 0
+    },
+    {
+      "day": 180,
+      "cal": 97,
+      "dt": 1.5486,
+      "find_path": 0,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 389,
+      "dispersing": 0
+    },
+    {
+      "day": 181,
+      "cal": 98,
+      "dt": 1.471,
+      "find_path": 2,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 389,
+      "dispersing": 0
+    },
+    {
+      "day": 182,
+      "cal": 99,
+      "dt": 1.422,
+      "find_path": 3,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 183,
+      "cal": 100,
+      "dt": 1.4713,
+      "find_path": 5,
+      "wild_bfs": 3,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 184,
+      "cal": 101,
+      "dt": 2.0605,
+      "find_path": 4,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 185,
+      "cal": 102,
+      "dt": 2.2059,
+      "find_path": 5,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 186,
+      "cal": 103,
+      "dt": 1.6459,
+      "find_path": 5,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 187,
+      "cal": 104,
+      "dt": 1.5261,
+      "find_path": 4,
+      "wild_bfs": 2,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 188,
+      "cal": 105,
+      "dt": 1.4759,
+      "find_path": 4,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 189,
+      "cal": 106,
+      "dt": 1.2082,
+      "find_path": 5,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 190,
+      "cal": 107,
+      "dt": 0.981,
+      "find_path": 4,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 191,
+      "cal": 108,
+      "dt": 1.2422,
+      "find_path": 7,
+      "wild_bfs": 3,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 192,
+      "cal": 109,
+      "dt": 1.8136,
+      "find_path": 8,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 193,
+      "cal": 110,
+      "dt": 1.8355,
+      "find_path": 8,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 194,
+      "cal": 111,
+      "dt": 1.7694,
+      "find_path": 7,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 195,
+      "cal": 0,
+      "dt": 1.7039,
+      "find_path": 8,
+      "wild_bfs": 2,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 196,
+      "cal": 1,
+      "dt": 1.5131,
+      "find_path": 6,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 197,
+      "cal": 2,
+      "dt": 3.8481,
+      "find_path": 351,
+      "wild_bfs": 2,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 198,
+      "cal": 3,
+      "dt": 5.9435,
+      "find_path": 634,
+      "wild_bfs": 0,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 199,
+      "cal": 4,
+      "dt": 0.8379,
+      "find_path": 3,
+      "wild_bfs": 4,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 200,
+      "cal": 5,
+      "dt": 0.9283,
+      "find_path": 3,
+      "wild_bfs": 2,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 201,
+      "cal": 6,
+      "dt": 0.8781,
+      "find_path": 4,
+      "wild_bfs": 2,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 202,
+      "cal": 7,
+      "dt": 10.2696,
+      "find_path": 172,
+      "wild_bfs": 1,
+      "forage_rebuilds": 240,
+      "animals": 388,
+      "dispersing": 0
+    },
+    {
+      "day": 203,
+      "cal": 8,
+      "dt": 12.9477,
+      "find_path": 243,
+      "wild_bfs": 10,
+      "forage_rebuilds": 240,
+      "animals": 417,
+      "dispersing": 56
+    },
+    {
+      "day": 204,
+      "cal": 9,
+      "dt": 13.5219,
+      "find_path": 243,
+      "wild_bfs": 22,
+      "forage_rebuilds": 240,
+      "animals": 417,
+      "dispersing": 56
+    },
+    {
+      "day": 205,
+      "cal": 10,
+      "dt": 14.0838,
+      "find_path": 243,
+      "wild_bfs": 20,
+      "forage_rebuilds": 240,
+      "animals": 417,
+      "dispersing": 56
+    },
+    {
+      "day": 206,
+      "cal": 11,
+      "dt": 12.9229,
+      "find_path": 243,
+      "wild_bfs": 21,
+      "forage_rebuilds": 240,
+      "animals": 417,
+      "dispersing": 56
+    },
+    {
+      "day": 207,
+      "cal": 12,
+      "dt": 14.9218,
+      "find_path": 242,
+      "wild_bfs": 17,
+      "forage_rebuilds": 240,
+      "animals": 417,
+      "dispersing": 56
+    },
+    {
+      "day": 208,
+      "cal": 13,
+      "dt": 13.2807,
+      "find_path": 249,
+      "wild_bfs": 19,
+      "forage_rebuilds": 240,
+      "animals": 417,
+      "dispersing": 55
+    },
+    {
+      "day": 209,
+      "cal": 14,
+      "dt": 12.3063,
+      "find_path": 229,
+      "wild_bfs": 16,
+      "forage_rebuilds": 240,
+      "animals": 416,
+      "dispersing": 54
+    },
+    {
+      "day": 210,
+      "cal": 15,
+      "dt": 0.7289,
+      "find_path": 2,
+      "wild_bfs": 17,
+      "forage_rebuilds": 240,
+      "animals": 416,
+      "dispersing": 53
+    },
+    {
+      "day": 211,
+      "cal": 16,
+      "dt": 0.8664,
+      "find_path": 1,
+      "wild_bfs": 23,
+      "forage_rebuilds": 240,
+      "animals": 447,
+      "dispersing": 79
+    },
+    {
+      "day": 212,
+      "cal": 17,
+      "dt": 0.8777,
+      "find_path": 5,
+      "wild_bfs": 27,
+      "forage_rebuilds": 240,
+      "animals": 447,
+      "dispersing": 78
+    },
+    {
+      "day": 213,
+      "cal": 18,
+      "dt": 0.8709,
+      "find_path": 0,
+      "wild_bfs": 30,
+      "forage_rebuilds": 240,
+      "animals": 447,
+      "dispersing": 78
+    },
+    {
+      "day": 214,
+      "cal": 19,
+      "dt": 1.0339,
+      "find_path": 0,
+      "wild_bfs": 23,
+      "forage_rebuilds": 240,
+      "animals": 447,
+      "dispersing": 77
+    },
+    {
+      "day": 215,
+      "cal": 20,
+      "dt": 0.9434,
+      "find_path": 0,
+      "wild_bfs": 25,
+      "forage_rebuilds": 240,
+      "animals": 447,
+      "dispersing": 76
+    },
+    {
+      "day": 216,
+      "cal": 21,
+      "dt": 0.9214,
+      "find_path": 0,
+      "wild_bfs": 27,
+      "forage_rebuilds": 240,
+      "animals": 447,
+      "dispersing": 76
+    },
+    {
+      "day": 217,
+      "cal": 22,
+      "dt": 0.9092,
+      "find_path": 0,
+      "wild_bfs": 23,
+      "forage_rebuilds": 240,
+      "animals": 447,
+      "dispersing": 76
+    },
+    {
+      "day": 218,
+      "cal": 23,
+      "dt": 0.8784,
+      "find_path": 0,
+      "wild_bfs": 22,
+      "forage_rebuilds": 240,
+      "animals": 447,
+      "dispersing": 76
+    },
+    {
+      "day": 219,
+      "cal": 24,
+      "dt": 0.9317,
+      "find_path": 22,
+      "wild_bfs": 30,
+      "forage_rebuilds": 240,
+      "animals": 475,
+      "dispersing": 110
+    },
+    {
+      "day": 220,
+      "cal": 25,
+      "dt": 0.9276,
+      "find_path": 23,
+      "wild_bfs": 31,
+      "forage_rebuilds": 240,
+      "animals": 475,
+      "dispersing": 108
+    },
+    {
+      "day": 221,
+      "cal": 26,
+      "dt": 0.9082,
+      "find_path": 11,
+      "wild_bfs": 32,
+      "forage_rebuilds": 240,
+      "animals": 475,
+      "dispersing": 107
+    },
+    {
+      "day": 222,
+      "cal": 27,
+      "dt": 1.4947,
+      "find_path": 0,
+      "wild_bfs": 35,
+      "forage_rebuilds": 240,
+      "animals": 475,
+      "dispersing": 106
+    },
+    {
+      "day": 223,
+      "cal": 28,
+      "dt": 1.8912,
+      "find_path": 0,
+      "wild_bfs": 26,
+      "forage_rebuilds": 240,
+      "animals": 475,
+      "dispersing": 105
+    }
+  ],
+  "forager_stuck": [
+    {
+      "id": 1,
+      "stuck_days": 18,
+      "day_range": [
+        171,
+        188
+      ],
+      "pos": [
+        12,
+        36
+      ],
+      "end": {
+        "day": 188,
+        "id": 1,
+        "x": 12,
+        "y": 36,
+        "state": "WORKING",
+        "target": null,
+        "move_cd": 0,
+        "work_cd": 0,
+        "inv_empty": true
+      },
+      "diagnosis": [
+        "state=WORKING pos=(2, 41) tgt=None",
+        "move_cd=0 work_cd=0",
+        "primary=True nearby=True find_work=None"
+      ]
+    },
+    {
+      "id": 3,
+      "stuck_days": 16,
+      "day_range": [
+        105,
+        120
+      ],
+      "pos": [
+        24,
+        36
+      ],
+      "end": {
+        "day": 120,
+        "id": 3,
+        "x": 24,
+        "y": 36,
+        "state": "WORKING",
+        "target": null,
+        "move_cd": 0,
+        "work_cd": 0,
+        "inv_empty": false
+      },
+      "diagnosis": [
+        "state=WORKING pos=(12, 37) tgt=(2, 47)",
+        "move_cd=49 work_cd=0",
+        "primary=True nearby=True find_work=(10, 40)",
+        "tgt_valid=True path_ok=True cache_goal=(11, 28) cache_len=10"
+      ]
+    }
+  ],
+  "day_times_summary": {
+    "avg": 1.9324257191204066,
+    "max": 14.921783500001766,
+    "p95": 5.943465333082713
+  }
+}

@@ -1853,6 +1853,11 @@ def draw_feature(
             },
         )
     elif feature == FeatureType.BERRY_BUSH:
+        berry_colour = (
+            adjust_colour(COLOUR_BERRY, vibrancy)
+            if deposit > 0
+            else adjust_colour((70, 95, 55), vibrancy)
+        )
         blit_icon(
             surface,
             ICON_BERRY_BUSH,
@@ -1862,7 +1867,7 @@ def draw_feature(
             variant=v,
             recolour={
                 "bush": adjust_colour((50, 110, 50), vibrancy),
-                "berry": adjust_colour(COLOUR_BERRY, vibrancy),
+                "berry": berry_colour,
             },
         )
     elif feature == FeatureType.REED:

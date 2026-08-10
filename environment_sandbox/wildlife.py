@@ -49,7 +49,11 @@ from resource_balance import (
     DEER_CROP_EAT_CHANCE,
     FISH_WATER_PER_CAP,
     HONEY_PER_BEE_LEVEL,
+    HUNT_APPROACH_RADIUS,
+    HUNT_SCARE_RADIUS,
+    HUNT_SCARE_STEPS,
     MIN_BREEDING_CAPACITY,
+    PATH_FIND_MAX_NODES,
     RABBIT_MEAT_PER_LEVEL,
     RABBIT_MOVE_PAUSE,
     SMALL_GAME_FORAGE_RADIUS,
@@ -63,6 +67,7 @@ from settings import (
     FISH_GROWTH_INTERVAL,
     FISH_MOVE_INTERVAL,
     RANDOM_SEED,
+    VILLAGER_MOVE_INTERVAL,
 )
 from world import FeatureType, TerrainType, World, disturbance_activity_multiplier, effective_disturbance_at
 
@@ -101,6 +106,16 @@ class Animal:
     migrate_target: tuple[int, int] | None = None
     # True after leaving home this year; cleared each spring.
     migrated_this_year: bool = False
+    # Hunt panic: flee away from kill site for scare_steps rapid hops.
+    scare_from: tuple[int, int] | None = None
+    scare_steps: int = 0
+    # Runtime-only path cache for migration / blocked steps (not saved).
+    _path_cache: list[tuple[int, int]] | None = field(
+        default=None, repr=False, compare=False
+    )
+    _path_goal: tuple[int, int] | None = field(
+        default=None, repr=False, compare=False
+    )
 
 
 @dataclass
@@ -264,6 +279,35 @@ class WildlifeManager:
         self.animals.remove(animal)
         self._by_id.pop(animal_id, None)
         return pos
+
+    def scare_from_kill(
+        self,
+        kill_x: int,
+        kill_y: int,
+        *,
+        radius: int | None = None,
+        steps: int | None = None,
+    ) -> int:
+        """Send nearby deer/boar fleeing rapidly from a hunt kill site.
+
+        Returns how many animals entered (or refreshed) panic.
+        """
+        r = HUNT_SCARE_RADIUS if radius is None else max(0, int(radius))
+        n_steps = HUNT_SCARE_STEPS if steps is None else max(0, int(steps))
+        if n_steps <= 0:
+            return 0
+        scared = 0
+        for animal in self.animals:
+            if animal.kind not in FOREST_KINDS:
+                continue
+            if max(abs(animal.x - kill_x), abs(animal.y - kill_y)) > r:
+                continue
+            animal.scare_from = (kill_x, kill_y)
+            animal.scare_steps = max(animal.scare_steps, n_steps)
+            animal.move_cooldown = 0
+            animal.retreat_target = None
+            scared += 1
+        return scared
 
     def _habitats_for(self, kind: AnimalKind) -> list[Habitat]:
         if kind in COLONY_KINDS:
@@ -929,7 +973,14 @@ class WildlifeManager:
     # ------------------------------------------------------------------
     # Simulation tick
     # ------------------------------------------------------------------
-    def tick(self, world: World, day: float = 0.0) -> None:
+    def tick(
+        self,
+        world: World,
+        day: float = 0.0,
+        *,
+        hunter_threats: list[tuple[int, int]] | None = None,
+        flee_interval: int | None = None,
+    ) -> None:
         if not self.habitats and not self.open_habitats:
             self.refresh_habitats(world)
         self._index_animals()
@@ -939,7 +990,13 @@ class WildlifeManager:
         elif season != self._prev_season:
             self.on_season_change(world, season)
         self._form_mating_pairs()
-        self._move_animals(world, day, season)
+        self._move_animals(
+            world,
+            day,
+            season,
+            hunter_threats=hunter_threats,
+            flee_interval=flee_interval,
+        )
         self._move_colony_members(world, day)
         if not animals_multiply(day):
             return
@@ -1032,6 +1089,10 @@ class WildlifeManager:
         animal.move_cooldown = move_interval
         arm_cell_step_visual(animal, move_interval)
 
+    def _clear_animal_path(self, animal: Animal) -> None:
+        animal._path_cache = None
+        animal._path_goal = None
+
     def _step_toward(
         self,
         world: World,
@@ -1040,8 +1101,9 @@ class WildlifeManager:
         ty: int,
         occupied: set[tuple[int, int]],
     ) -> bool:
-        """Take one walkable step toward (tx, ty). Uses BFS when greedy is stuck."""
+        """Take one walkable step toward (tx, ty). Uses cached BFS when greedy is stuck."""
         if (animal.x, animal.y) == (tx, ty):
+            self._clear_animal_path(animal)
             return False
 
         cur_d = max(abs(animal.x - tx), abs(animal.y - ty))
@@ -1061,11 +1123,9 @@ class WildlifeManager:
         choice: tuple[int, int] | None = None
         if improving:
             choice = self.rng.choice(improving)
+            self._clear_animal_path(animal)
         else:
-            # Obstacle in the way — follow a BFS path around water / blockers.
-            choice = self._bfs_next_step(
-                world, animal.x, animal.y, tx, ty, occupied
-            )
+            choice = self._cached_path_step(world, animal, tx, ty, occupied)
             if choice is None and sideways:
                 choice = self.rng.choice(sideways)
 
@@ -1073,6 +1133,68 @@ class WildlifeManager:
             return False
         self._place_animal(animal, choice[0], choice[1], occupied)
         return True
+
+    def _step_flee(
+        self,
+        world: World,
+        animal: Animal,
+        threat: tuple[int, int],
+        occupied: set[tuple[int, int]],
+    ) -> bool:
+        """One panic step that maximizes Chebyshev distance from ``threat``."""
+        self._clear_animal_path(animal)
+        tx, ty = threat
+        cur_d = max(abs(animal.x - tx), abs(animal.y - ty))
+        best: list[tuple[int, int]] = []
+        best_d = cur_d
+        for ny, nx in world.neighbourhood(animal.x, animal.y, radius=1):
+            if (nx, ny) == (animal.x, animal.y):
+                continue
+            if not world.is_walkable(nx, ny) or (nx, ny) in occupied:
+                continue
+            d = max(abs(nx - tx), abs(ny - ty))
+            if d > best_d:
+                best_d = d
+                best = [(nx, ny)]
+            elif d == best_d and d > cur_d:
+                best.append((nx, ny))
+        if not best:
+            # No improving step — still try any free neighbour away-ish.
+            options = [
+                (nx, ny)
+                for ny, nx in world.neighbourhood(animal.x, animal.y, radius=1)
+                if (nx, ny) != (animal.x, animal.y)
+                and world.is_walkable(nx, ny)
+                and (nx, ny) not in occupied
+            ]
+            if not options:
+                return False
+            choice = self._weighted_away_choice(
+                options, (float(tx), float(ty))
+            )
+        else:
+            choice = self.rng.choice(best)
+        self._place_animal(animal, choice[0], choice[1], occupied)
+        return True
+
+    def _nearest_hunter_threat(
+        self,
+        animal: Animal,
+        threats: list[tuple[int, int]] | None,
+        radius: int,
+    ) -> tuple[int, int] | None:
+        """Closest hunter/player within Chebyshev ``radius``, or None."""
+        if not threats or radius <= 0:
+            return None
+        best: tuple[int, int] | None = None
+        best_d = radius
+        ax, ay = animal.x, animal.y
+        for tx, ty in threats:
+            d = max(abs(ax - tx), abs(ay - ty))
+            if d <= best_d:
+                best_d = d
+                best = (tx, ty)
+        return best
 
     def _step_along_path(
         self,
@@ -1082,10 +1204,11 @@ class WildlifeManager:
         ty: int,
         occupied: set[tuple[int, int]],
     ) -> bool:
-        """One step along a BFS path — used for migration so detours are not undone."""
+        """One step along a cached BFS path — used for migration so detours are not undone."""
         if (animal.x, animal.y) == (tx, ty):
+            self._clear_animal_path(animal)
             return False
-        nxt = self._bfs_next_step(world, animal.x, animal.y, tx, ty, occupied)
+        nxt = self._cached_path_step(world, animal, tx, ty, occupied)
         if nxt is None:
             # Fallback: greedy improve only (no sideways undo of a detour).
             cur_d = max(abs(animal.x - tx), abs(animal.y - ty))
@@ -1103,7 +1226,38 @@ class WildlifeManager:
         self._place_animal(animal, nxt[0], nxt[1], occupied)
         return True
 
-    def _bfs_next_step(
+    def _cached_path_step(
+        self,
+        world: World,
+        animal: Animal,
+        tx: int,
+        ty: int,
+        occupied: set[tuple[int, int]],
+    ) -> tuple[int, int] | None:
+        """Pop the next step from a cached path, recomputing with capped BFS on miss."""
+        goal = (tx, ty)
+        cache = animal._path_cache
+        if cache and animal._path_goal == goal:
+            nxt = cache[0]
+            if (
+                max(abs(nxt[0] - animal.x), abs(nxt[1] - animal.y)) <= 1
+                and (nxt == goal or (world.is_walkable(*nxt) and nxt not in occupied))
+            ):
+                animal._path_cache = cache[1:] or None
+                if not animal._path_cache:
+                    animal._path_goal = None
+                return nxt
+        path = self._bfs_path(
+            world, animal.x, animal.y, tx, ty, occupied
+        )
+        if not path:
+            self._clear_animal_path(animal)
+            return None
+        animal._path_cache = path[1:] or None
+        animal._path_goal = goal if animal._path_cache else None
+        return path[0]
+
+    def _bfs_path(
         self,
         world: World,
         sx: int,
@@ -1113,25 +1267,40 @@ class WildlifeManager:
         occupied: set[tuple[int, int]],
         *,
         limit: int | None = None,
-    ) -> tuple[int, int] | None:
-        """First step of a shortest walkable path from (sx,sy) toward (tx,ty)."""
+    ) -> list[tuple[int, int]] | None:
+        """Shortest cardinal path from (sx,sy) to (tx,ty), excluding start."""
         from collections import deque
 
         start = (sx, sy)
         goal = (tx, ty)
         if start == goal:
-            return None
+            return []
         blocked = set(occupied)
         blocked.discard(start)
         blocked.discard(goal)
-        max_nodes = limit if limit is not None else world.rows * world.cols + 8
+        straight = abs(tx - sx) + abs(ty - sy)
+        # Cap failed searches: don't flood the whole map when goal is cut off.
+        max_nodes = limit if limit is not None else min(
+            PATH_FIND_MAX_NODES,
+            max(256, straight * 8 + 128),
+            world.rows * world.cols + 8,
+        )
 
         prev: dict[tuple[int, int], tuple[int, int] | None] = {start: None}
         queue: deque[tuple[int, int]] = deque([start])
         found = False
         while queue and len(prev) < max_nodes:
             cx, cy = queue.popleft()
-            for ny, nx in world.neighbourhood(cx, cy, radius=1):
+            # Prefer axes toward the goal (same idea as world.find_path).
+            local: list[tuple[int, int]] = []
+            rest: list[tuple[int, int]] = []
+            for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+                if abs(tx - cx) >= abs(ty - cy):
+                    (local if dx != 0 else rest).append((dx, dy))
+                else:
+                    (local if dy != 0 else rest).append((dx, dy))
+            for dx, dy in local + rest:
+                nx, ny = cx + dx, cy + dy
                 nxt = (nx, ny)
                 if nxt in prev:
                     continue
@@ -1148,12 +1317,30 @@ class WildlifeManager:
         if not found or goal not in prev:
             return None
 
-        cur = goal
-        while prev[cur] is not None and prev[cur] != start:
-            cur = prev[cur]  # type: ignore[assignment]
-        if prev.get(cur) == start:
-            return cur
-        return None
+        path: list[tuple[int, int]] = []
+        cur: tuple[int, int] | None = goal
+        while cur is not None and cur != start:
+            path.append(cur)
+            cur = prev[cur]
+        path.reverse()
+        return path
+
+    def _bfs_next_step(
+        self,
+        world: World,
+        sx: int,
+        sy: int,
+        tx: int,
+        ty: int,
+        occupied: set[tuple[int, int]],
+        *,
+        limit: int | None = None,
+    ) -> tuple[int, int] | None:
+        """First step of a shortest walkable path from (sx,sy) toward (tx,ty)."""
+        path = self._bfs_path(world, sx, sy, tx, ty, occupied, limit=limit)
+        if not path:
+            return None
+        return path[0]
 
     def _patches_with_space(
         self, kind: AnimalKind, *, need: int, exclude_id: int | None
@@ -1443,9 +1630,21 @@ class WildlifeManager:
         self._arm_move(a, move_interval)
         self._arm_move(b, move_interval)
 
-    def _move_animals(self, world: World, day: float, season: Season) -> None:
+    def _move_animals(
+        self,
+        world: World,
+        day: float,
+        season: Season,
+        *,
+        hunter_threats: list[tuple[int, int]] | None = None,
+        flee_interval: int | None = None,
+    ) -> None:
         slow = 1 + int(2 * freeze_amount(day)) if animals_slow(day) else 1
         move_interval = ANIMAL_MOVE_INTERVAL * slow
+        flee_iv = max(
+            4,
+            int(flee_interval if flee_interval is not None else VILLAGER_MOVE_INTERVAL),
+        )
         occupied = self._occupied()
         cold_season = season in (Season.AUTUMN, Season.WINTER)
         warm_season = season in (Season.SPRING, Season.SUMMER)
@@ -1457,6 +1656,33 @@ class WildlifeManager:
             if animal.move_cooldown > 0:
                 animal.move_cooldown -= 1
                 continue
+
+            # Hunt panic: deer/boar scatter away from a nearby kill.
+            if (
+                animal.scare_steps > 0
+                and animal.scare_from is not None
+                and animal.kind in FOREST_KINDS
+            ):
+                self._step_flee(world, animal, animal.scare_from, occupied)
+                animal.scare_steps -= 1
+                if animal.scare_steps <= 0:
+                    animal.scare_from = None
+                    animal.scare_steps = 0
+                self._arm_move(animal, flee_iv)
+                moved.add(animal.id)
+                continue
+
+            # Flee a nearby hunter / player at healthy villager walk pace.
+            if animal.kind in FOREST_KINDS:
+                threat = self._nearest_hunter_threat(
+                    animal, hunter_threats, HUNT_APPROACH_RADIUS
+                )
+                if threat is not None:
+                    self._step_flee(world, animal, threat, occupied)
+                    animal.retreat_target = None
+                    self._arm_move(animal, flee_iv)
+                    moved.add(animal.id)
+                    continue
 
             # Dispersing pair: explore away from home / autumn-seek space.
             if animal.migrate_home_id is not None and animal.patch_id is None:

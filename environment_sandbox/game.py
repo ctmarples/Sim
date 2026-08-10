@@ -35,6 +35,7 @@ from resource_balance import (
     WORK_SEARCH_RADIUS,
     PATH_DETOUR_RATIO,
     PATH_DETOUR_SLACK,
+    PATH_PICK_MAX_PER_RING,
     HONEY_PER_BEE_LEVEL,
     MAX_FOOD_TYPES_PER_MEAL,
     MUSHROOM_YIELD,
@@ -5654,8 +5655,34 @@ class Game:
         label = "boar" if kind == AnimalKind.BOAR else "deer"
         self.world.add_meat_deposit(x, y, meat)
         self.world.apply_extraction_disturbance(x, y)
+        if kind in (AnimalKind.DEER, AnimalKind.BOAR):
+            self.wildlife.scare_from_kill(x, y)
         self._refresh_indicators()
         self._set_status(f"Hunted {label}. {meat} meat on ({x}, {y}).")
+
+    def _hunt_threat_positions(self) -> list[tuple[int, int]]:
+        """Player + assigned hunters — deer/boar flee these positions."""
+        threats: list[tuple[int, int]] = [(self.player.x, self.player.y)]
+        for villager in self.villagers:
+            if villager.building_id is None:
+                continue
+            building = self.buildings.get(villager.building_id)
+            if building is not None and building.kind == BuildingKind.HUNTER:
+                threats.append((villager.x, villager.y))
+        return threats
+
+    def _hunter_flee_interval(self) -> int:
+        """Match unbuffed healthy villager walk pace (after eating, no food speed buff)."""
+        scaled = self.balance.get_int("VILLAGER_MOVE_INTERVAL") * self._day_length_scale()
+        return max(4, int(round(scaled)))
+
+    def _tick_wildlife(self, day: float) -> None:
+        self.wildlife.tick(
+            self.world,
+            day,
+            hunter_threats=self._hunt_threat_positions(),
+            flee_interval=self._hunter_flee_interval(),
+        )
 
     def _collect_fish(self, x: int, y: int, inventory: Inventory, status: bool = False) -> bool:
         if inventory.is_full:
@@ -6432,7 +6459,8 @@ class Game:
                 return self._forester_has_nearby_tree_or_plant(villager, building)
             if building.work_mode == WorkMode.SPLIT:
                 return building.craftable_split_recipe() is not None
-            return self._find_work_in_building(villager, building) is not None
+            # COLLECT / PLANT: cheap presence, not full pathfinding.
+            return self._forester_has_nearby_tree_or_plant(villager, building)
 
         if building.kind == BuildingKind.HUNTER:
             if not villager.inventory.has_equipped_tool("spear"):
@@ -6491,7 +6519,17 @@ class Game:
                 and building.has_gather_cargo(villager.inventory)
             ):
                 return False
-            return self._find_work_in_building(villager, building) is not None
+            if villager.forage_colony_id is not None:
+                return True
+            if (
+                villager.target is not None
+                and villager.state == VillagerState.WORKING
+                and not self._is_station_or_home_cell(villager.target)
+            ):
+                return True
+            # Do not treat nearby-but-unreachable forage as primary work — that
+            # blocks delivery/idle and leaves foragers stuck in WORKING forever.
+            return False
 
         return self._find_work_in_building(villager, building) is not None
 
@@ -7244,10 +7282,25 @@ class Game:
 
         target = villager.target
         if target is None:
+            search_cd = int(getattr(villager, "_work_search_cd", 0))
+            if search_cd > 0:
+                villager._work_search_cd = search_cd - 1  # type: ignore[attr-defined]
+                if not villager.inventory.is_empty:
+                    if self._force_assigned_delivery(villager, building):
+                        return
+                self._set_workplace_idle(villager)
+                return
             target = self._find_work_in_building(villager, building)
             if target is None:
-                self._maybe_assigned_transport(villager, building)
+                villager._work_search_cd = 48  # type: ignore[attr-defined]
+                if not villager.inventory.is_empty:
+                    if self._force_assigned_delivery(villager, building):
+                        return
+                if self._maybe_assigned_transport(villager, building):
+                    return
+                self._set_workplace_idle(villager)
                 return
+            villager._work_search_cd = 0  # type: ignore[attr-defined]
             villager.target = target
             self._register_field_claim(villager, target)
 
@@ -8039,6 +8092,8 @@ class Game:
                     meat = BOAR_MEAT_YIELD if kind == AnimalKind.BOAR else DEER_MEAT_YIELD
                     self.world.add_meat_deposit(x, y, meat)
                     self.world.apply_extraction_disturbance(x, y)
+                    if kind in (AnimalKind.DEER, AnimalKind.BOAR):
+                        self.wildlife.scare_from_kill(x, y)
                     self._refresh_indicators()
                     villager.hunt_meat_pos = (x, y)
                     self._register_field_claim(villager, (x, y))
@@ -8053,6 +8108,14 @@ class Game:
                 if self.world.is_walkable(nx, ny):
                     approach = (nx, ny)
                     break
+        # Keep chasing the last approach cell while prey is still nearby so we
+        # do not re-BFS every tick as the animal flees one tile at a time.
+        cache_goal = getattr(villager, "_path_goal", None)
+        if (
+            cache_goal is not None
+            and max(abs(cache_goal[0] - animal.x), abs(cache_goal[1] - animal.y)) <= 2
+        ):
+            approach = cache_goal
         if not self._step_villager_toward(villager, approach):
             villager.hunt_animal_id = None
             self._clear_villager_path(villager)
@@ -8125,12 +8188,14 @@ class Game:
         else:
             animals = list(self.wildlife.animals)
         taken = self._claimed_animal_ids(villager.id)
+        origin = (villager.x, villager.y)
         animals = [
             a
             for a in animals
-            if building.allows_hunt_kind(a.kind.name) and a.id not in taken
+            if building.allows_hunt_kind(a.kind.name)
+            and a.id not in taken
+            and self._within_work_search(origin, (a.x, a.y))
         ]
-        origin = (villager.x, villager.y)
         return self._pick_nearest_reachable(
             origin,
             animals,
@@ -8972,8 +9037,8 @@ class Game:
         """Nearest candidate by Manhattan rings with path-detour rejection.
 
         Searches expanding Manhattan distance up to ``max_radius``. Within each
-        ring, prefers the shortest acceptable BFS path. Optionally seeds the
-        villager path cache for the chosen approach goal.
+        ring, takes the first few acceptable BFS paths (nearest-first). Optionally
+        seeds the villager path cache for the chosen approach goal.
         """
         if not candidates:
             return None
@@ -8987,12 +9052,12 @@ class Game:
                 continue
             by_dist.setdefault(d, []).append(item)
 
+        per_ring = max(1, int(PATH_PICK_MAX_PER_RING))
         for d in sorted(by_dist):
-            best_item = None
-            best_len = 10**9
-            best_goal: tuple[int, int] | None = None
-            best_path: list[tuple[int, int]] | None = None
+            tried = 0
             for item in by_dist[d]:
+                if tried >= per_ring:
+                    break
                 px, py = pos_fn(item)
                 goal = self._walk_goal_for_target(
                     px, py, prefer_adjacent=prefer_adjacent, from_pos=origin
@@ -9000,29 +9065,23 @@ class Game:
                 if goal is None:
                     continue
                 path = self.world.find_path(origin, goal)
+                tried += 1
                 if path is None:
                     continue
                 plen = len(path)
                 straight = abs(goal[0] - ox) + abs(goal[1] - oy)
                 if not self._path_detour_ok(straight, plen):
                     continue
-                if plen < best_len:
-                    best_len = plen
-                    best_item = item
-                    best_goal = goal
-                    best_path = path
-            if best_item is not None:
+                # Nearest ring with an acceptable path wins — no need to scan further.
                 if (
                     villager is not None
-                    and best_goal is not None
-                    and best_path is not None
                     # Only cache a path that starts at the villager — seeding from
                     # a workplace/search origin teleports or soft-locks movement.
                     and origin == (villager.x, villager.y)
                 ):
-                    villager._path_cache = list(best_path)  # type: ignore[attr-defined]
-                    villager._path_goal = best_goal  # type: ignore[attr-defined]
-                return best_item
+                    villager._path_cache = list(path)  # type: ignore[attr-defined]
+                    villager._path_goal = goal  # type: ignore[attr-defined]
+                return item
         return None
 
     def _find_work_in_building(
@@ -9228,6 +9287,65 @@ class Game:
                     return best
         return best
 
+    def _forager_has_nearby_work(
+        self, villager: Villager, building: Building
+    ) -> bool:
+        """True if any enabled forage target exists in search radius (no pathfinding)."""
+        from wildlife import AnimalKind
+
+        origin = (villager.x, villager.y)
+        ox, oy = origin
+        r = WORK_SEARCH_RADIUS
+        enabled = {rec.name for rec in building.enabled_recipes()}
+        if "honey" in enabled:
+            for colony in self.wildlife.colonies:
+                if (
+                    colony.kind == AnimalKind.BEE
+                    and colony.can_harvest()
+                    and abs(colony.x - ox) + abs(colony.y - oy) <= r
+                ):
+                    return True
+
+        forage_areas = [
+            a
+            for a in building.areas
+            if a.task_type
+            in (
+                TaskType.FULL_FORAGE,
+                TaskType.FORAGE_BERRIES,
+                TaskType.FORAGE_MUSHROOMS,
+                TaskType.FORAGE_HERBS,
+            )
+        ]
+
+        def cell_ok(x: int, y: int) -> bool:
+            cell = self.world.get_cell(x, y)
+            if cell is None or not self.world.is_walkable(x, y):
+                return False
+            key = self._forage_key_for_cell(cell)
+            return (
+                key is not None
+                and key in enabled
+                and self._building_allows_cell(building, cell)
+            )
+
+        if forage_areas:
+            for area in forage_areas:
+                for x, y in area.cells():
+                    if cell_ok(x, y):
+                        return True
+            return False
+
+        for key in enabled:
+            if key == "honey":
+                continue
+            for x, y in self._forage_cells_for_key(key):
+                if abs(x - ox) + abs(y - oy) > r:
+                    continue
+                if cell_ok(x, y):
+                    return True
+        return False
+
     def _find_closest_forage_key(
         self,
         ox: int,
@@ -9297,60 +9415,112 @@ class Game:
     ) -> tuple[int, int] | None:
         """Pick forage work: nearby first, then priority within each distance band.
 
-        For each enabled recipe, find the closest matching cell (or honey colony).
-        Sort by distance band → recipe priority (1 best) → exact distance, so a
-        forager clears local forage before crossing the map for a higher priority.
+        Scans the forage index once, then path-tests only the best few candidates
+        (not one full path search per enabled recipe).
         """
         ox, oy = origin
         band = max(1, int(FORAGER_PRIORITY_BAND))
-        # (band, priority, distance, target, colony_id|None)
-        candidates: list[tuple[int, int, int, tuple[int, int], int | None]] = []
-
+        recipe_meta: list[tuple[str, int, str, int]] = []
         for recipe in building.enabled_recipes():
             priority = building.get_recipe_priority(recipe.name)
             need = self._forage_yield_amount(recipe.name)
             cargo_key = "wood" if recipe.name == "wood" else recipe.name
-            # Produce recipes output the produce key (same as recipe name for forager).
             if recipe.outputs:
                 cargo_key = next(iter(recipe.outputs))
             if not villager.inventory.can_add(need, key=cargo_key):
                 continue
-            if recipe.name == "honey":
-                colony = self._find_honey_colony(
-                    villager, building, origin=origin
-                )
-                if colony is None:
+            recipe_meta.append((recipe.name, priority, cargo_key, need))
+        if not recipe_meta:
+            villager.forage_colony_id = None
+            return None
+
+        candidates: list[tuple[int, int, int, tuple[int, int], int | None]] = []
+
+        def consider_cell(x: int, y: int) -> None:
+            if (x, y) in claimed:
+                return
+            cell = self.world.get_cell(x, y)
+            if cell is None or not self.world.is_walkable(x, y):
+                return
+            if not self._building_allows_cell(building, cell):
+                return
+            key = self._forage_key_for_cell(cell)
+            if key is None:
+                return
+            for name, priority, _cargo_key, _need in recipe_meta:
+                if name != key:
                     continue
-                target = (colony.x, colony.y)
-                dist = abs(colony.x - ox) + abs(colony.y - oy)
-                candidates.append(
-                    (dist // band, priority, dist, target, colony.id)
-                )
+                dist = abs(x - ox) + abs(y - oy)
+                if dist > WORK_SEARCH_RADIUS:
+                    return
+                candidates.append((dist // band, priority, dist, (x, y), None))
+                return
+
+        if areas:
+            for area in areas:
+                if area.task_type not in (
+                    TaskType.FULL_FORAGE,
+                    TaskType.FORAGE_BERRIES,
+                    TaskType.FORAGE_MUSHROOMS,
+                    TaskType.FORAGE_HERBS,
+                ):
+                    continue
+                for x, y in area.cells():
+                    consider_cell(x, y)
+        else:
+            enabled_keys = {name for name, *_ in recipe_meta if name != "honey"}
+            index = self._ensure_forage_cell_index()
+            for key in enabled_keys:
+                for x, y in index.get(key, []):
+                    consider_cell(x, y)
+
+        for name, priority, _cargo_key, _need in recipe_meta:
+            if name != "honey":
                 continue
-            target = self._find_closest_forage_key(
-                ox,
-                oy,
-                recipe.name,
-                building=building,
-                exclude_cells=claimed,
-                areas=areas,
+            colony = self._find_honey_colony(
+                villager, building, origin=origin
             )
-            if target is None:
+            if colony is None:
                 continue
-            dist = abs(target[0] - ox) + abs(target[1] - oy)
-            candidates.append((dist // band, priority, dist, target, None))
+            dist = abs(colony.x - ox) + abs(colony.y - oy)
+            if dist <= WORK_SEARCH_RADIUS:
+                candidates.append(
+                    (dist // band, priority, dist, (colony.x, colony.y), colony.id)
+                )
 
         if not candidates:
             villager.forage_colony_id = None
             return None
-        # Sort by band → priority → distance → cell; omit colony_id (None vs int
-        # breaks ordering when a plant and honey target tie on the other keys).
+
         candidates.sort(key=lambda c: (c[0], c[1], c[2], c[3]))
-        _band, _prio, _dist, target, colony_id = candidates[0]
-        villager.forage_colony_id = colony_id
-        self._register_colony_claim(colony_id)
-        self._register_field_claim(villager, target)
-        return target
+        path_tries = max(1, int(PATH_PICK_MAX_PER_RING)) * 3
+        tried = 0
+        for _band, _prio, _dist, target, colony_id in candidates:
+            if tried >= path_tries:
+                break
+            tried += 1
+            goal = self._walk_goal_for_target(
+                target[0], target[1], prefer_adjacent=False, from_pos=origin
+            )
+            if goal is None:
+                continue
+            path = self.world.find_path(origin, goal)
+            if path is None:
+                continue
+            straight = abs(goal[0] - ox) + abs(goal[1] - oy)
+            if not self._path_detour_ok(straight, len(path)):
+                continue
+            villager.forage_colony_id = colony_id
+            if colony_id is not None:
+                self._register_colony_claim(colony_id)
+            self._register_field_claim(villager, target)
+            if origin == (villager.x, villager.y):
+                villager._path_cache = list(path)  # type: ignore[attr-defined]
+                villager._path_goal = goal  # type: ignore[attr-defined]
+            return target
+
+        villager.forage_colony_id = None
+        return None
 
     def _find_honey_colony(
         self,
@@ -9808,7 +9978,7 @@ class Game:
             decay_per_tick=self.balance.get_float("DISTURBANCE_DECAY_PER_TICK"), day=day
         )
         self._update_villagers()
-        self.wildlife.tick(self.world, day)
+        self._tick_wildlife(day)
         self.fish.tick(self.world, day)
         # Biodiversity is sample-based; skip live refresh for sampled modes.
         if self.overlay_mode not in (
@@ -9872,7 +10042,7 @@ class Game:
                     decay_per_tick=self.balance.get_float("DISTURBANCE_DECAY_PER_TICK"),
                     day=day,
                 )
-                self.wildlife.tick(self.world, day)
+                self._tick_wildlife(day)
                 self.fish.tick(self.world, day)
                 wildlife_pending = 0
                 remaining -= skip
@@ -9895,7 +10065,7 @@ class Game:
                 flush_eco(day)
             self._update_villagers()
             if wildlife_pending >= 4:
-                self.wildlife.tick(self.world, day)
+                self._tick_wildlife(day)
                 self.fish.tick(self.world, day)
                 wildlife_pending = 0
             remaining -= 1
@@ -9903,7 +10073,7 @@ class Game:
         day = float(self.calendar_day) + (1.0 - self.day_tick / self.ticks_per_day)
         flush_eco(day)
         if wildlife_pending:
-            self.wildlife.tick(self.world, day)
+            self._tick_wildlife(day)
             self.fish.tick(self.world, day)
 
     def _idle_cooldown_skip(self, limit: int) -> int:

@@ -172,6 +172,14 @@ ROCK_LARGE_MAX: int = 28
 DEER_MEAT_YIELD: int = 3
 BOAR_MEAT_YIELD: int = 5
 ANIMAL_MEAT_YIELD: int = DEER_MEAT_YIELD  # legacy alias
+# After a deer/boar kill: other deer & boar in this Chebyshev radius flee.
+HUNT_SCARE_RADIUS: int = 5
+# How many flee steps each scared animal takes.
+HUNT_SCARE_STEPS: int = 4
+# Deer/boar start fleeing when a hunter/player is within this Chebyshev radius.
+HUNT_APPROACH_RADIUS: int = 6
+# Flee pace fallback (= healthy unbuffed villager walk). Game passes scaled interval.
+HUNT_SCARE_MOVE_INTERVAL: int = 48
 FISH_YIELD: int = 2
 
 # ---------------------------------------------------------------------------
@@ -243,6 +251,8 @@ RABBIT_MOVE_PAUSE: int = 120
 BERRY_BUSH_YIELD: int = 4
 BERRY_REGEN_TICKS: int = 2400
 BERRY_SEED_DROP_CHANCE: float = 0.05
+# Permanent starter bushes on new maps (fruit is seasonal; bushes stay year-round).
+BERRY_INITIAL_COUNT: int = 6
 
 MUSHROOM_YIELD: int = 4  # per mushroom tile foraged
 REED_YIELD: int = 3
@@ -262,6 +272,10 @@ WORK_SEARCH_RADIUS: int = 48
 # path_len > max(straight * RATIO, straight + SLACK).
 PATH_DETOUR_RATIO: float = 2.0
 PATH_DETOUR_SLACK: int = 10
+# Hard cap on BFS nodes for a single path search (long hauls still fit on typical maps).
+PATH_FIND_MAX_NODES: int = 2500
+# Within each Manhattan ring, stop after this many successful path checks.
+PATH_PICK_MAX_PER_RING: int = 4
 # Fisher: walk to a shore near fish density and wait; catch when fish pass.
 # Chebyshev radius used when scoring how many fish a shore "covers".
 FISH_POST_SCORE_RADIUS: int = 8
@@ -288,11 +302,11 @@ NATURAL_SPROUT_MIN_PATCH: int = 4
 NATURAL_SPROUT_CHANCE: float = 1.0 / 8.0
 NATURAL_SPROUT_INTERVAL: int = 180
 
-BERRY_SPREAD_CHANCE: float = 0.02  # legacy; seasonal rates drive spawn now
+BERRY_SPREAD_CHANCE: float = 0.01  # legacy; seasonal rates drive spawn now
 BERRY_SPREAD_INTERVAL: int = 600
 
-MUSHROOM_SPAWN_CHANCE: float = 0.012  # legacy peak; see seasonal peaks below
-MUSHROOM_SPREAD_CHANCE: float = 0.02  # into neighbouring soil
+MUSHROOM_SPAWN_CHANCE: float = 0.006  # legacy peak; see seasonal peaks below
+MUSHROOM_SPREAD_CHANCE: float = 0.01  # into neighbouring soil
 MUSHROOM_TICK_INTERVAL: int = 360
 
 HERB_SPAWN_CHANCE: float = 0.03  # legacy peak; see seasonal peaks below
@@ -302,10 +316,10 @@ HERB_TICK_INTERVAL: int = 150
 HERB_SPAWN_RATE_PEAK: float = 0.045
 HERB_DESPAWN_FADE: float = 0.08
 HERB_DESPAWN_LEFTOVER: float = 0.15
-BERRY_SPAWN_RATE_PEAK: float = 0.025
+BERRY_SPAWN_RATE_PEAK: float = 0.0  # natural bush spawn off; fruit uses berry_fruiting()
 BERRY_DESPAWN_FADE: float = 0.07
 BERRY_DESPAWN_LEFTOVER: float = 0.18
-MUSHROOM_SPAWN_RATE_PEAK: float = 0.03
+MUSHROOM_SPAWN_RATE_PEAK: float = 0.015
 
 # Farm crop growth fallback (~32 in-game days at TICKS_PER_DAY = FPS*4).
 FARM_CROP_GROWTH_TICKS: int = FPS * 4 * 32

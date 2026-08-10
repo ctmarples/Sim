@@ -33,8 +33,7 @@ from trees import (
     resolve_tree,
 )
 from seasons import (
-    berry_despawn_rate,
-    berry_spawn_rate,
+    berry_fruiting,
     growth_halted,
     herb_despawn_rate,
     herb_spawn_rate,
@@ -48,6 +47,7 @@ from seasons import (
 )
 from resource_balance import (
     BERRY_BUSH_YIELD,
+    BERRY_INITIAL_COUNT,
     BERRY_REGEN_TICKS,
     BERRY_SPREAD_INTERVAL,
     HERB_TICK_INTERVAL,
@@ -707,17 +707,19 @@ class World:
             else:
                 cell.deposit = rng.randint(ROCK_SMALL_MIN, ROCK_SMALL_MAX)
 
-        # A few starter berry bushes on grass.
+        # Permanent berry bushes (fruit only in season; no natural spread).
         placed_bushes = 0
         attempts = 0
-        while placed_bushes < 8 and attempts < 200:
+        target_bushes = max(0, int(BERRY_INITIAL_COUNT))
+        while placed_bushes < target_bushes and attempts < 200:
             attempts += 1
             x = rng.randint(0, self.cols - 1)
             y = rng.randint(0, self.rows - 1)
             cell = self.cells[y][x]
             if cell.feature == FeatureType.NONE and cell.terrain == TerrainType.GRASS:
                 cell.feature = FeatureType.BERRY_BUSH
-                cell.deposit = BERRY_BUSH_YIELD
+                cell.deposit = 0
+                cell.growth_ticks = 0
                 placed_bushes += 1
 
         # Home near the centre-left so the starting area is clear.
@@ -1472,6 +1474,23 @@ class World:
             return None
         amount = cell.fish_deposit
         origin = reachable_from
+        reachable: set[tuple[int, int]] | None = None
+        if origin is not None:
+            # One flood-fill from the villager instead of BFS-per-candidate.
+            reachable = set()
+            ox, oy = origin
+            if self.is_walkable(ox, oy):
+                q: deque[tuple[int, int]] = deque([(ox, oy)])
+                reachable.add((ox, oy))
+                while q and len(reachable) < self.rows * self.cols + 8:
+                    cx, cy = q.popleft()
+                    for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+                        nx, ny = cx + dx, cy + dy
+                        nxt = (nx, ny)
+                        if nxt in reachable or not self.is_walkable(nx, ny):
+                            continue
+                        reachable.add(nxt)
+                        q.append(nxt)
         best: tuple[int, int] | None = None
         best_key: tuple[int, int, int] | None = None
         for radius in range(0, 12):
@@ -1482,7 +1501,7 @@ class World:
                     nx, ny = x + dx, y + dy
                     if not self.is_walkable(nx, ny):
                         continue
-                    if origin is not None and self.find_path(origin, (nx, ny)) is None:
+                    if reachable is not None and (nx, ny) not in reachable:
                         continue
                     size = self.land_component_size(nx, ny)
                     key = (-size, radius, abs(dx) + abs(dy))
@@ -1507,7 +1526,12 @@ class World:
         return path[0]
 
     def find_path(
-        self, start: tuple[int, int], goal: tuple[int, int]
+        self,
+        start: tuple[int, int],
+        goal: tuple[int, int],
+        *,
+        max_nodes: int | None = None,
+        max_len: int | None = None,
     ) -> list[tuple[int, int]] | None:
         """Shortest cardinal path from start→goal as cells after start (includes goal)."""
         if start == goal:
@@ -1517,11 +1541,19 @@ class World:
 
         sx, sy = start
         gx, gy = goal
+        # Default: search the whole land component. Tight caps reject valid river
+        # detours and turn every miss into a max-cost flood (worse + stuck workers).
+        node_cap = (
+            max_nodes
+            if max_nodes is not None
+            else self.rows * self.cols + 8
+        )
         queue: deque[tuple[int, int]] = deque([(sx, sy)])
         came_from: dict[tuple[int, int], tuple[int, int] | None] = {(sx, sy): None}
+        dist: dict[tuple[int, int], int] | None = {(sx, sy): 0} if max_len is not None else None
 
         found = False
-        while queue:
+        while queue and len(came_from) < node_cap:
             cx, cy = queue.popleft()
             if (cx, cy) == (gx, gy):
                 found = True
@@ -1539,6 +1571,11 @@ class World:
                     continue
                 if not self.is_walkable(nx, ny):
                     continue
+                if dist is not None:
+                    nd = dist[(cx, cy)] + 1
+                    if max_len is not None and nd > max_len:
+                        continue
+                    dist[(nx, ny)] = nd
                 came_from[(nx, ny)] = (cx, cy)
                 queue.append((nx, ny))
 
@@ -1584,7 +1621,8 @@ class World:
                 elif grow_step > 0 and cell.feature == FeatureType.BERRY_BUSH and cell.growth_ticks > 0:
                     cell.growth_ticks -= grow_step * ticks
                     if cell.growth_ticks <= 0 and cell.deposit <= 0:
-                        cell.deposit = BERRY_BUSH_YIELD
+                        if berry_fruiting(day, x, y):
+                            cell.deposit = BERRY_BUSH_YIELD
                         cell.growth_ticks = 0
                 elif cell.feature == FeatureType.CROP_HERB and cell.growth_ticks > 0:
                     # Farm crops follow the calendar (growth_days), not ecology
@@ -1623,7 +1661,7 @@ class World:
         if halt:
             _drain_timer("_mushroom_timer", MUSHROOM_TICK_INTERVAL, self._tick_mushrooms_seasonal)
             _drain_timer("_herb_timer", HERB_TICK_INTERVAL, self._tick_herbs_seasonal)
-            _drain_timer("_berry_spread_timer", BERRY_SPREAD_INTERVAL, self._tick_berries_seasonal)
+            _drain_timer("_berry_spread_timer", BERRY_SPREAD_INTERVAL, self._tick_berry_fruit)
             return
 
         spread = trees_spread_factor(day)
@@ -1639,7 +1677,7 @@ class World:
             self._sprout_timer = max(0, self._sprout_timer - ticks)
 
         _drain_timer("_mushroom_timer", MUSHROOM_TICK_INTERVAL, self._tick_mushrooms_seasonal)
-        _drain_timer("_berry_spread_timer", BERRY_SPREAD_INTERVAL, self._tick_berries_seasonal)
+        _drain_timer("_berry_spread_timer", BERRY_SPREAD_INTERVAL, self._tick_berry_fruit)
         _drain_timer("_herb_timer", HERB_TICK_INTERVAL, self._tick_herbs_seasonal)
 
     def _tick_herbs_seasonal(self, day: float) -> None:
@@ -1728,43 +1766,19 @@ class World:
             if self.plant_wild_crop(nx, ny, crop_key, wild_n=wild_n, total_n=total_n):
                 placed += 1
 
-    def _tick_berries_seasonal(self, day: float) -> None:
-        # Despawn existing bushes gradually.
-        bushes = [
-            (x, y)
-            for y in range(self.rows)
-            for x in range(self.cols)
-            if self.cells[y][x].feature == FeatureType.BERRY_BUSH
-        ]
-        for bx, by in bushes:
-            if self._forage_rng.random() < berry_despawn_rate(day, bx, by):
-                cell = self.cells[by][bx]
-                cell.feature = FeatureType.NONE
-                cell.deposit = 0
-                cell.growth_ticks = 0
-
-        wild, total = self._wild_plant_counts(TerrainType.GRASS)
-        limit = int(total * WILD_PLANT_MAX_FRACTION)
-        if total <= 0 or wild >= limit:
-            return
+    def _tick_berry_fruit(self, day: float) -> None:
+        """Refresh or clear berries on permanent bushes; never spawn/despawn bushes."""
         for y in range(self.rows):
             for x in range(self.cols):
-                if wild >= limit:
-                    return
                 cell = self.cells[y][x]
-                if (
-                    cell.feature == FeatureType.NONE
-                    and cell.terrain == TerrainType.GRASS
-                    and self._forage_rng.random()
-                    < berry_spawn_rate(day, x, y)
-                    * disturbance_activity_multiplier(
-                        effective_disturbance_at(self, x, y)
-                    )
-                ):
-                    cell.feature = FeatureType.BERRY_BUSH
-                    cell.deposit = BERRY_BUSH_YIELD
+                if cell.feature != FeatureType.BERRY_BUSH:
+                    continue
+                if berry_fruiting(day, x, y):
+                    if cell.deposit <= 0 and cell.growth_ticks <= 0:
+                        cell.deposit = BERRY_BUSH_YIELD
+                else:
+                    cell.deposit = 0
                     cell.growth_ticks = 0
-                    wild += 1
 
     def _tick_mushrooms_seasonal(self, day: float) -> None:
         # Winter: wipe immediately (also covers any leftovers mid-tick).
@@ -1938,7 +1952,8 @@ class World:
         if not self._wild_plant_room(TerrainType.GRASS):
             return False
         cell.feature = FeatureType.BERRY_BUSH
-        cell.deposit = BERRY_BUSH_YIELD
+        # Fruit appears only during berry season; the bush itself is permanent.
+        cell.deposit = 0
         cell.growth_ticks = 0
         return True
 

@@ -426,6 +426,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "migrate_home_id": a.migrate_home_id,
             "migrate_target": list(a.migrate_target) if a.migrate_target else None,
             "migrated_this_year": a.migrated_this_year,
+            "scare_from": list(a.scare_from) if a.scare_from else None,
+            "scare_steps": a.scare_steps,
         }
         for a in game.wildlife.animals
         if a.kind in (AnimalKind.DEER, AnimalKind.BOAR)
@@ -1094,6 +1096,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             sex = AnimalSex.MALE
         mt = a.get("migrate_target")
         migrate_target = (int(mt[0]), int(mt[1])) if mt else None
+        sf = a.get("scare_from")
+        scare_from = (int(sf[0]), int(sf[1])) if sf else None
         # New field migrate_home_id; older saves used migrate_patch_id as dest — drop.
         home_raw = a.get("migrate_home_id")
         if home_raw is None and a.get("patch_id") is None and a.get("migrate_patch_id") is not None:
@@ -1112,6 +1116,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                 migrate_home_id=int(home_raw) if home_raw is not None else None,
                 migrate_target=migrate_target,
                 migrated_this_year=bool(a.get("migrated_this_year", False)),
+                scare_from=scare_from,
+                scare_steps=int(a.get("scare_steps", 0)),
             )
         )
     game.wildlife.next_id = int(wild.get("next_id", 1))

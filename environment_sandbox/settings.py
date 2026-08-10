@@ -263,7 +263,7 @@ INDICATOR_RADIUS: int = 2
 # Resource yields, food effects, forage spawn rates: edit resource_balance.py
 
 VILLAGER_MOVE_INTERVAL: int = 48
-VILLAGER_WORK_INTERVAL: int = 72
+VILLAGER_WORK_INTERVAL: int = 144
 # Work actions (each spaced by villager work interval) to finish one mill/kitchen craft.
 PROCESSOR_RECIPE_STEPS: int = 3
 
