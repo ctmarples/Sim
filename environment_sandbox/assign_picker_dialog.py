@@ -29,17 +29,23 @@ from society import (
     housing_beds_of,
     housing_level_of,
     is_housing_kind,
+    skill_for_building,
     skills_used_by_building,
     villager_skill_level,
 )
 from villager_roster import SKILL_COL_W, draw_portrait, draw_skill_cell
 
 TITLE_BAR_H = 28
+FILTER_BAR_H = 30
 PAD = 10
 ROW_H = 44
 LIST_VIEW_H = 340
 SCROLL_STEP = 28
 SKILL_STRIP_W = SKILL_COL_W * len(SKILL_ORDER) + 8
+
+
+def _is_unassigned_worker(v: Villager) -> bool:
+    return not v.assigned_to_home and not v.building_id
 
 _BUILD_ICON: dict[BuildingKind, str] = {
     BuildingKind.HOME: "storehouse",
@@ -91,6 +97,8 @@ class AssignPickerDialog:
         self._content_h = 0
         self._title = "Assign"
         self.housing_only = False
+        self.unassigned_only = False
+        self._filter_rect = pygame.Rect(0, 0, 0, 0)
 
     @property
     def open(self) -> bool:
@@ -125,10 +133,12 @@ class AssignPickerDialog:
         self._scroll = 0
         self._moving = False
         self._pending_action = None
+        self.unassigned_only = False
         map_w = map_view_width()
         show_skills = self.mode == AssignPickerMode.VILLAGER
         self._panel.w = 560 if show_skills else 360
-        self._panel.h = TITLE_BAR_H + LIST_VIEW_H + PAD * 2
+        filter_h = FILTER_BAR_H if show_skills else 0
+        self._panel.h = TITLE_BAR_H + filter_h + LIST_VIEW_H + PAD * 2
         self._panel.center = (
             map_w // 2,
             MAP_OFFSET_Y + (WINDOW_HEIGHT - MAP_OFFSET_Y) // 2,
@@ -142,6 +152,7 @@ class AssignPickerDialog:
         self.target_building_id = None
         self.target_villager_id = None
         self.housing_only = False
+        self.unassigned_only = False
         self._pending_action = None
 
     def take_action(self) -> str | None:
@@ -171,6 +182,10 @@ class AssignPickerDialog:
             return False
         if self._close_rect.collidepoint(pos):
             self.close()
+            return True
+        if self._filter_rect.w > 0 and self._filter_rect.collidepoint(pos):
+            self.unassigned_only = not self.unassigned_only
+            self._scroll = 0
             return True
         if self._title_rect.collidepoint(pos):
             self._moving = True
@@ -246,18 +261,8 @@ class AssignPickerDialog:
             ),
         )
 
-        self._list_rect = pygame.Rect(
-            panel.x + PAD,
-            panel.y + TITLE_BAR_H + 4,
-            panel.w - PAD * 2,
-            panel.h - TITLE_BAR_H - PAD - 4,
-        )
-        pygame.draw.rect(surface, (38, 40, 46), self._list_rect, border_radius=4)
-        pygame.draw.rect(
-            surface, COLOUR_TOOLBAR_BORDER, self._list_rect, 1, border_radius=4
-        )
-
         highlight: frozenset = frozenset()
+        primary_skill = None
         if (
             self.mode == AssignPickerMode.VILLAGER
             and self.target_building_id is not None
@@ -265,11 +270,72 @@ class AssignPickerDialog:
             target_building = buildings.get(self.target_building_id)
             if target_building is not None:
                 highlight = skills_used_by_building(target_building)
+                kind_name = getattr(getattr(target_building, "kind", None), "name", "")
+                primary_skill, _ = skill_for_building(str(kind_name))
+
+        filter_h = 0
+        self._filter_rect = pygame.Rect(0, 0, 0, 0)
+        if self.mode == AssignPickerMode.VILLAGER:
+            filter_h = FILTER_BAR_H
+            label = "Unassigned only"
+            tw = self.font_small.size(label)[0]
+            self._filter_rect = pygame.Rect(
+                panel.x + PAD, panel.y + TITLE_BAR_H + 2, tw + 28, 24
+            )
+            filt_hov = mouse_pos is not None and self._filter_rect.collidepoint(mouse_pos)
+            if self.unassigned_only:
+                bg = (55, 95, 70) if not filt_hov else (65, 110, 80)
+            else:
+                bg = COLOUR_TOOLBAR_BTN_HOVER if filt_hov else COLOUR_TOOLBAR_BTN
+            pygame.draw.rect(surface, bg, self._filter_rect, border_radius=4)
+            pygame.draw.rect(
+                surface, COLOUR_TOOLBAR_BORDER, self._filter_rect, 1, border_radius=4
+            )
+            mark = "✓" if self.unassigned_only else "○"
+            surface.blit(
+                self.font_small.render(mark, True, COLOUR_TEXT),
+                (self._filter_rect.x + 6, self._filter_rect.y + 4),
+            )
+            surface.blit(
+                self.font_small.render(label, True, COLOUR_TEXT),
+                (self._filter_rect.x + 22, self._filter_rect.y + 4),
+            )
+
+        self._list_rect = pygame.Rect(
+            panel.x + PAD,
+            panel.y + TITLE_BAR_H + filter_h + 4,
+            panel.w - PAD * 2,
+            panel.h - TITLE_BAR_H - filter_h - PAD - 4,
+        )
+        pygame.draw.rect(surface, (38, 40, 46), self._list_rect, border_radius=4)
+        pygame.draw.rect(
+            surface, COLOUR_TOOLBAR_BORDER, self._list_rect, 1, border_radius=4
+        )
 
         self._row_hits = []
         rows: list[tuple[int, str, str, Any, Villager | None]] = []
         if self.mode == AssignPickerMode.VILLAGER:
+            villager_rows: list[Villager] = []
             for v in villagers:
+                if self.unassigned_only and not _is_unassigned_worker(v):
+                    continue
+                villager_rows.append(v)
+
+            def _skill_score(v: Villager) -> int:
+                if highlight:
+                    return max(villager_skill_level(v, sk) for sk in highlight)
+                if primary_skill is not None:
+                    return villager_skill_level(v, primary_skill)
+                return 0
+
+            villager_rows.sort(
+                key=lambda v: (
+                    -_skill_score(v),
+                    (v.name or "").lower(),
+                    v.id,
+                )
+            )
+            for v in villager_rows:
                 if callable(job_label):
                     job = str(job_label(v))
                 elif v.assigned_to_home:

@@ -215,6 +215,7 @@ from settings import (
     MAP_OFFSET_Y,
     map_view_height,
     map_view_width,
+    toggle_panel_collapsed,
 )
 from height_sample import (
     HeightSample,
@@ -1118,6 +1119,12 @@ class Game:
                     continue
                 if self._handle_player_hud_click(event.pos):
                     continue
+                if self.ui.hit_action(event.pos) == "toggle_panel":
+                    collapsed = toggle_panel_collapsed()
+                    self._set_status(
+                        "Sidebar hidden (Tab)." if collapsed else "Sidebar shown (Tab)."
+                    )
+                    continue
                 mx, my = event.pos
                 if mx >= map_view_width() and my >= MAP_OFFSET_Y:
                     if self._handle_panel_click(event.pos):
@@ -1497,6 +1504,11 @@ class Game:
             self._cycle_ticks_per_day(1)
         elif key == pygame.K_F6:
             self._toggle_autotile_diagnostic()
+        elif key == pygame.K_TAB:
+            collapsed = toggle_panel_collapsed()
+            self._set_status(
+                "Sidebar hidden (Tab)." if collapsed else "Sidebar shown (Tab)."
+            )
         # Arrows: continuous move via ``_update_player_move_input``.
         # WASD: continuous pan via ``_update_camera_input``.
 
@@ -2204,6 +2216,12 @@ class Game:
         if action == "assign_home":
             if self.selected_villager_id is not None:
                 self._assign_villager_to_home(self.selected_villager_id)
+            return True
+        if action == "toggle_panel":
+            collapsed = toggle_panel_collapsed()
+            self._set_status(
+                "Sidebar hidden (Tab)." if collapsed else "Sidebar shown (Tab)."
+            )
             return True
 
         hit = self.ui.hit_priority(pos)

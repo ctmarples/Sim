@@ -83,6 +83,7 @@ from settings import (
     COLOUR_WORKSTATION,
     MAP_OFFSET_Y,
     MAX_VILLAGERS,
+    PANEL_COLLAPSED,
     PANEL_WIDTH,
     TERRAIN_SUBDIV,
     WINDOW_HEIGHT,
@@ -134,6 +135,8 @@ class UI:
         # (rect, action_id, tooltip)
         self.action_hits: list[tuple[pygame.Rect, str, str]] = []
         self._tooltip: tuple[str, tuple[int, int]] | None = None
+        # Screen-space tab when the sidebar is collapsed (Tab / click to restore).
+        self.expand_tab_rect: pygame.Rect | None = None
 
     def _local_pos(self, pos: tuple[int, int]) -> tuple[int, int]:
         panel_x = map_view_width()
@@ -147,6 +150,8 @@ class UI:
         return None
 
     def hit_action(self, pos: tuple[int, int]) -> str | None:
+        if self.expand_tab_rect is not None and self.expand_tab_rect.collidepoint(pos):
+            return "toggle_panel"
         local = self._local_pos(pos)
         for rect, action, _tip in self.action_hits:
             if rect.collidepoint(local):
@@ -969,6 +974,36 @@ class UI:
         self.list_hits = []
         self.action_hits = []
         self._tooltip = None
+        self.expand_tab_rect = None
+
+        if PANEL_COLLAPSED:
+            # Slim restore tab on the right edge of the map.
+            tab = pygame.Rect(WINDOW_WIDTH - 22, MAP_OFFSET_Y + 8, 18, 52)
+            self.expand_tab_rect = tab
+            hovered = mouse_pos is not None and tab.collidepoint(mouse_pos)
+            colour = (70, 78, 92) if hovered else COLOUR_TOOLBAR_BTN
+            pygame.draw.rect(surface, colour, tab, border_top_left_radius=4, border_bottom_left_radius=4)
+            pygame.draw.rect(
+                surface,
+                COLOUR_TOOLBAR_BORDER,
+                tab,
+                1,
+                border_top_left_radius=4,
+                border_bottom_left_radius=4,
+            )
+            tip = self.font_icon.render("◀", True, COLOUR_TEXT)
+            surface.blit(
+                tip,
+                (
+                    tab.x + (tab.w - tip.get_width()) // 2,
+                    tab.y + (tab.h - tip.get_height()) // 2,
+                ),
+            )
+            if hovered:
+                self._tooltip = ("Show sidebar (Tab)", mouse_pos or tab.center)
+                self._draw_tooltip(surface, "Show sidebar (Tab)", mouse_pos or tab.center)
+            return
+
         content = self._ensure_content_surface(max(self.content_height, panel_h + 200))
         content.fill(COLOUR_PANEL_BG)
 
@@ -976,6 +1011,17 @@ class UI:
         if mouse_pos is not None:
             local_mouse = self._local_pos(mouse_pos)
 
+        # Collapse control at top of sidebar.
+        collapse = pygame.Rect(PANEL_WIDTH - 28, 6, 20, 20)
+        collapse_hov = local_mouse is not None and collapse.collidepoint(local_mouse)
+        self._draw_icon_button(
+            content, collapse, "▶", hovered=collapse_hov
+        )
+        self.action_hits.append(
+            (collapse, "toggle_panel", "Hide sidebar (Tab)")
+        )
+        if collapse_hov:
+            self._tooltip = ("Hide sidebar (Tab)", (collapse.centerx, collapse.bottom + 4))
         x = 10
         y = 8
 
@@ -1087,6 +1133,7 @@ class UI:
         if self._tooltip is not None and mouse_pos is not None:
             tip, _anchor = self._tooltip
             self._draw_tooltip(surface, tip, mouse_pos)
+
     def _draw_tooltip(
         self, surface: pygame.Surface, text: str, mouse_pos: tuple[int, int]
     ) -> None:

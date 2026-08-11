@@ -23,6 +23,7 @@ GRID_COLS: int = 24
 GRID_ROWS: int = 18
 CELL_SIZE: int = 40
 PANEL_WIDTH: int = 300
+PANEL_COLLAPSED: bool = False
 TOOLBAR_HEIGHT: int = 64
 RESOURCE_BAR_HEIGHT: int = 36
 MAP_OFFSET_Y: int = TOOLBAR_HEIGHT + RESOURCE_BAR_HEIGHT
@@ -63,57 +64,82 @@ MINIMAP_HEIGHT: int = 126
 
 
 def map_view_width() -> int:
-    return max(1, WINDOW_WIDTH - PANEL_WIDTH)
+    return max(1, WINDOW_WIDTH - effective_panel_width())
 
 
 def map_view_height() -> int:
     return max(1, WINDOW_HEIGHT - MAP_OFFSET_Y)
 
 
+def effective_panel_width() -> int:
+    """Sidebar width (0 when collapsed)."""
+    return 0 if PANEL_COLLAPSED else PANEL_WIDTH
+
+
+def set_panel_collapsed(collapsed: bool) -> None:
+    global PANEL_COLLAPSED
+    PANEL_COLLAPSED = bool(collapsed)
+
+
+def toggle_panel_collapsed() -> bool:
+    """Toggle the right sidebar. Returns the new collapsed state."""
+    set_panel_collapsed(not PANEL_COLLAPSED)
+    return PANEL_COLLAPSED
+
+
 def configure_for_display(screen_w: int, screen_h: int) -> None:
-    """Pick cell size and window so the map viewport + sidebar fit the display.
+    """Pick cell size and window so the map viewport + sidebar fill the display.
 
     World size stays at WORLD_COLS × WORLD_ROWS; only the viewport scales.
     """
     global GRID_COLS, GRID_ROWS, CELL_SIZE, WINDOW_WIDTH, WINDOW_HEIGHT
     global PANEL_WIDTH, TOOLBAR_HEIGHT, RESOURCE_BAR_HEIGHT, MAP_OFFSET_Y
+    global PANEL_COLLAPSED
 
+    PANEL_COLLAPSED = False
     PANEL_WIDTH = 300
     TOOLBAR_HEIGHT = 64
     RESOURCE_BAR_HEIGHT = 36
     MAP_OFFSET_Y = TOOLBAR_HEIGHT + RESOURCE_BAR_HEIGHT
-    usable_w = max(800, screen_w - 24)
-    usable_h = max(560, screen_h - 110 - MAP_OFFSET_Y)
+    # Tight margins: leave room for OS menu / title / dock without huge empty borders.
+    usable_w = max(800, int(screen_w) - 12)
+    usable_h = max(560, int(screen_h) - 72)
+
     map_w = max(400, usable_w - PANEL_WIDTH)
+    map_h = max(320, usable_h - MAP_OFFSET_Y)
 
-    base_cols = 20
-    base_rows = 15
-    for cell in range(48, 27, -1):
-        cols = map_w // cell
-        rows = usable_h // cell
-        if cols >= 20 and rows >= 15:
-            base_cols = cols
-            base_rows = rows
+    # Prefer a large cell that still shows a useful viewport (≥18×14 cells).
+    cell = 12
+    cols = 18
+    rows = 14
+    for candidate in range(48, 11, -1):
+        c = map_w // candidate
+        r = map_h // candidate
+        if c >= 18 and r >= 14:
+            cell = candidate
+            cols = c
+            rows = r
             break
-
-    cols = base_cols + 8
-    rows = base_rows + 8
-    cell = min(map_w // cols, usable_h // rows)
-    if cell < 14:
-        cols, rows = base_cols + 4, base_rows + 4
-        cell = max(12, min(map_w // cols, usable_h // rows))
-
-    while cell > 12 and (
-        cols * cell + PANEL_WIDTH > usable_w
-        or MAP_OFFSET_Y + rows * cell > usable_h + MAP_OFFSET_Y
-    ):
-        cell -= 1
+    else:
+        cell = max(12, min(map_w // 18, map_h // 14))
+        cols = max(16, map_w // cell)
+        rows = max(12, map_h // cell)
 
     GRID_COLS = cols
     GRID_ROWS = rows
     CELL_SIZE = cell
-    WINDOW_WIDTH = cols * cell + PANEL_WIDTH
-    WINDOW_HEIGHT = MAP_OFFSET_Y + rows * cell
+    # Fill the usable display; leftover pixels become a thin border inside the window.
+    WINDOW_WIDTH = min(usable_w, cols * cell + PANEL_WIDTH)
+    WINDOW_HEIGHT = min(usable_h, MAP_OFFSET_Y + rows * cell)
+    # If we still have spare room, grow the window to match the display usable area.
+    WINDOW_WIDTH = usable_w
+    WINDOW_HEIGHT = usable_h
+    # Recompute cell so the map tiles the available map area tightly.
+    map_w = WINDOW_WIDTH - PANEL_WIDTH
+    map_h = WINDOW_HEIGHT - MAP_OFFSET_Y
+    CELL_SIZE = max(12, min(48, min(map_w // max(16, cols), map_h // max(12, rows))))
+    GRID_COLS = max(16, map_w // CELL_SIZE)
+    GRID_ROWS = max(12, map_h // CELL_SIZE)
 
 
 # ---------------------------------------------------------------------------
