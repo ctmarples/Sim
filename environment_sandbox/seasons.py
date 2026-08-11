@@ -264,7 +264,18 @@ def water_frozen(day: float) -> bool:
 
 
 def fishing_allowed(day: float) -> bool:
-    return freeze_amount(day) < 0.45
+    """Rivers stay open year-round; fishing is never season-locked.
+
+    Lake ice is visual only — breeding is gated separately via
+    ``fish_breeding_allowed``.
+    """
+    del day
+    return True
+
+
+def fish_breeding_allowed(day: float) -> bool:
+    """Fish populations grow in spring and summer only."""
+    return season_for_day(int(day)) in (Season.SPRING, Season.SUMMER)
 
 
 def animals_slow(day: float) -> bool:

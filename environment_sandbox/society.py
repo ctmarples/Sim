@@ -263,6 +263,26 @@ def skill_for_building(kind_name: str) -> tuple[SkillType, int]:
     return JOB_SKILL_REQUIREMENTS.get(kind_name, (SkillType.LABOUR, 1))
 
 
+def skills_used_by_building(building) -> frozenset[SkillType]:
+    """Skills relevant to a workplace: job skill plus any recipe skill gates."""
+    skills: set[SkillType] = set()
+    kind_name = getattr(getattr(building, "kind", None), "name", None) or ""
+    primary, _ = skill_for_building(str(kind_name))
+    skills.add(primary)
+    for getter in ("known_recipes", "split_recipes", "plant_recipes"):
+        fn = getattr(building, getter, None)
+        if not callable(fn):
+            continue
+        try:
+            recipes = fn() or ()
+        except Exception:
+            continue
+        for recipe in recipes:
+            for sk, _need in getattr(recipe, "skill_reqs", ()) or ():
+                skills.add(sk)
+    return frozenset(skills)
+
+
 def villager_meets_skill(villager: Villager, kind_name: str) -> bool:
     """Deprecated for assignment — always True. Kept for callers/tests."""
     return True

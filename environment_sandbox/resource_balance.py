@@ -27,6 +27,7 @@ VILLAGER_SATIATION_SECONDS: float = 180.0
 VILLAGER_SATIATION_DECAY_PER_TICK: float = 1.0 / (FPS * VILLAGER_SATIATION_SECONDS)
 
 # Prefer these HomeStorage / inventory food keys when eating.
+# Kitchen craft outputs are appended via ``register_food`` when recipes.csv loads.
 VILLAGER_FOOD_KEYS: list[str] = [
     "berries",
     "mushrooms",
@@ -37,13 +38,6 @@ VILLAGER_FOOD_KEYS: list[str] = [
     "cabbage",
     "carrot",
     "garlic",
-    "bread",
-    "stew",
-    "fish_stew",
-    "mushroom_stew",
-    "spiced_stew",
-    "grilled_meat",
-    "grilled_fish",
 ]
 
 # 5 meal-points ≈ one full stew-sized meal.
@@ -64,6 +58,7 @@ class FoodDef:
     hunger_rate: float = 1.0
 
 
+# Raw / foraged foods only. Kitchen craft foods: ``recipes_data/kitchen/recipes.csv``.
 FOODS: list[FoodDef] = [
     FoodDef("berries", satiation=1.0),
     FoodDef("mushrooms", satiation=1.0),
@@ -75,27 +70,6 @@ FOODS: list[FoodDef] = [
     # 3 meat ≈ 1 stew → 5/3 points each. Raw: mild speed/work penalty.
     FoodDef("meat", satiation=MEAL_POINTS_FULL / 3.0, walk_speed=0.8, work_efficiency=0.8),
     FoodDef("fish", satiation=MEAL_POINTS_FULL / 3.0, walk_speed=0.8, work_efficiency=0.8),
-    FoodDef("grilled_meat", satiation=MEAL_POINTS_FULL / 3.0),
-    FoodDef("grilled_fish", satiation=MEAL_POINTS_FULL / 3.0),
-    FoodDef("grilled_mushrooms", satiation=1.5),
-    # Bread: solid meal, halves hunger until next meal.
-    FoodDef("bread", satiation=2.5, hunger_rate=0.5),
-    # Stew: full meal, doubles walk + work.
-    FoodDef("stew", satiation=MEAL_POINTS_FULL, walk_speed=2.0, work_efficiency=2.0),
-
-    FoodDef(
-        "fish_stew",
-        satiation=MEAL_POINTS_FULL,
-        walk_speed=2.0,
-        work_efficiency=2.0,
-    ),
-    FoodDef("mushroom_stew", satiation=MEAL_POINTS_FULL, walk_speed=1.5, work_efficiency=1.5),
-    FoodDef(
-        "spiced_stew",
-        satiation=MEAL_POINTS_FULL,
-        walk_speed=1.75,
-        work_efficiency=1.75,
-    ),
 ]
 
 FOOD_BY_KEY: dict[str, FoodDef] = {f.key: f for f in FOODS}

@@ -1526,19 +1526,18 @@ class Building:
         return self.is_recipe_enabled(key)
 
     def ensure_recipe_state(self) -> None:
-        # New buildings (empty map) enable all recipes. Existing benches keep their
-        # toggles — newly added recipe names default off so they don't hijack work.
-        default_enabled = not bool(self.recipe_enabled)
+        # Preserve existing toggles; newly added recipe names default on so they
+        # show up and can craft (disable manually if unwanted).
         for recipe in self.known_recipes():
-            self.recipe_enabled.setdefault(recipe.name, default_enabled)
+            self.recipe_enabled.setdefault(recipe.name, True)
             self.recipe_progress.setdefault(recipe.name, 0)
             self.recipe_priority.setdefault(recipe.name, RECIPE_PRIORITY_DEFAULT)
         for recipe in self.split_recipes():
-            self.recipe_enabled.setdefault(recipe.name, default_enabled)
+            self.recipe_enabled.setdefault(recipe.name, True)
             self.recipe_progress.setdefault(recipe.name, 0)
             self.recipe_priority.setdefault(recipe.name, RECIPE_PRIORITY_DEFAULT)
         for recipe in self.plant_recipes():
-            self.recipe_enabled.setdefault(recipe.name, default_enabled)
+            self.recipe_enabled.setdefault(recipe.name, True)
             self.recipe_progress.setdefault(recipe.name, 0)
             self.recipe_priority.setdefault(recipe.name, RECIPE_PRIORITY_DEFAULT)
 
@@ -1896,7 +1895,12 @@ class Building:
         return int(cap) if cap is not None else None
 
     def max_item_cap(self, key: str) -> int:
-        """Upper bound when setting a cap (pool size for this key)."""
+        """Upper bound when setting a cap.
+
+        Local trays (fuel / seeds / processor inputs) stay pool-sized.
+        Output / gather Max is village-wide, so the ceiling is high.
+        """
+        production_ceiling = 9999
         if self.kind == BuildingKind.KITCHEN and key == KITCHEN_FUEL_KEY:
             return max(1, self.fuel_capacity)
         if self.is_seed_storage_key(key):
@@ -1905,9 +1909,9 @@ class Building:
             if key in self.processor_input_keys():
                 return max(1, self.input_capacity)
             if key in self.processor_output_keys():
-                return max(1, self.output_capacity)
-            return 1
-        return max(1, self.capacity)
+                return production_ceiling
+            return production_ceiling
+        return production_ceiling
 
     def set_item_cap(self, key: str, cap: int | None) -> None:
         """Set or clear a per-item stock limit. ``None`` / <=0 clears."""
@@ -1997,6 +2001,7 @@ class Building:
         worker_skill_level: int | None = None,
         prefer_name: str | None = None,
         avoid_names: set[str] | frozenset[str] | None = None,
+        stock_amounts: dict[str, int] | None = None,
     ) -> Recipe | None:
         """Pick an enabled recipe that can run now.
 
@@ -2007,6 +2012,7 @@ class Building:
         ``prefer_name`` continues a worker's sticky order when still ready.
         ``avoid_names`` steers co-workers onto other ready recipes when possible
         so two cooks can progress stew and jam at the same time.
+        ``stock_amounts`` (village-wide) is used for Max production caps.
 
         ``worker`` gates recipes by ``Recipe.skill_reqs`` when set.
         ``worker_skill_level`` is a legacy single-level fallback.
@@ -2036,9 +2042,15 @@ class Building:
                     recipe,
                     output_capacity=self.output_capacity,
                     output_keys=self.processor_output_keys(),
+                    stock_amounts=stock_amounts,
                 )
             else:
-                fits = recipe_output_fits(self, recipe, capacity=self.capacity)
+                fits = recipe_output_fits(
+                    self,
+                    recipe,
+                    capacity=self.capacity,
+                    stock_amounts=stock_amounts,
+                )
             if not fits:
                 continue
             candidates.append(recipe)
@@ -2087,6 +2099,7 @@ class Building:
         *,
         worker=None,
         worker_skill_level: int | None = None,
+        stock_amounts: dict[str, int] | None = None,
     ) -> Recipe | None:
         from society import recipe_skill_gate
 
@@ -2102,7 +2115,9 @@ class Building:
         )
         if not recipes:
             return None
-        return can_craft(self, recipes, capacity=self.capacity)
+        return can_craft(
+            self, recipes, capacity=self.capacity, stock_amounts=stock_amounts
+        )
 
     def advance_recipe_progress(self, recipe: Recipe, *, split: bool = False) -> bool:
         """Advance one work step. Returns True when the craft completes.

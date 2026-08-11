@@ -24,14 +24,22 @@ from settings import (
     WINDOW_WIDTH,
     map_view_width,
 )
-from society import housing_beds_of, housing_level_of, is_housing_kind
-from villager_roster import draw_portrait
+from society import (
+    SKILL_ORDER,
+    housing_beds_of,
+    housing_level_of,
+    is_housing_kind,
+    skills_used_by_building,
+    villager_skill_level,
+)
+from villager_roster import SKILL_COL_W, draw_portrait, draw_skill_cell
 
 TITLE_BAR_H = 28
 PAD = 10
-ROW_H = 36
-LIST_VIEW_H = 320
+ROW_H = 44
+LIST_VIEW_H = 340
 SCROLL_STEP = 28
+SKILL_STRIP_W = SKILL_COL_W * len(SKILL_ORDER) + 8
 
 _BUILD_ICON: dict[BuildingKind, str] = {
     BuildingKind.HOME: "storehouse",
@@ -65,12 +73,13 @@ class AssignPickerDialog:
     def __init__(self) -> None:
         self.font = pygame.font.SysFont("menlo", 14)
         self.font_small = pygame.font.SysFont("menlo", 12)
+        self.font_tiny = pygame.font.SysFont("menlo", 10, bold=True)
         self.font_title = pygame.font.SysFont("menlo", 15, bold=True)
         self.mode: AssignPickerMode | None = None
         self.target_building_id: int | None = None
         self.target_villager_id: int | None = None
         self._open = False
-        self._panel = pygame.Rect(0, 0, 340, TITLE_BAR_H + LIST_VIEW_H + PAD * 2)
+        self._panel = pygame.Rect(0, 0, 520, TITLE_BAR_H + LIST_VIEW_H + PAD * 2)
         self._scroll = 0
         self._moving = False
         self._move_offset = (0, 0)
@@ -117,9 +126,13 @@ class AssignPickerDialog:
         self._moving = False
         self._pending_action = None
         map_w = map_view_width()
-        self._panel.w = 360
+        show_skills = self.mode == AssignPickerMode.VILLAGER
+        self._panel.w = 560 if show_skills else 360
         self._panel.h = TITLE_BAR_H + LIST_VIEW_H + PAD * 2
-        self._panel.center = (map_w // 2, MAP_OFFSET_Y + (WINDOW_HEIGHT - MAP_OFFSET_Y) // 2)
+        self._panel.center = (
+            map_w // 2,
+            MAP_OFFSET_Y + (WINDOW_HEIGHT - MAP_OFFSET_Y) // 2,
+        )
         self._clamp()
 
     def close(self) -> None:
@@ -244,8 +257,17 @@ class AssignPickerDialog:
             surface, COLOUR_TOOLBAR_BORDER, self._list_rect, 1, border_radius=4
         )
 
+        highlight: frozenset = frozenset()
+        if (
+            self.mode == AssignPickerMode.VILLAGER
+            and self.target_building_id is not None
+        ):
+            target_building = buildings.get(self.target_building_id)
+            if target_building is not None:
+                highlight = skills_used_by_building(target_building)
+
         self._row_hits = []
-        rows: list[tuple[int, str, str, Any]] = []
+        rows: list[tuple[int, str, str, Any, Villager | None]] = []
         if self.mode == AssignPickerMode.VILLAGER:
             for v in villagers:
                 if callable(job_label):
@@ -257,7 +279,7 @@ class AssignPickerDialog:
                 else:
                     job = "free"
                 name = v.name or f"Villager #{v.id}"
-                rows.append((v.id, name, job, ("villager", v.portrait_seed)))
+                rows.append((v.id, name, job, ("villager", v.portrait_seed), v))
         else:
             for b in buildings.values():
                 if b.kind == BuildingKind.FIELD:
@@ -269,15 +291,13 @@ class AssignPickerDialog:
                         continue
                     beds = housing_beds_of(b.kind)
                     used = sum(
-                        1
-                        for v in villagers
-                        if v.housed and v.housing_id == b.id
+                        1 for v in villagers if v.housed and v.housing_id == b.id
                     )
                     lvl = housing_level_of(b.kind)
                     label = f"{BUILDING_LABELS[b.kind]} #{b.id}"
                     sub = f"{used}/{beds} beds · lvl {lvl}"
                     icon = _BUILD_ICON.get(b.kind, "construction_site")
-                    rows.append((b.id, label, sub, ("building", icon)))
+                    rows.append((b.id, label, sub, ("building", icon), None))
                     continue
                 if is_housing_kind(b.kind):
                     continue
@@ -289,7 +309,7 @@ class AssignPickerDialog:
                     workers = sum(1 for v in villagers if v.building_id == b.id)
                     sub = f"{workers} worker(s)"
                 icon = _BUILD_ICON.get(b.kind, "construction_site")
-                rows.append((b.id, label, sub, ("building", icon)))
+                rows.append((b.id, label, sub, ("building", icon), None))
 
         self._content_h = len(rows) * (ROW_H + 2)
         max_scroll = max(0, self._content_h - self._list_rect.h)
@@ -298,7 +318,7 @@ class AssignPickerDialog:
         old = surface.get_clip()
         surface.set_clip(self._list_rect)
         y = self._list_rect.y + 4 - self._scroll
-        for item_id, title, subtitle, visual in rows:
+        for item_id, title, subtitle, visual, villager in rows:
             row = pygame.Rect(
                 self._list_rect.x + 4, y, self._list_rect.w - 8, ROW_H
             )
@@ -310,13 +330,37 @@ class AssignPickerDialog:
                 draw_portrait(surface, row.x + 16, row.centery, int(data), size=22)
             else:
                 blit_icon(surface, str(data), row.x + 16, row.centery, 24)
-            surface.blit(
-                self.font_small.render(title, True, COLOUR_TEXT),
-                (row.x + 36, row.y + 4),
-            )
+            text_right = row.right - 4
+            if villager is not None:
+                text_right = row.right - SKILL_STRIP_W - 4
+                sx = row.right - SKILL_STRIP_W
+                sy = row.y + 4
+                for sk in SKILL_ORDER:
+                    lvl = villager_skill_level(villager, sk)
+                    draw_skill_cell(
+                        surface,
+                        sx,
+                        sy,
+                        sk,
+                        lvl,
+                        self.font_tiny,
+                        icon_size=12,
+                        col_w=SKILL_COL_W,
+                        highlighted=sk in highlight,
+                    )
+                    sx += SKILL_COL_W
+            # Truncate name if it would run into skills.
+            name_surf = self.font_small.render(title, True, COLOUR_TEXT)
+            max_name_w = max(40, text_right - (row.x + 36))
+            if name_surf.get_width() > max_name_w:
+                # Simple trim with ellipsis.
+                while title and self.font_small.size(title + "…")[0] > max_name_w:
+                    title = title[:-1]
+                name_surf = self.font_small.render(title + "…", True, COLOUR_TEXT)
+            surface.blit(name_surf, (row.x + 36, row.y + 4))
             surface.blit(
                 self.font_small.render(subtitle, True, COLOUR_TEXT_DIM),
-                (row.x + 36, row.y + 18),
+                (row.x + 36, row.y + 20),
             )
             self._row_hits.append((row, item_id))
             y += ROW_H + 2

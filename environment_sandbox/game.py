@@ -3,9 +3,10 @@
 Player presses Enter/E on their cell (needs equipped tools for chop/hunt/fish).
 F eats the highlighted inventory food (select or hover); right-click food also eats.
 Q equips/unequips tools; I opens inventory (drag tools to equip). On a stocked
-construction site, E builds. Opening a workplace via E shows Craft on recipes.
-Movement/work use villager satiation pacing. Toolbar handles build, tasks, speed,
-and File save/load. Esc clears selection / menus (does not quit).
+construction site, E builds (pads or centre). Arrow keys move the player; WASD
+pans the camera — both work at the same time. Opening a workplace via E shows
+Craft on recipes. Movement/work use villager satiation pacing. Toolbar handles
+build, tasks, speed, and File save/load. Esc clears selection / menus (does not quit).
 """
 
 from __future__ import annotations
@@ -463,6 +464,7 @@ class Game:
         self.player_craft_building_id: int | None = None
         self.player_craft_recipe: str | None = None
         self.player_craft_split: bool = False
+        self.player_build_site_id: int | None = None
         self.camera.center_on(self.player.x, self.player.y, self.world.cols, self.world.rows)
         self.home_storage = HomeStorage()
         self.regional_wealth: int = 0
@@ -486,6 +488,7 @@ class Game:
         self.calendar_day = 0
         self.day_tick = self.ticks_per_day
         self._pending_file_action: str | None = None
+        self._last_save_path = None  # Path | None — last successful save/load
 
         # Selection / drawing
         self.selected_building_id: int | None = None
@@ -620,6 +623,7 @@ class Game:
         path = self._most_recent_save_path()
         if path is not None:
             load_from_path(self, str(path))
+            self._last_save_path = path
             self.status_message = f"Loaded {path.name}"
             self.status_timer = STATUS_MESSAGE_FRAMES
             return
@@ -766,6 +770,9 @@ class Game:
             dt = self.clock.get_time() / 1000.0
             self._handle_events()
             self._sync_camera_height_overscan()
+            # Arrows move the player; WASD pans — run both so neither cancels the other.
+            # Pan after move so edge-follow does not undo an active WASD pan.
+            self._update_player_move_input(dt)
             self._update_camera_input(dt)
             self.camera.update(dt, self.world.cols, self.world.rows)
             if self.sim_speed > 0:
@@ -776,11 +783,8 @@ class Game:
             self.clock.tick(FPS)
         pygame.quit()
 
-    def _update_camera_input(self, dt: float) -> None:
-        """Continuous WASD panning (smooth, not cell-stepped)."""
-        if self.headless:
-            return
-        if (
+    def _dialogs_block_world_input(self) -> bool:
+        return (
             self.file_dialog.open
             or self.number_input.open
             or self.field_plan_dialog.open
@@ -792,7 +796,43 @@ class Game:
             or self.habitat_inspect.open
             or self.player_inventory.open
             or self.assign_picker.open
-        ):
+            or self.management.open
+            or self.villager_roster.open
+        )
+
+    def _update_player_move_input(self, dt: float) -> None:
+        """Continuous arrow-key player movement (WASD is camera pan only)."""
+        del dt
+        if self.headless or self._dialogs_block_world_input():
+            return
+        mods = pygame.key.get_mods()
+        if mods & (pygame.KMOD_META | pygame.KMOD_CTRL | pygame.KMOD_ALT):
+            return
+        keys = pygame.key.get_pressed()
+        dx = int(keys[pygame.K_RIGHT]) - int(keys[pygame.K_LEFT])
+        dy = int(keys[pygame.K_DOWN]) - int(keys[pygame.K_UP])
+        if not dx and not dy:
+            return
+        # While WASD is panning, skip edge-follow so pan and walk can coexist.
+        panning = bool(
+            keys[pygame.K_w] or keys[pygame.K_a] or keys[pygame.K_s] or keys[pygame.K_d]
+        )
+        if dx and dy:
+            if self.world.is_walkable(self.player.x + dx, self.player.y + dy):
+                self._try_move(dx, dy, follow_camera=not panning)
+            elif self.world.is_walkable(self.player.x + dx, self.player.y):
+                self._try_move(dx, 0, follow_camera=not panning)
+            elif self.world.is_walkable(self.player.x, self.player.y + dy):
+                self._try_move(0, dy, follow_camera=not panning)
+        else:
+            self._try_move(dx, dy, follow_camera=not panning)
+
+    def _update_camera_input(self, dt: float) -> None:
+        """Continuous WASD camera panning (arrows move the player separately)."""
+        if self.headless or self._dialogs_block_world_input():
+            return
+        mods = pygame.key.get_mods()
+        if mods & (pygame.KMOD_META | pygame.KMOD_CTRL | pygame.KMOD_ALT):
             return
         keys = pygame.key.get_pressed()
         dx = float(keys[pygame.K_d]) - float(keys[pygame.K_a])
@@ -811,6 +851,7 @@ class Game:
         self.habitat_inspect.close()
         self.player_inventory.close()
         self._clear_player_craft()
+        self._clear_player_build()
         self.drawing = False
         self.draw_start = None
         self.draw_current = None
@@ -867,11 +908,37 @@ class Game:
 
     def _village_stock_amounts(self) -> dict[str, int]:
         """Storehouse + building storage totals (same scope as resource bar Total)."""
-        from resources import amounts_from_obj, merge_amounts
+        from recipes import PROCESSED_KEYS
+        from resources import RESOURCE_KEYS, amounts_from_obj, merge_amounts
 
         parts = [amounts_from_obj(self.home_storage)]
         parts.extend(amounts_from_obj(b) for b in self.buildings.values())
-        return merge_amounts(*parts)
+        totals = merge_amounts(*parts)
+        # Recipe outputs registered after RESOURCES init must still count.
+        for key in PROCESSED_KEYS:
+            if key in RESOURCE_KEYS:
+                continue
+            totals[key] = int(getattr(self.home_storage, key, 0)) + sum(
+                int(getattr(b, key, 0)) for b in self.buildings.values()
+            )
+        return totals
+
+    def _under_production_max(self, building: Building, key: str) -> bool:
+        """True when village stock is still below this building's Max for ``key``."""
+        cap = building.item_cap(key)
+        if cap is None:
+            return True
+        return int(self._village_stock_amounts().get(key, 0)) < int(cap)
+
+    def _craftable_recipe(self, building: Building, **kwargs):
+        """``Building.craftable_recipe`` with village-wide Max stock enforcement."""
+        kwargs.setdefault("stock_amounts", self._village_stock_amounts())
+        return building.craftable_recipe(**kwargs)
+
+    def _craftable_split_recipe(self, building: Building, **kwargs):
+        """``Building.craftable_split_recipe`` with village-wide Max enforcement."""
+        kwargs.setdefault("stock_amounts", self._village_stock_amounts())
+        return building.craftable_split_recipe(**kwargs)
 
     def _apply_recipe_tracked(
         self, storage: object, recipe, *, fuel_wood: int = 0
@@ -905,6 +972,13 @@ class Game:
                 self._apply_roster_action()
                 continue
             elif event.type == pygame.KEYDOWN:
+                # Cmd+S / Ctrl+S quick-save (before dialogs swallow the key).
+                if event.key == pygame.K_s and (
+                    event.mod & (pygame.KMOD_META | pygame.KMOD_CTRL)
+                ):
+                    if not self.file_dialog.open and not self.number_input.open:
+                        self._quick_save()
+                    continue
                 if self.number_input.open:
                     self.number_input.handle_keydown(event)
                     self._finish_number_input_if_needed()
@@ -1255,18 +1329,40 @@ class Game:
         if action == "save":
             try:
                 save_to_path(self, path)
+                self._last_save_path = path
                 self._set_status(f"Saved to {path.name}")
             except Exception as exc:
                 self._set_status(f"Save failed: {exc}")
         elif action == "load":
             try:
                 load_from_path(self, path)
+                self._last_save_path = path
                 self._invalidate_forage_index()
                 self._minimap_terrain = None
                 self._minimap_terrain_key = None
                 self._set_status(f"Loaded {path.name} (speed x{self.sim_speed})")
             except Exception as exc:
                 self._set_status(f"Load failed: {exc}")
+
+    def _quick_save(self) -> None:
+        """Overwrite the last save path, else newest save, else quicksave.json."""
+        from pathlib import Path
+
+        from save_load import save_to_path, saves_dir
+
+        path = self._last_save_path
+        if path is None or not Path(path).parent.is_dir():
+            path = self._most_recent_save_path()
+        if path is None:
+            path = saves_dir() / "quicksave.json"
+        else:
+            path = Path(path)
+        try:
+            save_to_path(self, path)
+            self._last_save_path = path
+            self._set_status(f"Quick-saved to {path.name}")
+        except Exception as exc:
+            self._set_status(f"Save failed: {exc}")
 
     def _on_keydown(self, key: int) -> None:
         if key == pygame.K_ESCAPE:
@@ -1401,14 +1497,8 @@ class Game:
             self._cycle_ticks_per_day(1)
         elif key == pygame.K_F6:
             self._toggle_autotile_diagnostic()
-        elif key == pygame.K_UP:
-            self._try_move(0, -1)
-        elif key == pygame.K_DOWN:
-            self._try_move(0, 1)
-        elif key == pygame.K_LEFT:
-            self._try_move(-1, 0)
-        elif key == pygame.K_RIGHT:
-            self._try_move(1, 0)
+        # Arrows: continuous move via ``_update_player_move_input``.
+        # WASD: continuous pan via ``_update_camera_input``.
 
     def _selected_building(self) -> Building | None:
         if self.selected_building_id is None:
@@ -4106,6 +4196,12 @@ class Game:
             if group in ("food", "wares", "agriculture"):
                 self.building_inspect.market_supply_group = group
             return
+        if action.startswith("recipe_category:"):
+            raw = action.split(":", 1)[1]
+            self.building_inspect.recipe_category_tab = raw or None
+            # Reset scroll so switching tabs doesn't leave a blank view.
+            self.building_inspect._scroll.pop("craft_recipes", None)
+            return
         if action.startswith("toggle_market_supply_key:"):
             building = self._inspect_building()
             if building is None or not building.is_market():
@@ -4711,7 +4807,7 @@ class Game:
             f"{TASK_LABELS.get(task, 'work')} zones. Toggle off when done."
         )
 
-    def _try_move(self, dx: int, dy: int) -> None:
+    def _try_move(self, dx: int, dy: int, *, follow_camera: bool = True) -> None:
         if self.sim_speed <= 0:
             self._set_status("Unpause (Space) to move.")
             return
@@ -4726,7 +4822,8 @@ class Game:
         self.player.move_cooldown = interval
         arm_cell_step_visual(self.player, interval)
         self.player.energy = max(0.0, self.player.energy - ENERGY_MOVE_DRAIN)
-        self._ensure_player_in_view()
+        if follow_camera:
+            self._ensure_player_in_view()
 
     def _ensure_player_in_view(self, *, margin: float = 2.5) -> None:
         """Pan the camera when the player reaches the edge of the viewport."""
@@ -4912,6 +5009,16 @@ class Game:
                 self._select_building(building, show_player=True, detail_only=True)
             return
 
+        # Construction pads / centre glyph — deposit & build before other interacts.
+        site = self._construction_at(x, y)
+        if site is not None and (
+            cell.feature
+            in (FeatureType.CONSTRUCTION_SITE, FeatureType.STRUCTURE_PAD)
+            or site.contains_plot(x, y)
+        ):
+            self._player_work_construction(site)
+            return
+
         if cell.feature in (
             FeatureType.FORESTER,
             FeatureType.MASON,
@@ -4976,7 +5083,7 @@ class Game:
         catch = self._adjacent_fish(x, y)
         if catch is not None:
             if not fishing_allowed(self.calendar_day):
-                self._set_status("Water is frozen — no fishing in winter.")
+                self._set_status("Cannot fish right now.")
                 return
             self._player_fish(catch)
             return
@@ -4985,69 +5092,6 @@ class Game:
         villager = self._villager_at(x, y) or self._adjacent_villager(x, y)
         if villager is not None:
             self._open_villager_inspect(villager, show_player=True, detail_only=True)
-            return
-
-        if cell.feature == FeatureType.CONSTRUCTION_SITE:
-            site = self._construction_at(x, y)
-            if site is None:
-                self._set_status("Broken construction site.")
-                return
-            delivered = False
-            while site.wood_needed > 0 and self.player.inventory.wood > 0:
-                self.player.inventory.wood -= 1
-                site.have_wood += 1
-                self.record_consumed("wood", 1)
-                delivered = True
-            while site.logs_needed > 0 and self.player.inventory.logs > 0:
-                self.player.inventory.logs -= 1
-                site.have_logs += 1
-                self.record_consumed("logs", 1)
-                delivered = True
-            while site.hardwood_needed > 0 and self.player.inventory.hardwood_logs > 0:
-                self.player.inventory.hardwood_logs -= 1
-                site.have_hardwood += 1
-                self.record_consumed("hardwood_logs", 1)
-                delivered = True
-            while site.rock_needed > 0 and self.player.inventory.rock > 0:
-                self.player.inventory.rock -= 1
-                site.have_rock += 1
-                self.record_consumed("rock", 1)
-                delivered = True
-            if delivered:
-                self._finish_player_work()
-                self._set_status(
-                    f"Delivered to site. Now {site.have_wood}/{site.need_wood} wood "
-                    f"{site.have_logs}/{site.need_logs} logs "
-                    f"{site.have_hardwood}/{site.need_hardwood} hwood "
-                    f"{site.have_rock}/{site.need_rock} rock."
-                )
-                return
-            if site.materials_ready and not site.is_complete:
-                site.build_progress += 1
-                self._finish_player_work()
-                if site.is_complete:
-                    label = BUILDING_LABELS[site.kind]
-                    self._complete_construction(site)
-                    self._set_status(f"Finished {label}.")
-                else:
-                    pct = int(
-                        100
-                        * site.build_progress
-                        / max(1, site.build_required_ticks())
-                    )
-                    self._set_status(
-                        f"Building {BUILDING_LABELS[site.kind]}… {pct}% "
-                        f"({site.build_progress}/{site.build_required_ticks()})."
-                    )
-                return
-            self._set_status(
-                f"{BUILDING_LABELS[site.kind]} site: "
-                f"{site.have_wood}/{site.need_wood} wood "
-                f"{site.have_logs}/{site.need_logs} logs "
-                f"{site.have_hardwood}/{site.need_hardwood} hwood "
-                f"{site.have_rock}/{site.need_rock} rock"
-                + (" — need materials" if not site.materials_ready else "")
-            )
             return
 
         if cell.feature == FeatureType.MUSHROOM:
@@ -6458,7 +6502,7 @@ class Game:
         """One split work tick at the forester. Returns True if work was done."""
         if not villager.inventory.has_equipped_tool("axe"):
             return False
-        recipe = building.craftable_split_recipe(worker=villager)
+        recipe = self._craftable_split_recipe(building, worker=villager)
         if recipe is None or villager.work_cooldown > 0:
             return False
         self._spend_work_energy(villager)
@@ -7113,6 +7157,112 @@ class Game:
         self.player.energy = max(0.0, self.player.energy - ENERGY_WORK_DRAIN)
         self.player.work_cooldown = self._player_work_interval()
 
+    def _clear_player_build(self) -> None:
+        self.player_build_site_id = None
+
+    def _player_work_construction(self, site: ConstructionSite) -> None:
+        """Deposit materials and/or start continuous building on a construction site."""
+        if site.is_complete:
+            self._clear_player_build()
+            return
+        if self.player.work_cooldown > 0 and self.player_build_site_id != site.id:
+            self._set_status("Still working…")
+            return
+
+        delivered = False
+        while site.wood_needed > 0 and self.player.inventory.wood > 0:
+            self.player.inventory.wood -= 1
+            site.have_wood += 1
+            self.record_consumed("wood", 1)
+            delivered = True
+        while site.logs_needed > 0 and self.player.inventory.logs > 0:
+            self.player.inventory.logs -= 1
+            site.have_logs += 1
+            self.record_consumed("logs", 1)
+            delivered = True
+        while site.hardwood_needed > 0 and self.player.inventory.hardwood_logs > 0:
+            self.player.inventory.hardwood_logs -= 1
+            site.have_hardwood += 1
+            self.record_consumed("hardwood_logs", 1)
+            delivered = True
+        while site.rock_needed > 0 and self.player.inventory.rock > 0:
+            self.player.inventory.rock -= 1
+            site.have_rock += 1
+            self.record_consumed("rock", 1)
+            delivered = True
+        if delivered:
+            self._finish_player_work()
+            self._set_status(
+                f"Delivered to site. Now {site.have_wood}/{site.need_wood} wood "
+                f"{site.have_logs}/{site.need_logs} logs "
+                f"{site.have_hardwood}/{site.need_hardwood} hwood "
+                f"{site.have_rock}/{site.need_rock} rock."
+            )
+            if site.materials_ready and not site.is_complete:
+                self.player_build_site_id = site.id
+            return
+
+        if not site.materials_ready:
+            self._clear_player_build()
+            self._set_status(
+                f"{BUILDING_LABELS[site.kind]} site: "
+                f"{site.have_wood}/{site.need_wood} wood "
+                f"{site.have_logs}/{site.need_logs} logs "
+                f"{site.have_hardwood}/{site.need_hardwood} hwood "
+                f"{site.have_rock}/{site.need_rock} rock — need materials"
+            )
+            return
+
+        # Materials ready: start / continue continuous build (like Craft).
+        if self.sim_speed <= 0:
+            self._set_status("Unpause (Space) to build.")
+            return
+        self.player_build_site_id = site.id
+        if self.player.work_cooldown <= 0:
+            self._advance_player_build_step()
+        else:
+            pct = int(
+                100 * site.build_progress / max(1, site.build_required_ticks())
+            )
+            self._set_status(
+                f"Building {BUILDING_LABELS[site.kind]}… {pct}%."
+            )
+
+    def _advance_player_build_step(self) -> bool:
+        """One work tick on the sticky construction job. Returns False if stopped."""
+        sid = self.player_build_site_id
+        if sid is None:
+            return False
+        site = self.construction_sites.get(sid)
+        if site is None or site.is_complete:
+            self._clear_player_build()
+            return False
+        px, py = self.player.x, self.player.y
+        if not site.contains_plot(px, py):
+            self._clear_player_build()
+            self._set_status("Left the site — building stopped.")
+            return False
+        if not site.materials_ready:
+            self._clear_player_build()
+            self._set_status("Need more materials at the site.")
+            return False
+        if self.sim_speed <= 0:
+            return False
+        site.build_progress += 1
+        self._finish_player_work()
+        if site.is_complete:
+            label = BUILDING_LABELS[site.kind]
+            self._complete_construction(site)
+            self._clear_player_build()
+            self._set_status(f"Finished {label}.")
+            return False
+        pct = int(100 * site.build_progress / max(1, site.build_required_ticks()))
+        self._set_status(
+            f"Building {BUILDING_LABELS[site.kind]}… {pct}% "
+            f"({site.build_progress}/{site.build_required_ticks()})."
+        )
+        return True
+
     def _player_craft_recipe(self, recipe_name: str) -> None:
         """Start (or retarget) continuous player crafting on the inspected building."""
         from recipes import recipe_label, recipe_output_fits, recipe_ready
@@ -7185,7 +7335,12 @@ class Game:
                 + (", ".join(missing) if missing else "materials")
             )
             return
-        if not recipe_output_fits(building, recipe, capacity=building.capacity):
+        if not recipe_output_fits(
+            building,
+            recipe,
+            capacity=building.capacity,
+            stock_amounts=self._village_stock_amounts(),
+        ):
             self._set_status("No room for craft output.")
             return
 
@@ -7268,7 +7423,12 @@ class Game:
             self._clear_player_craft()
             self._set_status(f"Craft stopped — need more inputs for {recipe_label(recipe)}.")
             return False
-        if not recipe_output_fits(building, recipe, capacity=building.capacity):
+        if not recipe_output_fits(
+            building,
+            recipe,
+            capacity=building.capacity,
+            stock_amounts=self._village_stock_amounts(),
+        ):
             self._clear_player_craft()
             self._set_status("Craft stopped — no room for output.")
             return False
@@ -7284,9 +7444,15 @@ class Game:
             if fuel:
                 building.fuel_wood = max(0, building.fuel_wood - 1)
             # Keep producing the same recipe while inputs remain.
+            village_stock = self._village_stock_amounts()
             if (
                 recipe_ready(building, recipe)
-                and recipe_output_fits(building, recipe, capacity=building.capacity)
+                and recipe_output_fits(
+                    building,
+                    recipe,
+                    capacity=building.capacity,
+                    stock_amounts=village_stock,
+                )
                 and (
                     building.kind != BuildingKind.KITCHEN
                     or building.has_cooking_fuel()
@@ -7322,13 +7488,19 @@ class Game:
                     f"Auto-ate {meal}. Walk ×{p.food_walk_mult:g} · "
                     f"Work ×{p.food_work_mult:g}."
                 )
-        # Continue an active craft job when the work cooldown rolls over.
+        # Continue an active craft / build job when the work cooldown rolls over.
         if (
             self.player_craft_building_id is not None
             and p.work_cooldown <= 0
             and self.sim_speed > 0
         ):
             self._advance_player_craft_step()
+        if (
+            self.player_build_site_id is not None
+            and p.work_cooldown <= 0
+            and self.sim_speed > 0
+        ):
+            self._advance_player_build_step()
 
     def _highlighted_player_food(self) -> str | None:
         """Food key selected or hovered in the player inventory UI."""
@@ -7723,9 +7895,9 @@ class Game:
     def _building_can_produce(self, building: Building) -> bool:
         """True while the station can still run a recipe from current stock."""
         if building.is_processor():
-            return building.craftable_recipe() is not None
+            return self._craftable_recipe(building) is not None
         if building.is_splitter() or building.kind == BuildingKind.FORESTER:
-            return building.craftable_split_recipe() is not None
+            return self._craftable_split_recipe(building) is not None
         return False
 
     def _claimed_haul_targets(self, exclude_id: int) -> set[int]:
@@ -7972,7 +8144,7 @@ class Game:
                 return True
             # Full-ish packs, or lodge already waiting to split — return logs.
             if log_cargo > 0 and (
-                building.craftable_split_recipe() is not None or not inv.can_add(2)
+                self._craftable_split_recipe(building) is not None or not inv.can_add(2)
             ):
                 return True
             return False
@@ -8151,7 +8323,7 @@ class Game:
             BuildingKind.ALCHEMIST,
             BuildingKind.TAILOR,
         ):
-            if building.craftable_recipe() is not None:
+            if self._craftable_recipe(building) is not None:
                 return True
             # Cooldown alone must not latch an empty station (blocks supply / P2).
             if villager.work_cooldown > 0 and building.can_accept_from(
@@ -8237,7 +8409,7 @@ class Game:
                 return False
             if villager.target is not None:
                 return True
-            if building.craftable_split_recipe(worker=villager) is not None:
+            if self._craftable_split_recipe(building, worker=villager) is not None:
                 return True
             return self._forester_has_nearby_tree_or_plant(villager, building)
 
@@ -8254,17 +8426,22 @@ class Game:
             origin = (villager.x, villager.y)
             if any(
                 building.allows_hunt_kind(a.kind.name)
+                and self._under_production_max(building, "meat")
                 and self._within_work_search(origin, (a.x, a.y))
                 for a in self.wildlife.animals
             ):
                 return True
             from wildlife import AnimalKind
 
-            if building.allows_hunt_kind("rabbit") and any(
+            if (
+                building.allows_hunt_kind("rabbit")
+                and self._under_production_max(building, "meat")
+                and any(
                 c.kind == AnimalKind.RABBIT
                 and c.can_harvest()
                 and self._within_work_search(origin, (c.x, c.y))
                 for c in self.wildlife.colonies
+            )
             ):
                 return True
             return self._meat_deposit_available(building, villager.id)
@@ -8357,6 +8534,7 @@ class Game:
                 recipe,
                 output_capacity=building.output_capacity,
                 output_keys=building.processor_output_keys(),
+                stock_amounts=self._village_stock_amounts(),
             ):
                 return False
         return input_ready
@@ -8897,6 +9075,7 @@ class Game:
                 and colony.kind == AnimalKind.BEE
                 and colony.can_harvest()
                 and colony.id not in self._claimed_colony_ids(villager.id)
+                and self._under_production_max(building, "honey")
             ):
                 return True
         if building.kind == BuildingKind.FORESTER:
@@ -9445,7 +9624,7 @@ class Game:
         sticky_ok = False
         if sticky is not None:
             if sticky == (bx, by):
-                sticky_ok = building.craftable_split_recipe(worker=villager) is not None
+                sticky_ok = self._craftable_split_recipe(building, worker=villager) is not None
             elif not building.areas:
                 sticky_ok = (
                     abs(sticky[0] - bx) + abs(sticky[1] - by) <= WORK_SEARCH_RADIUS
@@ -9463,7 +9642,7 @@ class Game:
         kind: str
         target: tuple[int, int]
         if sticky is not None and sticky_ok and sticky != (bx, by):
-            split_recipe = building.craftable_split_recipe(worker=villager)
+            split_recipe = self._craftable_split_recipe(building, worker=villager)
             if split_recipe is not None:
                 target, kind = (bx, by), "split"
             else:
@@ -9575,7 +9754,7 @@ class Game:
         """
         candidates: list[tuple[int, int, tuple[int, int], str]] = []
 
-        split_recipe = building.craftable_split_recipe(worker=villager)
+        split_recipe = self._craftable_split_recipe(building, worker=villager)
         if split_recipe is not None:
             candidates.append(
                 (
@@ -9941,7 +10120,8 @@ class Game:
             if name:
                 claimed.add(name)
 
-        recipe = building.craftable_recipe(
+        recipe = self._craftable_recipe(
+            building,
             worker=villager,
             prefer_name=villager.craft_recipe_name,
             avoid_names=claimed,
@@ -10738,6 +10918,7 @@ class Game:
             a
             for a in animals
             if building.allows_hunt_kind(a.kind.name)
+            and self._under_production_max(building, "meat")
             and a.id not in taken
             and self._within_work_search(origin, (a.x, a.y))
         ]
@@ -10981,6 +11162,8 @@ class Game:
 
     def _fisher_candidate_fish(self, villager: Villager, building: Building):
         """Fish the workplace may target (area filter + search radius from villager)."""
+        if not self._under_production_max(building, "fish"):
+            return []
         if building.areas:
             found = []
             for area in building.areas:
@@ -12216,7 +12399,7 @@ class Game:
         ox, oy = origin
         r = WORK_SEARCH_RADIUS
         enabled = {rec.name for rec in building.enabled_recipes()}
-        if "honey" in enabled:
+        if "honey" in enabled and self._under_production_max(building, "honey"):
             for colony in self.wildlife.colonies:
                 if (
                     colony.kind == AnimalKind.BEE
@@ -12452,6 +12635,8 @@ class Game:
 
         if not building.allows_forage_key("honey"):
             return None
+        if not self._under_production_max(building, "honey"):
+            return None
         if not villager.inventory.can_add(HONEY_PER_BEE_LEVEL, key="honey"):
             return None
         taken = self._claimed_colony_ids(villager.id)
@@ -12600,13 +12785,14 @@ class Game:
         return None
 
     def _building_allows_cell(self, building: Building, cell) -> bool:
-        """Respect gather-recipe toggles for forester / forager cells."""
+        """Respect gather-recipe toggles and Max for forester / forager cells."""
         if building.kind == BuildingKind.FORESTER:
             if cell.feature == FeatureType.TREE and cell.deposit > 0:
                 from trees import resolve_tree
 
-                return building.allows_tree_yield(
-                    resolve_tree(cell.tree_species).yield_key
+                key = resolve_tree(cell.tree_species).yield_key
+                return building.allows_tree_yield(key) and self._under_production_max(
+                    building, key
                 )
             return True
         if building.kind == BuildingKind.FORAGER:
@@ -12616,7 +12802,9 @@ class Game:
             # Reeds have no recipe toggle — leave them for manual collection.
             if key == "reeds":
                 return False
-            return building.allows_forage_key(key)
+            return building.allows_forage_key(key) and self._under_production_max(
+                building, key
+            )
         return True
 
     def _cell_matches_task(
@@ -12716,6 +12904,7 @@ class Game:
             allow_collect
             and building.kind == BuildingKind.FORAGER
             and building.allows_forage_key("honey")
+            and self._under_production_max(building, "honey")
         ):
             from wildlife import AnimalKind
 

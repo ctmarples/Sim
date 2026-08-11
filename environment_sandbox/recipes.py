@@ -4,21 +4,24 @@ Recipes live in ``recipes_data/<building>/recipes.csv`` (one sheet per building)
 Edit those CSVs to add or tweak recipes — no Python changes needed for I/O amounts.
 
 Columns:
-  name, label, inputs, outputs, icon_key,
+  name, label, inputs, outputs, category, icon_key,
   extraction, farming, hunting, crafting, labour, transport,
   resource_group, resource_short,
   food_satiation, food_walk_speed, food_work_efficiency, food_hunger_rate, food_edible
 
 ``inputs`` / ``outputs`` use ``key:qty;key:qty`` (empty inputs = gather toggle).
+``category`` groups recipes in the building inspect UI (kitchen: stews, grill, …).
 Skill columns are minimum levels (1–10); leave blank for no requirement on that skill.
 A recipe may require several skills at once. Optional compact ``skills`` column
 also works: ``crafting:3;hunting:2``.
 
 Optional ``resource_*`` / ``food_*`` register catalogue entries for new outputs
 (icons: ``assets/icons/<icon_key or output key>.png`` / ``.svg``).
+Kitchen craft food buffs live in the kitchen CSV ``food_*`` columns — not in
+``resource_balance.py`` (that file keeps raw / foraged foods only).
 
 Crop produce gather toggles for the forager are appended from ``crops.PRODUCE_KEYS``.
-Harvest yields and core food buffs: ``resource_balance.py``.
+Harvest yields and raw food buffs: ``resource_balance.py``.
 """
 
 from __future__ import annotations
@@ -61,6 +64,8 @@ class Recipe:
     icon_key: str | None = None
     # Minimum skill levels required (empty = no skill gate).
     skill_reqs: tuple[tuple[SkillType, int], ...] = ()
+    # Optional UI group (e.g. kitchen stews / grill / bakery).
+    category: str | None = None
 
     def display_icon_key(self) -> str:
         if self.icon_key:
@@ -92,6 +97,15 @@ HUNTER_RECIPES: tuple[Recipe, ...] = ()
 FORAGER_RECIPES: tuple[Recipe, ...] = ()
 
 RECIPE_LABELS: dict[str, str] = {}
+# recipe name → category key (from CSV).
+RECIPE_CATEGORIES: dict[str, str] = {}
+# Display order / labels for kitchen (and other) category keys.
+CATEGORY_LABELS: dict[str, str] = {
+    "stews": "Stews",
+    "grill": "Grill",
+    "bakery": "Bakery",
+    "sweet": "Sweet",
+}
 
 KITCHEN_FUEL_KEY: str = "wood"
 
@@ -169,8 +183,15 @@ def _recipe_from_row(row: dict[str, str]) -> Recipe:
     icon_raw = _cell(row, "icon_key")
     icon_key = icon_raw or None
     skill_reqs = _parse_skill_reqs(row)
+    cat_raw = _cell(row, "category")
+    category = cat_raw or None
     return Recipe(
-        name, inputs, outputs, icon_key=icon_key, skill_reqs=skill_reqs
+        name,
+        inputs,
+        outputs,
+        icon_key=icon_key,
+        skill_reqs=skill_reqs,
+        category=category,
     )
 
 
@@ -179,6 +200,11 @@ def _apply_row_metadata(row: dict[str, str], recipe: Recipe) -> None:
     label = _cell(row, "label")
     if label:
         RECIPE_LABELS[recipe.name] = label
+    if recipe.category:
+        RECIPE_CATEGORIES[recipe.name] = recipe.category
+        # Remember unknown category labels as title-cased keys.
+        if recipe.category not in CATEGORY_LABELS:
+            CATEGORY_LABELS[recipe.category] = recipe.category.replace("_", " ").title()
 
     satiation = _cell(row, "food_satiation")
     resource_group = _cell(row, "resource_group")
@@ -413,6 +439,7 @@ def recipe_output_fits(
     capacity: int | None = None,
     output_capacity: int | None = None,
     output_keys: tuple[str, ...] | None = None,
+    stock_amounts: dict[str, int] | None = None,
 ) -> bool:
     from resources import cargo_units_after_add, stack_units
 
@@ -440,14 +467,49 @@ def recipe_output_fits(
             delta += cargo_units_after_add(key, have, n)
         if stored + delta > capacity:
             return False
-    # Per-item caps (Building.item_caps).
+    # Per-item caps (Building.item_caps). When ``stock_amounts`` is provided
+    # (village-wide totals matching the Sto: UI), enforce Max against that.
     caps = getattr(storage, "item_caps", None)
     if isinstance(caps, dict) and caps:
         for key, n in recipe.outputs.items():
             cap = caps.get(key)
-            if cap is not None and int(getattr(storage, key, 0)) + n > int(cap):
+            if cap is None:
+                continue
+            if stock_amounts is not None:
+                have = int(stock_amounts.get(key, 0))
+            else:
+                have = int(getattr(storage, key, 0))
+            if have + n > int(cap):
                 return False
     return True
+
+
+def recipes_by_category(
+    recipes: tuple[Recipe, ...] | list[Recipe],
+) -> list[tuple[str | None, list[Recipe]]]:
+    """Group recipes into (category_key, recipes) preserving first-seen order.
+
+    Recipes without a category are returned under ``None``.
+    """
+    order: list[str | None] = []
+    groups: dict[str | None, list[Recipe]] = {}
+    for recipe in recipes:
+        cat = recipe.category or RECIPE_CATEGORIES.get(recipe.name)
+        if cat not in groups:
+            groups[cat] = []
+            order.append(cat)
+        groups[cat].append(recipe)
+    # Prefer known CATEGORY_LABELS order, then remaining.
+    preferred = [c for c in CATEGORY_LABELS if c in groups]
+    rest = [c for c in order if c not in preferred]
+    ordered_keys = preferred + rest
+    return [(key, groups[key]) for key in ordered_keys]
+
+
+def category_label(key: str | None) -> str:
+    if key is None:
+        return "Other"
+    return CATEGORY_LABELS.get(key, key.replace("_", " ").title())
 
 
 def can_craft(
@@ -457,6 +519,7 @@ def can_craft(
     capacity: int | None = None,
     output_capacity: int | None = None,
     output_keys: tuple[str, ...] | None = None,
+    stock_amounts: dict[str, int] | None = None,
 ) -> Recipe | None:
     for recipe in recipes:
         if not recipe.inputs:
@@ -467,6 +530,7 @@ def can_craft(
             capacity=capacity,
             output_capacity=output_capacity,
             output_keys=output_keys,
+            stock_amounts=stock_amounts,
         ):
             return recipe
     return None

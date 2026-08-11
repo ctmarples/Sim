@@ -100,6 +100,8 @@ class BuildingInspectDialog:
         self.market_demand_expanded: bool = True
         self.market_supply_expanded: bool = True
         self.market_supply_group: str = "food"
+        # Active category tab for craft recipes (kitchen stews/grill/…); None = auto.
+        self.recipe_category_tab: str | None = None
         self._scroll: dict[str, int] = {}
         # name → (view_rect, content_h, view_h) rebuilt each draw.
         self._scroll_areas: dict[str, tuple[pygame.Rect, int, int]] = {}
@@ -308,13 +310,38 @@ class BuildingInspectDialog:
         return True
 
     def _craft_recipes_block_height(
-        self, recipe_count: int, *, player_craft: bool = False
+        self, recipes: tuple, *, player_craft: bool = False
     ) -> int:
-        if recipe_count <= 0:
+        if not recipes:
             return 0
+        from recipes import recipes_by_category
+
         row_h = RECIPE_ROW_H + (BTN_H + 4 if player_craft else 0)
+        groups = recipes_by_category(recipes)
+        show_tabs = len(groups) > 1 or (groups and groups[0][0] is not None)
+        if show_tabs:
+            active = self._active_recipe_category(recipes)
+            visible = next((g for c, g in groups if c == active), groups[0][1])
+            tab_h = BTN_H + 6
+        else:
+            visible = list(recipes)
+            tab_h = 0
+        content_h = len(visible) * row_h
         max_h = MAX_RECIPE_VIEW_H + (BTN_H + 4 if player_craft else 0)
-        return 18 + min(recipe_count * row_h, max_h) + SECTION_GAP
+        return 18 + tab_h + min(content_h, max_h) + SECTION_GAP
+
+    def _recipe_category_tabs(self, recipes: tuple) -> list[str | None]:
+        from recipes import recipes_by_category
+
+        return [cat for cat, _ in recipes_by_category(recipes)]
+
+    def _active_recipe_category(self, recipes: tuple) -> str | None:
+        tabs = self._recipe_category_tabs(recipes)
+        if not tabs:
+            return None
+        if self.recipe_category_tab in tabs:
+            return self.recipe_category_tab
+        return tabs[0]
 
     def _recipe_output_key(self, recipe) -> str | None:
         if recipe.outputs:
@@ -497,23 +524,59 @@ class BuildingInspectDialog:
     ) -> tuple[int, str | None]:
         """Kitchen-style recipe rows with inputs. Returns (height, hovered tip key)."""
         from inventory_ui import draw_resource_cell
-        from recipes import KITCHEN_FUEL_KEY, recipe_output_fits, recipe_ready
+        from recipes import (
+            KITCHEN_FUEL_KEY,
+            category_label,
+            recipe_output_fits,
+            recipe_ready,
+            recipes_by_category,
+        )
 
         if not recipes:
             return 0, None
         building.ensure_recipe_state()
+        top_y = y
         surface.blit(self.font.render(title, True, COLOUR_TEXT), (x, y))
         y += 18
         row_h = RECIPE_ROW_H + (BTN_H + 4 if player_craft else 0)
-        content_h = len(recipes) * row_h
-        view_h = min(content_h, MAX_RECIPE_VIEW_H + (BTN_H + 4 if player_craft else 0))
+        ordered = building._recipes_by_priority(recipes)
+        groups = recipes_by_category(ordered)
+        show_tabs = len(groups) > 1 or (groups and groups[0][0] is not None)
+        if show_tabs:
+            active = self._active_recipe_category(recipes)
+            # Category filter tabs (same pattern as market supply).
+            bx = x
+            for cat in (c for c, _ in groups):
+                label = category_label(cat)
+                w = max(56, 12 + self.font_small.size(label)[0])
+                if bx + w > x + inner_w and bx > x:
+                    y += BTN_H + 4
+                    bx = x
+                rect = pygame.Rect(bx, y, w, BTN_H)
+                is_active = cat == active
+                hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+                self._draw_button(
+                    surface, rect, label, hovered=hovered, active=is_active
+                )
+                tab_key = cat if cat is not None else ""
+                self._buttons.append((f"recipe_category:{tab_key}", rect))
+                bx += w + 4
+            y += BTN_H + 6
+            visible = next((g for c, g in groups if c == active), groups[0][1])
+        else:
+            visible = list(ordered)
+
+        content_h = len(visible) * row_h
+        max_view = MAX_RECIPE_VIEW_H + (BTN_H + 4 if player_craft else 0)
+        view_h = min(content_h, max_view) if content_h else 0
+        tip_key: str | None = None
+        if view_h <= 0:
+            return y - top_y + SECTION_GAP, tip_key
         view = pygame.Rect(x, y, inner_w, view_h)
         scroll = self._register_scroll(scroll_name, view, content_h, view_h)
         old_clip = surface.get_clip()
         surface.set_clip(view.clip(old_clip) if old_clip.width else view)
-        tip_key: str | None = None
-        ordered = building._recipes_by_priority(recipes)
-        for i, recipe in enumerate(ordered):
+        for i, recipe in enumerate(visible):
             row_y = y + i * row_h - scroll
             if row_y + row_h < view.top or row_y > view.bottom:
                 continue
@@ -531,11 +594,14 @@ class BuildingInspectDialog:
             )
             if out_hov and out_key:
                 tip_key = out_key
-            # Priority chip: click to cycle 1→2→3.
             prio_cell = pygame.Rect(out_cell.right + 2, row_y + 2, 16, 16)
             if prio_cell.colliderect(view):
                 self._draw_priority_badge(
-                    surface, prio_cell, priority, enabled=enabled, hovered=(
+                    surface,
+                    prio_cell,
+                    priority,
+                    enabled=enabled,
+                    hovered=(
                         mouse_pos is not None and prio_cell.collidepoint(mouse_pos)
                     ),
                 )
@@ -615,7 +681,12 @@ class BuildingInspectDialog:
                 can_craft = (
                     enabled
                     and recipe_ready(building, recipe)
-                    and recipe_output_fits(building, recipe, capacity=building.capacity)
+                    and recipe_output_fits(
+                        building,
+                        recipe,
+                        capacity=building.capacity,
+                        stock_amounts=stock_amounts,
+                    )
                 )
                 if show_fuel:
                     can_craft = can_craft and building.has_cooking_fuel()
@@ -641,7 +712,6 @@ class BuildingInspectDialog:
                         shade.fill((30, 30, 34, 120))
                         surface.blit(shade, craft_rect.topleft)
                     self._buttons.append((f"craft_recipe:{recipe.name}", craft_rect))
-            # Progress bar under icons (and craft button when present).
             bar_x = x
             bar_y = row_y + RECIPE_OUT_CELL + (BTN_H + 6 if player_craft else 3)
             bar_w = inner_w - 8
@@ -661,7 +731,7 @@ class BuildingInspectDialog:
                 )
         surface.set_clip(old_clip)
         self._draw_scrollbar(surface, view, content_h, scroll)
-        return view_h + SECTION_GAP, tip_key
+        return (y - top_y) + view_h + SECTION_GAP, tip_key
 
     def _draw_priority_badge(
         self,
@@ -890,13 +960,13 @@ class BuildingInspectDialog:
             content = rows * (RECIPE_OUT_CELL + GRID_GAP) - GRID_GAP
             recipes_h += 18 + min(content, MAX_GATHER_VIEW_H) + SECTION_GAP
         recipes_h += self._craft_recipes_block_height(
-            len(split_recipes), player_craft=self.allow_player_craft
+            split_recipes, player_craft=self.allow_player_craft
         )
         recipes_h += self._craft_recipes_block_height(
-            len(plant_recipes), player_craft=self.allow_player_craft
+            plant_recipes, player_craft=self.allow_player_craft
         )
         recipes_h += self._craft_recipes_block_height(
-            len(craft_recipes), player_craft=self.allow_player_craft
+            craft_recipes, player_craft=self.allow_player_craft
         )
 
         storage_items = len(present_keys(amounts, storage_keys or None))

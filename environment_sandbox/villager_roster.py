@@ -357,8 +357,13 @@ def draw_skill_cell(
     *,
     icon_size: int = 14,
     col_w: int = SKILL_COL_W,
+    highlighted: bool = False,
 ) -> None:
     """One skill column: icon centred, level digit below (no overlap)."""
+    if highlighted:
+        bg = pygame.Rect(x + 1, y - 1, col_w - 2, icon_size + 14)
+        pygame.draw.rect(surface, (55, 85, 55), bg, border_radius=3)
+        pygame.draw.rect(surface, (90, 140, 90), bg, 1, border_radius=3)
     icon = SKILL_ICONS.get(skill, "wood")
     cx = x + col_w // 2
     try:
@@ -367,7 +372,8 @@ def draw_skill_cell(
         label = SKILL_SHORT.get(skill, "?")
         text = font.render(label, True, COLOUR_TEXT_DIM)
         surface.blit(text, (cx - text.get_width() // 2, y))
-    lvl = font.render(str(int(level)), True, COLOUR_TEXT)
+    lvl_col = COLOUR_TEXT if highlighted else COLOUR_TEXT
+    lvl = font.render(str(int(level)), True, lvl_col)
     surface.blit(lvl, (cx - lvl.get_width() // 2, y + icon_size + 1))
 
 
@@ -379,18 +385,31 @@ def draw_skill_icons(
     font: pygame.font.Font,
     *,
     icon_size: int = 14,
+    highlight: frozenset | set | None = None,
 ) -> tuple[int, list[tuple[pygame.Rect, str]]]:
     """Draw skills in fixed-width columns. Returns (width used, tip hits)."""
     from society import SKILL_LABELS
 
     cur = x
     tips: list[tuple[pygame.Rect, str]] = []
+    hi = highlight or ()
     for sk in SKILL_ORDER:
         st = skills.get(sk)
         lvl = int(getattr(st, "level", 1) or 1)
-        draw_skill_cell(surface, cur, y, sk, lvl, font, icon_size=icon_size)
+        draw_skill_cell(
+            surface,
+            cur,
+            y,
+            sk,
+            lvl,
+            font,
+            icon_size=icon_size,
+            highlighted=sk in hi,
+        )
         tip_rect = pygame.Rect(cur, y, SKILL_COL_W, icon_size + 14)
-        tips.append((tip_rect, f"{SKILL_LABELS.get(sk, sk.name)} {lvl}"))
+        label = SKILL_LABELS.get(sk, sk.name)
+        tip = f"{label} {lvl}" + (" · used here" if sk in hi else "")
+        tips.append((tip_rect, tip))
         cur += SKILL_COL_W
     return cur - x, tips
 

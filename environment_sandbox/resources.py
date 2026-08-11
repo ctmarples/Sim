@@ -379,11 +379,30 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
             "mushroom_stew",
             {"body": (140, 100, 70), "accent": (107, 74, 46)},
         )
+    if key == "spiced_stew":
+        return ResourceIconStyle(
+            "spiced_stew",
+            {"body": (140, 100, 70), "accent": (180, 80, 40)},
+        )
+    if key == "vegetable_soup":
+        return ResourceIconStyle(
+            "vegetable_soup",
+            {"body": (120, 140, 70), "accent": (80, 140, 60)},
+        )
+    if key == "berry_jam":
+        return ResourceIconStyle(
+            "berry_jam",
+            {"body": (160, 60, 90), "accent": (200, 80, 110)},
+        )
     if key == "grilled_meat":
         # Same marker as raw meat, browned/cooked tint.
         return ResourceIconStyle(ICON_MEAT_MARKER, {"body": (160, 90, 45)})
     if key == "grilled_fish":
         return ResourceIconStyle(ICON_FISH, {"body": (200, 140, 70)})
+    if key == "grilled_mushrooms":
+        return ResourceIconStyle(
+            ICON_MUSHROOM, {"cap": (160, 100, 50), "stem": (210, 200, 180)}
+        )
 
     for tree in TREES:
         if key == f"{tree.key}_saplings":

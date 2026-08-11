@@ -26,6 +26,7 @@ from seasons import (
     Season,
     animals_multiply,
     animals_slow,
+    fish_breeding_allowed,
     freeze_amount,
     season_for_day,
     water_frozen,
@@ -2259,7 +2260,7 @@ class FishManager:
 
     def tick(self, world: World, day: float = 0.0) -> None:
         self._move_fish(world, day)
-        if water_frozen(day) or not animals_multiply(day):
+        if not fish_breeding_allowed(day):
             return
         self.growth_timer -= 1
         if self.growth_timer <= 0:
@@ -2267,11 +2268,9 @@ class FishManager:
             self._update_population(world)
 
     def _move_fish(self, world: World, day: float = 0.0) -> None:
-        if water_frozen(day):
-            for item in self.fish:
-                if item.move_cooldown > 0:
-                    item.move_cooldown -= 1
-            return
+        from world import TerrainType
+
+        lake_frozen = water_frozen(day)
         water_age = getattr(self, "_water_age", 0)
         if water_age <= 0 or not hasattr(self, "_water_cache"):
             self._water_cache = set(world.water_cells())
@@ -2289,6 +2288,11 @@ class FishManager:
             if item.move_cooldown > 0:
                 item.move_cooldown -= 1
                 continue
+            # Lakes ice over; rivers stay open so fish there keep swimming.
+            if lake_frozen:
+                cell = world.get_cell(item.x, item.y)
+                if cell is not None and cell.terrain == TerrainType.WATER:
+                    continue
             neighbours = [
                 (nx, ny)
                 for ny, nx in world.neighbourhood(item.x, item.y, radius=1)
