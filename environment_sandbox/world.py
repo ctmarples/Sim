@@ -172,6 +172,9 @@ class FeatureType(Enum):
     TENT = auto()
     HOUSE_SMALL = auto()
     HOUSE = auto()
+    BARN = auto()
+    PANTRY = auto()
+    DRYING_RACK = auto()
     CONSTRUCTION_SITE = auto()
     # Invisible reserved cells of a multi-cell building footprint (not the glyph cell).
     STRUCTURE_PAD = auto()
@@ -206,6 +209,9 @@ STRUCTURE_FEATURES: frozenset[FeatureType] = frozenset(
         FeatureType.TENT,
         FeatureType.HOUSE_SMALL,
         FeatureType.HOUSE,
+        FeatureType.BARN,
+        FeatureType.PANTRY,
+        FeatureType.DRYING_RACK,
         FeatureType.CONSTRUCTION_SITE,
         FeatureType.STRUCTURE_PAD,
     }
@@ -255,6 +261,7 @@ class Cell:
     growth_ticks: int = 0  # sapling maturity / berry regen countdown
     deposit: int = 0  # wood, rock, or berries remaining
     meat_deposit: int = 0
+    hide_deposit: int = 0
     fish_deposit: int = 0
     crop_kind: str | None = None  # CropDef key for wild & farm crops
     tree_species: str | None = None  # TreeDef key for TREE / SAPLING
@@ -2196,6 +2203,20 @@ class World:
         if cell is None:
             return
         cell.meat_deposit += amount
+
+    def harvest_hide(self, x: int, y: int, amount: int = 1) -> int:
+        cell = self.get_cell(x, y)
+        if cell is None or cell.hide_deposit <= 0:
+            return 0
+        taken = min(amount, cell.hide_deposit)
+        cell.hide_deposit -= taken
+        return taken
+
+    def add_hide_deposit(self, x: int, y: int, amount: int) -> None:
+        cell = self.get_cell(x, y)
+        if cell is None:
+            return
+        cell.hide_deposit += amount
 
     def harvest_fish(self, x: int, y: int, amount: int = 1) -> int:
         cell = self.get_cell(x, y)

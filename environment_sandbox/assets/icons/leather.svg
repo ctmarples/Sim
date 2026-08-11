@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 40 40" width="40" height="40" xmlns="http://www.w3.org/2000/svg">
+  <title>leather</title>
+  <rect x="9" y="10" width="22" height="20" rx="3" fill="#8b5a2b" stroke="#4a3020" stroke-width="1.2"/>
+  <path d="M12 16 H28 M12 22 H28 M12 28 H22" stroke="#6b3f1f" stroke-width="1.2"/>
+</svg>

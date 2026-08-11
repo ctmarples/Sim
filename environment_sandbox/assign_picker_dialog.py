@@ -65,6 +65,9 @@ _BUILD_ICON: dict[BuildingKind, str] = {
     BuildingKind.TENT: "tent",
     BuildingKind.HOUSE_SMALL: "house_small",
     BuildingKind.HOUSE: "house",
+    BuildingKind.BARN: "barn",
+    BuildingKind.PANTRY: "pantry",
+    BuildingKind.DRYING_RACK: "drying_rack",
 }
 
 
@@ -365,7 +368,9 @@ class AssignPickerDialog:
                     icon = _BUILD_ICON.get(b.kind, "construction_site")
                     rows.append((b.id, label, sub, ("building", icon), None))
                     continue
-                if is_housing_kind(b.kind):
+                from extensions import is_extension_kind
+
+                if is_housing_kind(b.kind) or is_extension_kind(b.kind):
                     continue
                 label = f"{BUILDING_LABELS[b.kind]} #{b.id}"
                 if b.kind == BuildingKind.HOME:

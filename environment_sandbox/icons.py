@@ -1589,6 +1589,9 @@ ICON_MARKET = "market"
 ICON_TENT = "tent"
 ICON_HOUSE_SMALL = "house_small"
 ICON_HOUSE = "house"
+ICON_BARN = "barn"
+ICON_PANTRY = "pantry"
+ICON_DRYING_RACK = "drying_rack"
 ICON_CONSTRUCTION = "construction_site"
 
 # Buildings that use stipple; baked at CELL_SIZE on map/game load.
@@ -1611,6 +1614,9 @@ BUILDING_ICON_NAMES: tuple[str, ...] = (
     ICON_TENT,
     ICON_HOUSE_SMALL,
     ICON_HOUSE,
+    ICON_BARN,
+    ICON_PANTRY,
+    ICON_DRYING_RACK,
     ICON_CONSTRUCTION,
 )
 
@@ -1676,6 +1682,12 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_ALCHEMIST,
     ICON_TAILOR,
     ICON_MARKET,
+    ICON_TENT,
+    ICON_HOUSE_SMALL,
+    ICON_HOUSE,
+    ICON_BARN,
+    ICON_PANTRY,
+    ICON_DRYING_RACK,
     ICON_CONSTRUCTION,
     ICON_DEER_MALE,
     ICON_DEER_FEMALE,
@@ -1710,6 +1722,8 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_STEW,
     ICON_FISH_STEW,
     "mushroom_stew",
+    "hide",
+    "leather",
 )
 
 
@@ -1767,6 +1781,9 @@ def icon_base_for_feature(
         FeatureType.TENT: ICON_TENT,
         FeatureType.HOUSE_SMALL: ICON_HOUSE_SMALL,
         FeatureType.HOUSE: ICON_HOUSE,
+        FeatureType.BARN: ICON_BARN,
+        FeatureType.PANTRY: ICON_PANTRY,
+        FeatureType.DRYING_RACK: ICON_DRYING_RACK,
         FeatureType.COMMUNITY: ICON_TENT,
         FeatureType.CONSTRUCTION_SITE: ICON_CONSTRUCTION,
         FeatureType.MUSHROOM: ICON_MUSHROOM,

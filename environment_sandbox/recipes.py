@@ -50,6 +50,8 @@ _BUILDING_RECIPE_ATTR: dict[str, str] = {
     "forester_split": "FORESTER_SPLIT_RECIPES",
     "hunter": "HUNTER_RECIPES",
     "forager": "FORAGER_RECIPES",
+    "barn": "BARN_RECIPES",
+    "drying_rack": "DRYING_RACK_RECIPES",
 }
 
 
@@ -95,6 +97,8 @@ FORESTER_PLANT_RECIPES: tuple[Recipe, ...] = ()
 FORESTER_SPLIT_RECIPES: tuple[Recipe, ...] = ()
 HUNTER_RECIPES: tuple[Recipe, ...] = ()
 FORAGER_RECIPES: tuple[Recipe, ...] = ()
+BARN_RECIPES: tuple[Recipe, ...] = ()
+DRYING_RACK_RECIPES: tuple[Recipe, ...] = ()
 
 RECIPE_LABELS: dict[str, str] = {}
 # recipe name → category key (from CSV).
@@ -345,7 +349,7 @@ def _load_directory_recipes() -> None:
     global MILL_RECIPES, KITCHEN_RECIPES, CRAFT_BENCH_RECIPES, ALCHEMIST_RECIPES
     global TAILOR_RECIPES
     global FORESTER_RECIPES, FORESTER_PLANT_RECIPES, FORESTER_SPLIT_RECIPES
-    global HUNTER_RECIPES, FORAGER_RECIPES
+    global HUNTER_RECIPES, FORAGER_RECIPES, BARN_RECIPES, DRYING_RACK_RECIPES
 
     if not _RECIPES_DATA_DIR.is_dir():
         return

@@ -938,6 +938,10 @@ class BuildingInspectDialog:
             options_h = BTN_H * 2 + 12
         elif building.has_recipes():
             options_h = BTN_H + 8
+        from extensions import extensions_for_parent
+
+        if extensions_for_parent(building.kind):
+            options_h += BTN_H + 8
 
         gather_recipes = (
             building.known_recipes() if building.is_gather_recipe_building() else ()
@@ -953,6 +957,8 @@ class BuildingInspectDialog:
             if building.has_recipes() and not building.is_gather_recipe_building()
             else ()
         )
+        if building.is_gather_recipe_building() and building.addon_craft_recipes():
+            craft_recipes = building.addon_craft_recipes()
         recipes_h = 0
         if gather_recipes:
             cols = max(1, (380 - PAD * 2) // GATHER_CELL_STRIDE)
@@ -1296,6 +1302,27 @@ class BuildingInspectDialog:
                 hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
                 self._draw_button(surface, rect, label, hovered=hovered)
                 self._buttons.append((action, rect))
+                bx += w + 4
+            y += BTN_H + 4
+            bx = x
+            from extensions import EXTENSION_LABELS, extensions_for_parent
+
+            for ext_kind in extensions_for_parent(building.kind):
+                claimed = ext_kind in building.linked_extensions
+                label = f"Add {EXTENSION_LABELS.get(ext_kind, ext_kind.name)}"
+                if claimed:
+                    label = f"{EXTENSION_LABELS.get(ext_kind, ext_kind.name)} ✓"
+                w = max(90, 10 + self.font_small.size(label)[0])
+                if bx + w > x + inner_w and bx > x:
+                    bx = x
+                    y += BTN_H + 4
+                rect = pygame.Rect(bx, y, w, BTN_H)
+                hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+                self._draw_button(
+                    surface, rect, label, hovered=hovered and not claimed
+                )
+                if not claimed:
+                    self._buttons.append((f"place_extension:{ext_kind.name}", rect))
                 bx += w + 4
             y += BTN_H + SECTION_GAP
 

@@ -217,6 +217,14 @@ BUILDING_STORAGE: dict[str, BuildingStorageSpec] = {
     "tent": BuildingStorageSpec(capacity=0),
     "house_small": BuildingStorageSpec(capacity=0),
     "house": BuildingStorageSpec(capacity=0),
+    # Extension bonuses are added onto the parent workplace (capacity here = bonus).
+    "barn": BuildingStorageSpec(capacity=100, seed_capacity=80),
+    "pantry": BuildingStorageSpec(
+        capacity=0,
+        input_capacity=80,
+        output_capacity=40,
+    ),
+    "drying_rack": BuildingStorageSpec(capacity=20),
 }
 
 

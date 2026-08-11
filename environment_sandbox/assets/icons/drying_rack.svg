@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 40 40" width="40" height="40" xmlns="http://www.w3.org/2000/svg">
+  <title>drying_rack</title>
+  <line x1="8" y1="32" x2="8" y2="10" stroke="#6b5344" stroke-width="2"/>
+  <line x1="32" y1="32" x2="32" y2="10" stroke="#6b5344" stroke-width="2"/>
+  <line x1="8" y1="12" x2="32" y2="12" stroke="#6b5344" stroke-width="2"/>
+  <line x1="8" y1="18" x2="32" y2="18" stroke="#6b5344" stroke-width="2"/>
+  <line x1="8" y1="24" x2="32" y2="24" stroke="#6b5344" stroke-width="2"/>
+  <ellipse cx="15" cy="15" rx="4" ry="6" fill="#b08968" opacity="0.85"/>
+  <ellipse cx="25" cy="21" rx="4" ry="6" fill="#9a7352" opacity="0.85"/>
+</svg>

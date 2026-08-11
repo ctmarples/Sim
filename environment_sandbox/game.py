@@ -375,6 +375,9 @@ FEATURE_FOR_BUILDING = {
     BuildingKind.TENT: FeatureType.TENT,
     BuildingKind.HOUSE_SMALL: FeatureType.HOUSE_SMALL,
     BuildingKind.HOUSE: FeatureType.HOUSE,
+    BuildingKind.BARN: FeatureType.BARN,
+    BuildingKind.PANTRY: FeatureType.PANTRY,
+    BuildingKind.DRYING_RACK: FeatureType.DRYING_RACK,
 }
 
 BUILDING_FEATURES = frozenset(FEATURE_FOR_BUILDING.values()) | {
@@ -501,6 +504,7 @@ class Game:
         self.assign_workplace_season: str | None = None
         self.area_draw_task: TaskType | None = None
         self.place_kind: BuildingKind | None = None  # B cycles build ghost
+        self.extension_parent_id: int | None = None  # parent for extension placement
         self.field_crop_kind: str = "sage"
         self.drawing = False
         self.draw_start: tuple[int, int] | None = None
@@ -2984,15 +2988,47 @@ class Game:
         self._announce_place_kind()
 
     def _set_place_kind(self, kind: BuildingKind | None) -> None:
+        self.extension_parent_id = None
         if kind is not None:
             allowed = unlock_built_kinds(self.buildings)
             from building_unlock import unlocked_kinds
+            from extensions import is_extension_kind
 
-            if kind not in unlocked_kinds(allowed):
+            if not is_extension_kind(kind) and kind not in unlocked_kinds(allowed):
                 self._set_status(f"{BUILDING_LABELS[kind]} is still locked.")
                 return
         self.place_kind = kind
         self._announce_place_kind()
+
+    def _begin_place_extension(self, parent: Building, ext_kind: BuildingKind) -> None:
+        from extensions import (
+            EXTENSION_PARENT,
+            extension_or_site_claimed,
+            is_extension_kind,
+        )
+
+        if not is_extension_kind(ext_kind):
+            return
+        if EXTENSION_PARENT.get(ext_kind) != parent.kind:
+            self._set_status("That extension does not belong on this building.")
+            return
+        if extension_or_site_claimed(
+            parent.id, ext_kind, self.buildings, self.construction_sites
+        ):
+            self._set_status(
+                f"{BUILDING_LABELS[ext_kind]} already built or under construction here."
+            )
+            return
+        self.relocate_building_id = None
+        self.place_kind = ext_kind
+        self.extension_parent_id = parent.id
+        self.area_draw_task = None
+        cost = unlock_building_cost(ext_kind)
+        bits = ", ".join(cost.summary_bits()) if cost.summary_bits() else "free"
+        self._set_status(
+            f"Place {BUILDING_LABELS[ext_kind]} adjacent to "
+            f"{BUILDING_LABELS[parent.kind]} #{parent.id} ({bits})."
+        )
 
     def _announce_place_kind(self) -> None:
         if self.place_kind is None:
@@ -4077,6 +4113,17 @@ class Game:
                 return
             self._begin_relocate(building)
             return
+        if action.startswith("place_extension:"):
+            building = self._inspect_building()
+            if building is None:
+                return
+            name = action.split(":", 1)[1]
+            try:
+                ext_kind = BuildingKind[name]
+            except KeyError:
+                return
+            self._begin_place_extension(building, ext_kind)
+            return
         if action == "assign_villager":
             # Prefer the inspected building so Assign from the floating window works.
             inspect_b = self._inspect_building()
@@ -4097,6 +4144,7 @@ class Game:
             building = self._inspect_building()
             if building is None or not (
                 building.has_recipes()
+                or building.addon_craft_recipes()
                 or building.split_recipes()
                 or building.plant_recipes()
             ):
@@ -4107,7 +4155,10 @@ class Game:
 
             label = RECIPE_LABELS.get(name)
             if label is None:
-                for recipe in building.known_recipes():
+                for recipe in (
+                    *building.known_recipes(),
+                    *building.addon_craft_recipes(),
+                ):
                     if recipe.name == name:
                         label = recipe_label(recipe)
                         break
@@ -5314,6 +5365,12 @@ class Game:
         return False
 
     def _place_construction_site(self, kind: BuildingKind, x: int, y: int) -> bool:
+        from extensions import (
+            EXTENSION_PARENT,
+            footprints_orthogonally_adjacent,
+            is_extension_kind,
+        )
+
         if kind == BuildingKind.FIELD:
             return self._place_field_site((x, y), (x, y))
         plot_w, plot_h = default_building_plot(kind)
@@ -5325,6 +5382,24 @@ class Game:
             for py in range(oy, oy + plot_h)
             for px in range(ox, ox + plot_w)
         ]
+        parent_id: int | None = None
+        if is_extension_kind(kind):
+            parent_id = self.extension_parent_id
+            parent = self.buildings.get(parent_id) if parent_id is not None else None
+            need_parent = EXTENSION_PARENT.get(kind)
+            if parent is None or parent.kind != need_parent:
+                self._set_status(
+                    f"Select {BUILDING_LABELS.get(need_parent, 'parent')} "
+                    f"and use Add {BUILDING_LABELS[kind]} first."
+                )
+                return False
+            parent_cells = set(parent.plot_cells())
+            if not footprints_orthogonally_adjacent(set(cells), parent_cells):
+                self._set_status(
+                    f"{BUILDING_LABELS[kind]} must touch "
+                    f"{BUILDING_LABELS[parent.kind]} #{parent.id} (edge, not corner)."
+                )
+                return False
         reason = self._footprint_blocked(cells)
         if reason is not None:
             self._set_status(reason)
@@ -5341,6 +5416,7 @@ class Game:
             need_hardwood=cost_h,
             plot_w=plot_w,
             plot_h=plot_h,
+            parent_building_id=parent_id,
         )
         self.next_construction_id += 1
         self.construction_sites[site.id] = site
@@ -5351,6 +5427,7 @@ class Game:
         self.world.apply_disturbance(x, y)
         self._refresh_indicators()
         self.place_kind = None
+        self.extension_parent_id = None
         bits = unlock_building_cost(kind).summary_bits()
         need_txt = ", ".join(bits) if bits else "no materials"
         self._set_status(
@@ -5550,8 +5627,10 @@ class Game:
             work_mode=Building.work_mode_from_task(site.kind, default_task),
             plot_w=plot_w,
             plot_h=plot_h,
+            parent_building_id=site.parent_building_id,
         )
         from entities import apply_building_storage
+        from extensions import apply_extension_storage_boosts, is_extension_kind
 
         apply_building_storage(building)
         building.sync_draw_task_from_mode()
@@ -5561,6 +5640,15 @@ class Game:
             self._ensure_market_demand(building)
         self.next_building_id += 1
         self.buildings[building.id] = building
+        if is_extension_kind(site.kind):
+            apply_extension_storage_boosts(self.buildings)
+            parent = (
+                self.buildings.get(site.parent_building_id)
+                if site.parent_building_id is not None
+                else None
+            )
+            if parent is not None:
+                parent.ensure_recipe_state()
         if site.kind == BuildingKind.FIELD:
             # Field is a plot outline only — no building glyph on the map.
             for px, py in site.plot_cells():
@@ -6703,17 +6791,37 @@ class Game:
                 self._set_status("Inventory is full.")
             return False
         taken = self.world.harvest_meat(x, y, amount=1)
-        if taken <= 0:
+        hide_taken = 0
+        if inventory.can_add(1, key="hide"):
+            hide_taken = self.world.harvest_hide(x, y, amount=1)
+            if hide_taken > 0:
+                inventory.add_item("hide", hide_taken)
+                self.record_produced("hide", hide_taken)
+        if taken <= 0 and hide_taken <= 0:
             if status:
                 self._set_status("No meat here.")
             return False
-        inventory.add_meat(taken)
-        self.record_produced("meat", taken)
+        if taken > 0:
+            inventory.add_meat(taken)
+            self.record_produced("meat", taken)
         if status:
             left = self.world.get_cell(x, y)
             remaining = left.meat_deposit if left else 0
-            self._set_status(f"Collected {taken} meat ({remaining} left).")
+            bits = []
+            if taken:
+                bits.append(f"{taken} meat ({remaining} left)")
+            if hide_taken:
+                bits.append(f"{hide_taken} hide")
+            self._set_status("Collected " + ", ".join(bits) + ".")
         return True
+
+    def _drop_hunt_yields(self, x: int, y: int, kind) -> int:
+        """Leave meat (and deer hide) on the kill tile. Returns meat amount."""
+        meat = BOAR_MEAT_YIELD if kind == AnimalKind.BOAR else DEER_MEAT_YIELD
+        self.world.add_meat_deposit(x, y, meat)
+        if kind == AnimalKind.DEER:
+            self.world.add_hide_deposit(x, y, 1)
+        return meat
 
     def _adjacent_animal(self, x: int, y: int):
         """Animal on this cell or within Chebyshev distance 1."""
@@ -6809,16 +6917,18 @@ class Game:
             inv.consume_item("stone_arrows", 1)
             self.record_consumed("stone_arrows", 1)
         x, y, kind = result
-        meat = BOAR_MEAT_YIELD if kind == AnimalKind.BOAR else DEER_MEAT_YIELD
+        meat = self._drop_hunt_yields(x, y, kind)
         label = "boar" if kind == AnimalKind.BOAR else "deer"
-        self.world.add_meat_deposit(x, y, meat)
         self.world.apply_extraction_disturbance(x, y)
         if kind in (AnimalKind.DEER, AnimalKind.BOAR):
             self.wildlife.scare_from_kill(x, y)
         self._refresh_indicators()
         self._finish_player_work()
         weapon = "spear" if has_spear else "bow"
-        self._set_status(f"Hunted {label} with {weapon}. {meat} meat on ({x}, {y}).")
+        hide_txt = " + hide" if kind == AnimalKind.DEER else ""
+        self._set_status(
+            f"Hunted {label} with {weapon}. {meat} meat{hide_txt} on ({x}, {y})."
+        )
 
     def _hunt_threat_positions(self) -> list[tuple[int, int]]:
         """Player + assigned hunters — deer/boar flee these positions."""
@@ -7295,21 +7405,12 @@ class Game:
         building = self._inspect_building()
         if building is None:
             return
-        tool = WORKPLACE_TOOL.get(building.kind)
-        extras = WORKPLACE_EXTRA_TOOLS.get(building.kind, ())
-        if tool is not None:
-            inv = self.player.inventory
-            ok = inv.has_equipped_tool(tool) or any(
-                inv.has_equipped_tool(t) for t in extras
-            )
-            if not ok:
-                need = resource_label(tool)
-                self._set_status(f"Equip a {need} (I or Q) to craft here.")
-                return
-
         recipe = None
         is_split = False
-        for r in building.known_recipes():
+        for r in (
+            *building.known_recipes(),
+            *building.addon_craft_recipes(),
+        ):
             if r.name == recipe_name:
                 recipe = r
                 break
@@ -7327,6 +7428,22 @@ class Game:
         if recipe is None:
             self._set_status("Unknown recipe.")
             return
+
+        tool = WORKPLACE_TOOL.get(building.kind)
+        extras = WORKPLACE_EXTRA_TOOLS.get(building.kind, ())
+        if recipe in building.addon_craft_recipes() and building.kind == BuildingKind.HUNTER:
+            tool = "knife"
+            extras = ()
+        if tool is not None:
+            inv = self.player.inventory
+            ok = inv.has_equipped_tool(tool) or any(
+                inv.has_equipped_tool(t) for t in extras
+            )
+            if not ok:
+                need = resource_label(tool)
+                self._set_status(f"Equip a {need} (I or Q) to craft here.")
+                return
+
         if not building.is_recipe_enabled(recipe.name):
             # Player Craft implies enabling a newly added / toggled-off recipe.
             building.ensure_recipe_state()
@@ -10009,6 +10126,8 @@ class Game:
             return
 
         if not self._fields_near_farm(building):
+            if self._try_addon_craft(villager, building):
+                return
             if (
                 building.haulable_total() > 0
                 and not self._general_hauler_serving(building.id)
@@ -10048,6 +10167,8 @@ class Game:
                 villager, building
             )
             if target is None:
+                if self._try_addon_craft(villager, building):
+                    return
                 if self._maybe_assigned_transport(villager, building):
                     return
                 if self._workplace_accepts_carry(villager, building):
@@ -10158,6 +10279,58 @@ class Game:
                 building.fuel_wood = max(0, building.fuel_wood - 1)
             self._gain_job_skill(villager, building.kind.name)
         villager.work_cooldown = self._villager_work_interval(villager)
+
+    def _try_addon_craft(self, villager: Villager, building: Building) -> bool:
+        """Farm barn / hunter drying-rack crafts on the parent workplace."""
+        recipes = building.addon_craft_recipes()
+        if not recipes:
+            return False
+        # Leather needs a knife; barn seed recipes use the farm (hoe already held).
+        if building.kind == BuildingKind.HUNTER:
+            if not self._ensure_work_tool(villager, "knife"):
+                return False
+        recipe = self._craftable_recipe(
+            building,
+            worker=villager,
+            prefer_name=villager.craft_recipe_name,
+        )
+        if recipe is None or recipe not in recipes:
+            # craftable_recipe may pick gather-empty recipes first for hunter;
+            # filter to addon crafts only.
+            ready = None
+            for candidate in recipes:
+                if not building.is_recipe_enabled(candidate.name):
+                    continue
+                probe = self._craftable_recipe(
+                    building, worker=villager, prefer_name=candidate.name
+                )
+                if probe is not None and probe.name == candidate.name:
+                    ready = probe
+                    break
+            recipe = ready
+        if recipe is None:
+            villager.craft_recipe_name = None
+            return False
+
+        bx, by = building.center_cell()
+        villager.target = (bx, by)
+        villager.state = VillagerState.WORKING
+        if (villager.x, villager.y) != (bx, by):
+            if villager.move_cooldown > 0:
+                return True
+            self._step_villager_toward(villager, (bx, by))
+            return True
+
+        building.deposit_from_inventory(villager.inventory)
+        villager.craft_recipe_name = recipe.name
+        if villager.work_cooldown > 0:
+            return True
+        self._spend_work_energy(villager)
+        if building.advance_recipe_progress(recipe):
+            self._apply_recipe_tracked(building, recipe)
+            self._gain_job_skill(villager, building.kind.name)
+        villager.work_cooldown = self._villager_work_interval(villager)
+        return True
 
     def _market_storehouse_surplus(self, key: str, reserve: int) -> int:
         """Storehouse units of ``key`` above the configured supply reserve."""
@@ -10630,6 +10803,8 @@ class Game:
             self._force_assigned_delivery(villager, building)
             return
         if not self._ensure_hunter_weapon(villager):
+            if self._try_addon_craft(villager, building):
+                return
             self._maybe_assigned_transport(villager, building)
             return
         if self._workplace_primary_available(villager, building):
@@ -10638,6 +10813,8 @@ class Game:
             return
         elif self._workplace_accepts_carry(villager, building):
             self._force_assigned_delivery(villager, building)
+            return
+        elif self._try_addon_craft(villager, building):
             return
 
         # Resolve a pending bow shot (animation + hit/miss).
@@ -10648,7 +10825,7 @@ class Game:
         meat_pos = villager.hunt_meat_pos
         if meat_pos is not None:
             cell = self.world.get_cell(*meat_pos)
-            if cell is None or cell.meat_deposit <= 0:
+            if cell is None or (cell.meat_deposit <= 0 and cell.hide_deposit <= 0):
                 villager.hunt_meat_pos = None
                 meat_pos = None
         if meat_pos is None:
@@ -10666,7 +10843,9 @@ class Game:
                         self._gain_job_skill(villager, building.kind.name)
                     villager.work_cooldown = self._villager_work_interval(villager)
                     cell = self.world.get_cell(*meat_pos)
-                    if cell is None or cell.meat_deposit <= 0:
+                    if cell is None or (
+                        cell.meat_deposit <= 0 and cell.hide_deposit <= 0
+                    ):
                         villager.hunt_meat_pos = None
                 return
             if not self.world.is_walkable(*meat_pos):
@@ -10734,6 +10913,8 @@ class Game:
             return
 
         if animal is None:
+            if self._try_addon_craft(villager, building):
+                return
             self._maybe_assigned_transport(villager, building)
             return
 
@@ -10753,8 +10934,7 @@ class Game:
                 villager.hunt_animal_id = None
                 if result is not None:
                     x, y, kind = result
-                    meat = BOAR_MEAT_YIELD if kind == AnimalKind.BOAR else DEER_MEAT_YIELD
-                    self.world.add_meat_deposit(x, y, meat)
+                    self._drop_hunt_yields(x, y, kind)
                     self.world.apply_extraction_disturbance(x, y)
                     if kind in (AnimalKind.DEER, AnimalKind.BOAR):
                         self.wildlife.scare_from_kill(x, y)
@@ -10825,8 +11005,7 @@ class Game:
         if result is None:
             return
         x, y, kind = result
-        meat = BOAR_MEAT_YIELD if kind == AnimalKind.BOAR else DEER_MEAT_YIELD
-        self.world.add_meat_deposit(x, y, meat)
+        self._drop_hunt_yields(x, y, kind)
         self.world.apply_extraction_disturbance(x, y)
         if kind in (AnimalKind.DEER, AnimalKind.BOAR):
             self.wildlife.scare_from_kill(x, y)
@@ -10977,7 +11156,9 @@ class Game:
                     if (x, y) in claimed:
                         continue
                     cell = self.world.get_cell(x, y)
-                    if cell is not None and cell.meat_deposit > 0:
+                    if cell is not None and (
+                        cell.meat_deposit > 0 or cell.hide_deposit > 0
+                    ):
                         cells.append((x, y))
             origin = building.center_cell()
             # Prefer nearest to a hunter currently looking — use building centre.
@@ -10986,7 +11167,8 @@ class Game:
                 for x in range(self.world.cols):
                     if (x, y) in claimed:
                         continue
-                    if self.world.cells[y][x].meat_deposit > 0:
+                    cell = self.world.cells[y][x]
+                    if cell.meat_deposit > 0 or cell.hide_deposit > 0:
                         cells.append((x, y))
             origin = building.center_cell()
         villager = self._get_villager(exclude_villager_id)
@@ -11013,7 +11195,9 @@ class Game:
                     if (x, y) in claimed:
                         continue
                     cell = self.world.get_cell(x, y)
-                    if cell is not None and cell.meat_deposit > 0:
+                    if cell is not None and (
+                        cell.meat_deposit > 0 or cell.hide_deposit > 0
+                    ):
                         return True
             return False
         villager = self._get_villager(exclude_villager_id)
@@ -11026,7 +11210,8 @@ class Game:
             for x in range(self.world.cols):
                 if (x, y) in claimed:
                     continue
-                if self.world.cells[y][x].meat_deposit <= 0:
+                cell = self.world.cells[y][x]
+                if cell.meat_deposit <= 0 and cell.hide_deposit <= 0:
                     continue
                 if self._within_work_search(origin, (x, y)):
                     return True

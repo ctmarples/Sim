@@ -55,6 +55,8 @@ _BASE_STORAGE_KEYS = (
     "reeds",
     "straw",
     "fur",
+    "hide",
+    "leather",
     "twine",
     "coins",
     "axe",
@@ -182,6 +184,7 @@ def _cell_to_dict(cell: Cell) -> dict[str, Any]:
         "growth_ticks": cell.growth_ticks,
         "deposit": cell.deposit,
         "meat_deposit": cell.meat_deposit,
+        "hide_deposit": cell.hide_deposit,
         "fish_deposit": cell.fish_deposit,
     }
     crop_kind = getattr(cell, "crop_kind", None)
@@ -209,6 +212,7 @@ def _cell_from_save(c: dict[str, Any]) -> Cell:
         growth_ticks=int(c.get("growth_ticks", 0)),
         deposit=int(c.get("deposit", 0)),
         meat_deposit=int(c.get("meat_deposit", 0)),
+        hide_deposit=int(c.get("hide_deposit", 0)),
         fish_deposit=int(c.get("fish_deposit", 0)),
     )
     crop_kind = c.get("crop_kind")
@@ -340,6 +344,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "plot_h": getattr(b, "plot_h", 1),
             "next_field_id": getattr(b, "next_field_id", 1),
             "next_plan_id": getattr(b, "next_plan_id", 1),
+            "parent_building_id": getattr(b, "parent_building_id", None),
         }
         if hasattr(b, "crop_kind"):
             bdata["crop_kind"] = b.crop_kind
@@ -449,6 +454,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "relocate_pair_id": getattr(s, "relocate_pair_id", None),
             "relocate_from_building_id": getattr(s, "relocate_from_building_id", None),
             "source_building_id": getattr(s, "source_building_id", None),
+            "parent_building_id": getattr(s, "parent_building_id", None),
         }
         for s in game.construction_sites.values()
     ]
@@ -669,6 +675,9 @@ def _migrate_building_footprints(game: Game) -> None:
         BuildingKind.TENT: FeatureType.TENT,
         BuildingKind.HOUSE_SMALL: FeatureType.HOUSE_SMALL,
         BuildingKind.HOUSE: FeatureType.HOUSE,
+        BuildingKind.BARN: FeatureType.BARN,
+        BuildingKind.PANTRY: FeatureType.PANTRY,
+        BuildingKind.DRYING_RACK: FeatureType.DRYING_RACK,
     }
 
     for building in list(game.buildings.values()):
@@ -910,6 +919,11 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             work_mode=work_mode,
             plot_w=max(1, int(bdata.get("plot_w", 1))),
             plot_h=max(1, int(bdata.get("plot_h", 1))),
+            parent_building_id=(
+                int(bdata["parent_building_id"])
+                if bdata.get("parent_building_id") is not None
+                else None
+            ),
         )
         # Settings are the source of truth for pool sizes (avoids stale save caps).
         from entities import apply_building_storage
@@ -1070,6 +1084,10 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         )
         building.next_plan_id = int(bdata.get("next_plan_id", max_plan + 1))
         game.buildings[building.id] = building
+
+    from extensions import apply_extension_storage_boosts
+
+    apply_extension_storage_boosts(game.buildings)
 
     # Ensure new Field buildings from migration get unique ids.
     if game.buildings:
@@ -1247,6 +1265,11 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             relocate_pair_id=int(pair) if pair is not None else None,
             relocate_from_building_id=int(from_b) if from_b is not None else None,
             source_building_id=int(src_b) if src_b is not None else None,
+            parent_building_id=(
+                int(sdata["parent_building_id"])
+                if sdata.get("parent_building_id") is not None
+                else None
+            ),
         )
         game.construction_sites[site.id] = site
 

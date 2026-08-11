@@ -72,6 +72,8 @@ RESOURCES: list[ResourceDef] = [
     ResourceDef("reeds", "Reeds", "wares", "reed"),
     ResourceDef("straw", "Straw", "wares", "strw"),
     ResourceDef("fur", "Fur", "wares", "fur"),
+    ResourceDef("hide", "Hide", "wares", "hide"),
+    ResourceDef("leather", "Leather", "wares", "leth"),
     *_CROP_PRODUCE_WARES,
     ResourceDef("coins", "Coins", "wares", "coin"),
     ResourceDef("wheat_flour", "Wheat flour", "wares", "w.fl"),
@@ -350,6 +352,12 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
     if key == "reeds":
         return ResourceIconStyle(ICON_REED, {"stem": COLOUR_REED})
 
+    if key == "fur":
+        return ResourceIconStyle("fur", {"body": (210, 190, 170)})
+    if key == "hide":
+        return ResourceIconStyle("hide", {"body": (196, 168, 130)})
+    if key == "leather":
+        return ResourceIconStyle("leather", {"body": (139, 90, 43)})
     if key == "wheat_flour":
         return ResourceIconStyle(
             ICON_SEEDS,

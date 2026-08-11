@@ -10,9 +10,11 @@ from recipes import (
     ALCHEMIST_INPUT_KEYS,
     ALCHEMIST_OUTPUT_KEYS,
     ALCHEMIST_RECIPES,
+    BARN_RECIPES,
     CRAFT_BENCH_INPUT_KEYS,
     CRAFT_BENCH_OUTPUT_KEYS,
     CRAFT_BENCH_RECIPES,
+    DRYING_RACK_RECIPES,
     FORESTER_RECIPES,
     FORESTER_PLANT_RECIPES,
     FORESTER_SPLIT_RECIPES,
@@ -162,6 +164,10 @@ class BuildingKind(Enum):
     TENT = auto()
     HOUSE_SMALL = auto()  # 1×2
     HOUSE = auto()  # 2×2
+    # 1×1 extensions (must be built adjacent to their parent workplace).
+    BARN = auto()  # Farm
+    PANTRY = auto()  # Kitchen
+    DRYING_RACK = auto()  # Hunter
 
 
 # Tool required in the equipped slot for workplace actions.
@@ -198,6 +204,9 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
     BuildingKind.TENT: "Tent",
     BuildingKind.HOUSE_SMALL: "Cottage",
     BuildingKind.HOUSE: "House",
+    BuildingKind.BARN: "Barn",
+    BuildingKind.PANTRY: "Pantry",
+    BuildingKind.DRYING_RACK: "Drying rack",
 }
 
 
@@ -205,7 +214,12 @@ def default_building_plot(kind: BuildingKind) -> tuple[int, int]:
     """Default footprint size. Fields are drag-sized; housing uses custom plots."""
     if kind == BuildingKind.FIELD:
         return 1, 1
-    if kind == BuildingKind.TENT:
+    if kind in (
+        BuildingKind.TENT,
+        BuildingKind.BARN,
+        BuildingKind.PANTRY,
+        BuildingKind.DRYING_RACK,
+    ):
         return 1, 1
     if kind == BuildingKind.HOUSE_SMALL:
         return 1, 2
@@ -361,6 +375,8 @@ class Inventory:
     reeds: int = 0
     straw: int = 0
     fur: int = 0
+    hide: int = 0
+    leather: int = 0
     wheat: int = 0
     flax: int = 0
     sage: int = 0
@@ -443,6 +459,8 @@ class Inventory:
             + self.reeds
             + self.straw
             + self.fur
+            + self.hide
+            + self.leather
             + self.twine
             + sum(int(getattr(self, key, 0)) for key in TOOL_KEYS)
             + sum(getattr(self, key) for key in PRODUCE_KEYS)
@@ -646,6 +664,8 @@ class Inventory:
             "reeds": self.reeds,
             "straw": self.straw,
             "fur": self.fur,
+            "hide": self.hide,
+            "leather": self.leather,
             "twine": self.twine,
             "coins": self.coins,
             **{key: int(getattr(self, key, 0)) for key in TOOL_KEYS},
@@ -665,7 +685,7 @@ class Inventory:
     def reset(self) -> None:
         self.logs = self.hardwood_logs = self.wood = self.rock = self.meat = self.fish = 0
         self.mushrooms = self.honey = self.berries = self.berry_seeds = self.reeds = 0
-        self.straw = self.fur = 0
+        self.straw = self.fur = self.hide = self.leather = 0
         self.twine = self.coins = 0
         for key in TOOL_KEYS:
             setattr(self, key, 0)
@@ -693,6 +713,8 @@ class HomeStorage:
     reeds: int = 0
     straw: int = 0
     fur: int = 0
+    hide: int = 0
+    leather: int = 0
     wheat: int = 0
     flax: int = 0
     sage: int = 0
@@ -765,7 +787,7 @@ class HomeStorage:
     def reset(self) -> None:
         self.logs = self.hardwood_logs = self.wood = self.rock = self.meat = self.fish = 0
         self.mushrooms = self.honey = self.berries = self.berry_seeds = self.reeds = 0
-        self.straw = self.fur = 0
+        self.straw = self.fur = self.hide = self.leather = 0
         self.twine = self.coins = 0
         for key in TOOL_KEYS:
             setattr(self, key, 0)
@@ -1062,6 +1084,8 @@ class Building:
     reeds: int = 0
     straw: int = 0
     fur: int = 0
+    hide: int = 0
+    leather: int = 0
     wheat: int = 0
     flax: int = 0
     sage: int = 0
@@ -1139,6 +1163,9 @@ class Building:
     crop_kind: str = "sage"  # legacy
     next_field_id: int = 1
     next_plan_id: int = 1
+    # Extension annexes: parent link (on the extension) and attached kinds (on parent).
+    parent_building_id: int | None = None
+    linked_extensions: frozenset[BuildingKind] = field(default_factory=frozenset)
 
     @property
     def saplings(self) -> int:
@@ -1356,6 +1383,8 @@ class Building:
             + self.reeds
             + self.straw
             + self.fur
+            + self.hide
+            + self.leather
             + self.twine
             + sum(int(getattr(self, key, 0)) for key in TOOL_KEYS)
             + sum(getattr(self, key) for key in PRODUCE_KEYS)
@@ -1488,6 +1517,19 @@ class Building:
             return HUNTER_RECIPES
         if self.kind == BuildingKind.FORAGER:
             return FORAGER_RECIPES
+        if self.kind == BuildingKind.FARM:
+            return self.addon_craft_recipes()
+        return ()
+
+    def addon_craft_recipes(self) -> tuple[Recipe, ...]:
+        """Craft recipes unlocked by attached extensions (barn / drying rack)."""
+        if self.kind == BuildingKind.FARM and BuildingKind.BARN in self.linked_extensions:
+            return BARN_RECIPES
+        if (
+            self.kind == BuildingKind.HUNTER
+            and BuildingKind.DRYING_RACK in self.linked_extensions
+        ):
+            return DRYING_RACK_RECIPES
         return ()
 
     def split_recipes(self) -> tuple[Recipe, ...]:
@@ -1528,15 +1570,12 @@ class Building:
     def ensure_recipe_state(self) -> None:
         # Preserve existing toggles; newly added recipe names default on so they
         # show up and can craft (disable manually if unwanted).
-        for recipe in self.known_recipes():
-            self.recipe_enabled.setdefault(recipe.name, True)
-            self.recipe_progress.setdefault(recipe.name, 0)
-            self.recipe_priority.setdefault(recipe.name, RECIPE_PRIORITY_DEFAULT)
-        for recipe in self.split_recipes():
-            self.recipe_enabled.setdefault(recipe.name, True)
-            self.recipe_progress.setdefault(recipe.name, 0)
-            self.recipe_priority.setdefault(recipe.name, RECIPE_PRIORITY_DEFAULT)
-        for recipe in self.plant_recipes():
+        for recipe in (
+            *self.known_recipes(),
+            *self.addon_craft_recipes(),
+            *self.split_recipes(),
+            *self.plant_recipes(),
+        ):
             self.recipe_enabled.setdefault(recipe.name, True)
             self.recipe_progress.setdefault(recipe.name, 0)
             self.recipe_priority.setdefault(recipe.name, RECIPE_PRIORITY_DEFAULT)
@@ -1591,8 +1630,11 @@ class Building:
 
     def enabled_recipes(self) -> tuple[Recipe, ...]:
         self.ensure_recipe_state()
+        recipes = list(self.known_recipes())
+        if self.kind == BuildingKind.HUNTER:
+            recipes.extend(self.addon_craft_recipes())
         enabled = tuple(
-            r for r in self.known_recipes() if self.recipe_enabled.get(r.name, True)
+            r for r in recipes if self.recipe_enabled.get(r.name, True)
         )
         return self._recipes_by_priority(enabled)
 
@@ -2237,6 +2279,8 @@ class Building:
                 "reeds",
                 "straw",
                 "fur",
+                "hide",
+                "leather",
                 "twine",
                 "axe",
             ) + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS
@@ -2247,13 +2291,20 @@ class Building:
         if self.kind == BuildingKind.MASON:
             return ("rock",)
         if self.kind == BuildingKind.HUNTER:
-            return ("meat", "fur")
+            return ("meat", "fur", "hide", "leather")
         if self.kind == BuildingKind.FISHER:
             return ("fish",)
         if self.kind == BuildingKind.FORAGER:
             return ("wood", "rock", *_FORAGE_KEYS)
         if self.kind == BuildingKind.FARM:
             return PRODUCE_KEYS + SEED_KEYS + ("straw",)
+        if self.kind in (
+            BuildingKind.BARN,
+            BuildingKind.PANTRY,
+            BuildingKind.DRYING_RACK,
+            BuildingKind.FIELD,
+        ):
+            return ()
         if self.kind == BuildingKind.MILL:
             return MILL_INPUT_KEYS + MILL_OUTPUT_KEYS
         if self.kind == BuildingKind.KITCHEN:
@@ -2268,8 +2319,6 @@ class Building:
             from market_economy import market_supply_resource_keys
 
             return market_supply_resource_keys()
-        if self.kind == BuildingKind.FIELD:
-            return ()
         return ()
 
     def haul_keys(self) -> tuple[str, ...]:
@@ -2576,6 +2625,8 @@ class ConstructionSite:
     relocate_from_building_id: int | None = None
     # On deconstruct sites: original building id before teardown.
     source_building_id: int | None = None
+    # Extension construction: parent workplace this annex attaches to.
+    parent_building_id: int | None = None
 
     def plot_bounds(self) -> tuple[int, int, int, int]:
         w = max(1, self.plot_w)
