@@ -196,7 +196,7 @@ def draw_inv_grid(
         cell = pygame.Rect(cx, cy, GRID_CELL, GRID_CELL)
         if not cell.colliderect(body):
             continue
-        is_sel = selected_key == key and side == "storage"
+        is_sel = selected_key is not None and selected_key == key
         is_hov = body.collidepoint(mouse_pos or (-1, -1)) and (
             hover_inv == (side, key)
             or (mouse_pos is not None and cell.collidepoint(mouse_pos))
@@ -287,22 +287,34 @@ def draw_item_tooltip(
     label = resource_label(key)
     if extra:
         label = f"{label} — {extra}"
-    text = font.render(label, True, COLOUR_TEXT)
+    draw_hover_tooltip(surface, mouse_pos=mouse_pos, text=label, font=font)
+
+
+def draw_hover_tooltip(
+    surface: pygame.Surface,
+    *,
+    mouse_pos: tuple[int, int],
+    text: str,
+    font: pygame.font.Font,
+) -> None:
+    """Draw a free-text tooltip near the cursor."""
+    if not text:
+        return
+    rendered = font.render(text, True, COLOUR_TEXT)
     pad = 4
     tip = pygame.Rect(
         mouse_pos[0] + 14,
         mouse_pos[1] + 12,
-        text.get_width() + pad * 2,
-        text.get_height() + pad * 2,
+        rendered.get_width() + pad * 2,
+        rendered.get_height() + pad * 2,
     )
-    # Keep on-screen horizontally within the surface.
     if tip.right > surface.get_width() - 4:
         tip.x = mouse_pos[0] - tip.w - 8
     if tip.bottom > surface.get_height() - 4:
         tip.y = mouse_pos[1] - tip.h - 8
     pygame.draw.rect(surface, (28, 30, 36), tip, border_radius=3)
     pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, tip, 1, border_radius=3)
-    surface.blit(text, (tip.x + pad, tip.y + pad))
+    surface.blit(rendered, (tip.x + pad, tip.y + pad))
 
 
 def draw_tool_slot(
@@ -359,7 +371,7 @@ def draw_tool_slot(
                 hits.append((cell, f"tool_unequip:{key}"))
             elif len(tools) < TOOL_SLOT_MAX and i == len(tools):
                 hits.append((cell, "tool_equip"))
-        if hovered and key:
-            tip_key = key
+        if hovered:
+            tip_key = key if key else "_empty_tool_"
     row_w = TOOL_SLOT_MAX * GRID_CELL + (TOOL_SLOT_MAX - 1) * GRID_GAP
     return y + GRID_CELL + 8 - y0, hits, tip_key

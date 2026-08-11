@@ -1995,12 +1995,18 @@ class Building:
         *,
         worker=None,
         worker_skill_level: int | None = None,
+        prefer_name: str | None = None,
+        avoid_names: set[str] | frozenset[str] | None = None,
     ) -> Recipe | None:
         """Pick an enabled recipe that can run now.
 
         Respects recipe priority (1 before 2 before 3). At the same priority,
         prefer richer recipes (more input units) so e.g. spiced stew beats
         grilled meat when both are stocked.
+
+        ``prefer_name`` continues a worker's sticky order when still ready.
+        ``avoid_names`` steers co-workers onto other ready recipes when possible
+        so two cooks can progress stew and jam at the same time.
 
         ``worker`` gates recipes by ``Recipe.skill_reqs`` when set.
         ``worker_skill_level`` is a legacy single-level fallback.
@@ -2014,8 +2020,7 @@ class Building:
         if self.kind == BuildingKind.KITCHEN and not self.has_cooking_fuel():
             return None
         use_split_out = self.output_capacity > 0
-        best: Recipe | None = None
-        best_key: tuple[int, int, int] | None = None
+        candidates: list[Recipe] = []
         for recipe in recipes:
             if not recipe.inputs:
                 continue
@@ -2036,12 +2041,32 @@ class Building:
                 fits = recipe_output_fits(self, recipe, capacity=self.capacity)
             if not fits:
                 continue
+            candidates.append(recipe)
+        if not candidates:
+            return None
+
+        def rank(recipe: Recipe) -> tuple[int, int, int]:
             prio = self.get_recipe_priority(recipe.name)
-            key = (prio, -sum(recipe.inputs.values()), -len(recipe.inputs))
-            if best_key is None or key < best_key:
-                best_key = key
-                best = recipe
-        return best
+            return (prio, -sum(recipe.inputs.values()), -len(recipe.inputs))
+
+        avoid = avoid_names or ()
+        if prefer_name:
+            for recipe in candidates:
+                if recipe.name == prefer_name:
+                    return recipe
+
+        # Keep warming in-progress orders (unless another worker claimed them).
+        in_progress = [
+            r
+            for r in candidates
+            if int(self.recipe_progress.get(r.name, 0)) > 0 and r.name not in avoid
+        ]
+        if in_progress:
+            return min(in_progress, key=rank)
+
+        free = [r for r in candidates if r.name not in avoid]
+        pool = free if free else list(candidates)
+        return min(pool, key=rank)
 
     def enabled_split_recipes(self) -> tuple[Recipe, ...]:
         self.ensure_recipe_state()
@@ -2080,16 +2105,14 @@ class Building:
         return can_craft(self, recipes, capacity=self.capacity)
 
     def advance_recipe_progress(self, recipe: Recipe, *, split: bool = False) -> bool:
-        """Advance one work step. Returns True when the craft completes."""
+        """Advance one work step. Returns True when the craft completes.
+
+        Multiple recipes may be in progress at once so co-workers can cook /
+        craft different orders in parallel without canceling each other.
+        """
         self.ensure_recipe_state()
         steps = max(1, int(PROCESSOR_RECIPE_STEPS))
-        primary = self.split_recipes() if split else self.known_recipes()
-        secondary = self.known_recipes() if split else self.split_recipes()
-        for other in primary:
-            if other.name != recipe.name:
-                self.recipe_progress[other.name] = 0
-        for other in secondary:
-            self.recipe_progress[other.name] = 0
+        _ = split  # progress is keyed by recipe name for craft and split alike
         self.recipe_progress[recipe.name] = int(self.recipe_progress.get(recipe.name, 0)) + 1
         if self.recipe_progress[recipe.name] >= steps:
             self.recipe_progress[recipe.name] = 0
@@ -2407,6 +2430,9 @@ class Building:
             BuildingKind.CRAFT_BENCH,
             BuildingKind.ALCHEMIST,
             BuildingKind.TAILOR,
+            BuildingKind.TENT,
+            BuildingKind.HOUSE_SMALL,
+            BuildingKind.HOUSE,
         ):
             return ()
         if self.kind == BuildingKind.FORESTER:
@@ -2659,6 +2685,8 @@ class Villager:
     fish_post_pos: tuple[int, int] | None = None
     forage_colony_id: int | None = None
     construction_id: int | None = None
+    # Sticky processor craft order (kitchen / mill / craft bench).
+    craft_recipe_name: str | None = None
     priorities: list[WorkPriority] = field(
         default_factory=lambda: list(DEFAULT_PRIORITIES_UNASSIGNED)
     )
@@ -2685,14 +2713,20 @@ class Villager:
     required_foods: list[str] = field(default_factory=lambda: ["meat"])
     favourite_foods: list[str] = field(default_factory=list)
     favourite_is_junk: bool = False
-    join_fee_paid: bool = False
+    join_fee_paid: bool = False  # legacy save field; no longer used for fees
     seasons_without_reqs: int = 0
-    low_happiness_days: float = 0.0
+    coins_paid_total: int = 0
+    season_pay_due: int = 0
+    happiness_events: list[dict] = field(default_factory=list)
+    low_happiness_days: float = 0.0  # legacy
+    low_happiness_seasons: int = 0
     skills: dict = field(default_factory=dict)
     community_id: int | None = None
     virtues: list[str] = field(default_factory=list)
     vices: list[str] = field(default_factory=list)
     portrait_seed: int = 0
+    template_id: str = ""
+    tier: int = 1
 
     def __post_init__(self) -> None:
         if not self.skills:
@@ -2728,6 +2762,7 @@ class Villager:
         self.fish_post_pos = None
         self.forage_colony_id = None
         self.construction_id = None
+        self.craft_recipe_name = None
         self.target = None
 
     def clear_assignment(self) -> None:
@@ -2886,36 +2921,61 @@ class Player:
     x: int
     y: int
     inventory: Inventory = field(default_factory=Inventory)
-    vis_x: float = 0.0
-    vis_y: float = 0.0
+    move_cooldown: int = 0
+    work_cooldown: int = 0
+    satiation: float = 0.75
+    energy: float = 1.0
+    happiness: float = 0.7
+    last_meal: list[str] = field(default_factory=list)
+    food_walk_mult: float = 1.0
+    food_work_mult: float = 1.0
+    food_hunger_mult: float = 1.0
+    ration_mode: RationMode = RationMode.NORMAL
+    auto_eat: bool = False
 
     def __post_init__(self) -> None:
-        self.vis_x = float(self.x)
-        self.vis_y = float(self.y)
+        snap_entity_visual(self)
 
     def move_to(self, x: int, y: int) -> None:
         self.x = x
         self.y = y
+        snap_entity_visual(self)
 
     def reset(self, x: int, y: int) -> None:
         self.x = x
         self.y = y
-        self.vis_x = float(x)
-        self.vis_y = float(y)
+        self.move_cooldown = 0
+        self.work_cooldown = 0
+        self.satiation = 0.75
+        self.energy = 1.0
+        self.happiness = 0.7
+        self.last_meal.clear()
+        self.clear_food_buffs()
+        self.ration_mode = RationMode.NORMAL
+        self.auto_eat = False
         self.inventory.reset()
+        snap_entity_visual(self)
 
-    def update_visual(self, dt: float, speed: float) -> None:
-        """Lerp draw position toward the logical cell each frame."""
-        tx, ty = float(self.x), float(self.y)
-        dx = tx - self.vis_x
-        dy = ty - self.vis_y
-        dist = (dx * dx + dy * dy) ** 0.5
-        step = max(0.0, speed) * max(0.0, dt)
-        if dist <= step or dist < 1e-6:
-            self.vis_x, self.vis_y = tx, ty
-        else:
-            self.vis_x += dx / dist * step
-            self.vis_y += dy / dist * step
+    def eat_threshold(self) -> float:
+        return RATION_EAT_AT[self.ration_mode]
+
+    def ration_refill(self) -> float:
+        return RATION_REFILL[self.ration_mode]
+
+    def needs_food(self) -> bool:
+        return self.satiation <= self.eat_threshold()
+
+    def apply_food_buffs(
+        self, walk: float = 1.0, work: float = 1.0, hunger: float = 1.0
+    ) -> None:
+        self.food_walk_mult = max(0.1, float(walk))
+        self.food_work_mult = max(0.1, float(work))
+        self.food_hunger_mult = max(0.05, float(hunger))
+
+    def clear_food_buffs(self) -> None:
+        self.food_walk_mult = 1.0
+        self.food_work_mult = 1.0
+        self.food_hunger_mult = 1.0
 
 
 def note_cell_step(entity: object, nx: int, ny: int) -> None:

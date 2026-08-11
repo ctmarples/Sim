@@ -92,19 +92,23 @@ HOUSING_BEDS: dict[str, int] = {
 }
 
 # Hire / happiness balance.
-HAPPINESS_LEAVE_THRESHOLD: float = 0.18
-HAPPINESS_LEAVE_DAYS: float = 5.0
+HAPPINESS_LEAVE_THRESHOLD: float = 0.10
+HAPPINESS_LEAVE_SEASONS: int = 2
 ENERGY_SLEEP_THRESHOLD: float = 0.22
 ENERGY_WORK_DRAIN: float = 0.0012
 ENERGY_MOVE_DRAIN: float = 0.0004
 ENERGY_SLEEP_GAIN: float = 0.004
 HAPPINESS_FOOD_VARIETY_BONUS: float = 0.04
-HAPPINESS_HOUSING_BONUS_PER_LEVEL: float = 0.06
+# Happiness from each housing level above the villager's requirement.
+HAPPINESS_HOUSING_BONUS_PER_LEVEL: float = 0.01
 HAPPINESS_MISSING_REQ_PENALTY: float = 0.08
 HAPPINESS_FAVOURITE_MISS_PENALTY: float = 0.05
-PAY_TO_JOIN_LOGS: int = 4
-PAY_TO_JOIN_WOOD: int = 2
-SEASON_MISSING_REQ_PAY_LOGS: int = 2
+# Coins charged each season for every unmet hire requirement (housing / staple).
+SEASON_MISSING_REQ_PAY_COINS: int = 2
+HAPPINESS_EVENT_HISTORY: int = 8
+# Discrete event deltas are shown as integer happiness points.
+HAPPINESS_POINT_SCALE: float = 0.01
+MAX_TRAVELLERS: int = 10
 
 HIRE_STAPLE_FOODS: tuple[str, ...] = ("meat", "fish", "bread")
 
@@ -389,6 +393,8 @@ class HireCandidate:
     join_fee_paid: bool = False
     seasons_without_reqs: int = 0
     portrait_seed: int = 0
+    template_id: str = ""
+    tier: int = 1
 
     def __post_init__(self) -> None:
         if not self.portrait_seed:
@@ -398,6 +404,7 @@ class HireCandidate:
             self.virtues, self.vices = pick_traits(rng)
             if self.favourite_is_junk and "Glutton" not in self.vices:
                 self.vices = (self.vices + ["Glutton"])[:2]
+        self.tier = max(1, min(3, int(self.tier or 1)))
 
     def to_dict(self) -> dict:
         return {
@@ -419,6 +426,8 @@ class HireCandidate:
             "join_fee_paid": self.join_fee_paid,
             "seasons_without_reqs": self.seasons_without_reqs,
             "portrait_seed": self.portrait_seed,
+            "template_id": self.template_id,
+            "tier": self.tier,
         }
 
     @classmethod
@@ -442,9 +451,163 @@ class HireCandidate:
             join_fee_paid=bool(data.get("join_fee_paid", False)),
             seasons_without_reqs=int(data.get("seasons_without_reqs", 0)),
             portrait_seed=int(data.get("portrait_seed", 0)),
+            template_id=str(data.get("template_id", "") or ""),
+            tier=int(data.get("tier", 1) or 1),
         )
         cand.__post_init__()
         return cand
+
+
+@dataclass
+class TravellerTemplate:
+    """Row from society_data/travellers.csv."""
+
+    template_id: str
+    name: str
+    tier: int
+    housing_need: int
+    required_foods: list[str]
+    favourite_foods: list[str]
+    favourite_is_junk: bool
+    virtues: list[str]
+    vices: list[str]
+    skill_levels: dict[SkillType, int]
+    skill_caps: dict[SkillType, int]
+
+
+def _travellers_csv_path() -> str:
+    from pathlib import Path
+
+    return str(Path(__file__).resolve().parent / "society_data" / "travellers.csv")
+
+
+def _split_csv_list(raw: str) -> list[str]:
+    return [p.strip() for p in str(raw or "").split(";") if p.strip()]
+
+
+def load_traveller_templates(path: str | None = None) -> list[TravellerTemplate]:
+    import csv
+    from pathlib import Path
+
+    csv_path = Path(path or _travellers_csv_path())
+    if not csv_path.is_file():
+        return []
+    out: list[TravellerTemplate] = []
+    with csv_path.open(newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            levels: dict[SkillType, int] = {}
+            caps: dict[SkillType, int] = {}
+            for skill in SKILL_ORDER:
+                key = skill.name.lower()
+                levels[skill] = max(1, min(10, int(row.get(key, 1) or 1)))
+                caps[skill] = max(
+                    levels[skill],
+                    min(10, int(row.get(f"{key}_cap", levels[skill]) or levels[skill])),
+                )
+            out.append(
+                TravellerTemplate(
+                    template_id=str(row.get("template_id") or row.get("name") or ""),
+                    name=str(row.get("name") or "Traveller"),
+                    tier=max(1, min(3, int(row.get("tier", 1) or 1))),
+                    housing_need=max(1, min(3, int(row.get("housing_need", 1) or 1))),
+                    required_foods=_split_csv_list(row.get("required_foods", "meat")),
+                    favourite_foods=_split_csv_list(row.get("favourite_foods", "")),
+                    favourite_is_junk=str(row.get("favourite_is_junk", "0")).strip()
+                    in ("1", "true", "True", "yes"),
+                    virtues=_split_csv_list(row.get("virtues", "")),
+                    vices=_split_csv_list(row.get("vices", "")),
+                    skill_levels=levels,
+                    skill_caps=caps,
+                )
+            )
+    return out
+
+
+def skills_from_template(template: TravellerTemplate) -> dict[SkillType, SkillState]:
+    out: dict[SkillType, SkillState] = {}
+    for skill in SKILL_ORDER:
+        level = int(template.skill_levels.get(skill, 1))
+        potential = int(template.skill_caps.get(skill, level))
+        st = SkillState(level=level, xp=0.0, potential=potential, peak=level)
+        st.clamp()
+        out[skill] = st
+    return out
+
+
+def hire_candidate_from_template(
+    template: TravellerTemplate,
+    *,
+    cand_id: int,
+    community: Community,
+    rng: random.Random,
+    name: str | None = None,
+) -> HireCandidate:
+    display_name = name or template.name
+    return HireCandidate(
+        id=cand_id,
+        name=display_name,
+        community_id=community.id,
+        x=community.x + rng.randint(-1, 1),
+        y=community.y + rng.randint(-1, 1),
+        skills=skills_from_template(template),
+        housing_need=template.housing_need,
+        required_foods=list(template.required_foods) or ["meat"],
+        favourite_foods=list(template.favourite_foods),
+        favourite_is_junk=template.favourite_is_junk,
+        virtues=list(template.virtues),
+        vices=list(template.vices),
+        portrait_seed=cand_id * 9973 + hash(display_name) % 10000,
+        template_id=template.template_id,
+        tier=template.tier,
+    )
+
+
+_TRAVELLER_TEMPLATES: list[TravellerTemplate] | None = None
+
+
+def traveller_templates() -> list[TravellerTemplate]:
+    global _TRAVELLER_TEMPLATES
+    if _TRAVELLER_TEMPLATES is None:
+        _TRAVELLER_TEMPLATES = load_traveller_templates()
+    return list(_TRAVELLER_TEMPLATES)
+
+
+def pick_traveller_templates(
+    rng: random.Random,
+    *,
+    count: int,
+    exclude_ids: set[str] | None = None,
+) -> list[TravellerTemplate]:
+    """Pick templates with a mix of tiers (round-robin 1→2→3)."""
+    exclude = exclude_ids or set()
+    by_tier: dict[int, list[TravellerTemplate]] = {1: [], 2: [], 3: []}
+    for tmpl in traveller_templates():
+        if tmpl.template_id and tmpl.template_id in exclude:
+            continue
+        by_tier.setdefault(tmpl.tier, []).append(tmpl)
+    for tier in by_tier:
+        rng.shuffle(by_tier[tier])
+    picked: list[TravellerTemplate] = []
+    while len(picked) < count:
+        progressed = False
+        for tier in (1, 2, 3):
+            pool = by_tier.get(tier) or []
+            if not pool:
+                continue
+            picked.append(pool.pop())
+            progressed = True
+            if len(picked) >= count:
+                break
+        if not progressed:
+            break
+    # If still short, recycle any templates (new name later).
+    if len(picked) < count:
+        all_tmpls = list(traveller_templates())
+        rng.shuffle(all_tmpls)
+        while len(picked) < count and all_tmpls:
+            picked.append(rng.choice(all_tmpls))
+    return picked[:count]
 
 
 @dataclass
@@ -511,16 +674,16 @@ def generate_communities(
     count: int = 3,
     candidates_per: tuple[int, int] = (2, 4),
     avoid: tuple[int, int] | None = None,
+    max_travellers: int = MAX_TRAVELLERS,
 ) -> tuple[list[Community], list[HireCandidate]]:
-    """Place camps on walkable land away from the player start."""
+    """Place camps on walkable land and fill travellers from travellers.csv."""
+    del candidates_per  # pool size comes from max_travellers + CSV templates
     from world import FeatureType, is_water_terrain
 
     cols, rows = world.cols, world.rows
     ax, ay = avoid if avoid is not None else world.start_pos
     communities: list[Community] = []
-    candidates: list[HireCandidate] = []
     next_c = 1
-    next_v = 1
     attempts = 0
     while len(communities) < count and attempts < 400:
         attempts += 1
@@ -544,40 +707,49 @@ def generate_communities(
         )
         next_c += 1
         communities.append(camp)
-        n = rng.randint(candidates_per[0], candidates_per[1])
-        for _ in range(n):
-            req, fav, junk = _pick_foods(rng)
-            skills = blank_skills(rng)
-            focus = rng.choice(SKILL_ORDER)
-            skills[focus].level = min(
-                skills[focus].potential,
-                skills[focus].level + rng.randint(1, 3),
-            )
-            skills[focus].peak = skills[focus].level
-            skills[focus].xp = 0.0
-            virtues, vices = pick_traits(rng)
-            if junk and "Glutton" not in vices:
-                vices = (vices + ["Glutton"])[:2]
-            name = random_name(rng)
-            candidates.append(
-                HireCandidate(
-                    id=next_v,
-                    name=name,
-                    community_id=camp.id,
-                    x=x + rng.randint(-1, 1),
-                    y=y + rng.randint(-1, 1),
-                    skills=skills,
-                    housing_need=rng.choice((1, 1, 1, 2, 2, 3)),
-                    required_foods=req,
-                    favourite_foods=fav,
-                    favourite_is_junk=junk,
-                    virtues=virtues,
-                    vices=vices,
-                    portrait_seed=next_v * 9973 + hash(name) % 10000,
-                )
-            )
-            next_v += 1
+
+    candidates, _next_id = spawn_travellers_from_templates(
+        communities,
+        rng,
+        count=max_travellers,
+        next_id=1,
+    )
     return communities, candidates
+
+
+def spawn_travellers_from_templates(
+    communities: list[Community],
+    rng: random.Random,
+    *,
+    count: int,
+    next_id: int,
+    exclude_template_ids: set[str] | None = None,
+) -> tuple[list[HireCandidate], int]:
+    """Create hire candidates from CSV templates, spread across camps."""
+    if count <= 0 or not communities:
+        return [], next_id
+    templates = pick_traveller_templates(
+        rng, count=count, exclude_ids=exclude_template_ids
+    )
+    used_names = set()
+    candidates: list[HireCandidate] = []
+    for i, tmpl in enumerate(templates):
+        camp = communities[i % len(communities)]
+        name = tmpl.name
+        if name in used_names:
+            name = random_name(rng)
+        used_names.add(name)
+        candidates.append(
+            hire_candidate_from_template(
+                tmpl,
+                cand_id=next_id,
+                community=camp,
+                rng=rng,
+                name=name,
+            )
+        )
+        next_id += 1
+    return candidates, next_id
 
 
 def staple_food_available(amounts: dict[str, int], required: list[str]) -> bool:
@@ -590,3 +762,191 @@ def staple_food_available(amounts: dict[str, int], required: list[str]) -> bool:
 
 def any_staple_available(amounts: dict[str, int]) -> bool:
     return any(int(amounts.get(k, 0)) > 0 for k in HIRE_STAPLE_FOODS)
+
+
+def hire_unmet_requirements(
+    *,
+    housing_need: int,
+    required_foods: list[str],
+    foods: dict[str, int],
+    free_beds: int,
+    max_housing_level: int,
+) -> list[str]:
+    """Requirement keys unmet for a hire candidate (bed, housing, each staple)."""
+    missing: list[str] = []
+    if int(free_beds) <= 0:
+        missing.append("bed")
+    if int(max_housing_level) < int(housing_need):
+        missing.append("housing")
+    for food in required_foods:
+        if int(foods.get(food, 0)) <= 0:
+            missing.append(str(food))
+    return missing
+
+
+def villager_unmet_requirements(
+    villager: Villager,
+    buildings: dict[int, Building],
+    foods: dict[str, int],
+) -> list[str]:
+    """Requirement keys unmet for a hired villager (housing + each staple)."""
+    missing: list[str] = []
+    if not villager.housed:
+        missing.append("housing")
+    else:
+        house = buildings.get(villager.housing_id or -1)
+        if house is None or housing_level_of(house.kind) < int(villager.housing_need):
+            missing.append("housing")
+    for food in list(getattr(villager, "required_foods", []) or []):
+        if int(foods.get(food, 0)) <= 0:
+            missing.append(str(food))
+    return missing
+
+
+def season_pay_coins(unmet: list[str]) -> int:
+    return len(unmet) * SEASON_MISSING_REQ_PAY_COINS
+
+
+def requirement_label(key: str) -> str:
+    if key == "bed":
+        return "Free bed"
+    if key == "housing":
+        return "Housing"
+    from resources import resource_label
+
+    try:
+        return resource_label(key)
+    except Exception:
+        return key.replace("_", " ").title()
+
+
+def villager_requirement_rows(
+    villager: Villager,
+    buildings: dict[int, Building],
+    foods: dict[str, int],
+    *,
+    housing_icon: str = "tent",
+) -> list[dict]:
+    """Requirement icons for inspect UI: housing + each required staple."""
+    from resources import resource_icon
+
+    rows: list[dict] = []
+    need = int(getattr(villager, "housing_need", 1) or 1)
+    housed = bool(getattr(villager, "housed", False))
+    house = buildings.get(villager.housing_id or -1) if housed else None
+    level = housing_level_of(house.kind) if house is not None else 0
+    housing_met = housed and level >= need
+    rows.append(
+        {
+            "key": "housing",
+            "icon": housing_icon if housing_met else "tent",
+            "met": housing_met,
+            "label": (
+                f"Housing level {level} (need ≥{need})"
+                if housed
+                else f"Needs housing level ≥{need}"
+            ),
+            "coins": 0 if housing_met else SEASON_MISSING_REQ_PAY_COINS,
+        }
+    )
+    for food in list(getattr(villager, "required_foods", []) or []):
+        key = str(food)
+        met = int(foods.get(key, 0)) > 0
+        rows.append(
+            {
+                "key": key,
+                "icon": resource_icon(key),
+                "met": met,
+                "label": (
+                    f"{requirement_label(key)} in stock"
+                    if met
+                    else f"{requirement_label(key)} missing"
+                ),
+                "coins": 0 if met else SEASON_MISSING_REQ_PAY_COINS,
+            }
+        )
+    return rows
+
+
+def candidate_requirement_rows(
+    *,
+    housing_need: int,
+    required_foods: list[str],
+    foods: dict[str, int],
+    free_beds: int,
+    max_housing_level: int,
+    housing_icon: str = "tent",
+) -> list[dict]:
+    """Requirement icons for a hire candidate (bed/level + staples)."""
+    from resources import resource_icon
+
+    need = int(housing_need)
+    housing_met = int(free_beds) > 0 and int(max_housing_level) >= need
+    rows: list[dict] = [
+        {
+            "key": "housing",
+            "icon": housing_icon if housing_met else "tent",
+            "met": housing_met,
+            "label": (
+                f"Housing ready (need ≥{need})"
+                if housing_met
+                else f"Needs bed + housing level ≥{need}"
+            ),
+            "coins": 0 if housing_met else SEASON_MISSING_REQ_PAY_COINS,
+        }
+    ]
+    for food in required_foods:
+        key = str(food)
+        met = int(foods.get(key, 0)) > 0
+        rows.append(
+            {
+                "key": key,
+                "icon": resource_icon(key),
+                "met": met,
+                "label": (
+                    f"{requirement_label(key)} in stock"
+                    if met
+                    else f"{requirement_label(key)} missing"
+                ),
+                "coins": 0 if met else SEASON_MISSING_REQ_PAY_COINS,
+            }
+        )
+    return rows
+
+
+def push_happiness_event(
+    villager: Villager,
+    *,
+    icon: str,
+    label: str,
+    delta: int | float,
+    day: int = 0,
+) -> None:
+    """Append a recent happiness event (keeps last N). Delta is happiness points."""
+    events = list(
+        getattr(villager, "happiness_events", None)
+        or getattr(villager, "happiness_impacts", None)
+        or []
+    )
+    events.append(
+        {
+            "icon": str(icon),
+            "label": str(label),
+            "delta": int(round(float(delta))),
+            "day": int(day),
+        }
+    )
+    setattr(villager, "happiness_events", events[-HAPPINESS_EVENT_HISTORY:])
+    # Keep legacy attribute in sync for any old readers.
+    setattr(villager, "happiness_impacts", list(getattr(villager, "happiness_events")))
+
+
+# Back-compat alias
+push_happiness_impact = push_happiness_event
+
+
+def apply_happiness_points(villager: Villager, points: int | float) -> float:
+    """Apply integer happiness points to the 0–1 happiness bar. Returns float delta."""
+    delta = float(points) * HAPPINESS_POINT_SCALE
+    villager.happiness = max(0.0, min(1.0, float(villager.happiness) + delta))
+    return delta

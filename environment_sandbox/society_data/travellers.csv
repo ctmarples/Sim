@@ -1,0 +1,19 @@
+template_id,name,tier,housing_need,required_foods,favourite_foods,favourite_is_junk,virtues,vices,extraction,extraction_cap,farming,farming_cap,hunting,hunting_cap,crafting,crafting_cap,labour,labour_cap,transport,transport_cap
+t1_ash,Ash Reed,1,1,meat,stew,1,Hardy,Glutton,2,5,1,4,1,4,1,4,2,5,1,4
+t1_bram,Bram Stone,1,1,fish,grilled_fish,0,Steady,Lazy,1,4,1,4,2,5,1,4,2,5,1,4
+t1_cora,Cora Brook,1,1,bread,bread,0,Cheerful,Picky,1,4,2,5,1,4,1,4,1,4,2,5
+t1_dell,Dell Hill,1,1,meat,,0,Diligent,Moody,2,5,1,4,2,5,1,4,1,5,1,4
+t1_elsie,Elsie Vale,1,1,fish,berries,0,Kind,Nervous,1,4,1,5,1,4,2,5,1,4,2,5
+t1_finn,Finn Thorn,1,1,bread,honey,0,Curious,Restless,1,5,2,5,1,4,1,4,2,5,1,4
+t2_gwen,Gwen Fern,2,2,meat,grilled_meat,0,Hardy,Stubborn,3,7,2,6,4,8,2,6,2,6,2,6
+t2_holt,Holt Lake,2,1,fish;bread,fish_stew,0,Patient,Lazy,2,6,2,6,3,7,2,6,3,7,3,7
+t2_ivy,Ivy Reed,2,2,meat;fish,stew,0,Loyal,Picky,2,6,2,6,3,7,3,7,2,6,2,6
+t2_joss,Joss Stone,2,2,bread,bread,0,Diligent,,3,7,4,8,2,6,2,6,3,7,2,6
+t2_kade,Kade Brook,2,1,meat,spiced_stew,1,Cheerful,Glutton,2,6,2,6,4,8,2,6,2,6,3,7
+t2_lina,Lina Hill,2,2,fish,grilled_fish,0,Steady,Moody,2,6,3,7,2,6,4,8,2,6,2,6
+t3_moss,Moss Vale,3,3,meat;fish,stew,0,Hardy;Diligent,Stubborn,5,10,3,8,6,10,4,9,3,8,3,8
+t3_nell,Nell Thorn,3,2,meat;bread,spiced_stew,0,Loyal;Steady,Picky,4,9,5,10,3,8,5,10,4,9,4,9
+t3_orin,Orin Lake,3,3,fish;bread,fish_stew,0,Patient;Curious,Restless,3,8,4,9,5,10,4,9,5,10,5,10
+t3_pia,Pia Fern,3,3,meat;fish;bread,stew,0,Cheerful;Kind,Glutton,4,9,4,9,5,10,6,10,4,9,4,9
+t3_reed,Reed Stone,3,2,meat;fish,grilled_meat,0,Hardy;Loyal,Moody,6,10,3,8,7,10,3,8,4,9,3,8
+t3_willow,Willow Brook,3,3,bread;fish,bread,0,Diligent;Patient,,3,8,6,10,3,8,5,10,4,9,6,10

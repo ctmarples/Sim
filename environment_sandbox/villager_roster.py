@@ -37,6 +37,7 @@ class RosterSort(Enum):
     SATIATION = auto()
     HAPPINESS = auto()
     HOUSING = auto()
+    PAY = auto()
     EXTRACTION = auto()
     FARMING = auto()
     HUNTING = auto()
@@ -50,7 +51,8 @@ SORT_LABELS: dict[RosterSort, str] = {
     RosterSort.ENERGY: "En",
     RosterSort.SATIATION: "Sat",
     RosterSort.HAPPINESS: "Hap",
-    RosterSort.HOUSING: "House",
+    RosterSort.HOUSING: "Reqs",
+    RosterSort.PAY: "Pay",
     RosterSort.EXTRACTION: "Ex",
     RosterSort.FARMING: "Fa",
     RosterSort.HUNTING: "Hu",
@@ -77,9 +79,43 @@ ACTION_W = 100  # Hire/Pay or Pick column
 SKILL_COL_W = 36
 
 # Fixed column widths (content starts after portrait gutter).
-COL_NAME_W = 150
+COL_NAME_W = 140
 COL_BAR_W = 44
-COL_HOUSE_W = 44
+COL_HOUSE_W = 78
+COL_PAY_W = 40
+REQ_ICON = 16
+REQ_ICON_GAP = 2
+
+
+def draw_requirement_icons(
+    surface: pygame.Surface,
+    x: int,
+    y: int,
+    rows: list[dict],
+    *,
+    icon_size: int = REQ_ICON,
+    max_icons: int = 4,
+) -> int:
+    """Draw compact green/red requirement icons. Returns width used."""
+    from icons import blit_icon
+
+    cur = x
+    for row in list(rows or [])[:max_icons]:
+        if not isinstance(row, dict):
+            continue
+        met = bool(row.get("met"))
+        ic = str(row.get("icon") or "tent")
+        rect = pygame.Rect(cur, y, icon_size, icon_size)
+        fill = (40, 70, 48) if met else (70, 40, 40)
+        border = (70, 160, 85) if met else (190, 70, 60)
+        pygame.draw.rect(surface, fill, rect, border_radius=3)
+        pygame.draw.rect(surface, border, rect, 1, border_radius=3)
+        try:
+            blit_icon(surface, ic, rect.centerx, rect.centery, icon_size - 4)
+        except Exception:
+            pass
+        cur += icon_size + REQ_ICON_GAP
+    return max(0, cur - x - REQ_ICON_GAP)
 
 
 def _column_layout(left: int, *, actions: bool) -> dict[str, int]:
@@ -98,6 +134,8 @@ def _column_layout(left: int, *, actions: bool) -> dict[str, int]:
     x += COL_BAR_W
     cols["house"] = x
     x += COL_HOUSE_W
+    cols["pay"] = x
+    x += COL_PAY_W
     for sk in SKILL_ORDER:
         cols[sk.name.lower()] = x
         x += SKILL_COL_W
@@ -130,9 +168,18 @@ class RosterEntry:
     job: str = ""
     status: str = ""
     kind: str = "villager"  # villager | traveller
+    season_pay: int = 0
+    coins_paid: int = 0
+    requirement_rows: list[dict] = field(default_factory=list)
 
 
-def entry_from_villager(v: Any, *, job: str = "", status: str = "") -> RosterEntry:
+def entry_from_villager(
+    v: Any,
+    *,
+    job: str = "",
+    status: str = "",
+    requirement_rows: list[dict] | None = None,
+) -> RosterEntry:
     return RosterEntry(
         id=int(v.id),
         name=str(getattr(v, "name", None) or f"Villager {v.id}"),
@@ -150,10 +197,18 @@ def entry_from_villager(v: Any, *, job: str = "", status: str = "") -> RosterEnt
         job=job,
         status=status,
         kind="villager",
+        season_pay=int(getattr(v, "season_pay_due", 0) or 0),
+        coins_paid=int(getattr(v, "coins_paid_total", 0) or 0),
+        requirement_rows=list(requirement_rows or []),
     )
 
 
-def entry_from_candidate(c: Any) -> RosterEntry:
+def entry_from_candidate(
+    c: Any,
+    *,
+    season_pay: int = 0,
+    requirement_rows: list[dict] | None = None,
+) -> RosterEntry:
     return RosterEntry(
         id=int(c.id),
         name=str(c.name),
@@ -171,6 +226,9 @@ def entry_from_candidate(c: Any) -> RosterEntry:
         job="traveller",
         status="camp",
         kind="traveller",
+        season_pay=int(season_pay),
+        coins_paid=0,
+        requirement_rows=list(requirement_rows or []),
     )
 
 
@@ -197,6 +255,12 @@ def sort_entries(
             entries,
             key=lambda e: (e.housed, -e.housing_need, e.name.lower()),
             reverse=reverse,
+        )
+    if key == RosterSort.PAY:
+        return sorted(
+            entries,
+            key=lambda e: (e.season_pay, e.coins_paid, e.name.lower()),
+            reverse=not reverse,
         )
     if key in _SKILL_SORT:
         sk = _SKILL_SORT[key]
@@ -315,15 +379,20 @@ def draw_skill_icons(
     font: pygame.font.Font,
     *,
     icon_size: int = 14,
-) -> int:
-    """Draw skills in fixed-width columns. Returns width used."""
+) -> tuple[int, list[tuple[pygame.Rect, str]]]:
+    """Draw skills in fixed-width columns. Returns (width used, tip hits)."""
+    from society import SKILL_LABELS
+
     cur = x
+    tips: list[tuple[pygame.Rect, str]] = []
     for sk in SKILL_ORDER:
         st = skills.get(sk)
         lvl = int(getattr(st, "level", 1) or 1)
         draw_skill_cell(surface, cur, y, sk, lvl, font, icon_size=icon_size)
+        tip_rect = pygame.Rect(cur, y, SKILL_COL_W, icon_size + 14)
+        tips.append((tip_rect, f"{SKILL_LABELS.get(sk, sk.name)} {lvl}"))
         cur += SKILL_COL_W
-    return cur - x
+    return cur - x, tips
 
 
 class VillagerRosterDialog:
@@ -520,6 +589,7 @@ class VillagerRosterDialog:
             (RosterSort.SATIATION, "satiation", COL_BAR_W),
             (RosterSort.HAPPINESS, "happiness", COL_BAR_W),
             (RosterSort.HOUSING, "house", COL_HOUSE_W),
+            (RosterSort.PAY, "pay", COL_PAY_W),
             (RosterSort.EXTRACTION, "extraction", SKILL_COL_W),
             (RosterSort.FARMING, "farming", SKILL_COL_W),
             (RosterSort.HUNTING, "hunting", SKILL_COL_W),
@@ -588,8 +658,9 @@ class VillagerRosterDialog:
             meta_parts = []
             if entry.job:
                 meta_parts.append(entry.job)
-            meta_parts.append(f"needs {req}")
-            meta = " · ".join(meta_parts)
+            if entry.status and entry.kind == "villager":
+                meta_parts.append(entry.status)
+            meta = " · ".join(meta_parts) if meta_parts else "—"
             while self.font_tiny.size(meta)[0] > name_max_w and len(meta) > 4:
                 meta = meta[:-2] + "…"
             surface.blit(
@@ -635,16 +706,51 @@ class VillagerRosterDialog:
                 kind="happy",
             )
 
-            # Housing column
-            house_txt = "bed" if entry.housed else f"≥{entry.housing_need}"
-            ht = self.font_tiny.render(house_txt, True, COLOUR_TEXT_DIM)
+            # Requirements column (housing + staple icons)
+            if entry.requirement_rows:
+                draw_requirement_icons(
+                    surface,
+                    cols["house"] + 2,
+                    row_y + (ROW_H - REQ_ICON) // 2,
+                    entry.requirement_rows,
+                )
+            else:
+                house_txt = "bed" if entry.housed else f"≥{entry.housing_need}"
+                ht = self.font_tiny.render(house_txt, True, COLOUR_TEXT_DIM)
+                surface.blit(
+                    ht,
+                    (
+                        cols["house"] + (COL_HOUSE_W - ht.get_width()) // 2,
+                        row_y + (ROW_H - ht.get_height()) // 2,
+                    ),
+                )
+
+            # Payments: coins/season (and lifetime paid for hired villagers)
+            if entry.season_pay > 0:
+                pay_txt = f"{entry.season_pay}/s"
+            elif entry.coins_paid > 0:
+                pay_txt = f"{entry.coins_paid}"
+            else:
+                pay_txt = "—"
+            pt = self.font_tiny.render(pay_txt, True, COLOUR_TEXT_DIM)
             surface.blit(
-                ht,
+                pt,
                 (
-                    cols["house"] + (COL_HOUSE_W - ht.get_width()) // 2,
-                    row_y + (ROW_H - ht.get_height()) // 2,
+                    cols["pay"] + (COL_PAY_W - pt.get_width()) // 2,
+                    row_y + 18,
                 ),
             )
+            if entry.kind == "villager" and entry.coins_paid > 0 and entry.season_pay > 0:
+                paid = self.font_tiny.render(
+                    f"{entry.coins_paid} tot", True, COLOUR_TEXT_DIM
+                )
+                surface.blit(
+                    paid,
+                    (
+                        cols["pay"] + (COL_PAY_W - paid.get_width()) // 2,
+                        row_y + 34,
+                    ),
+                )
 
             # Skills — one per column under Ex…Tr
             skill_y = row_y + 12
@@ -679,7 +785,8 @@ class VillagerRosterDialog:
                     "Pay",
                     hovered=mouse_pos is not None and pay_r.collidepoint(mouse_pos),
                 )
-                self._buttons.append((f"hire_cand:{entry.id}", hire_r))
+                if ok:
+                    self._buttons.append((f"hire_cand:{entry.id}", hire_r))
                 self._buttons.append((f"pay_cand:{entry.id}", pay_r))
             elif self.mode == "assign":
                 pick_r = pygame.Rect(cols["actions"] + 8, row_y + 18, 56, 24)

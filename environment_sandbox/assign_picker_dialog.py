@@ -24,6 +24,7 @@ from settings import (
     WINDOW_WIDTH,
     map_view_width,
 )
+from society import housing_beds_of, housing_level_of, is_housing_kind
 from villager_roster import draw_portrait
 
 TITLE_BAR_H = 28
@@ -80,6 +81,7 @@ class AssignPickerDialog:
         self._pending_action: str | None = None
         self._content_h = 0
         self._title = "Assign"
+        self.housing_only = False
 
     @property
     def open(self) -> bool:
@@ -89,6 +91,7 @@ class AssignPickerDialog:
         self.mode = AssignPickerMode.VILLAGER
         self.target_building_id = building_id
         self.target_villager_id = None
+        self.housing_only = False
         self._title = title or "Assign villager"
         self._open_common()
 
@@ -96,7 +99,16 @@ class AssignPickerDialog:
         self.mode = AssignPickerMode.BUILDING
         self.target_villager_id = villager_id
         self.target_building_id = None
+        self.housing_only = False
         self._title = title or "Assign workplace"
+        self._open_common()
+
+    def open_housing(self, villager_id: int, *, title: str | None = None) -> None:
+        self.mode = AssignPickerMode.BUILDING
+        self.target_villager_id = villager_id
+        self.target_building_id = None
+        self.housing_only = True
+        self._title = title or "Assign housing"
         self._open_common()
 
     def _open_common(self) -> None:
@@ -116,6 +128,7 @@ class AssignPickerDialog:
         self.mode = None
         self.target_building_id = None
         self.target_villager_id = None
+        self.housing_only = False
         self._pending_action = None
 
     def take_action(self) -> str | None:
@@ -250,6 +263,23 @@ class AssignPickerDialog:
                 if b.kind == BuildingKind.FIELD:
                     continue
                 if b.kind == BuildingKind.WORKSTATION:
+                    continue
+                if self.housing_only:
+                    if not is_housing_kind(b.kind):
+                        continue
+                    beds = housing_beds_of(b.kind)
+                    used = sum(
+                        1
+                        for v in villagers
+                        if v.housed and v.housing_id == b.id
+                    )
+                    lvl = housing_level_of(b.kind)
+                    label = f"{BUILDING_LABELS[b.kind]} #{b.id}"
+                    sub = f"{used}/{beds} beds · lvl {lvl}"
+                    icon = _BUILD_ICON.get(b.kind, "construction_site")
+                    rows.append((b.id, label, sub, ("building", icon)))
+                    continue
+                if is_housing_kind(b.kind):
                     continue
                 label = f"{BUILDING_LABELS[b.kind]} #{b.id}"
                 if b.kind == BuildingKind.HOME:

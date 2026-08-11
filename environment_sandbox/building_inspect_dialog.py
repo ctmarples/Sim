@@ -44,17 +44,22 @@ from settings import (
     WINDOW_WIDTH,
     map_view_width,
 )
+from society import housing_beds_of, housing_level_of, is_housing_kind
 
 TITLE_BAR_H = 28
 PAD = 12
 BTN_H = 24
 ROW_H = 22
-RECIPE_ROW_H = GRID_CELL + 14
+RECIPE_OUT_CELL = 56  # room for Max / Sto labels like market supply cells
+RECIPE_ROW_H = RECIPE_OUT_CELL + 14
+# Extra gap so collection priority badges sit outside the icon (top-right).
+GATHER_PRIO_GAP = 18
+GATHER_CELL_STRIDE = RECIPE_OUT_CELL + GATHER_PRIO_GAP
 SECTION_GAP = 10
 SCROLL_STEP = 28
 # Visible size before a section starts scrolling.
 MAX_RECIPE_VIEW_H = 3 * RECIPE_ROW_H
-MAX_GATHER_VIEW_H = 2 * (GRID_CELL + GRID_GAP) - GRID_GAP
+MAX_GATHER_VIEW_H = 2 * (RECIPE_OUT_CELL + GRID_GAP) - GRID_GAP
 MAX_CAP_VIEW_H = 2 * (GRID_CELL + GRID_GAP) - GRID_GAP
 MAX_STORAGE_BODY_H = 3 * (GRID_CELL + GRID_GAP) - GRID_GAP
 MAX_WORKER_VIEW_H = 4 * (ROW_H + 2)
@@ -70,9 +75,11 @@ class BuildingInspectDialog:
         self.font_title = pygame.font.SysFont("menlo", 15, bold=True)
         self.building_id: int | None = None
         self.show_player: bool = False
+        self.allow_player_craft: bool = False
         self._buttons: list[tuple[str, pygame.Rect]] = []
         self._worker_hits: list[tuple[pygame.Rect, int]] = []
         self._inv_hits: list[tuple[pygame.Rect, str, str]] = []
+        self._inv_tip_hits: list[tuple[pygame.Rect, str, str]] = []
         self._pending_action: str | None = None
         self._panel_x = 80
         self._panel_y = MAP_OFFSET_Y + 40
@@ -120,6 +127,7 @@ class BuildingInspectDialog:
         if building.kind == BuildingKind.FIELD:
             return
         self.building_id = building.id
+        self.allow_player_craft = bool(show_player)
         self.show_player = show_player and bool(building.depositable_keys())
         self._pending_action = None
         self._moving = False
@@ -148,6 +156,7 @@ class BuildingInspectDialog:
     def close(self) -> None:
         self.building_id = None
         self.show_player = False
+        self.allow_player_craft = False
         self.embedded = False
         self._moving = False
         self._pending_action = None
@@ -298,10 +307,113 @@ class BuildingInspectDialog:
                 return True
         return True
 
-    def _craft_recipes_block_height(self, recipe_count: int) -> int:
+    def _craft_recipes_block_height(
+        self, recipe_count: int, *, player_craft: bool = False
+    ) -> int:
         if recipe_count <= 0:
             return 0
-        return 18 + min(recipe_count * RECIPE_ROW_H, MAX_RECIPE_VIEW_H) + SECTION_GAP
+        row_h = RECIPE_ROW_H + (BTN_H + 4 if player_craft else 0)
+        max_h = MAX_RECIPE_VIEW_H + (BTN_H + 4 if player_craft else 0)
+        return 18 + min(recipe_count * row_h, max_h) + SECTION_GAP
+
+    def _recipe_output_key(self, recipe) -> str | None:
+        if recipe.outputs:
+            return next(iter(recipe.outputs))
+        return recipe.display_icon_key() or None
+
+    def _draw_recipe_stock_cell(
+        self,
+        surface: pygame.Surface,
+        *,
+        building: Building,
+        recipe,
+        cell: pygame.Rect,
+        mouse_pos: tuple[int, int] | None,
+        view: pygame.Rect | None = None,
+        stock_amounts: dict[str, int] | None = None,
+    ) -> tuple[str | None, bool]:
+        """Draw Max (top) / Sto (bottom) on a recipe output cell.
+
+        Returns ``(tip_key, hovered)``. Max → production cap (∞ default when
+        enabled; click to edit). Sto → total village storage count (display).
+        """
+        from icons import blit_icon
+        from resources import resource_icon_style
+
+        enabled = building.is_recipe_enabled(recipe.name)
+        out_key = self._recipe_output_key(recipe)
+        if out_key is None:
+            return None, False
+        hov = (
+            (view is None or view.collidepoint(mouse_pos or (-1, -1)))
+            and mouse_pos is not None
+            and cell.collidepoint(mouse_pos)
+        )
+        if enabled or hov:
+            bg = (40, 48, 40) if hov else (32, 38, 34)
+            border = COLOUR_SELECTED_ENTITY
+        elif hov:
+            bg = (48, 50, 42)
+            border = COLOUR_SELECTED_ENTITY
+        else:
+            bg = (36, 38, 42)
+            border = COLOUR_TOOLBAR_BORDER
+        pygame.draw.rect(surface, bg, cell, border_radius=4)
+        pygame.draw.rect(surface, border, cell, 1, border_radius=4)
+
+        cap = building.item_cap(out_key) if enabled else None
+        if stock_amounts is not None:
+            stock_n = int(stock_amounts.get(out_key, 0))
+        else:
+            stock_n = int(getattr(building, out_key, 0))
+        text_col = COLOUR_TEXT if enabled else COLOUR_TEXT_DIM
+        max_txt = self.font_tiny.render(
+            f"Max: {'∞' if (not enabled or cap is None) else cap}", True, text_col
+        )
+        sto_txt = self.font_tiny.render(f"Sto: {stock_n}", True, text_col)
+        max_rect = pygame.Rect(
+            cell.x + 2, cell.y + 2, cell.w - 4, max_txt.get_height() + 2
+        )
+        surface.blit(
+            max_txt,
+            (cell.centerx - max_txt.get_width() // 2, max_rect.y + 1),
+        )
+        surface.blit(
+            sto_txt,
+            (
+                cell.centerx - sto_txt.get_width() // 2,
+                cell.bottom - sto_txt.get_height() - 3,
+            ),
+        )
+
+        icon_size = max(16, cell.w - 28)
+        try:
+            style = resource_icon_style(out_key)
+            blit_icon(
+                surface,
+                style.name,
+                cell.centerx,
+                cell.centery + 1,
+                icon_size,
+                recolour=style.recolour,
+                class_scales=style.class_scales,
+                omit_classes=style.omit_classes or None,
+            )
+        except (FileNotFoundError, OSError, ValueError, TypeError):
+            pass
+
+        if not enabled:
+            overlay = pygame.Surface((cell.w, cell.h), pygame.SRCALPHA)
+            overlay.fill((28, 30, 36, 110))
+            surface.blit(overlay, cell.topleft)
+
+        if view is None or cell.colliderect(view):
+            # Reverse-scanned: Max edit beats the toggle. Sto is display-only.
+            self._buttons.append((f"toggle_recipe:{recipe.name}", cell))
+            if enabled:
+                self._buttons.append((f"edit_recipe_max:{out_key}", max_rect))
+            self._inv_tip_hits.append((cell, "recipe", out_key))
+        return out_key, hov
 
     def _market_demand_block_height(
         self, *, expanded: bool, key_count: int, inner_w: int
@@ -380,18 +492,21 @@ class BuildingInspectDialog:
         fonts: tuple,
         scroll_name: str,
         show_fuel: bool = False,
+        player_craft: bool = False,
+        stock_amounts: dict[str, int] | None = None,
     ) -> tuple[int, str | None]:
         """Kitchen-style recipe rows with inputs. Returns (height, hovered tip key)."""
         from inventory_ui import draw_resource_cell
-        from recipes import KITCHEN_FUEL_KEY
+        from recipes import KITCHEN_FUEL_KEY, recipe_output_fits, recipe_ready
 
         if not recipes:
             return 0, None
         building.ensure_recipe_state()
         surface.blit(self.font.render(title, True, COLOUR_TEXT), (x, y))
         y += 18
-        content_h = len(recipes) * RECIPE_ROW_H
-        view_h = min(content_h, MAX_RECIPE_VIEW_H)
+        row_h = RECIPE_ROW_H + (BTN_H + 4 if player_craft else 0)
+        content_h = len(recipes) * row_h
+        view_h = min(content_h, MAX_RECIPE_VIEW_H + (BTN_H + 4 if player_craft else 0))
         view = pygame.Rect(x, y, inner_w, view_h)
         scroll = self._register_scroll(scroll_name, view, content_h, view_h)
         old_clip = surface.get_clip()
@@ -399,33 +514,22 @@ class BuildingInspectDialog:
         tip_key: str | None = None
         ordered = building._recipes_by_priority(recipes)
         for i, recipe in enumerate(ordered):
-            row_y = y + i * RECIPE_ROW_H - scroll
-            if row_y + RECIPE_ROW_H < view.top or row_y > view.bottom:
+            row_y = y + i * row_h - scroll
+            if row_y + row_h < view.top or row_y > view.bottom:
                 continue
             enabled = building.is_recipe_enabled(recipe.name)
             priority = building.get_recipe_priority(recipe.name)
-            out_key = recipe.display_icon_key()
-            out_n = int(next(iter(recipe.outputs.values()))) if recipe.outputs else 1
-            out_cell = pygame.Rect(x, row_y, GRID_CELL, GRID_CELL)
-            out_hov = (
-                view.collidepoint(mouse_pos or (-1, -1))
-                and mouse_pos is not None
-                and out_cell.collidepoint(mouse_pos)
-            )
-            draw_resource_cell(
+            out_cell = pygame.Rect(x, row_y, RECIPE_OUT_CELL, RECIPE_OUT_CELL)
+            out_key, out_hov = self._draw_recipe_stock_cell(
                 surface,
+                building=building,
+                recipe=recipe,
                 cell=out_cell,
-                key=out_key,
-                count=out_n if out_n != 1 else None,
-                fonts=fonts,
-                hovered=out_hov,
-                dimmed=not enabled,
-                active=enabled,
+                mouse_pos=mouse_pos,
+                view=view,
+                stock_amounts=stock_amounts,
             )
-            if out_cell.colliderect(view):
-                self._buttons.append((f"toggle_recipe:{recipe.name}", out_cell))
-                self._inv_tip_hits.append((out_cell, "recipe", out_key))
-            if out_hov:
+            if out_hov and out_key:
                 tip_key = out_key
             # Priority chip: click to cycle 1→2→3.
             prio_cell = pygame.Rect(out_cell.right + 2, row_y + 2, 16, 16)
@@ -436,18 +540,23 @@ class BuildingInspectDialog:
                     ),
                 )
                 self._buttons.append((f"cycle_recipe_priority:{recipe.name}", prio_cell))
+            ix = out_cell.right + GRID_GAP + 20
             if recipe.inputs:
-                ix = out_cell.right + GRID_GAP + 20
                 arrow = self.font_small.render("←", True, COLOUR_TEXT_DIM)
                 surface.blit(
                     arrow,
-                    (ix, row_y + (GRID_CELL - arrow.get_height()) // 2),
+                    (ix, row_y + (RECIPE_OUT_CELL - arrow.get_height()) // 2),
                 )
                 ix += arrow.get_width() + 6
                 for in_key, in_n in recipe.inputs.items():
                     if ix + GRID_CELL > x + inner_w:
                         break
-                    in_cell = pygame.Rect(ix, row_y, GRID_CELL, GRID_CELL)
+                    in_cell = pygame.Rect(
+                        ix,
+                        row_y + (RECIPE_OUT_CELL - GRID_CELL) // 2,
+                        GRID_CELL,
+                        GRID_CELL,
+                    )
                     in_hov = (
                         view.collidepoint(mouse_pos or (-1, -1))
                         and mouse_pos is not None
@@ -473,10 +582,15 @@ class BuildingInspectDialog:
                     arrow2 = self.font_small.render("←", True, COLOUR_TEXT_DIM)
                     surface.blit(
                         arrow2,
-                        (ix, row_y + (GRID_CELL - arrow2.get_height()) // 2),
+                        (ix, row_y + (RECIPE_OUT_CELL - arrow2.get_height()) // 2),
                     )
                     ix += arrow2.get_width() + 6
-                fuel_cell = pygame.Rect(ix, row_y, GRID_CELL, GRID_CELL)
+                fuel_cell = pygame.Rect(
+                    ix,
+                    row_y + (RECIPE_OUT_CELL - GRID_CELL) // 2,
+                    GRID_CELL,
+                    GRID_CELL,
+                )
                 fuel_hov = (
                     view.collidepoint(mouse_pos or (-1, -1))
                     and mouse_pos is not None
@@ -496,8 +610,40 @@ class BuildingInspectDialog:
                     self._inv_tip_hits.append((fuel_cell, "recipe", KITCHEN_FUEL_KEY))
                 if fuel_hov:
                     tip_key = KITCHEN_FUEL_KEY
+            fill = building.recipe_progress_fraction(recipe.name) if enabled else 0.0
+            if player_craft:
+                can_craft = (
+                    enabled
+                    and recipe_ready(building, recipe)
+                    and recipe_output_fits(building, recipe, capacity=building.capacity)
+                )
+                if show_fuel:
+                    can_craft = can_craft and building.has_cooking_fuel()
+                craft_rect = pygame.Rect(
+                    out_cell.x,
+                    out_cell.bottom + 2,
+                    max(out_cell.w, 10 + self.font_small.size("Craft")[0]),
+                    BTN_H,
+                )
+                if craft_rect.colliderect(view):
+                    hov = mouse_pos is not None and craft_rect.collidepoint(mouse_pos)
+                    self._draw_button(
+                        surface,
+                        craft_rect,
+                        "Craft",
+                        active=can_craft and fill > 0,
+                        hovered=hov and can_craft,
+                    )
+                    if not can_craft:
+                        shade = pygame.Surface(
+                            (craft_rect.w, craft_rect.h), pygame.SRCALPHA
+                        )
+                        shade.fill((30, 30, 34, 120))
+                        surface.blit(shade, craft_rect.topleft)
+                    self._buttons.append((f"craft_recipe:{recipe.name}", craft_rect))
+            # Progress bar under icons (and craft button when present).
             bar_x = x
-            bar_y = row_y + GRID_CELL + 3
+            bar_y = row_y + RECIPE_OUT_CELL + (BTN_H + 6 if player_craft else 3)
             bar_w = inner_w - 8
             pygame.draw.rect(
                 surface,
@@ -505,7 +651,6 @@ class BuildingInspectDialog:
                 pygame.Rect(bar_x, bar_y, bar_w, 7),
                 border_radius=2,
             )
-            fill = building.recipe_progress_fraction(recipe.name) if enabled else 0.0
             if fill > 0:
                 fill_c = (90, 150, 200) if enabled else (70, 70, 70)
                 pygame.draw.rect(
@@ -674,6 +819,7 @@ class BuildingInspectDialog:
         area_draw_task: TaskType | None = None,
         home_storage=None,
         market_offer_fn=None,
+        village_stock: dict[str, int] | None = None,
     ) -> None:
         if not self.open or building is None or building.kind == BuildingKind.FIELD:
             return
@@ -714,6 +860,8 @@ class BuildingInspectDialog:
         options_h = BTN_H + 8
         if building.kind == BuildingKind.WORKSTATION:
             options_h = BTN_H + 28
+        elif is_housing_kind(building.kind):
+            options_h = BTN_H * 2 + 28
         elif building.kind == BuildingKind.FORESTER:
             options_h = BTN_H + 28
         elif building.supported_work_modes():
@@ -737,13 +885,19 @@ class BuildingInspectDialog:
         )
         recipes_h = 0
         if gather_recipes:
-            cols = max(1, (380 - PAD * 2) // (GRID_CELL + GRID_GAP))
+            cols = max(1, (380 - PAD * 2) // GATHER_CELL_STRIDE)
             rows = max(1, (len(gather_recipes) + cols - 1) // cols)
-            content = rows * (GRID_CELL + GRID_GAP) - GRID_GAP
+            content = rows * (RECIPE_OUT_CELL + GRID_GAP) - GRID_GAP
             recipes_h += 18 + min(content, MAX_GATHER_VIEW_H) + SECTION_GAP
-        recipes_h += self._craft_recipes_block_height(len(split_recipes))
-        recipes_h += self._craft_recipes_block_height(len(plant_recipes))
-        recipes_h += self._craft_recipes_block_height(len(craft_recipes))
+        recipes_h += self._craft_recipes_block_height(
+            len(split_recipes), player_craft=self.allow_player_craft
+        )
+        recipes_h += self._craft_recipes_block_height(
+            len(plant_recipes), player_craft=self.allow_player_craft
+        )
+        recipes_h += self._craft_recipes_block_height(
+            len(craft_recipes), player_craft=self.allow_player_craft
+        )
 
         storage_items = len(present_keys(amounts, storage_keys or None))
         if building.item_caps:
@@ -933,6 +1087,38 @@ class BuildingInspectDialog:
             self._draw_button(surface, rect, "Relocate", hovered=hovered)
             self._buttons.append(("relocate_building", rect))
             y += BTN_H + 6
+        elif is_housing_kind(building.kind):
+            beds = housing_beds_of(building.kind)
+            used = len(workers)
+            lvl = housing_level_of(building.kind)
+            surface.blit(
+                self.font_tiny.render(
+                    f"Level {lvl}  ·  Beds {used}/{beds}",
+                    True,
+                    COLOUR_TEXT_DIM,
+                ),
+                (x, y),
+            )
+            y += 16
+            for label, action in (
+                ("Assign resident +", "assign_villager"),
+                ("Unassign −", "unassign_villager"),
+            ):
+                w = max(100, 10 + self.font_small.size(label)[0])
+                rect = pygame.Rect(bx, y, w, BTN_H)
+                hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+                self._draw_button(surface, rect, label, hovered=hovered)
+                self._buttons.append((action, rect))
+                bx += w + 4
+            relocate_w = max(72, 10 + self.font_small.size("Relocate")[0])
+            if bx + relocate_w > x + inner_w and bx > x:
+                bx = x
+                y += BTN_H + 4
+            rect = pygame.Rect(bx, y, relocate_w, BTN_H)
+            hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+            self._draw_button(surface, rect, "Relocate", hovered=hovered)
+            self._buttons.append(("relocate_building", rect))
+            y += BTN_H + SECTION_GAP
         else:
             for mode in building.supported_work_modes():
                 label = WORK_MODE_LABELS[mode]
@@ -1053,9 +1239,9 @@ class BuildingInspectDialog:
             building.ensure_recipe_state()
             surface.blit(self.font.render("Collect", True, COLOUR_TEXT), (x, y))
             y += 18
-            cols = max(1, inner_w // (GRID_CELL + GRID_GAP))
+            cols = max(1, inner_w // GATHER_CELL_STRIDE)
             rows = max(1, (len(gather_recipes) + cols - 1) // cols)
-            content_h = rows * (GRID_CELL + GRID_GAP) - GRID_GAP
+            content_h = rows * (RECIPE_OUT_CELL + GRID_GAP) - GRID_GAP
             view_h = min(content_h, MAX_GATHER_VIEW_H)
             view = pygame.Rect(x, y, inner_w, view_h)
             scroll = self._register_scroll("gather_recipes", view, content_h, view_h)
@@ -1065,40 +1251,33 @@ class BuildingInspectDialog:
                 col = i % cols
                 row = i // cols
                 cell = pygame.Rect(
-                    x + col * (GRID_CELL + GRID_GAP),
-                    y + row * (GRID_CELL + GRID_GAP) - scroll,
-                    GRID_CELL,
-                    GRID_CELL,
+                    x + col * GATHER_CELL_STRIDE,
+                    y + row * (RECIPE_OUT_CELL + GRID_GAP) - scroll,
+                    RECIPE_OUT_CELL,
+                    RECIPE_OUT_CELL,
                 )
                 if not cell.colliderect(view):
                     continue
-                enabled = building.is_recipe_enabled(recipe.name)
                 priority = building.get_recipe_priority(recipe.name)
-                hov = (
-                    view.collidepoint(mouse_pos or (-1, -1))
-                    and mouse_pos is not None
-                    and cell.collidepoint(mouse_pos)
-                )
-                draw_resource_cell(
+                out_key, hov = self._draw_recipe_stock_cell(
                     surface,
+                    building=building,
+                    recipe=recipe,
                     cell=cell,
-                    key=recipe.display_icon_key(),
-                    count=None,
-                    fonts=fonts,
-                    hovered=hov,
-                    dimmed=not enabled,
-                    active=enabled,
+                    mouse_pos=mouse_pos,
+                    view=view,
+                    stock_amounts=village_stock,
                 )
-                self._buttons.append((f"toggle_recipe:{recipe.name}", cell))
-                self._inv_tip_hits.append((cell, "recipe", recipe.display_icon_key()))
-                prio_cell = pygame.Rect(cell.right - 14, cell.bottom - 14, 13, 13)
+                enabled = building.is_recipe_enabled(recipe.name)
+                # Same placement as production recipes: top-right outside the icon.
+                prio_cell = pygame.Rect(cell.right + 2, cell.y + 2, 16, 16)
                 prio_hov = mouse_pos is not None and prio_cell.collidepoint(mouse_pos)
                 self._draw_priority_badge(
                     surface, prio_cell, priority, enabled=enabled, hovered=prio_hov
                 )
                 self._buttons.append((f"cycle_recipe_priority:{recipe.name}", prio_cell))
-                if hov and not prio_hov:
-                    tip_key = recipe.display_icon_key()
+                if hov and not prio_hov and out_key:
+                    tip_key = out_key
             surface.set_clip(old_clip)
             self._draw_scrollbar(surface, view, content_h, scroll)
             y += view_h + SECTION_GAP
@@ -1114,6 +1293,8 @@ class BuildingInspectDialog:
                 mouse_pos=mouse_pos,
                 fonts=fonts,
                 scroll_name="split_recipes",
+                player_craft=self.allow_player_craft,
+                stock_amounts=village_stock,
             )
             y += block_h
             if split_tip:
@@ -1130,6 +1311,8 @@ class BuildingInspectDialog:
                 mouse_pos=mouse_pos,
                 fonts=fonts,
                 scroll_name="plant_recipes",
+                player_craft=self.allow_player_craft,
+                stock_amounts=village_stock,
             )
             y += block_h
             if plant_tip:
@@ -1147,6 +1330,8 @@ class BuildingInspectDialog:
                 fonts=fonts,
                 scroll_name="craft_recipes",
                 show_fuel=building.kind == BuildingKind.KITCHEN,
+                player_craft=self.allow_player_craft,
+                stock_amounts=village_stock,
             )
             y += block_h
             if craft_tip:
@@ -1158,8 +1343,13 @@ class BuildingInspectDialog:
             if building.kind == BuildingKind.HOME
             else "Travellers"
             if building.kind == BuildingKind.WORKSTATION
+            else "Residents"
+            if is_housing_kind(building.kind)
             else "Workers"
         )
+        if is_housing_kind(building.kind):
+            beds = housing_beds_of(building.kind)
+            workers_title = f"Residents ({len(workers)}/{beds})"
         surface.blit(self.font.render(workers_title, True, COLOUR_TEXT), (x, y))
         y += 18
         if building.kind == BuildingKind.WORKSTATION:

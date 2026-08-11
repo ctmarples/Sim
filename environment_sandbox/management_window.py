@@ -30,13 +30,22 @@ from settings import (
     WINDOW_WIDTH,
     map_view_width,
 )
-from society import SKILL_ORDER
+from society import (
+    SKILL_ORDER,
+    candidate_requirement_rows,
+    free_housing_beds,
+    is_housing_kind,
+    max_housing_level,
+    villager_requirement_rows,
+)
 from villager_roster import (
     COL_BAR_W,
     COL_HOUSE_W,
     COL_NAME_W,
+    COL_PAY_W,
     HEADER_H,
     PORTRAIT_SIZE,
+    REQ_ICON,
     ROW_H,
     RosterEntry,
     RosterSort,
@@ -45,6 +54,7 @@ from villager_roster import (
     _column_layout,
     _table_width,
     draw_portrait,
+    draw_requirement_icons,
     draw_skill_cell,
     draw_status_bar,
     entry_from_villager,
@@ -463,6 +473,7 @@ class ManagementWindow:
         mouse_pos: tuple[int, int] | None = None,
         hire_entries: list[RosterEntry] | None = None,
         can_hire: Callable[[RosterEntry], bool] | None = None,
+        food_amounts: dict[str, int] | None = None,
         draw_villager_detail: Callable[[pygame.Surface, pygame.Rect], None] | None = None,
         draw_building_detail: Callable[[pygame.Surface, pygame.Rect], None] | None = None,
     ) -> None:
@@ -593,6 +604,7 @@ class ManagementWindow:
                     buildings=buildings,
                     hire_entries=hire_entries,
                     can_hire=can_hire,
+                    food_amounts=food_amounts,
                     mouse_pos=mouse_pos,
                 )
             elif self.tab == MgmtTab.BUILDINGS:
@@ -712,6 +724,31 @@ class ManagementWindow:
             return BUILDING_LABELS[buildings[v.building_id].kind]
         return "free"
 
+    def _housing_icon_for(self, v: Villager, buildings: dict[int, Building]) -> str:
+        if v.housed and v.housing_id is not None:
+            building = buildings.get(v.housing_id)
+            if building is not None:
+                return _BUILD_ICON.get(building.kind, "tent")
+        return "tent"
+
+    def _villager_entry(
+        self,
+        v: Villager,
+        buildings: dict[int, Building],
+        foods: dict[str, int],
+    ) -> RosterEntry:
+        return entry_from_villager(
+            v,
+            job=self._job_for_villager(v, buildings),
+            status="EAT" if v.seeking_food else v.state.name.title(),
+            requirement_rows=villager_requirement_rows(
+                v,
+                buildings,
+                foods,
+                housing_icon=self._housing_icon_for(v, buildings),
+            ),
+        )
+
     def _draw_people_list(
         self,
         surface: pygame.Surface,
@@ -720,39 +757,39 @@ class ManagementWindow:
         buildings: dict[int, Building],
         hire_entries: list[RosterEntry] | None,
         can_hire: Callable[[RosterEntry], bool] | None,
+        food_amounts: dict[str, int] | None,
         mouse_pos: tuple[int, int] | None,
     ) -> None:
         rect = self._list_rect
         x = rect.x + 6
         y = rect.y + 6
         show_actions = self._people_actions()
+        foods = dict(food_amounts or {})
 
         if self.people_mode == "hire":
             entries = list(hire_entries or [])
+            beds = free_housing_beds(buildings, villagers)
+            lvl = max_housing_level(buildings)
+            for e in entries:
+                if e.requirement_rows:
+                    continue
+                e.requirement_rows = candidate_requirement_rows(
+                    housing_need=e.housing_need,
+                    required_foods=list(e.required_foods),
+                    foods=foods,
+                    free_beds=beds,
+                    max_housing_level=lvl,
+                )
             surface.blit(
                 self.font_small.render("Travellers", True, COLOUR_TEXT), (x, y)
             )
         elif self.people_mode == "assign":
-            entries = [
-                entry_from_villager(
-                    v,
-                    job=self._job_for_villager(v, buildings),
-                    status="EAT" if v.seeking_food else v.state.name.title(),
-                )
-                for v in villagers
-            ]
+            entries = [self._villager_entry(v, buildings, foods) for v in villagers]
             surface.blit(
                 self.font_small.render("Pick villager", True, COLOUR_TEXT), (x, y)
             )
         else:
-            entries = [
-                entry_from_villager(
-                    v,
-                    job=self._job_for_villager(v, buildings),
-                    status="EAT" if v.seeking_food else v.state.name.title(),
-                )
-                for v in villagers
-            ]
+            entries = [self._villager_entry(v, buildings, foods) for v in villagers]
             surface.blit(
                 self.font_small.render("Villagers", True, COLOUR_TEXT), (x, y)
             )
@@ -769,6 +806,7 @@ class ManagementWindow:
             (RosterSort.SATIATION, "satiation", COL_BAR_W),
             (RosterSort.HAPPINESS, "happiness", COL_BAR_W),
             (RosterSort.HOUSING, "house", COL_HOUSE_W),
+            (RosterSort.PAY, "pay", COL_PAY_W),
             (RosterSort.EXTRACTION, "extraction", SKILL_COL_W),
             (RosterSort.FARMING, "farming", SKILL_COL_W),
             (RosterSort.HUNTING, "hunting", SKILL_COL_W),
@@ -839,8 +877,7 @@ class ManagementWindow:
                 meta_parts.append(entry.job)
             if entry.status:
                 meta_parts.append(entry.status)
-            meta_parts.append(f"needs {req}")
-            meta = " · ".join(meta_parts)
+            meta = " · ".join(meta_parts) if meta_parts else "—"
             while self.font_tiny.size(meta)[0] > name_max_w and len(meta) > 4:
                 meta = meta[:-2] + "…"
             surface.blit(
@@ -891,15 +928,49 @@ class ManagementWindow:
                 kind="happy",
             )
 
-            house_txt = "bed" if entry.housed else f"≥{entry.housing_need}"
-            ht = self.font_tiny.render(house_txt, True, COLOUR_TEXT_DIM)
+            if entry.requirement_rows:
+                draw_requirement_icons(
+                    surface,
+                    cols["house"] + 2,
+                    row_y + (ROW_H - REQ_ICON) // 2,
+                    entry.requirement_rows,
+                )
+            else:
+                house_txt = "bed" if entry.housed else f"≥{entry.housing_need}"
+                ht = self.font_tiny.render(house_txt, True, COLOUR_TEXT_DIM)
+                surface.blit(
+                    ht,
+                    (
+                        cols["house"] + (COL_HOUSE_W - ht.get_width()) // 2,
+                        row_y + (ROW_H - ht.get_height()) // 2,
+                    ),
+                )
+
+            if entry.season_pay > 0:
+                pay_txt = f"{entry.season_pay}/s"
+            elif entry.coins_paid > 0:
+                pay_txt = f"{entry.coins_paid}"
+            else:
+                pay_txt = "—"
+            pt = self.font_tiny.render(pay_txt, True, COLOUR_TEXT_DIM)
             surface.blit(
-                ht,
+                pt,
                 (
-                    cols["house"] + (COL_HOUSE_W - ht.get_width()) // 2,
-                    row_y + (ROW_H - ht.get_height()) // 2,
+                    cols["pay"] + (COL_PAY_W - pt.get_width()) // 2,
+                    row_y + 18,
                 ),
             )
+            if entry.kind == "villager" and entry.coins_paid > 0 and entry.season_pay > 0:
+                paid = self.font_tiny.render(
+                    f"{entry.coins_paid} tot", True, COLOUR_TEXT_DIM
+                )
+                surface.blit(
+                    paid,
+                    (
+                        cols["pay"] + (COL_PAY_W - paid.get_width()) // 2,
+                        row_y + 34,
+                    ),
+                )
 
             skill_y = row_y + 12
             for sk in SKILL_ORDER:
@@ -1018,6 +1089,10 @@ class ManagementWindow:
             )
             if b.kind == BuildingKind.HOME:
                 workers = [v for v in villagers if v.assigned_to_home]
+            elif is_housing_kind(b.kind):
+                workers = [
+                    v for v in villagers if v.housed and v.housing_id == b.id
+                ]
             else:
                 workers = [v for v in villagers if v.building_id == b.id]
             if workers:

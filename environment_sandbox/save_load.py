@@ -399,12 +399,33 @@ def serialize_game(game: Game) -> dict[str, Any]:
                 "favourite_is_junk": v.favourite_is_junk,
                 "join_fee_paid": v.join_fee_paid,
                 "seasons_without_reqs": v.seasons_without_reqs,
+                "coins_paid_total": int(getattr(v, "coins_paid_total", 0) or 0),
+                "season_pay_due": int(getattr(v, "season_pay_due", 0) or 0),
+                "happiness_events": [
+                    {
+                        "icon": str(imp.get("icon", "")),
+                        "label": str(imp.get("label", "")),
+                        "delta": int(round(float(imp.get("delta", 0)))),
+                        "day": int(imp.get("day", 0)),
+                    }
+                    for imp in (
+                        getattr(v, "happiness_events", None)
+                        or getattr(v, "happiness_impacts", None)
+                        or []
+                    )
+                    if isinstance(imp, dict)
+                ],
                 "low_happiness_days": round(v.low_happiness_days, 4),
+                "low_happiness_seasons": int(
+                    getattr(v, "low_happiness_seasons", 0) or 0
+                ),
                 "skills": skills_to_dict(v.skills) if v.skills else {},
                 "community_id": v.community_id,
                 "virtues": list(getattr(v, "virtues", []) or []),
                 "vices": list(getattr(v, "vices", []) or []),
                 "portrait_seed": int(getattr(v, "portrait_seed", 0) or 0),
+                "template_id": str(getattr(v, "template_id", "") or ""),
+                "tier": int(getattr(v, "tier", 1) or 1),
             }
         )
     sites = [
@@ -502,6 +523,17 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "x": game.player.x,
             "y": game.player.y,
             "inventory": _inv_to_dict(game.player.inventory),
+            "satiation": float(getattr(game.player, "satiation", 0.75)),
+            "energy": float(getattr(game.player, "energy", 1.0)),
+            "happiness": float(getattr(game.player, "happiness", 0.7)),
+            "last_meal": list(getattr(game.player, "last_meal", []) or []),
+            "food_walk_mult": float(getattr(game.player, "food_walk_mult", 1.0)),
+            "food_work_mult": float(getattr(game.player, "food_work_mult", 1.0)),
+            "food_hunger_mult": float(getattr(game.player, "food_hunger_mult", 1.0)),
+            "ration_mode": getattr(
+                getattr(game.player, "ration_mode", None), "name", "NORMAL"
+            ),
+            "auto_eat": bool(getattr(game.player, "auto_eat", False)),
         },
         "home_storage": _storage_to_dict(game.home_storage),
         "regional_wealth": int(getattr(game, "regional_wealth", 0)),
@@ -791,6 +823,29 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     game.player.x = int(player_data["x"])
     game.player.y = int(player_data["y"])
     game.player.inventory = _inv_from_dict(player_data["inventory"])
+    game.player.satiation = float(player_data.get("satiation", 0.75))
+    game.player.energy = float(player_data.get("energy", 1.0))
+    game.player.happiness = float(player_data.get("happiness", 0.7))
+    game.player.last_meal = [
+        str(k) for k in (player_data.get("last_meal") or []) if k
+    ][:3]
+    game.player.food_walk_mult = float(player_data.get("food_walk_mult", 1.0))
+    game.player.food_work_mult = float(player_data.get("food_work_mult", 1.0))
+    game.player.food_hunger_mult = float(player_data.get("food_hunger_mult", 1.0))
+    try:
+        from entities import RationMode
+
+        game.player.ration_mode = RationMode[str(player_data.get("ration_mode", "NORMAL"))]
+    except KeyError:
+        from entities import RationMode
+
+        game.player.ration_mode = RationMode.NORMAL
+    game.player.auto_eat = bool(player_data.get("auto_eat", False))
+    game.player.move_cooldown = 0
+    game.player.work_cooldown = 0
+    from entities import snap_entity_visual
+
+    snap_entity_visual(game.player)
     _apply_storage(game.home_storage, data["home_storage"])
     game.regional_wealth = max(0, int(data.get("regional_wealth", 0) or 0))
 
@@ -1134,13 +1189,35 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         villager.favourite_is_junk = bool(vdata.get("favourite_is_junk", False))
         villager.join_fee_paid = bool(vdata.get("join_fee_paid", False))
         villager.seasons_without_reqs = int(vdata.get("seasons_without_reqs", 0))
+        villager.coins_paid_total = int(vdata.get("coins_paid_total", 0) or 0)
+        villager.season_pay_due = int(vdata.get("season_pay_due", 0) or 0)
+        raw_events = vdata.get("happiness_events")
+        if not isinstance(raw_events, list):
+            raw_events = vdata.get("happiness_impacts")
+        events: list[dict] = []
+        if isinstance(raw_events, list):
+            for imp in raw_events:
+                if not isinstance(imp, dict):
+                    continue
+                events.append(
+                    {
+                        "icon": str(imp.get("icon", "") or "coins"),
+                        "label": str(imp.get("label", "") or "Event"),
+                        "delta": int(round(float(imp.get("delta", 0) or 0))),
+                        "day": int(imp.get("day", 0) or 0),
+                    }
+                )
+        villager.happiness_events = events
         villager.low_happiness_days = float(vdata.get("low_happiness_days", 0.0))
+        villager.low_happiness_seasons = int(vdata.get("low_happiness_seasons", 0) or 0)
         villager.skills = skills_from_dict(vdata.get("skills"))
         cid = vdata.get("community_id")
         villager.community_id = int(cid) if cid is not None else None
         villager.virtues = list(vdata.get("virtues") or [])
         villager.vices = list(vdata.get("vices") or [])
         villager.portrait_seed = int(vdata.get("portrait_seed", 0) or 0)
+        villager.template_id = str(vdata.get("template_id", "") or "")
+        villager.tier = int(vdata.get("tier", 1) or 1)
         if not villager.virtues and not villager.vices:
             villager.__post_init__()
         game.villagers.append(villager)

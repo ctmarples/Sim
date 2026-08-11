@@ -180,7 +180,11 @@ def _apply_row_metadata(row: dict[str, str], recipe: Recipe) -> None:
     if label:
         RECIPE_LABELS[recipe.name] = label
 
+    satiation = _cell(row, "food_satiation")
     resource_group = _cell(row, "resource_group")
+    # Food metadata implies a catalogue entry even if resource_group was left blank.
+    if not resource_group and satiation and recipe.outputs:
+        resource_group = "food"
     if resource_group and recipe.outputs:
         from resources import register_resource
 
@@ -192,7 +196,6 @@ def _apply_row_metadata(row: dict[str, str], recipe: Recipe) -> None:
             short=_cell(row, "resource_short") or out_key[:4],
         )
 
-    satiation = _cell(row, "food_satiation")
     if satiation and recipe.outputs:
         from resource_balance import register_food
 

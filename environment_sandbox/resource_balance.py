@@ -139,11 +139,16 @@ def satiation_from_points(points: float) -> float:
     return max(0.0, float(points) / MEAL_POINTS_FULL)
 
 
-def food_preference_key(key: str) -> tuple:
-    """Sort key for meal picking: avoid debuffs, then buff strength, then satiation."""
+def food_preference_key(key: str, required_foods: list[str] | None = None) -> tuple:
+    """Sort key for meal picking: required staples first, then buffs, then satiation."""
     fx = food_def(key)
+    req_miss = 0
+    if required_foods:
+        # 0 = covers a required staple (prefer), 1 = does not.
+        req_miss = 0 if food_covers_any_requirement(key, required_foods) else 1
     debuff = 1 if (fx.walk_speed < 1.0 or fx.work_efficiency < 1.0) else 0
     return (
+        req_miss,
         debuff,
         -(fx.walk_speed * fx.work_efficiency),
         -fx.satiation,
@@ -161,15 +166,70 @@ def meal_quality_score(food_keys: list[str]) -> float:
     return sat * walk * work / max(0.05, hunger)
 
 
-def storage_meal_score(storage: object, food_keys: list[str] | None = None) -> float:
+def storage_meal_score(
+    storage: object,
+    food_keys: list[str] | None = None,
+    *,
+    required_foods: list[str] | None = None,
+) -> float:
     """Best meal score available from ``storage`` (up to ``MAX_FOOD_TYPES_PER_MEAL``)."""
     keys = food_keys if food_keys is not None else VILLAGER_FOOD_KEYS
     available = [key for key in keys if int(getattr(storage, key, 0)) > 0]
     if not available:
         return 0.0
-    available.sort(key=food_preference_key)
+    available.sort(key=lambda k: food_preference_key(k, required_foods))
     picked = available[:MAX_FOOD_TYPES_PER_MEAL]
-    return meal_quality_score(picked)
+    score = meal_quality_score(picked)
+    # Strong bonus when the best available bite covers a hire staple.
+    if required_foods and any(
+        food_covers_any_requirement(k, required_foods) for k in picked
+    ):
+        score += 50.0
+    return score
+
+
+# Local alias so this module does not import society (cycle risk).
+HIRE_STAPLE_FOODS_LOCAL: tuple[str, ...] = ("meat", "fish", "bread")
+
+# Which edible keys count toward hire staple requirements (meat / fish / bread).
+# Cooked dishes inherit the staple(s) in their recipe.
+FOOD_STAPLE_TAGS: dict[str, frozenset[str]] = {
+    "meat": frozenset({"meat"}),
+    "grilled_meat": frozenset({"meat"}),
+    "stew": frozenset({"meat"}),
+    "spiced_stew": frozenset({"meat"}),
+    "fish": frozenset({"fish"}),
+    "grilled_fish": frozenset({"fish"}),
+    "fish_stew": frozenset({"fish"}),
+    "bread": frozenset({"bread"}),
+}
+
+
+def food_staple_tags(key: str) -> frozenset[str]:
+    tags = FOOD_STAPLE_TAGS.get(key)
+    if tags is not None:
+        return tags
+    if key in HIRE_STAPLE_FOODS_LOCAL:
+        return frozenset({key})
+    return frozenset()
+
+
+def food_covers_requirement(food_key: str, requirement: str) -> bool:
+    return requirement in food_staple_tags(food_key) or food_key == requirement
+
+
+def food_covers_any_requirement(food_key: str, required: list[str] | None) -> bool:
+    if not required:
+        return False
+    return any(food_covers_requirement(food_key, r) for r in required)
+
+
+def meal_covers_any_requirement(
+    eaten_keys: list[str], required: list[str] | None
+) -> bool:
+    if not required:
+        return True
+    return any(food_covers_any_requirement(k, required) for k in eaten_keys)
 
 
 def combine_meal_buffs(food_keys: list[str]) -> tuple[float, float, float]:
