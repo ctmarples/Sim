@@ -34,12 +34,16 @@ MARKET_PRICES: dict[str, int] = {
     "mushroom_stew": 4,
     "grilled_meat": 5,
     "grilled_fish": 5,
-    "spiced_stew": 6,
+    "spiced_stew": 10,
     "wheat_flour": 3,
     "rye_flour": 3,
     "wood": 1,
     "rock": 1,
     "twine": 2,
+    "sun_hat": 10,
+    "winter_hat": 15,
+    "simple_shirt": 15,
+    "winter_coat": 20,
 }
 
 MARKET_SELLABLE_KEYS: tuple[str, ...] = tuple(MARKET_PRICES.keys())

@@ -139,6 +139,39 @@ def satiation_from_points(points: float) -> float:
     return max(0.0, float(points) / MEAL_POINTS_FULL)
 
 
+def food_preference_key(key: str) -> tuple:
+    """Sort key for meal picking: avoid debuffs, then buff strength, then satiation."""
+    fx = food_def(key)
+    debuff = 1 if (fx.walk_speed < 1.0 or fx.work_efficiency < 1.0) else 0
+    return (
+        debuff,
+        -(fx.walk_speed * fx.work_efficiency),
+        -fx.satiation,
+        -1.0 / max(0.05, fx.hunger_rate),
+        key,
+    )
+
+
+def meal_quality_score(food_keys: list[str]) -> float:
+    """Higher is better. Combines satiation with stacked walk/work/hunger buffs."""
+    if not food_keys:
+        return 0.0
+    walk, work, hunger = combine_meal_buffs(food_keys)
+    sat = sum(food_def(k).satiation for k in food_keys)
+    return sat * walk * work / max(0.05, hunger)
+
+
+def storage_meal_score(storage: object, food_keys: list[str] | None = None) -> float:
+    """Best meal score available from ``storage`` (up to ``MAX_FOOD_TYPES_PER_MEAL``)."""
+    keys = food_keys if food_keys is not None else VILLAGER_FOOD_KEYS
+    available = [key for key in keys if int(getattr(storage, key, 0)) > 0]
+    if not available:
+        return 0.0
+    available.sort(key=food_preference_key)
+    picked = available[:MAX_FOOD_TYPES_PER_MEAL]
+    return meal_quality_score(picked)
+
+
 def combine_meal_buffs(food_keys: list[str]) -> tuple[float, float, float]:
     """Return (walk_speed, work_efficiency, hunger_rate) for a finished meal.
 

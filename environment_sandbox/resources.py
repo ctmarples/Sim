@@ -63,6 +63,8 @@ RESOURCES: list[ResourceDef] = [
     ResourceDef("fishing_rod", "Fishing rod", "wares", "rod"),
     ResourceDef("hoe", "Hoe", "wares", "hoe"),
     ResourceDef("knife", "Knife", "wares", "knf"),
+    ResourceDef("bow", "Bow", "wares", "bow"),
+    ResourceDef("stone_arrows", "Stone arrows", "wares", "s.arr"),
     ResourceDef("insect_repellant", "Insect repellant", "wares", "rep"),
     ResourceDef("mineral_powder", "Mineral powder", "wares", "min"),
     ResourceDef("spices", "Spices", "wares", "spc"),
@@ -88,6 +90,50 @@ GROUP_LABELS: dict[str, str] = {
 }
 
 RESOURCE_KEYS: tuple[str, ...] = tuple(r.key for r in RESOURCES)
+
+# Cargo / building capacity: these keys occupy ceil(count / size) slots.
+# Count stays the real amount (e.g. arrows left); UI shows that number on the icon.
+STACK_SIZES: dict[str, int] = {
+    "stone_arrows": 10,
+}
+
+
+def stack_size(key: str) -> int | None:
+    size = STACK_SIZES.get(key)
+    return int(size) if size else None
+
+
+def stack_units(key: str, count: int) -> int:
+    """Cargo slots occupied by ``count`` of ``key`` (1 per stack, or 1:1)."""
+    n = max(0, int(count))
+    if n <= 0:
+        return 0
+    size = stack_size(key)
+    if size is None or size <= 1:
+        return n
+    return (n + size - 1) // size
+
+
+def cargo_units_after_add(key: str, have: int, add: int) -> int:
+    """Net cargo-slot delta when adding ``add`` items to ``have`` already stored."""
+    return stack_units(key, int(have) + int(add)) - stack_units(key, have)
+
+
+def items_for_stack_room(key: str, have: int, room_units: int) -> int:
+    """How many items of ``key`` fit in ``room_units`` free cargo slots."""
+    room = max(0, int(room_units))
+    if room <= 0 and stack_size(key) is None:
+        return 0
+    size = stack_size(key)
+    if size is None or size <= 1:
+        return room
+    have_n = max(0, int(have))
+    fill = 0
+    if have_n > 0:
+        rem = have_n % size
+        if rem:
+            fill = size - rem
+    return fill + room * size
 
 
 def register_resource(
@@ -189,6 +235,7 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
         ICON_AXE,
         ICON_BERRIES,
         ICON_BREAD,
+        ICON_BOW,
         ICON_FISH,
         ICON_FISHING_ROD,
         ICON_FLOWER,
@@ -207,6 +254,7 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
         ICON_SPEAR,
         ICON_STEW,
         ICON_FISH_STEW,
+        ICON_STONE_ARROWS,
         ICON_TWINE,
         ICON_WOOD,
         crop_icon_base,
@@ -256,6 +304,12 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
 
     if key == "knife":
         return ResourceIconStyle(ICON_KNIFE, {})
+
+    if key == "bow":
+        return ResourceIconStyle(ICON_BOW, {})
+
+    if key == "stone_arrows":
+        return ResourceIconStyle(ICON_STONE_ARROWS, {})
 
     if key == "rock":
         return ResourceIconStyle(ICON_ROCK, {"body": COLOUR_ROCK_FEATURE})

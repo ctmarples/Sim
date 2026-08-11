@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="40" height="40">
+  <title>stone_arrows</title>
+  <g class="shaft">
+    <line x1="10" y1="28" x2="28" y2="10" stroke="#8B5A2B" stroke-width="1.6" stroke-linecap="round"/>
+    <line x1="8" y1="32" x2="26" y2="14" stroke="#8B5A2B" stroke-width="1.6" stroke-linecap="round"/>
+  </g>
+  <g class="head">
+    <polygon points="28,10 32,12 30,6" fill="#8A8F96"/>
+    <polygon points="26,14 30,16 28,10" fill="#8A8F96"/>
+  </g>
+  <g class="fletch">
+    <path d="M 10 28 L 7 26 L 9 30 Z" fill="#C8B88A"/>
+    <path d="M 8 32 L 5 30 L 7 34 Z" fill="#C8B88A"/>
+  </g>
+</svg>

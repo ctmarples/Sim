@@ -62,6 +62,7 @@ _BASE_STORAGE_KEYS = (
     "fishing_rod",
     "hoe",
     "knife",
+    "bow",
 )
 _CROP_STORAGE_KEYS = PRODUCE_KEYS + SEED_KEYS
 _STORAGE_KEYS = _BASE_STORAGE_KEYS + _CROP_STORAGE_KEYS + PROCESSED_KEYS

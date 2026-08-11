@@ -51,8 +51,12 @@ from trees import SAPLING_ITEM_KEYS, sapling_item_key
 SEED_ITEM_KEYS: tuple[str, ...] = ("berry_seeds", *SEED_KEYS)
 
 # Tools carried in dedicated tool slots (not general cargo stacks).
-TOOL_KEYS: tuple[str, ...] = ("axe", "spear", "fishing_rod", "hoe", "knife")
+TOOL_KEYS: tuple[str, ...] = ("axe", "spear", "fishing_rod", "hoe", "knife", "bow")
 TOOL_SLOT_MAX: int = 3
+# Chebyshev range for bow shots (hunter skill 4+).
+HUNTER_BOW_RANGE: int = 5
+HUNTER_BOW_MIN_SKILL: int = 4
+HUNTER_BOW_HIT_CHANCE: float = 0.5
 
 
 class TaskType(Enum):
@@ -167,6 +171,11 @@ WORKPLACE_TOOL: dict[BuildingKind, str] = {
     BuildingKind.FISHER: "fishing_rod",
     BuildingKind.FARM: "hoe",
     BuildingKind.KITCHEN: "knife",
+}
+
+# Extra tools accepted for a workplace (in addition to WORKPLACE_TOOL).
+WORKPLACE_EXTRA_TOOLS: dict[BuildingKind, tuple[str, ...]] = {
+    BuildingKind.HUNTER: ("bow",),
 }
 
 
@@ -387,6 +396,7 @@ class Inventory:
     fishing_rod: int = 0
     hoe: int = 0
     knife: int = 0
+    bow: int = 0
     equipped_tools: list[str] = field(default_factory=list)
     capacity: int = INVENTORY_CAPACITY
     seed_capacity: int = SEED_CARRY_CAPACITY
@@ -417,7 +427,9 @@ class Inventory:
     @property
     def cargo_total(self) -> int:
         """Non-seed items (wood, food, saplings, produce, …)."""
-        return (
+        from resources import stack_units
+
+        total = (
             self.logs
             + self.hardwood_logs
             + self.wood
@@ -432,10 +444,14 @@ class Inventory:
             + self.straw
             + self.fur
             + self.twine
-            + self.axe
+            + sum(int(getattr(self, key, 0)) for key in TOOL_KEYS)
             + sum(getattr(self, key) for key in PRODUCE_KEYS)
-            + sum(getattr(self, key) for key in PROCESSED_KEYS)
         )
+        for key in PROCESSED_KEYS:
+            if key in TOOL_KEYS:
+                continue
+            total += stack_units(key, int(getattr(self, key, 0)))
+        return total
 
     @property
     def total(self) -> int:
@@ -460,6 +476,12 @@ class Inventory:
             return True
         if key is not None and self.is_seed_key(key):
             return self.seed_total + amount <= self.seed_capacity
+        if key is not None:
+            from resources import cargo_units_after_add, stack_size
+
+            if stack_size(key) is not None:
+                have = int(getattr(self, key, 0))
+                return self.cargo_total + cargo_units_after_add(key, have, amount) <= self.capacity
         return self.cargo_total + amount <= self.capacity
 
     def add_item(self, key: str, n: int = 1) -> bool:
@@ -626,11 +648,15 @@ class Inventory:
             "fur": self.fur,
             "twine": self.twine,
             "coins": self.coins,
-            "axe": self.axe,
+            **{key: int(getattr(self, key, 0)) for key in TOOL_KEYS},
             **{key: getattr(self, key) for key in SAPLING_ITEM_KEYS},
             **{key: getattr(self, key) for key in PRODUCE_KEYS},
             **{key: getattr(self, key) for key in SEED_KEYS},
-            **{key: getattr(self, key) for key in PROCESSED_KEYS},
+            **{
+                key: getattr(self, key)
+                for key in PROCESSED_KEYS
+                if key not in TOOL_KEYS
+            },
         }
         self.reset()
         self.equipped_tools = saved_tools
@@ -641,7 +667,8 @@ class Inventory:
         self.mushrooms = self.honey = self.berries = self.berry_seeds = self.reeds = 0
         self.straw = self.fur = 0
         self.twine = self.coins = 0
-        self.axe = self.spear = self.fishing_rod = self.hoe = self.knife = 0
+        for key in TOOL_KEYS:
+            setattr(self, key, 0)
         self.equipped_tools.clear()
         for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS:
             setattr(self, key, 0)
@@ -701,6 +728,7 @@ class HomeStorage:
     fishing_rod: int = 0
     hoe: int = 0
     knife: int = 0
+    bow: int = 0
 
     @property
     def saplings(self) -> int:
@@ -739,10 +767,8 @@ class HomeStorage:
         self.mushrooms = self.honey = self.berries = self.berry_seeds = self.reeds = 0
         self.straw = self.fur = 0
         self.twine = self.coins = 0
-        self.axe = self.spear = self.fishing_rod = self.hoe = self.knife = 0
         for key in TOOL_KEYS:
-            if key not in ("axe",):
-                setattr(self, key, 0)
+            setattr(self, key, 0)
         for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS:
             setattr(self, key, 0)
 
@@ -1071,6 +1097,7 @@ class Building:
     fishing_rod: int = 0
     hoe: int = 0
     knife: int = 0
+    bow: int = 0
     capacity: int = BUILDING_STORAGE_CAPACITY
     # Processor buildings use split pools (0 = unused / fall back to capacity).
     input_capacity: int = 0
@@ -1313,6 +1340,8 @@ class Building:
     @property
     def cargo_stored_total(self) -> int:
         """Stock that counts against ``capacity`` (excludes separate seed pool)."""
+        from resources import stack_units
+
         total = (
             self.logs
             + self.hardwood_logs
@@ -1328,10 +1357,13 @@ class Building:
             + self.straw
             + self.fur
             + self.twine
-            + self.axe
+            + sum(int(getattr(self, key, 0)) for key in TOOL_KEYS)
             + sum(getattr(self, key) for key in PRODUCE_KEYS)
-            + sum(getattr(self, key) for key in PROCESSED_KEYS)
         )
+        for key in PROCESSED_KEYS:
+            if key in TOOL_KEYS:
+                continue
+            total += stack_units(key, int(getattr(self, key, 0)))
         if self.seed_capacity <= 0:
             total += int(getattr(self, "berry_seeds", 0))
             total += sum(getattr(self, key) for key in SEED_KEYS)
@@ -1494,16 +1526,19 @@ class Building:
         return self.is_recipe_enabled(key)
 
     def ensure_recipe_state(self) -> None:
+        # New buildings (empty map) enable all recipes. Existing benches keep their
+        # toggles — newly added recipe names default off so they don't hijack work.
+        default_enabled = not bool(self.recipe_enabled)
         for recipe in self.known_recipes():
-            self.recipe_enabled.setdefault(recipe.name, True)
+            self.recipe_enabled.setdefault(recipe.name, default_enabled)
             self.recipe_progress.setdefault(recipe.name, 0)
             self.recipe_priority.setdefault(recipe.name, RECIPE_PRIORITY_DEFAULT)
         for recipe in self.split_recipes():
-            self.recipe_enabled.setdefault(recipe.name, True)
+            self.recipe_enabled.setdefault(recipe.name, default_enabled)
             self.recipe_progress.setdefault(recipe.name, 0)
             self.recipe_priority.setdefault(recipe.name, RECIPE_PRIORITY_DEFAULT)
         for recipe in self.plant_recipes():
-            self.recipe_enabled.setdefault(recipe.name, True)
+            self.recipe_enabled.setdefault(recipe.name, default_enabled)
             self.recipe_progress.setdefault(recipe.name, 0)
             self.recipe_priority.setdefault(recipe.name, RECIPE_PRIORITY_DEFAULT)
 
@@ -1783,19 +1818,30 @@ class Building:
         return ()
 
     def input_stored_total(self) -> int:
+        from resources import stack_units
+
         if self.is_market():
             from market_economy import market_supply_resource_keys
 
             return sum(
-                int(getattr(self, key, 0)) for key in market_supply_resource_keys()
+                stack_units(key, int(getattr(self, key, 0)))
+                for key in market_supply_resource_keys()
             )
-        return sum(int(getattr(self, key, 0)) for key in self.processor_input_keys())
+        return sum(
+            stack_units(key, int(getattr(self, key, 0)))
+            for key in self.processor_input_keys()
+        )
 
     def output_stored_total(self) -> int:
+        from resources import stack_units
+
         if self.is_market():
             # Coins are currency and do not fill the output pool.
             return 0
-        return sum(int(getattr(self, key, 0)) for key in self.processor_output_keys())
+        return sum(
+            stack_units(key, int(getattr(self, key, 0)))
+            for key in self.processor_output_keys()
+        )
 
     def input_space_left(self) -> int:
         if self.input_capacity <= 0:
@@ -1808,6 +1854,8 @@ class Building:
         return max(0, self.output_capacity - self.output_stored_total())
 
     def space_for_key(self, key: str) -> int:
+        from resources import items_for_stack_room, stack_size
+
         if key == "coins":
             # Currency is uncapped (still subject to an optional item cap).
             room = 10**9
@@ -1834,9 +1882,11 @@ class Building:
                 return 0
         else:
             room = self.space_left
+        have = int(getattr(self, key, 0))
+        if stack_size(key) is not None:
+            room = items_for_stack_room(key, have, room)
         cap = self.item_caps.get(key)
         if cap is not None:
-            have = int(getattr(self, key, 0))
             room = min(room, max(0, int(cap) - have))
         return max(0, room)
 
@@ -2600,6 +2650,10 @@ class Villager:
     hunt_animal_id: int | None = None
     hunt_colony_id: int | None = None
     hunt_meat_pos: tuple[int, int] | None = None
+    # After a job change: walk to storehouse and deposit old cargo/tools first.
+    job_change_deposit: bool = False
+    # Pending bow shot resolution (animal_id, hit, ticks_remaining).
+    hunt_shot: tuple[int, bool, int] | None = None
     fish_target_id: int | None = None
     fish_catch_pos: tuple[int, int] | None = None
     fish_post_pos: tuple[int, int] | None = None
@@ -2668,6 +2722,7 @@ class Villager:
         self.hunt_animal_id = None
         self.hunt_colony_id = None
         self.hunt_meat_pos = None
+        self.hunt_shot = None
         self.fish_target_id = None
         self.fish_catch_pos = None
         self.fish_post_pos = None

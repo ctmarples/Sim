@@ -55,7 +55,9 @@ from resource_balance import (
     WILD_PRODUCE_YIELD,
     combine_meal_buffs,
     food_def,
+    food_preference_key,
     satiation_from_points,
+    storage_meal_score,
 )
 from entities import (
     BUILDING_LABELS,
@@ -78,7 +80,11 @@ from entities import (
     TaskArea,
     TaskType,
     TOOL_KEYS,
+    WORKPLACE_EXTRA_TOOLS,
     WORKPLACE_TOOL,
+    HUNTER_BOW_HIT_CHANCE,
+    HUNTER_BOW_MIN_SKILL,
+    HUNTER_BOW_RANGE,
     Villager,
     VillagerState,
     WorkMode,
@@ -487,6 +493,8 @@ class Game:
         self._forage_cell_index: dict[str, list[tuple[int, int]]] | None = None
         self._minimap_terrain: pygame.Surface | None = None
         self._minimap_terrain_key: tuple[int, int, int] | None = None
+        # Active bow-shot visuals: (x0, y0, x1, y1, age, duration, hit).
+        self._arrow_shots: list[tuple[float, float, float, float, int, int, bool]] = []
         # Villager wear map: cell → cumulative traffic (decayed on env sample).
         self._path_traffic: dict[tuple[int, int], float] = {}
 
@@ -1964,6 +1972,7 @@ class Game:
                 villager = self._get_villager(vid)
                 if villager is not None:
                     mode = villager.cycle_priority_slot(slot)
+                    self._return_mismatched_tools_to_store(villager)
                     self._set_status(
                         f"Villager {vid} priority {slot + 1}: {PRIORITY_LABELS[mode]}"
                     )
@@ -2019,6 +2028,7 @@ class Game:
             villager = self._get_villager(vid)
             if villager is not None:
                 mode = villager.cycle_priority_slot(slot)
+                self._return_mismatched_tools_to_store(villager)
                 self._set_status(
                     f"Villager {vid} priority {slot + 1}: {PRIORITY_LABELS[mode]}"
                 )
@@ -2267,6 +2277,7 @@ class Game:
                 self._set_primary_workplace(villager, building_id, slot=0)
                 self._set_status(f"{villager.name} → {label} ({season_name} P1)")
             else:
+                self._begin_job_change_deposit(villager)
                 self._set_status(f"{villager.name} → {label} ({season_name} P{slot + 1})")
             return
         villager.ensure_workplace_slots()
@@ -2274,6 +2285,7 @@ class Game:
             self._set_primary_workplace(villager, building_id, slot=0)
         else:
             villager.workplace_slots[slot] = building_id
+            self._begin_job_change_deposit(villager)
         self._wake_building_workers(building_id)
         self._set_status(f"{villager.name} → {label} (P{slot + 1})")
 
@@ -2285,6 +2297,7 @@ class Game:
         if building is None:
             return
         villager.ensure_workplace_slots()
+        was_home = villager.assigned_to_home
         was_unassigned = (
             villager.building_id is None
             and not villager.assigned_to_home
@@ -2295,8 +2308,9 @@ class Game:
         villager.assigned_to_home = False
         villager.building_id = building_id
         villager.state = VillagerState.IDLE
-        if was_unassigned:
+        if was_unassigned or was_home:
             villager.set_default_priorities()
+        self._begin_job_change_deposit(villager)
 
     def _apply_assign_picker_action(self) -> None:
         action = self.assign_picker.take_action()
@@ -2623,6 +2637,7 @@ class Game:
         secondary = list(villager.workplace_slots[1:3])
         while len(secondary) < 2:
             secondary.append(None)
+        was_home = villager.assigned_to_home
         was_unassigned = villager.building_id is None and not villager.assigned_to_home
         villager.clear_work_stickies()
         villager.assigned_to_home = False
@@ -2632,8 +2647,9 @@ class Game:
         villager.workplace_slots[1] = secondary[0]
         villager.workplace_slots[2] = secondary[1]
         villager.state = VillagerState.IDLE
-        if was_unassigned:
+        if was_unassigned or was_home:
             villager.set_default_priorities()
+        self._begin_job_change_deposit(villager)
         self.assign_workplace_mode = False
         self.selected_villager_id = None
         self.selected_building_id = building_id
@@ -2651,6 +2667,7 @@ class Game:
         villager.assigned_to_home = True
         villager.state = VillagerState.IDLE
         villager.set_default_priorities()
+        self._begin_job_change_deposit(villager)
         self.assign_workplace_mode = False
         self.selected_villager_id = None
         self.selected_building_id = None
@@ -4241,6 +4258,7 @@ class Game:
     def _unassign_villager(self, villager: Villager) -> None:
         villager.clear_assignment()
         villager.set_default_priorities()
+        self._begin_job_change_deposit(villager)
         self._set_status(f"Unassigned villager {villager.id}.")
 
     def _field_crop_counts(self, building: Building) -> dict[str, int]:
@@ -5967,6 +5985,144 @@ class Game:
             self._set_status("Deposited. " + " · ".join(lines) if lines else "Deposited.")
         return True
 
+    def _allowed_tools_for_villager(self, villager: Villager) -> set[str]:
+        """Tools matching any priority workplace slot (or empty for pure haulers)."""
+        allowed: set[str] = set()
+        for bid in villager.active_workplace_slot_ids(self.season):
+            if bid is None:
+                continue
+            building = self.buildings.get(bid)
+            if building is None:
+                continue
+            primary = WORKPLACE_TOOL.get(building.kind)
+            if primary:
+                allowed.add(primary)
+            for extra in WORKPLACE_EXTRA_TOOLS.get(building.kind, ()):
+                allowed.add(extra)
+        return allowed
+
+    def _villager_needs_home_restock(self, villager: Villager) -> bool:
+        """True when storehouse can refill a missing job tool or arrow stack."""
+        inv = villager.inventory
+        home = self.home_storage
+        for tool in self._allowed_tools_for_villager(villager):
+            if inv.has_equipped_tool(tool):
+                continue
+            if int(getattr(home, tool, 0)) > 0 and inv.tool_slots_free() > 0:
+                return True
+        if self._hunter_prefers_bow(villager) or inv.has_equipped_tool("bow"):
+            from resources import STACK_SIZES
+
+            stack = int(STACK_SIZES.get("stone_arrows", 10))
+            have = int(getattr(inv, "stone_arrows", 0))
+            if have < stack and int(getattr(home, "stone_arrows", 0)) > 0:
+                return True
+        return False
+
+    def _restock_workplace_gear_at_home(self, villager: Villager) -> None:
+        """Equip missing job tools and top up arrows while standing at the storehouse."""
+        if (villager.x, villager.y) != self.world.home_pos:
+            return
+        inv = villager.inventory
+        for tool in self._allowed_tools_for_villager(villager):
+            if inv.has_equipped_tool(tool):
+                continue
+            if inv.tool_slots_free() <= 0:
+                break
+            stock = int(getattr(self.home_storage, tool, 0))
+            if stock <= 0:
+                continue
+            setattr(self.home_storage, tool, stock - 1)
+            inv.equip_tool_from_transfer(tool)
+        if self._hunter_prefers_bow(villager) or inv.has_equipped_tool("bow"):
+            from resources import STACK_SIZES
+
+            stack = int(STACK_SIZES.get("stone_arrows", 10))
+            have = int(getattr(inv, "stone_arrows", 0))
+            need = stack - have
+            if need <= 0:
+                return
+            stock = int(getattr(self.home_storage, "stone_arrows", 0))
+            take = min(need, stock)
+            if take <= 0:
+                return
+            # Deposit may have freed cargo space; top up as many as fit.
+            while take > 0 and not inv.can_add(take, key="stone_arrows"):
+                take -= 1
+            if take <= 0:
+                return
+            setattr(self.home_storage, "stone_arrows", stock - take)
+            inv.add_item("stone_arrows", take)
+
+    def _unequip_mismatched_tools(self, villager: Villager) -> bool:
+        """Unequip tools that don't match priority jobs. Returns True if any moved."""
+        allowed = self._allowed_tools_for_villager(villager)
+        inv = villager.inventory
+        changed = False
+        for tool in list(inv.equipped_tools):
+            if tool in allowed:
+                continue
+            if inv.unequip_tool(tool):
+                changed = True
+        return changed
+
+    def _inventory_needs_store_deposit(self, inventory: Inventory) -> bool:
+        """True when cargo or loose (unequipped) tools should go to the storehouse."""
+        if inventory.has_delivery_cargo():
+            return True
+        return any(int(getattr(inventory, key, 0)) > 0 for key in TOOL_KEYS)
+
+    def _begin_job_change_deposit(self, villager: Villager) -> None:
+        """After a job/slot change: return mismatched tools and deposit old cargo."""
+        self._unequip_mismatched_tools(villager)
+        if not self._inventory_needs_store_deposit(villager.inventory):
+            villager.job_change_deposit = False
+            return
+        villager.job_change_deposit = True
+        villager.clear_work_stickies()
+        villager.haul_building_id = None
+        villager.state = VillagerState.DELIVERING
+        villager.target = self.world.home_pos
+        self._clear_villager_path(villager)
+
+    def _return_mismatched_tools_to_store(self, villager: Villager) -> None:
+        """Unequip tools that don't match priority jobs and send them to the storehouse."""
+        self._unequip_mismatched_tools(villager)
+        inv = villager.inventory
+        if not any(int(getattr(inv, key, 0)) > 0 for key in TOOL_KEYS):
+            return
+        villager.job_change_deposit = True
+        villager.clear_work_stickies()
+        villager.haul_building_id = None
+        villager.state = VillagerState.DELIVERING
+        villager.target = self.world.home_pos
+        self._clear_villager_path(villager)
+
+    def _tick_job_change_deposit(self, villager: Villager) -> bool:
+        """Walk to storehouse and deposit. True while still handling the deposit."""
+        if not villager.job_change_deposit:
+            return False
+        self._unequip_mismatched_tools(villager)
+        if not self._inventory_needs_store_deposit(villager.inventory):
+            villager.job_change_deposit = False
+            if villager.state == VillagerState.DELIVERING:
+                villager.state = VillagerState.IDLE
+                villager.target = None
+            return False
+        home = self.world.home_pos
+        villager.state = VillagerState.DELIVERING
+        villager.target = home
+        villager.haul_building_id = None
+        if (villager.x, villager.y) == home:
+            self._deposit_home(villager.inventory, status=False)
+            villager.job_change_deposit = False
+            villager.state = VillagerState.IDLE
+            villager.target = None
+            return False
+        if villager.move_cooldown == 0:
+            self._step_villager_toward(villager, home)
+        return True
+
     def _collect_meat(self, x: int, y: int, inventory: Inventory, status: bool = False) -> bool:
         if inventory.is_full:
             if status:
@@ -6134,6 +6290,9 @@ class Game:
                 ):
                     self._step_villager_toward(villager, villager.target)
                     villager.move_cooldown = self._villager_move_interval(villager)
+                continue
+
+            if self._tick_job_change_deposit(villager):
                 continue
 
             villager.satiation = max(
@@ -6322,6 +6481,7 @@ class Game:
         return None
 
     def _find_nearest_food_store(self, villager: Villager) -> tuple[int, int] | None:
+        """Best village food stockpile: meal quality first, then distance."""
         options: list[tuple[int, int]] = []
         if self._food_count(self.home_storage) > 0:
             options.append(self.world.home_pos)
@@ -6338,10 +6498,14 @@ class Game:
                 options.append(building.center_cell())
         if not options:
             return None
-        return min(
-            options,
-            key=lambda p: abs(p[0] - villager.x) + abs(p[1] - villager.y),
-        )
+
+        def rank(pos: tuple[int, int]) -> tuple[float, int]:
+            storage = self._food_store_at(pos)
+            score = storage_meal_score(storage) if storage is not None else 0.0
+            dist = abs(pos[0] - villager.x) + abs(pos[1] - villager.y)
+            return (-score, dist)
+
+        return min(options, key=rank)
 
     def _eat_random_from(
         self, storage, villager: Villager | None = None
@@ -6349,8 +6513,7 @@ class Game:
         """Consume food toward a meal. Returns how many items eaten.
 
         One unit of each food type, up to ``MAX_FOOD_TYPES_PER_MEAL`` types,
-        preferring highest-satiation foods first. Stops early once the villager
-        reaches their ration refill target (or a full meal for non-villager calls).
+        preferring buff foods over debuff snacks, then satiation.
         """
         target = (
             villager.ration_refill()
@@ -6360,14 +6523,7 @@ class Game:
         available = [
             key for key in VILLAGER_FOOD_KEYS if getattr(storage, key, 0) > 0
         ]
-        # Highest satiation first; prefer stronger walk buff (cooked over raw).
-        available.sort(
-            key=lambda k: (
-                -food_def(k).satiation,
-                -food_def(k).walk_speed,
-                k,
-            ),
-        )
+        available.sort(key=food_preference_key)
         eaten_keys: list[str] = []
         points = 0.0
         for key in available:
@@ -6409,11 +6565,25 @@ class Game:
         return len(eaten_keys)
 
     def _update_seek_food(self, villager: Villager) -> None:
-        """Walk to nearest food store and eat according to ration mode."""
+        """Walk to food; at the storehouse also deposit cargo and restock gear."""
         villager.seeking_food = True
+        home = self.world.home_pos
+        needs_home_stop = self._inventory_needs_store_deposit(
+            villager.inventory
+        ) or self._villager_needs_home_restock(villager)
 
-        # Eat from carried food first.
-        if self._food_count(villager.inventory) > 0:
+        dest = self._find_nearest_food_store(villager)
+        store = self._food_store_at(dest) if dest is not None else None
+        store_score = storage_meal_score(store) if store is not None else 0.0
+        inv_score = storage_meal_score(villager.inventory)
+
+        # Eat carried food only when it matches the best village meal and we do not
+        # still need a storehouse stop for deposits / tool restock.
+        if (
+            not needs_home_stop
+            and self._food_count(villager.inventory) > 0
+            and inv_score + 0.05 >= store_score
+        ):
             eaten = self._eat_random_from(villager.inventory, villager)
             if eaten > 0:
                 villager.seeking_food = False
@@ -6421,9 +6591,19 @@ class Game:
                 villager.state = VillagerState.WORKING
             return
 
-        dest = self._find_nearest_food_store(villager)
+        # Drop cargo / restock tools at home before (or instead of) a kitchen run.
+        if needs_home_stop:
+            dest = home
+
         if dest is None:
-            # Nowhere to eat — keep seeking flag while below threshold so we retry.
+            # Nowhere better to eat — finish any carried snacks as a last resort.
+            if self._food_count(villager.inventory) > 0:
+                eaten = self._eat_random_from(villager.inventory, villager)
+                if eaten > 0:
+                    villager.seeking_food = False
+                    villager.work_cooldown = self._villager_work_interval(villager)
+                    villager.state = VillagerState.WORKING
+                    return
             villager.seeking_food = villager.needs_food()
             if villager.state not in (
                 VillagerState.DELIVERING,
@@ -6437,8 +6617,16 @@ class Game:
         if (villager.x, villager.y) == dest:
             if villager.work_cooldown > 0:
                 return
+            if dest == home:
+                if self._inventory_needs_store_deposit(villager.inventory):
+                    self._deposit_home(villager.inventory, status=False)
+                self._restock_workplace_gear_at_home(villager)
             storage = self._food_store_at(dest)
             if storage is None:
+                # Deposited at home with no food left here — retry next tick (kitchen).
+                villager.seeking_food = villager.needs_food()
+                return
+            if self._food_count(storage) <= 0:
                 villager.seeking_food = villager.needs_food()
                 return
             eaten = self._eat_random_from(storage, villager)
@@ -6773,6 +6961,7 @@ class Game:
         villager.hunt_animal_id = None
         villager.hunt_colony_id = None
         villager.hunt_meat_pos = None
+        villager.hunt_shot = None
         villager.fish_target_id = None
         villager.fish_catch_pos = None
         villager.fish_post_pos = None
@@ -6797,10 +6986,86 @@ class Game:
         if building.kind == BuildingKind.FORESTER:
             return "axe" if self._forester_needs_axe(building) else None
         if building.kind == BuildingKind.HUNTER:
+            if self._hunter_weapon_ready(villager):
+                return None
+            if self._hunter_prefers_bow(villager):
+                return "bow"
             return "spear"
         if building.kind == BuildingKind.FISHER:
+            if not fishing_allowed(self.calendar_day):
+                return None
             return "fishing_rod"
         return WORKPLACE_TOOL.get(building.kind)
+
+    def _hunter_prefers_bow(self, villager: Villager) -> bool:
+        from society import SkillType
+
+        if villager_skill_level(villager, SkillType.HUNTING) < HUNTER_BOW_MIN_SKILL:
+            return False
+        inv = villager.inventory
+        if inv.has_equipped_tool("bow") or int(getattr(inv, "bow", 0)) > 0:
+            return True
+        if int(getattr(self.home_storage, "bow", 0)) > 0:
+            return True
+        return False
+
+    def _hunter_can_ranged(self, villager: Villager) -> bool:
+        from society import SkillType
+
+        if villager_skill_level(villager, SkillType.HUNTING) < HUNTER_BOW_MIN_SKILL:
+            return False
+        inv = villager.inventory
+        if not inv.has_equipped_tool("bow"):
+            return False
+        return int(getattr(inv, "stone_arrows", 0)) > 0
+
+    def _hunter_weapon_ready(self, villager: Villager) -> bool:
+        inv = villager.inventory
+        if inv.has_equipped_tool("spear"):
+            return True
+        return self._hunter_can_ranged(villager)
+
+    def _ensure_hunter_arrows(self, villager: Villager, amount: int = 10) -> bool:
+        """Ensure stone arrows in cargo; fetch one stack from storehouse if needed."""
+        from resources import STACK_SIZES
+
+        inv = villager.inventory
+        if int(getattr(inv, "stone_arrows", 0)) > 0:
+            return True
+        stock = int(getattr(self.home_storage, "stone_arrows", 0))
+        if stock <= 0:
+            if villager.target == self.world.home_pos:
+                villager.target = None
+                self._clear_villager_path(villager)
+            return False
+        home = self.world.home_pos
+        if (villager.x, villager.y) != home:
+            villager.state = VillagerState.WORKING
+            villager.target = home
+            if villager.move_cooldown == 0:
+                self._step_villager_toward(villager, home)
+            return False
+        stack = int(STACK_SIZES.get("stone_arrows", 10))
+        take = min(amount, stack, stock)
+        if take <= 0 or not inv.can_add(take, key="stone_arrows"):
+            return False
+        setattr(self.home_storage, "stone_arrows", stock - take)
+        inv.add_item("stone_arrows", take)
+        villager.target = None
+        return int(getattr(inv, "stone_arrows", 0)) > 0
+
+    def _ensure_hunter_weapon(self, villager: Villager) -> bool:
+        """Equip spear or (skill 4+) bow+arrows for hunting."""
+        if self._hunter_prefers_bow(villager):
+            if self._ensure_work_tool(villager, "bow") and self._ensure_hunter_arrows(
+                villager
+            ):
+                return True
+        if villager.inventory.has_equipped_tool("spear"):
+            return True
+        if self._hunter_can_ranged(villager):
+            return True
+        return self._ensure_work_tool(villager, "spear")
 
     def _workplace_needs_tool_fetch(
         self, villager: Villager, building: Building
@@ -7006,6 +7271,44 @@ class Game:
             return True
         return False
 
+    def _processor_blocked_on_output(
+        self, building: Building, worker: Villager | None = None
+    ) -> bool:
+        """True when inputs are ready but no recipe fits in the output pool.
+
+        Without this, craft/alchemist workers fall through to P2 whenever the tray
+        is partly full (below the 75% clear latch) even though they should clear.
+        """
+        if not building.is_processor() or building.output_capacity <= 0:
+            return False
+        if building.haulable_total() <= 0:
+            return False
+        from recipes import recipe_output_fits, recipe_ready
+        from society import recipe_skill_gate
+
+        input_ready = False
+        for recipe in building.enabled_recipes():
+            if not recipe.inputs:
+                continue
+            if worker is not None and not recipe_skill_gate(recipe, worker=worker):
+                continue
+            if not recipe_ready(building, recipe):
+                continue
+            input_ready = True
+            if recipe_output_fits(
+                building,
+                recipe,
+                output_capacity=building.output_capacity,
+                output_keys=building.processor_output_keys(),
+            ):
+                return False
+        return input_ready
+
+    def _processor_should_clear(self, building: Building, worker: Villager | None = None) -> bool:
+        return self._workplace_output_backed_up(building) or self._processor_blocked_on_output(
+            building, worker
+        )
+
     def _farm_clear_in_progress(self, building: Building) -> bool:
         """True when an assigned farmer is mid clear/delivery of farm produce."""
         for v in self.villagers:
@@ -7118,6 +7421,22 @@ class Game:
         ):
             return hid
 
+        # Stick to the current workplace while it still has useful work so P1↔P2
+        # (craft↔alchemist) does not thrash when craftable flickers for a tick.
+        # Earlier slots may still preempt when they have primary/tool work ready.
+        cur = villager.building_id
+        if cur is not None and cur in ids and self._workplace_has_work_at(villager, cur):
+            cur_i = ids.index(cur)
+            for bid in ids[:cur_i]:
+                building = self.buildings.get(bid)
+                if building is None:
+                    continue
+                if self._workplace_primary_available(villager, building):
+                    return bid
+                if self._workplace_needs_tool_fetch(villager, building):
+                    return bid
+            return cur
+
         # Per slot: primary → tool fetch → storehouse ingredients → clear full outputs.
         for bid in ids:
             building = self.buildings.get(bid)
@@ -7135,7 +7454,7 @@ class Game:
             # outputs (kitchen meals) — otherwise they fall through to P2.
             # Gather huts (fisher) must not use this: they accept their own cargo
             # and emergency clear↔deposit loops forever.
-            if building.is_processor() and self._workplace_output_backed_up(building):
+            if building.is_processor() and self._processor_should_clear(building, villager):
                 return bid
             if building.is_market() and building.haulable_total() > 0:
                 return bid
@@ -7447,6 +7766,15 @@ class Game:
             return True
         if self._owns_haul_claim(villager, building.id) and self._workplace_needs_home_supply(
             building
+        ):
+            return True
+        if building.is_processor() and self._processor_should_clear(building, villager):
+            return True
+        if building.is_market() and building.haulable_total() > 0:
+            return True
+        if (
+            building.kind == BuildingKind.FARM
+            and self._farm_or_processor_needs_clear(building)
         ):
             return True
         if self._workplace_accepts_carry(villager, building):
@@ -8512,7 +8840,7 @@ class Game:
             pass
         elif self._maybe_assigned_transport(villager, building):
             return
-        elif self._workplace_output_backed_up(building):
+        elif self._processor_should_clear(building, villager):
             # Hauler is already clearing, or we just queued transport above.
             # Stay on-site so the picker does not bounce the cook to P2.
             if self._general_hauler_serving(building.id):
@@ -9028,7 +9356,7 @@ class Game:
         ):
             self._force_assigned_delivery(villager, building)
             return
-        if not self._ensure_work_tool(villager, "spear"):
+        if not self._ensure_hunter_weapon(villager):
             self._maybe_assigned_transport(villager, building)
             return
         if self._workplace_primary_available(villager, building):
@@ -9037,6 +9365,11 @@ class Game:
             return
         elif self._workplace_accepts_carry(villager, building):
             self._force_assigned_delivery(villager, building)
+            return
+
+        # Resolve a pending bow shot (animation + hit/miss).
+        if villager.hunt_shot is not None:
+            self._tick_hunter_shot(villager)
             return
 
         meat_pos = villager.hunt_meat_pos
@@ -9133,7 +9466,15 @@ class Game:
 
         villager.state = VillagerState.WORKING
         dist = max(abs(animal.x - villager.x), abs(animal.y - villager.y))
-        if dist <= 1:
+        can_ranged = self._hunter_can_ranged(villager)
+        has_spear = villager.inventory.has_equipped_tool("spear")
+
+        if can_ranged and dist <= HUNTER_BOW_RANGE:
+            if villager.work_cooldown == 0:
+                self._hunter_fire_bow(villager, building, animal)
+            return
+
+        if has_spear and dist <= 1:
             if villager.work_cooldown == 0:
                 result = self.wildlife.kill_animal(animal.id)
                 villager.hunt_animal_id = None
@@ -9169,6 +9510,85 @@ class Game:
         if not self._step_villager_toward(villager, approach):
             villager.hunt_animal_id = None
             self._clear_villager_path(villager)
+
+    def _hunter_fire_bow(self, villager: Villager, building: Building, animal) -> None:
+        """Consume one arrow, spawn flight FX, and queue hit/miss resolution."""
+        inv = villager.inventory
+        if int(getattr(inv, "stone_arrows", 0)) <= 0:
+            return
+        inv.consume_item("stone_arrows", 1)
+        hit = random.random() < HUNTER_BOW_HIT_CHANCE
+        duration = max(4, self._villager_work_interval(villager) // 2)
+        villager.hunt_shot = (animal.id, hit, duration)
+        self._arrow_shots.append(
+            (
+                float(villager.x),
+                float(villager.y),
+                float(animal.x),
+                float(animal.y),
+                0,
+                duration,
+                hit,
+            )
+        )
+        self._spend_work_energy(villager)
+        villager.work_cooldown = self._villager_work_interval(villager)
+
+    def _tick_hunter_shot(self, villager: Villager) -> None:
+        shot = villager.hunt_shot
+        if shot is None:
+            return
+        animal_id, hit, ticks_left = shot
+        ticks_left -= 1
+        if ticks_left > 0:
+            villager.hunt_shot = (animal_id, hit, ticks_left)
+            villager.state = VillagerState.WORKING
+            return
+        villager.hunt_shot = None
+        villager.hunt_animal_id = None
+        if not hit:
+            return
+        result = self.wildlife.kill_animal(animal_id)
+        if result is None:
+            return
+        x, y, kind = result
+        meat = BOAR_MEAT_YIELD if kind == AnimalKind.BOAR else DEER_MEAT_YIELD
+        self.world.add_meat_deposit(x, y, meat)
+        self.world.apply_extraction_disturbance(x, y)
+        if kind in (AnimalKind.DEER, AnimalKind.BOAR):
+            self.wildlife.scare_from_kill(x, y)
+        self._refresh_indicators()
+        villager.hunt_meat_pos = (x, y)
+        self._register_field_claim(villager, (x, y))
+        building = self.buildings.get(villager.building_id) if villager.building_id else None
+        if building is not None:
+            self._gain_job_skill(villager, building.kind.name)
+
+    def _tick_arrow_shots(self) -> None:
+        if not self._arrow_shots:
+            return
+        next_shots: list[tuple[float, float, float, float, int, int, bool]] = []
+        for x0, y0, x1, y1, age, duration, hit in self._arrow_shots:
+            age += 1
+            if age < duration:
+                next_shots.append((x0, y0, x1, y1, age, duration, hit))
+        self._arrow_shots = next_shots
+
+    def _draw_arrow_shots(self) -> None:
+        if not self._arrow_shots:
+            return
+        for x0, y0, x1, y1, age, duration, hit in self._arrow_shots:
+            t = min(1.0, age / max(1, duration))
+            ax = x0 + (x1 - x0) * t
+            ay = y0 + (y1 - y0) * t
+            cx, cy = self._cell_center(ax, ay)
+            # Slight trail behind the tip.
+            bx = x0 + (x1 - x0) * max(0.0, t - 0.12)
+            by = y0 + (y1 - y0) * max(0.0, t - 0.12)
+            px, py = self._cell_center(bx, by)
+            colour = (210, 180, 120) if hit else (160, 160, 160)
+            pygame.draw.line(self.screen, colour, (px, py), (cx, cy), 2)
+            pygame.draw.circle(self.screen, (90, 90, 95), (cx, cy), 3)
 
     def _within_work_search(
         self, origin: tuple[int, int], pos: tuple[int, int]
@@ -9341,9 +9761,12 @@ class Game:
     def _update_fisher(self, villager: Villager, building: Building) -> None:
         """Collect shore deposits, else stand at a dense shoreline and wait for fish."""
         if not fishing_allowed(self.calendar_day):
-            self._maybe_assigned_transport(villager, building)
             villager.fish_target_id = None
             villager.fish_post_pos = None
+            villager.fish_catch_pos = None
+            if self._maybe_assigned_transport(villager, building):
+                return
+            self._set_workplace_idle(villager)
             return
 
         if villager.inventory.is_full or self._gather_cargo_needs_delivery(
@@ -9590,7 +10013,18 @@ class Game:
             chosen = pick_from(local)
             if chosen is not None:
                 return chosen
-        return pick_from(dense)
+        chosen = pick_from(dense)
+        if chosen is not None:
+            return chosen
+        # Densest shores can be unreachable (detour / blocked). Fall back to any
+        # scored shore by distance so fishers still leave the storehouse.
+        return self._pick_nearest_reachable(
+            origin,
+            list(shore_scores.keys()),
+            pos_fn=lambda p: p,
+            prefer_adjacent=False,
+            villager=villager,
+        )
 
     def _resolve_fish_post(
         self, villager: Villager, building: Building
@@ -11396,6 +11830,7 @@ class Game:
             decay_per_tick=self.balance.get_float("DISTURBANCE_DECAY_PER_TICK"), day=day
         )
         self._update_villagers()
+        self._tick_arrow_shots()
         self._tick_wildlife(day)
         self.fish.tick(self.world, day)
         # Biodiversity is sample-based; skip live refresh for sampled modes.
@@ -11482,6 +11917,7 @@ class Game:
             if eco_pending >= 16:
                 flush_eco(day)
             self._update_villagers()
+            self._tick_arrow_shots()
             if wildlife_pending >= 4:
                 self._tick_wildlife(day)
                 self.fish.tick(self.world, day)
@@ -11531,6 +11967,7 @@ class Game:
         self._draw_animals()
         self._draw_fish()
         self._draw_villagers()
+        self._draw_arrow_shots()
         self._draw_player()
         self._draw_selection_highlights()
         self._draw_minimap()

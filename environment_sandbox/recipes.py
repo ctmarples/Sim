@@ -411,17 +411,31 @@ def recipe_output_fits(
     output_capacity: int | None = None,
     output_keys: tuple[str, ...] | None = None,
 ) -> bool:
-    out_total = sum(recipe.outputs.values())
+    from resources import cargo_units_after_add, stack_units
+
     if output_capacity is not None and output_keys is not None:
-        out_stored = sum(int(getattr(storage, key, 0)) for key in output_keys)
-        if out_stored + out_total > output_capacity:
+        out_stored = sum(
+            stack_units(key, int(getattr(storage, key, 0))) for key in output_keys
+        )
+        added = 0
+        for key, n in recipe.outputs.items():
+            if key not in output_keys:
+                continue
+            have = int(getattr(storage, key, 0))
+            added += cargo_units_after_add(key, have, n)
+        if out_stored + added > output_capacity:
             return False
     elif capacity is not None:
         stored = int(getattr(storage, "stored_total", 0))
-        in_total = sum(recipe.inputs.values())
-        # Net change after consuming inputs — gross ``stored + out_total`` wrongly
-        # blocks crafts when the building is nearly full (e.g. forester split).
-        if stored - in_total + out_total > capacity:
+        # Net cargo change after consuming inputs and adding outputs.
+        delta = 0
+        for key, n in recipe.inputs.items():
+            have = int(getattr(storage, key, 0))
+            delta += stack_units(key, have - n) - stack_units(key, have)
+        for key, n in recipe.outputs.items():
+            have = int(getattr(storage, key, 0))
+            delta += cargo_units_after_add(key, have, n)
+        if stored + delta > capacity:
             return False
     # Per-item caps (Building.item_caps).
     caps = getattr(storage, "item_caps", None)
