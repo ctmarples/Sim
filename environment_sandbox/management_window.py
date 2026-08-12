@@ -192,6 +192,12 @@ class ManagementWindow:
         self._scroll = 0
         self._layout_panel()
 
+    def open_people_list(self) -> None:
+        """Open People tab with the villager roster list visible."""
+        self.open_window(MgmtTab.PEOPLE, people_mode="roster")
+        self.show_list = True
+        self._layout_panel()
+
     def close(self) -> None:
         self.open = False
         self._pending_action = "mgmt_closed"

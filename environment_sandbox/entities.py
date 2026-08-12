@@ -75,7 +75,9 @@ CLOTHING_ITEM_SLOT: dict[str, str] = {
     "light_shirt": "shirt",
     "winter_coat": "shirt",
     "leather_shoes": "shoes",
+    "leather_boots": "shoes",
     "leather_satchel": "bag",
+    "leather_backpack": "bag",
 }
 CLOTHING_KEYS: tuple[str, ...] = tuple(CLOTHING_ITEM_SLOT)
 # Chebyshev range for bow shots (hunter skill 4+).
@@ -95,6 +97,30 @@ except Exception:
     pass
 
 
+def _gear_slot_prefs(slot: str) -> tuple[str, ...]:
+    """Best-first gear for a clothing slot (capacity, walk, protection)."""
+    from recipes import (
+        clothing_capacity_bonus,
+        clothing_cold_protection,
+        clothing_heat_protection,
+        clothing_walk_mult,
+    )
+
+    items = [key for key, s in CLOTHING_ITEM_SLOT.items() if s == slot]
+    if not items:
+        return ()
+
+    def score(key: str) -> tuple[float, float, float, float]:
+        return (
+            float(clothing_capacity_bonus(key)),
+            float(clothing_walk_mult(key)),
+            float(clothing_cold_protection(key)),
+            float(clothing_heat_protection(key)),
+        )
+
+    return tuple(sorted(items, key=score, reverse=True))
+
+
 def preferred_clothing_for_temp(temp_c: float) -> dict[str, tuple[str, ...]]:
     """Slot → preferred item keys (best first) for the current air temperature."""
     t = float(temp_c)
@@ -110,8 +136,8 @@ def preferred_clothing_for_temp(temp_c: float) -> dict[str, tuple[str, ...]]:
     return {
         "hat": hat,
         "shirt": shirt,
-        "shoes": ("leather_shoes",),
-        "bag": ("leather_satchel",),
+        "shoes": _gear_slot_prefs("shoes") or ("leather_shoes",),
+        "bag": _gear_slot_prefs("bag") or ("leather_satchel",),
     }
 
 
@@ -237,6 +263,11 @@ WORKPLACE_TOOL: dict[BuildingKind, str] = {
 # Extra tools accepted for a workplace (in addition to WORKPLACE_TOOL).
 WORKPLACE_EXTRA_TOOLS: dict[BuildingKind, tuple[str, ...]] = {
     BuildingKind.HUNTER: ("bow",),
+}
+
+# Additional tools that must be equipped alongside the primary / weapon tool.
+WORKPLACE_ALSO_REQUIRES: dict[BuildingKind, tuple[str, ...]] = {
+    BuildingKind.HUNTER: ("knife",),
 }
 
 
@@ -433,6 +464,8 @@ class Inventory:
     fur: int = 0
     hide: int = 0
     leather: int = 0
+    wheat_grain: int = 0
+    rye_grain: int = 0
     wheat: int = 0
     flax: int = 0
     sage: int = 0
@@ -887,6 +920,8 @@ class HomeStorage:
     fur: int = 0
     hide: int = 0
     leather: int = 0
+    wheat_grain: int = 0
+    rye_grain: int = 0
     wheat: int = 0
     flax: int = 0
     sage: int = 0
@@ -1265,6 +1300,8 @@ class Building:
     fur: int = 0
     hide: int = 0
     leather: int = 0
+    wheat_grain: int = 0
+    rye_grain: int = 0
     wheat: int = 0
     flax: int = 0
     sage: int = 0
@@ -1835,7 +1872,10 @@ class Building:
         from recipes import input_keys_for_recipes
 
         recipes = list(self.enabled_recipes())
-        recipes.extend(self.addon_craft_recipes())
+        if self.kind == BuildingKind.HUNTER:
+            recipes.extend(
+                r for r in self.addon_craft_recipes() if r not in recipes
+            )
         return input_keys_for_recipes(tuple(recipes))
 
     def recipe_gap_demand(self) -> dict[str, int]:
@@ -1935,6 +1975,20 @@ class Building:
                 want = min(target - have, room)
                 if want > 0:
                     demand[key] = max(demand.get(key, 0), want)
+            if self.addon_craft_recipes():
+                for key in self.active_supply_keys():
+                    target = self.reserve_amount(key)
+                    if target <= 0:
+                        continue
+                    have = int(getattr(self, key, 0))
+                    if have >= target:
+                        continue
+                    room = self.space_for_key(key)
+                    if room <= 0:
+                        continue
+                    want = min(target - have, room)
+                    if want > 0:
+                        demand[key] = max(demand.get(key, 0), want)
         return demand
 
     def fuel_space_left(self) -> int:
@@ -1967,16 +2021,29 @@ class Building:
                 keep = max(keep, n * 2)
         return keep
 
+    def plant_keep_amount(self, key: str) -> int:
+        """Seeds to keep on the farm for planting (haulers may take the rest)."""
+        if self.kind != BuildingKind.FARM or key not in SEED_KEYS:
+            return 0
+        return max(3, int(self.item_mins.get(key, 0)))
+
     def reserve_amount(self, key: str) -> int:
-        """Units haulers must not remove (min reserve + recipe buffer)."""
-        return max(int(self.item_mins.get(key, 0)), self.input_keep_amount(key))
+        """Units haulers must not remove (min reserve + recipe buffer + plant stock)."""
+        return max(
+            int(self.item_mins.get(key, 0)),
+            self.input_keep_amount(key),
+            self.plant_keep_amount(key),
+        )
 
     def excess_input_amounts(self) -> dict[str, int]:
         """Input stock beyond reserve (mins + recipe buffer) — safe for haulers to clear."""
         excess: dict[str, int] = {}
-        if not self.is_processor():
-            return excess
-        for key in self.processor_input_keys():
+        keys: tuple[str, ...] = ()
+        if self.is_processor():
+            keys = self.processor_input_keys()
+        elif self.addon_craft_recipes():
+            keys = self.active_supply_keys()
+        for key in keys:
             have = int(getattr(self, key, 0))
             keep = self.reserve_amount(key)
             if have > keep:
@@ -1996,9 +2063,9 @@ class Building:
                 keep = self.market_stock_target(key)
                 return max(0, have - keep)
             return have
-        # Extension craft inputs (hide for leather, grain for barn seeds).
+        # Extension craft inputs (hide for leather, sheaves for barn threshing).
         if key in self.active_supply_keys() and self.addon_craft_recipes():
-            return int(self.excess_input_amounts().get(key, 0))
+            return max(0, have - self.reserve_amount(key))
         if self.is_processor():
             outputs = self.processor_output_keys()
             inputs = self.processor_input_keys()
@@ -2256,6 +2323,38 @@ class Building:
                 output_capacity=self.output_capacity,
                 output_keys=self.processor_output_keys(),
                 stock_amounts=stock_amounts,
+            )
+        if self.seed_capacity > 0:
+            from resources import cargo_units_after_add, stack_units
+
+            cargo_room = self.space_left
+            seed_room = self.seed_space_left()
+            for in_key, in_n in recipe.inputs.items():
+                have = int(getattr(self, in_key, 0))
+                take = min(have, int(in_n))
+                if take <= 0:
+                    continue
+                if self.is_seed_storage_key(in_key):
+                    seed_room += take
+                else:
+                    cargo_room += stack_units(in_key, have) - stack_units(
+                        in_key, have - take
+                    )
+            for out_key, out_n in recipe.outputs.items():
+                have = int(getattr(self, out_key, 0))
+                if self.is_seed_storage_key(out_key):
+                    if int(out_n) > seed_room:
+                        return False
+                    seed_room -= int(out_n)
+                else:
+                    added = cargo_units_after_add(out_key, have, int(out_n)) - stack_units(
+                        out_key, have
+                    )
+                    if added > cargo_room:
+                        return False
+                    cargo_room -= added
+            return recipe_output_fits(
+                self, recipe, capacity=None, stock_amounts=stock_amounts
             )
         return recipe_output_fits(
             self,
@@ -2597,7 +2696,8 @@ class Building:
         if self.kind == BuildingKind.FORAGER:
             return ("wood", "rock", *_FORAGE_KEYS)
         if self.kind == BuildingKind.FARM:
-            return PRODUCE_KEYS + ("straw",)
+            # Produce + straw, plus surplus grain/seeds (mill / storehouse).
+            return PRODUCE_KEYS + ("straw",) + SEED_KEYS
         if self.kind == BuildingKind.HUNTER:
             # Hide stays at the hut for drying-rack tanning; haul meat/fur/leather only.
             return ("meat", "fur", "leather")

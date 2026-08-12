@@ -26,7 +26,8 @@ Clothing outputs (tailor / cobbler) use ``walk_speed``, ``capacity_bonus``,
 (hat / shirt / trousers / shoes / bag).
 
 Crop produce gather toggles for the forager are appended from ``crops.PRODUCE_KEYS``.
-Harvest yields and raw food buffs: ``resource_balance.py``.
+Hunt yields (deer / boar / rabbit meat, hide, fur): ``recipes_data/hunter/recipes.csv``
+``outputs`` column. Raw foraged food buffs: ``resource_balance.py``.
 """
 
 from __future__ import annotations
@@ -258,7 +259,7 @@ def _apply_row_metadata(row: dict[str, str], recipe: Recipe) -> None:
         )
 
     if satiation and recipe.outputs:
-        from resource_balance import register_food
+        from resource_balance import register_food, register_sweet_food
 
         out_key = next(iter(recipe.outputs))
         edible_raw = _cell(row, "food_edible").lower()
@@ -271,6 +272,8 @@ def _apply_row_metadata(row: dict[str, str], recipe: Recipe) -> None:
             hunger_rate=float(_cell(row, "food_hunger_rate") or "1.0"),
             edible=edible,
         )
+        if (recipe.category or "").lower() == "sweet":
+            register_sweet_food(out_key)
 
     _register_clothing_effects(row, recipe)
 
@@ -372,7 +375,11 @@ def _load_building_csv(folder: Path, existing: list[Recipe], seen: set[str]) -> 
         for row in reader:
             if not row or not _cell(row, "name"):
                 continue
-            recipe = _recipe_from_row(row)
+            try:
+                recipe = _recipe_from_row(row)
+            except (ValueError, KeyError) as exc:
+                print(f"Skipping bad recipe row in {path}: {exc}")
+                continue
             if recipe.name in seen:
                 continue
             existing.append(recipe)
@@ -605,8 +612,40 @@ def can_craft(
 def apply_recipe(storage: object, recipe: Recipe) -> None:
     for key, n in recipe.inputs.items():
         setattr(storage, key, int(getattr(storage, key, 0)) - n)
+    apply_recipe_outputs(storage, recipe)
+
+
+def apply_recipe_outputs(storage: object, recipe: Recipe) -> None:
     for key, n in recipe.outputs.items():
-        setattr(storage, key, int(getattr(storage, key, 0)) + n)
+        add_item = getattr(storage, "add_item", None)
+        if callable(add_item):
+            add_item(str(key), int(n))
+        else:
+            setattr(storage, key, int(getattr(storage, key, 0)) + int(n))
+
+
+def recipe_outputs_fit(storage: object, recipe: Recipe) -> bool:
+    can_add = getattr(storage, "can_add", None)
+    if not callable(can_add):
+        return True
+    for key, n in recipe.outputs.items():
+        if not can_add(int(n), key=str(key)):
+            return False
+    return True
+
+
+def hunt_recipe(name: str) -> Recipe | None:
+    """Gather recipe for ``deer``, ``boar``, or ``rabbit`` (hunter CSV outputs)."""
+    key = str(name).lower()
+    for recipe in HUNTER_RECIPES:
+        if recipe.name == key:
+            return recipe
+    return None
+
+
+def hunt_recipe_outputs(name: str) -> dict[str, int]:
+    recipe = hunt_recipe(name)
+    return dict(recipe.outputs) if recipe is not None else {}
 
 
 def missing_inputs(storage: object, recipe: Recipe) -> dict[str, int]:

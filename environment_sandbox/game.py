@@ -27,8 +27,6 @@ from crops import (
 )
 from resource_balance import (
     BERRY_SEED_DROP_CHANCE,
-    BOAR_MEAT_YIELD,
-    DEER_MEAT_YIELD,
     FARM_PRODUCE_YIELD,
     FARM_SEED_AMOUNTS,
     FISH_YIELD,
@@ -50,7 +48,6 @@ from resource_balance import (
     FIELD_PEST_BOOST_MAX,
     INSECT_REPELLANT_PEST_BOOST,
     MINERAL_POWDER_PEST_BOOST,
-    RABBIT_MEAT_PER_LEVEL, RABBIT_FUR_PER_LEVEL, GRAIN_STRAW_YIELD,
     REED_YIELD,
     SAPLING_DROP_CHANCE,
     STARTING_FOOD,
@@ -59,8 +56,10 @@ from resource_balance import (
     WILD_PRODUCE_YIELD,
     combine_meal_buffs,
     food_def,
+    food_is_sweet,
     food_preference_key,
     meal_covers_any_requirement,
+    meal_includes_meat,
     satiation_from_points,
     storage_meal_score,
 )
@@ -86,6 +85,7 @@ from entities import (
     TaskType,
     TOOL_KEYS,
     WORKPLACE_EXTRA_TOOLS,
+    WORKPLACE_ALSO_REQUIRES,
     WORKPLACE_TOOL,
     HUNTER_BOW_HIT_CHANCE,
     HUNTER_BOW_MIN_SKILL,
@@ -243,6 +243,9 @@ from villager_inspect_dialog import VillagerInspectDialog
 from resource_bar import VIEW_LABELS, ResourceBar
 from recipes import (
     apply_recipe,
+    apply_recipe_outputs,
+    hunt_recipe,
+    recipe_outputs_fit,
 )
 from save_load import load_from_path, save_to_path
 from seasons import (
@@ -1445,6 +1448,8 @@ class Game:
             self._player_cycle_tool()
         elif key == pygame.K_i:
             self.player_inventory.toggle()
+        elif key == pygame.K_v:
+            self._open_management_people_list()
         elif key == pygame.K_b:
             self._cycle_place_kind()
         elif key == pygame.K_t:
@@ -2211,7 +2216,7 @@ class Game:
             self._mgmt_auto_select_people()
             return True
         if action == "open_villager_roster":
-            self.management.open_window(MgmtTab.PEOPLE, people_mode="roster")
+            self.management.open_people_list()
             self._mgmt_auto_select_people()
             return True
         if action == "assign_workplace":
@@ -2791,6 +2796,11 @@ class Game:
             or action.startswith("assign_pick:")
         ):
             self._handle_people_list_action(action)
+
+    def _open_management_people_list(self) -> None:
+        self.management.open_people_list()
+        self._mgmt_auto_select_people()
+        self._set_status("People — villager list (V).")
 
     def _mgmt_auto_select_people(self) -> None:
         if self.management.people_mode == "hire":
@@ -3819,7 +3829,7 @@ class Game:
                     * POLLINATION_YIELD_HIGH
                 )
             ),
-        ) + GRAIN_STRAW_YIELD
+        )
 
     def _sync_habitat_selection(self) -> None:
         """Drop habitat highlight if that breeding ground vanished on refresh."""
@@ -4755,6 +4765,10 @@ class Game:
             return None
         if cell.meat_deposit > 0:
             return ("Meat", cell.meat_deposit, "meat", "Ground deposit")
+        if cell.hide_deposit > 0:
+            return ("Hide", cell.hide_deposit, "hide", "Ground deposit")
+        if cell.fur_deposit > 0:
+            return ("Fur", cell.fur_deposit, "fur", "Ground deposit")
         if cell.fish_deposit > 0:
             return ("Fish", cell.fish_deposit, "fish", "Shore catch")
         if cell.feature == FeatureType.TREE:
@@ -6567,23 +6581,20 @@ class Game:
                 cell.deposit = 0
                 crop_key = crop.key
             crop = CROP_BY_KEY.get(crop_key, crop)
-            straw_n = GRAIN_STRAW_YIELD if crop.key in ("wheat", "rye") else 0
-            if straw_n and inventory.add_item("straw", straw_n):
-                self.record_produced("straw", straw_n)
-                straw_msg = f" +{straw_n} straw"
-            amounts = crop.farm_seed_amounts or FARM_SEED_AMOUNTS
-            want = self._drop_rng.choice(amounts)
-            got = 0
-            for _ in range(want):
-                if not inventory.can_add(1, key=crop.seed_key):
-                    break
-                inventory.add_item(crop.seed_key, 1)
-                got += 1
-            if got > 0:
-                self.record_produced(crop.seed_key, got)
-                seed_msg = (
-                    f" +{got} {crop.label.lower()} seed{'s' if got != 1 else ''}"
-                )
+            if crop.key not in ("wheat", "rye"):
+                amounts = crop.farm_seed_amounts or FARM_SEED_AMOUNTS
+                want = self._drop_rng.choice(amounts)
+                got = 0
+                for _ in range(want):
+                    if not inventory.can_add(1, key=crop.seed_key):
+                        break
+                    inventory.add_item(crop.seed_key, 1)
+                    got += 1
+                if got > 0:
+                    self.record_produced(crop.seed_key, got)
+                    seed_msg = (
+                        f" +{got} {crop.label.lower()} seed{'s' if got != 1 else ''}"
+                    )
             self.world.apply_extraction_disturbance(x, y)
             self._refresh_indicators()
         if status:
@@ -6716,7 +6727,71 @@ class Game:
                 allowed.add(primary)
             for extra in WORKPLACE_EXTRA_TOOLS.get(building.kind, ()):
                 allowed.add(extra)
+            for also in WORKPLACE_ALSO_REQUIRES.get(building.kind, ()):
+                allowed.add(also)
         return allowed
+
+    @staticmethod
+    def _cell_has_hunt_loot(cell) -> bool:
+        return (
+            cell.meat_deposit > 0
+            or cell.hide_deposit > 0
+            or cell.fur_deposit > 0
+        )
+
+    def _apply_hunt_recipe_to_inventory(
+        self, inventory: Inventory, recipe_name: str
+    ) -> bool:
+        recipe = hunt_recipe(recipe_name)
+        if recipe is None or not recipe.outputs:
+            return False
+        if not recipe_outputs_fit(inventory, recipe):
+            return False
+        apply_recipe_outputs(inventory, recipe)
+        for key, n in recipe.outputs.items():
+            self.record_produced(key, n)
+        return True
+
+    def _drop_hunt_yields(
+        self,
+        x: int,
+        y: int,
+        kind,
+        *,
+        building: Building | None = None,
+    ) -> int:
+        """Leave hunt loot on the kill tile from hunter CSV outputs. Returns meat amount."""
+        name = kind.name.lower()
+        if building is not None and not building.allows_hunt_kind(name):
+            return 0
+        recipe = hunt_recipe(name)
+        outputs = dict(recipe.outputs) if recipe is not None else {}
+        meat = 0
+        for key, amount in outputs.items():
+            if amount <= 0:
+                continue
+            if key == "meat":
+                self.world.add_meat_deposit(x, y, amount)
+                meat += amount
+            elif key == "hide":
+                self.world.add_hide_deposit(x, y, amount)
+            elif key == "fur":
+                self.world.add_fur_deposit(x, y, amount)
+        return meat
+
+    def _hunt_recipe_status_bits(self, recipe_name: str) -> list[str]:
+        recipe = hunt_recipe(recipe_name)
+        if recipe is None:
+            return []
+        bits: list[str] = []
+        for key, amount in recipe.outputs.items():
+            if amount <= 0:
+                continue
+            from resources import resource_label
+
+            label = resource_label(key)
+            bits.append(f"{amount} {label}" if amount != 1 else label)
+        return bits
 
     def _villager_needs_home_restock(self, villager: Villager) -> bool:
         """True when storehouse can refill a missing job tool, arrows, or clothing."""
@@ -6948,12 +7023,18 @@ class Game:
             return False
         taken = self.world.harvest_meat(x, y, amount=1)
         hide_taken = 0
+        fur_taken = 0
         if inventory.can_add(1, key="hide"):
             hide_taken = self.world.harvest_hide(x, y, amount=1)
             if hide_taken > 0:
                 inventory.add_item("hide", hide_taken)
                 self.record_produced("hide", hide_taken)
-        if taken <= 0 and hide_taken <= 0:
+        if inventory.can_add(1, key="fur"):
+            fur_taken = self.world.harvest_fur(x, y, amount=1)
+            if fur_taken > 0:
+                inventory.add_item("fur", fur_taken)
+                self.record_produced("fur", fur_taken)
+        if taken <= 0 and hide_taken <= 0 and fur_taken <= 0:
             if status:
                 self._set_status("No meat here.")
             return False
@@ -6968,16 +7049,10 @@ class Game:
                 bits.append(f"{taken} meat ({remaining} left)")
             if hide_taken:
                 bits.append(f"{hide_taken} hide")
+            if fur_taken:
+                bits.append(f"{fur_taken} fur")
             self._set_status("Collected " + ", ".join(bits) + ".")
         return True
-
-    def _drop_hunt_yields(self, x: int, y: int, kind) -> int:
-        """Leave meat (and deer hide) on the kill tile. Returns meat amount."""
-        meat = BOAR_MEAT_YIELD if kind == AnimalKind.BOAR else DEER_MEAT_YIELD
-        self.world.add_meat_deposit(x, y, meat)
-        if kind == AnimalKind.DEER:
-            self.world.add_hide_deposit(x, y, 1)
-        return meat
 
     def _adjacent_animal(self, x: int, y: int):
         """Animal on this cell or within Chebyshev distance 1."""
@@ -7032,34 +7107,37 @@ class Game:
     def _player_hunt_warren(self, colony) -> None:
         """Spear-hunt a rabbit warren within melee range."""
         inv = self.player.inventory
+        if not inv.has_equipped_tool("knife"):
+            self._set_status("Equip a knife (I or Q) to dress rabbits.")
+            return
         if not inv.has_equipped_tool("spear"):
             self._set_status("Equip a spear (I or Q) to hunt rabbits.")
             return
         if not colony.can_harvest() or colony.kind != AnimalKind.RABBIT:
             self._set_status("Warren is not ready to hunt.")
             return
-        need = RABBIT_MEAT_PER_LEVEL + RABBIT_FUR_PER_LEVEL
-        if not inv.can_add(need):
+        recipe = hunt_recipe("rabbit")
+        if recipe is None or not recipe_outputs_fit(inv, recipe):
             self._set_status("Inventory is full.")
             return
         result = self.wildlife.harvest_colony(colony.id, kind=AnimalKind.RABBIT)
         if result is None:
             self._set_status("Rabbits got away.")
             return
-        _kind, amount = result
-        inv.add_item("meat", amount)
-        self.record_produced("meat", amount)
-        if RABBIT_FUR_PER_LEVEL > 0:
-            inv.add_item("fur", RABBIT_FUR_PER_LEVEL)
-            self.record_produced("fur", RABBIT_FUR_PER_LEVEL)
+        if not self._apply_hunt_recipe_to_inventory(inv, "rabbit"):
+            self._set_status("Inventory is full.")
+            return
         self.world.apply_extraction_disturbance(colony.x, colony.y)
         self._refresh_indicators()
         self._finish_player_work()
-        fur_note = f" +{RABBIT_FUR_PER_LEVEL} fur" if RABBIT_FUR_PER_LEVEL > 0 else ""
-        self._set_status(f"Hunted warren. {amount} meat{fur_note}.")
+        loot = ", ".join(self._hunt_recipe_status_bits("rabbit")) or "loot"
+        self._set_status(f"Hunted warren. {loot}.")
 
     def _player_hunt(self, animal) -> None:
         inv = self.player.inventory
+        if not inv.has_equipped_tool("knife"):
+            self._set_status("Equip a knife (I or Q) to dress carcasses.")
+            return
         has_spear = inv.has_equipped_tool("spear")
         has_bow = inv.has_equipped_tool("bow") and int(getattr(inv, "stone_arrows", 0)) > 0
         if not has_spear and not has_bow:
@@ -7081,9 +7159,9 @@ class Game:
         self._refresh_indicators()
         self._finish_player_work()
         weapon = "spear" if has_spear else "bow"
-        hide_txt = " + hide" if kind == AnimalKind.DEER else ""
+        loot = ", ".join(self._hunt_recipe_status_bits(kind.name.lower())) or f"{meat} meat"
         self._set_status(
-            f"Hunted {label} with {weapon}. {meat} meat{hide_txt} on ({x}, {y})."
+            f"Hunted {label} with {weapon}. {loot} on ({x}, {y})."
         )
 
     def _hunt_threat_positions(self) -> list[tuple[int, int]]:
@@ -8049,6 +8127,8 @@ class Game:
 
         One unit of each food type, up to ``MAX_FOOD_TYPES_PER_MEAL`` types,
         preferring buff foods over debuff snacks, then satiation.
+        After a full meat meal, one sweet dessert may still be taken for a
+        walk-speed buff even when satiation is already full.
         """
         target = eater.ration_refill() if eater is not None else 0.75
         available = [
@@ -8062,13 +8142,9 @@ class Game:
         available.sort(key=lambda k: food_preference_key(k, required))
         eaten_keys: list[str] = []
         points = 0.0
-        for key in available:
-            if len(eaten_keys) >= MAX_FOOD_TYPES_PER_MEAL:
-                break
-            if eater is not None and eater.satiation >= target and eaten_keys:
-                break
-            if eater is None and points >= 5.0 and eaten_keys:
-                break
+
+        def _consume(key: str) -> None:
+            nonlocal points
             setattr(storage, key, getattr(storage, key) - 1)
             self.record_consumed(key, 1)
             fx = food_def(key)
@@ -8078,10 +8154,48 @@ class Game:
                 eater.satiation = min(
                     1.0, eater.satiation + satiation_from_points(fx.satiation)
                 )
+
+        for key in available:
+            if len(eaten_keys) >= MAX_FOOD_TYPES_PER_MEAL:
+                break
+            if eater is not None and eater.satiation >= target and eaten_keys:
+                break
+            if eater is None and points >= 5.0 and eaten_keys:
+                break
+            _consume(key)
+            if eater is not None:
                 if eater.satiation >= target:
                     break
             elif points >= 5.0:
                 break
+
+        # Dessert: full meat meal can take one sweet for a speed buff.
+        if (
+            eaten_keys
+            and meal_includes_meat(eaten_keys)
+            and not any(food_is_sweet(k) for k in eaten_keys)
+            and (
+                (eater is not None and eater.satiation >= target)
+                or (eater is None and points >= 5.0)
+            )
+        ):
+            dessert_keys = [
+                key
+                for key in available
+                if food_is_sweet(key)
+                and key not in eaten_keys
+                and int(getattr(storage, key, 0)) > 0
+            ]
+            dessert_keys.sort(
+                key=lambda k: (
+                    -food_def(k).walk_speed,
+                    -food_def(k).work_efficiency,
+                    k,
+                )
+            )
+            if dessert_keys:
+                _consume(dessert_keys[0])
+
         if eater is not None and eaten_keys:
             eater.last_meal = list(eaten_keys)
             walk, work, hunger = combine_meal_buffs(eaten_keys)
@@ -8451,7 +8565,46 @@ class Game:
         demand = self._building_supply_demand(building)
         if not demand:
             return False
-        return any(int(getattr(self.home_storage, key, 0)) > 0 for key in demand)
+        return any(self._village_supply_have(key) > 0 for key in demand)
+
+    def _village_supply_have(self, key: str) -> int:
+        """Units of ``key`` available for workplace supply (storehouse + farm surplus)."""
+        total = int(getattr(self.home_storage, key, 0))
+        for building in self.buildings.values():
+            if building.kind == BuildingKind.FARM:
+                total += int(building.haulable_amount(key))
+        return total
+
+    def _best_supply_pickup(
+        self, demand: dict[str, int]
+    ) -> tuple[object | None, tuple[int, int] | None]:
+        """Prefer storehouse stock; otherwise a farm holding surplus demand goods."""
+        if not demand:
+            return None, None
+        home = self.world.home_pos
+        if any(int(getattr(self.home_storage, key, 0)) > 0 for key in demand):
+            return self.home_storage, home
+        origin = home
+        best: Building | None = None
+        best_key: tuple | None = None
+        for building in self.buildings.values():
+            if building.kind != BuildingKind.FARM:
+                continue
+            available = sum(
+                min(int(want), building.haulable_amount(key))
+                for key, want in demand.items()
+            )
+            if available <= 0:
+                continue
+            bx, by = building.center_cell()
+            dist = abs(bx - origin[0]) + abs(by - origin[1])
+            key = (-available, dist, building.id)
+            if best_key is None or key < best_key:
+                best_key = key
+                best = building
+        if best is None:
+            return None, None
+        return best, best.center_cell()
 
     def _building_supply_demand(self, building: Building) -> dict[str, int]:
         """Ingredient gaps for a workplace, including plan-based farm seeds."""
@@ -8657,6 +8810,13 @@ class Game:
             return True
         return self._ensure_work_tool(villager, "spear")
 
+    def _ensure_hunter_tools(self, villager: Villager) -> bool:
+        """Knife for dressing plus spear or bow for the kill."""
+        for tool in WORKPLACE_ALSO_REQUIRES.get(BuildingKind.HUNTER, ()):
+            if not self._ensure_work_tool(villager, tool):
+                return False
+        return self._ensure_hunter_weapon(villager)
+
     def _workplace_needs_tool_fetch(
         self, villager: Villager, building: Building
     ) -> bool:
@@ -8667,6 +8827,56 @@ class Game:
         if villager.inventory.has_equipped_tool(tool):
             return False
         return self._tool_fetchable(villager, tool)
+
+    def _farm_barn_needs_sheaf_delivery(self, building: Building) -> bool:
+        """True when barn recipes need sheaves that are only at the storehouse."""
+        if building.kind != BuildingKind.FARM or not building.addon_craft_recipes():
+            return False
+        from recipes import missing_inputs
+
+        stock = self._village_stock_amounts()
+        for recipe in building.enabled_recipes():
+            if not recipe.inputs or not building.is_recipe_enabled(recipe.name):
+                continue
+            if not building._recipe_output_fits(recipe, stock_amounts=stock):
+                continue
+            gap = missing_inputs(building, recipe)
+            if not gap:
+                continue
+            for key, need in gap.items():
+                on_site = int(getattr(building, key, 0))
+                if on_site >= int(need):
+                    continue
+                if int(getattr(self.home_storage, key, 0)) > 0:
+                    return True
+        return False
+
+    def _farm_barn_craft_available(
+        self, villager: Villager, building: Building
+    ) -> bool:
+        """True when a linked barn has a craft the worker can run or walk to deposit for."""
+        if building.kind != BuildingKind.FARM or not building.addon_craft_recipes():
+            return False
+        stock = self._village_stock_amounts()
+        if self._craftable_recipe(building, worker=villager, stock_amounts=stock) is not None:
+            return True
+        from society import recipe_skill_gate
+
+        for recipe in building.enabled_recipes():
+            if not recipe.inputs:
+                continue
+            if not recipe_skill_gate(recipe, worker=villager):
+                continue
+            if not building._recipe_output_fits(recipe, stock_amounts=stock):
+                continue
+            if all(
+                int(getattr(building, key, 0))
+                + int(getattr(villager.inventory, key, 0))
+                >= int(need)
+                for key, need in recipe.inputs.items()
+            ):
+                return True
+        return False
 
     def _workplace_primary_available(
         self, villager: Villager, building: Building
@@ -8715,6 +8925,7 @@ class Game:
             if (
                 self._farm_or_processor_needs_clear(building)
                 and self._farm_clear_in_progress(building)
+                and self._find_farm_harvest(villager, building) is None
             ):
                 return False
             # Sticky field work is cheap; prefer it before full-plan scans.
@@ -8907,17 +9118,26 @@ class Game:
         )
 
     def _farm_clear_in_progress(self, building: Building) -> bool:
-        """True when an assigned farmer is mid clear/delivery of farm produce."""
+        """True when an assigned farmer is clearing farm produce to the storehouse."""
+        home = self.world.home_pos
+        bx, by = building.center_cell()
         for v in self.villagers:
-            if v.haul_building_id == building.id and v.state in (
-                VillagerState.HAULING,
-                VillagerState.DELIVERING,
-            ):
+            if v.haul_building_id != building.id:
+                if (
+                    v.building_id == building.id
+                    and v.state == VillagerState.DELIVERING
+                    and v.target == home
+                    and building.has_gather_cargo(v.inventory)
+                ):
+                    return True
+                continue
+            # Draining haulable stock home — not supply runs (home fetch → farm drop).
+            if v.state == VillagerState.DELIVERING and v.target == home:
                 return True
             if (
-                v.building_id == building.id
-                and v.state == VillagerState.DELIVERING
-                and building.has_gather_cargo(v.inventory)
+                v.state == VillagerState.HAULING
+                and v.target == (bx, by)
+                and v.inventory.is_empty
             ):
                 return True
         return False
@@ -9061,6 +9281,8 @@ class Game:
                 and self._farm_or_processor_needs_clear(building)
             ):
                 return bid
+            if self._farm_barn_has_work(villager, building):
+                return bid
 
         # Re-scan primary only (step 5/7): if any slot can produce now, prefer it
         # over delivery — e.g. P1 became free of a false tool latch.
@@ -9160,21 +9382,27 @@ class Game:
 
         if not villager.inventory.is_empty:
             # Farm harvest → farm store when it has room; otherwise storehouse.
-            # While the farm is backed up / full, never refill it — take produce home
-            # so clear trips actually drain the building.
+            # While the farm cannot take this cargo, only divert full packs home —
+            # partial packs must keep harvesting instead of bouncing to the store.
             farm_harvest = (
                 building.kind == BuildingKind.FARM
                 and building.has_gather_cargo(villager.inventory)
             )
+            farm_can_take = farm_harvest and building.can_accept_from(
+                villager.inventory
+            )
+            pack_full = (
+                villager.inventory.is_full or not villager.inventory.can_add(1)
+            )
+            if farm_harvest and not farm_can_take and not pack_full:
+                # Over item-cap / blocked farm — resume field work with partial pack
+                # even if already walking to the storehouse.
+                villager.haul_building_id = None
+                villager.state = VillagerState.WORKING
+                villager.target = None
+                return False
             farm_divert_home = farm_harvest and (
-                building.space_left <= 0
-                or self._farm_or_processor_needs_clear(building)
-                # Finish an in-flight storehouse trip — never bounce back to the
-                # farm after a partial withdraw opens a little space.
-                or (
-                    villager.state == VillagerState.DELIVERING
-                    and villager.target == home
-                )
+                building.space_left <= 0 or not farm_can_take
             )
             if farm_divert_home:
                 villager.haul_building_id = None
@@ -9246,10 +9474,15 @@ class Game:
             if not self._owns_haul_claim(villager, building.id):
                 villager.haul_building_id = None
                 return False
+            demand = self._building_supply_demand(building)
+            _, pickup = self._best_supply_pickup(demand)
+            if pickup is None:
+                villager.haul_building_id = None
+                return False
             villager.state = VillagerState.HAULING
-            villager.target = home
-            if (villager.x, villager.y) != home:
-                self._step_villager_toward(villager, home)
+            villager.target = pickup
+            if (villager.x, villager.y) != pickup:
+                self._step_villager_toward(villager, pickup)
                 return True
             if villager.work_cooldown > 0:
                 return True
@@ -9376,6 +9609,8 @@ class Game:
             building.kind == BuildingKind.FARM
             and self._farm_or_processor_needs_clear(building)
         ):
+            return True
+        if self._farm_barn_has_work(villager, building):
             return True
         if self._workplace_accepts_carry(villager, building):
             return True
@@ -10302,6 +10537,69 @@ class Game:
             ox, oy, can_plant_sapling=True, exclude_cells=claimed
         )
 
+    def _farm_barn_has_work(
+        self, villager: Villager, building: Building
+    ) -> bool:
+        """True when linked barn threshing or sheaf delivery should run."""
+        if building.kind != BuildingKind.FARM or self._farm_has_pending_field_work(
+            villager, building
+        ):
+            return False
+        if self._farm_barn_craft_available(villager, building):
+            return True
+        return self._farm_barn_needs_sheaf_delivery(building)
+
+    def _farm_has_pending_field_work(
+        self, villager: Villager, building: Building
+    ) -> bool:
+        """True when harvest, sow, or plough should run before barn threshing."""
+        if not self._fields_near_farm(building):
+            return False
+        if self._find_farm_harvest(villager, building) is not None:
+            return True
+        if self._find_farm_plant_work(villager, building) is not None:
+            return True
+        return self._find_farm_work(villager, building) is not None
+
+    def _coworker_addon_craft_claims(
+        self, building: Building, villager_id: int
+    ) -> frozenset[str]:
+        """Addon recipe names reserved by in-progress craft or a coworker."""
+        building.ensure_recipe_state()
+        names: set[str] = set()
+        villager = next((v for v in self.villagers if v.id == villager_id), None)
+        own_craft = villager.craft_recipe_name if villager is not None else None
+        for recipe in building.addon_craft_recipes():
+            if int(building.recipe_progress.get(recipe.name, 0)) > 0:
+                # Let the worker already on this recipe keep advancing it.
+                if recipe.name != own_craft:
+                    names.add(recipe.name)
+        bx, by = building.center_cell()
+        for other in self.villagers:
+            if other.id == villager_id or other.building_id != building.id:
+                continue
+            name = other.craft_recipe_name
+            if not name:
+                continue
+            if other.state not in (VillagerState.WORKING, VillagerState.IDLE):
+                continue
+            if (other.x, other.y) == (bx, by) or other.target == (bx, by):
+                names.add(name)
+        return frozenset(names)
+
+    def _try_farm_barn_work(self, villager: Villager, building: Building) -> bool:
+        """Thresh at the barn (last resort) or fetch sheaves from the storehouse."""
+        if self._farm_has_pending_field_work(villager, building):
+            return False
+        if self._try_addon_craft(villager, building):
+            return True
+        if (
+            self._farm_barn_needs_sheaf_delivery(building)
+            and self._maybe_assigned_transport(villager, building)
+        ):
+            return True
+        return False
+
     def _update_farmer(self, villager: Villager, building: Building) -> None:
         """Plough, sow, and harvest according to each field plan's seasonal calendar."""
         # Finish in-progress storehouse / farm-clear trips before field stickies
@@ -10310,7 +10608,8 @@ class Game:
             if self._update_assigned_transport(villager, building):
                 return
             if (
-                building.haulable_total() > 0
+                villager.inventory.is_empty
+                and building.haulable_total() > 0
                 and not self._general_hauler_serving(building.id)
                 and self._clear_backed_up_outputs_to_home(villager, building)
             ):
@@ -10321,18 +10620,20 @@ class Game:
             self._force_assigned_delivery(villager, building)
             return
 
-        # Carrying harvest while the farm is full / nearly full → storehouse
-        # (do not refill a backed-up farm).
+        # Carrying harvest while the farm cannot take it → storehouse.
+        # Do not divert partial packs just because a clear is wanted — keep
+        # harvesting until the pack is full, then deposit at the farm.
         if (
             building.has_gather_cargo(villager.inventory)
-            and self._farm_or_processor_needs_clear(building)
+            and building.space_left <= 0
             and self._clear_backed_up_outputs_to_home(villager, building)
         ):
             return
 
-        # One claim-holder peels off to clear stock; coworkers stay on fields.
+        # One empty-handed claim-holder peels off to clear stock; coworkers harvest.
         if (
-            self._farm_or_processor_needs_clear(building)
+            villager.inventory.is_empty
+            and self._farm_or_processor_needs_clear(building)
             and not self._general_hauler_serving(building.id)
             and self._owns_haul_claim(villager, building.id)
             and self._clear_backed_up_outputs_to_home(villager, building)
@@ -10351,14 +10652,15 @@ class Game:
         elif (
             building.kind == BuildingKind.FARM
             and self._farm_or_processor_needs_clear(building)
+            and not self._farm_has_pending_field_work(villager, building)
         ):
-            # Store is draining / full and this worker isn't on the clear claim —
-            # park instead of filling fields that can't be stored yet.
+            if self._try_farm_barn_work(villager, building):
+                return
             self._set_workplace_idle(villager)
             return
 
         if not self._fields_near_farm(building):
-            if self._try_addon_craft(villager, building):
+            if self._try_farm_barn_work(villager, building):
                 return
             if (
                 building.haulable_total() > 0
@@ -10388,18 +10690,18 @@ class Game:
                 if harvest_first is not None
                 else self._find_farm_plant_work(villager, building)
             )
-            # Pull plant stock from workplace (or storehouse) when sow needs it.
-            if (
-                harvest_first is None
-                and plough_or_sow is None
-                and self._update_plant_stock_withdraw(villager, building)
-            ):
-                return
+            if harvest_first is None and plough_or_sow is None:
+                # Barn threshing before seed withdraw — otherwise workers loop
+                # pulling wheat/rye grain off the farm when no sow tiles exist.
+                if self._try_farm_barn_work(villager, building):
+                    return
+                if self._update_plant_stock_withdraw(villager, building):
+                    return
             target = harvest_first or plough_or_sow or self._find_farm_work(
                 villager, building
             )
             if target is None:
-                if self._try_addon_craft(villager, building):
+                if self._try_farm_barn_work(villager, building):
                     return
                 if self._maybe_assigned_transport(villager, building):
                     return
@@ -10518,24 +10820,85 @@ class Game:
         if not recipes:
             return False
 
-        # Find a ready addon recipe before swapping tools (hunters need spear/bow).
+        bx, by = building.center_cell()
+        at_site = (villager.x, villager.y) == (bx, by)
+        if at_site:
+            building.deposit_from_inventory(villager.inventory)
+
+        claimed = self._coworker_addon_craft_claims(building, villager.id)
+        stock = self._village_stock_amounts()
         prefer = villager.craft_recipe_name
+        if prefer in claimed:
+            prefer = None
         ordered = list(recipes)
         if prefer:
             ordered.sort(key=lambda r: 0 if r.name == prefer else 1)
+
+        def _carries_inputs(recipe) -> bool:
+            for key, need in recipe.inputs.items():
+                have = int(getattr(building, key, 0)) + int(
+                    getattr(villager.inventory, key, 0)
+                )
+                if have < int(need):
+                    return False
+            return True
+
         ready = None
         for candidate in ordered:
+            if candidate.name in claimed:
+                continue
             if not building.is_recipe_enabled(candidate.name):
                 continue
             probe = self._craftable_recipe(
-                building, worker=villager, prefer_name=candidate.name
+                building,
+                worker=villager,
+                prefer_name=candidate.name,
+                avoid_names=claimed,
+                stock_amounts=stock,
             )
             if probe is not None and probe.name == candidate.name:
                 ready = probe
                 break
+
         if ready is None:
-            villager.craft_recipe_name = None
-            return False
+            resume = villager.craft_recipe_name
+            if resume and int(building.recipe_progress.get(resume, 0)) > 0:
+                ready = next((r for r in recipes if r.name == resume), None)
+            if ready is None:
+                villager.craft_recipe_name = None
+                if not at_site:
+                    for candidate in ordered:
+                        if candidate.name in claimed:
+                            continue
+                        if not building.is_recipe_enabled(candidate.name):
+                            continue
+                        if _carries_inputs(candidate):
+                            villager.craft_recipe_name = candidate.name
+                            villager.target = (bx, by)
+                            villager.state = VillagerState.WORKING
+                            if villager.move_cooldown > 0:
+                                return True
+                            self._step_villager_toward(villager, (bx, by))
+                            return True
+                    for candidate in ordered:
+                        if candidate.name in claimed:
+                            continue
+                        probe = self._craftable_recipe(
+                            building,
+                            worker=villager,
+                            prefer_name=candidate.name,
+                            avoid_names=claimed,
+                            stock_amounts=stock,
+                        )
+                        if probe is not None:
+                            villager.craft_recipe_name = probe.name
+                            villager.target = (bx, by)
+                            villager.state = VillagerState.WORKING
+                            if villager.move_cooldown > 0:
+                                return True
+                            self._step_villager_toward(villager, (bx, by))
+                            return True
+                return False
 
         # Leather needs a knife; barn seed recipes use the farm (hoe already held).
         if building.kind == BuildingKind.HUNTER:
@@ -10543,10 +10906,9 @@ class Game:
                 return False
 
         recipe = ready
-        bx, by = building.center_cell()
         villager.target = (bx, by)
         villager.state = VillagerState.WORKING
-        if (villager.x, villager.y) != (bx, by):
+        if not at_site:
             if villager.move_cooldown > 0:
                 return True
             self._step_villager_toward(villager, (bx, by))
@@ -11033,7 +11395,7 @@ class Game:
         ):
             self._force_assigned_delivery(villager, building)
             return
-        if not self._ensure_hunter_weapon(villager):
+        if not self._ensure_hunter_tools(villager):
             if self._try_addon_craft(villager, building):
                 return
             self._maybe_assigned_transport(villager, building)
@@ -11059,7 +11421,7 @@ class Game:
         meat_pos = villager.hunt_meat_pos
         if meat_pos is not None:
             cell = self.world.get_cell(*meat_pos)
-            if cell is None or (cell.meat_deposit <= 0 and cell.hide_deposit <= 0):
+            if cell is None or not self._cell_has_hunt_loot(cell):
                 villager.hunt_meat_pos = None
                 meat_pos = None
         if meat_pos is None:
@@ -11077,9 +11439,7 @@ class Game:
                         self._gain_job_skill(villager, building.kind.name)
                     villager.work_cooldown = self._villager_work_interval(villager)
                     cell = self.world.get_cell(*meat_pos)
-                    if cell is None or (
-                        cell.meat_deposit <= 0 and cell.hide_deposit <= 0
-                    ):
+                    if cell is None or not self._cell_has_hunt_loot(cell):
                         villager.hunt_meat_pos = None
                 return
             if not self.world.is_walkable(*meat_pos):
@@ -11110,8 +11470,10 @@ class Game:
             dist = max(abs(colony.x - villager.x), abs(colony.y - villager.y))
             if dist <= 1:
                 if villager.work_cooldown == 0:
-                    need = RABBIT_MEAT_PER_LEVEL + RABBIT_FUR_PER_LEVEL
-                    if not villager.inventory.can_add(need):
+                    recipe = hunt_recipe("rabbit")
+                    if recipe is None or not recipe_outputs_fit(
+                        villager.inventory, recipe
+                    ):
                         villager.hunt_colony_id = None
                         self._force_assigned_delivery(villager, building)
                         return
@@ -11120,18 +11482,15 @@ class Game:
                     )
                     villager.hunt_colony_id = None
                     if result is not None:
-                        _kind, amount = result
-                        villager.inventory.add_item("meat", amount)
-                        self.record_produced("meat", amount)
-                        if RABBIT_FUR_PER_LEVEL > 0:
-                            villager.inventory.add_item("fur", RABBIT_FUR_PER_LEVEL)
-                            self.record_produced("fur", RABBIT_FUR_PER_LEVEL)
-                        self.world.apply_extraction_disturbance(colony.x, colony.y)
-                        self._refresh_indicators()
-                        self._spend_work_energy(villager)
-                        self._gain_job_skill(villager, building.kind.name)
+                        if self._apply_hunt_recipe_to_inventory(
+                            villager.inventory, "rabbit"
+                        ):
+                            self.world.apply_extraction_disturbance(colony.x, colony.y)
+                            self._refresh_indicators()
+                            self._spend_work_energy(villager)
+                            self._gain_job_skill(villager, building.kind.name)
+                            self._force_assigned_delivery(villager, building)
                         villager.work_cooldown = self._villager_work_interval(villager)
-                        self._force_assigned_delivery(villager, building)
                         return
                     villager.work_cooldown = self._villager_work_interval(villager)
                 return
@@ -11168,7 +11527,7 @@ class Game:
                 villager.hunt_animal_id = None
                 if result is not None:
                     x, y, kind = result
-                    self._drop_hunt_yields(x, y, kind)
+                    self._drop_hunt_yields(x, y, kind, building=building)
                     self.world.apply_extraction_disturbance(x, y)
                     if kind in (AnimalKind.DEER, AnimalKind.BOAR):
                         self.wildlife.scare_from_kill(x, y)
@@ -11239,14 +11598,14 @@ class Game:
         if result is None:
             return
         x, y, kind = result
-        self._drop_hunt_yields(x, y, kind)
+        building = self.buildings.get(villager.building_id) if villager.building_id else None
+        self._drop_hunt_yields(x, y, kind, building=building)
         self.world.apply_extraction_disturbance(x, y)
         if kind in (AnimalKind.DEER, AnimalKind.BOAR):
             self.wildlife.scare_from_kill(x, y)
         self._refresh_indicators()
         villager.hunt_meat_pos = (x, y)
         self._register_field_claim(villager, (x, y))
-        building = self.buildings.get(villager.building_id) if villager.building_id else None
         if building is not None:
             self._gain_job_skill(villager, building.kind.name)
 
@@ -11288,7 +11647,8 @@ class Game:
 
         if not building.allows_hunt_kind("rabbit"):
             return None
-        if not villager.inventory.can_add(RABBIT_MEAT_PER_LEVEL + RABBIT_FUR_PER_LEVEL):
+        recipe = hunt_recipe("rabbit")
+        if recipe is None or not recipe_outputs_fit(villager.inventory, recipe):
             return None
         taken = self._claimed_colony_ids(villager.id)
         colonies = [
@@ -11390,9 +11750,7 @@ class Game:
                     if (x, y) in claimed:
                         continue
                     cell = self.world.get_cell(x, y)
-                    if cell is not None and (
-                        cell.meat_deposit > 0 or cell.hide_deposit > 0
-                    ):
+                    if cell is not None and self._cell_has_hunt_loot(cell):
                         cells.append((x, y))
             origin = building.center_cell()
             # Prefer nearest to a hunter currently looking — use building centre.
@@ -11402,7 +11760,7 @@ class Game:
                     if (x, y) in claimed:
                         continue
                     cell = self.world.cells[y][x]
-                    if cell.meat_deposit > 0 or cell.hide_deposit > 0:
+                    if self._cell_has_hunt_loot(cell):
                         cells.append((x, y))
             origin = building.center_cell()
         villager = self._get_villager(exclude_villager_id)
@@ -11429,9 +11787,7 @@ class Game:
                     if (x, y) in claimed:
                         continue
                     cell = self.world.get_cell(x, y)
-                    if cell is not None and (
-                        cell.meat_deposit > 0 or cell.hide_deposit > 0
-                    ):
+                    if cell is not None and self._cell_has_hunt_loot(cell):
                         return True
             return False
         villager = self._get_villager(exclude_villager_id)
@@ -11445,7 +11801,7 @@ class Game:
                 if (x, y) in claimed:
                     continue
                 cell = self.world.cells[y][x]
-                if cell.meat_deposit <= 0 and cell.hide_deposit <= 0:
+                if not self._cell_has_hunt_loot(cell):
                     continue
                 if self._within_work_search(origin, (x, y)):
                     return True
@@ -11958,8 +12314,14 @@ class Game:
                 if self._processor_can_be_supplied(claimed) and self._owns_haul_claim(
                     villager, claimed.id
                 ):
-                    if (villager.x, villager.y) != home:
-                        self._step_villager_toward(villager, home)
+                    demand = self._building_supply_demand(claimed)
+                    _, pickup = self._best_supply_pickup(demand)
+                    if pickup is None:
+                        villager.haul_building_id = None
+                        villager.state = VillagerState.IDLE
+                        return
+                    if (villager.x, villager.y) != pickup:
+                        self._step_villager_toward(villager, pickup)
                         return
                     taken = self._withdraw_processor_supply(villager, claimed)
                     if taken <= 0:
@@ -12007,10 +12369,16 @@ class Game:
             if others:
                 sink = min(others, key=self._supply_sink_sort_key)
         if sink is not None:
+            demand = self._building_supply_demand(sink)
+            _, pickup = self._best_supply_pickup(demand)
+            if pickup is None:
+                villager.haul_building_id = None
+                villager.state = VillagerState.IDLE
+                return
             villager.haul_building_id = sink.id
             villager.state = VillagerState.HAULING
-            if (villager.x, villager.y) != home:
-                self._step_villager_toward(villager, home)
+            if (villager.x, villager.y) != pickup:
+                self._step_villager_toward(villager, pickup)
                 return
             taken = self._withdraw_processor_supply(villager, sink)
             if taken <= 0:
@@ -12028,31 +12396,56 @@ class Game:
         demand = self._building_supply_demand(building)
         if not demand:
             return False
-        return any(getattr(self.home_storage, key, 0) > 0 for key in demand)
+        return any(self._village_supply_have(key) > 0 for key in demand)
 
     def _withdraw_processor_supply(self, villager: Villager, sink: Building) -> int:
-        """Pack ingredients for a workplace; fill remaining cargo when the sink has room."""
+        """Pack ingredients for a workplace from storehouse or the farm underfoot."""
         demand = self._building_supply_demand(sink)
         if not demand:
             return 0
+        source_obj, _ = self._best_supply_pickup(demand)
+        # Prefer whatever stockpile the worker is standing on.
+        at_home = (villager.x, villager.y) == self.world.home_pos
+        here_farm = None
+        for building in self.buildings.values():
+            if building.kind == BuildingKind.FARM and building.center_cell() == (
+                villager.x,
+                villager.y,
+            ):
+                here_farm = building
+                break
+        if at_home and any(int(getattr(self.home_storage, k, 0)) > 0 for k in demand):
+            source_obj = self.home_storage
+        elif here_farm is not None and any(
+            here_farm.haulable_amount(k) > 0 for k in demand
+        ):
+            source_obj = here_farm
+        if source_obj is None:
+            return 0
+
         amounts: dict[str, int] = {}
         inv = villager.inventory
         cargo_left = inv.capacity - inv.cargo_total
         seed_left = inv.seed_capacity - inv.seed_total
+
+        def _have(key: str, already: int) -> int:
+            if source_obj is self.home_storage:
+                have = int(getattr(self.home_storage, key, 0)) - already
+                if sink.is_market() and sink.market_supply_enabled(key):
+                    have = min(
+                        have,
+                        self._market_storehouse_surplus(key, sink.market_supply_min(key))
+                        - already,
+                    )
+                return max(0, have)
+            return max(0, int(source_obj.haulable_amount(key)) - already)
 
         def _take_key(key: str, want: int) -> None:
             nonlocal cargo_left, seed_left
             if want <= 0:
                 return
             already = amounts.get(key, 0)
-            have = int(getattr(self.home_storage, key, 0)) - already
-            if sink.is_market() and sink.market_supply_enabled(key):
-                # Never pull storehouse stock below the configured reserve.
-                have = min(
-                    have,
-                    self._market_storehouse_surplus(key, sink.market_supply_min(key))
-                    - already,
-                )
+            have = _have(key, already)
             room = sink.space_for_key(key) - already
             if Inventory.is_seed_key(key):
                 pack_room = seed_left
@@ -12066,12 +12459,9 @@ class Game:
                 else:
                     cargo_left -= n
 
-        # Pass 1: recipe gaps + reserve targets from supply_demand.
         for key, want in demand.items():
             _take_key(key, want)
 
-        # Pass 2: fill remaining pack only when no other workplace has a recipe gap
-        # we could also serve — leave room for multi-stop packing.
         others_need_gap = any(
             b.id != sink.id
             and b.needs_supplied()
@@ -12094,7 +12484,26 @@ class Game:
 
         if not amounts:
             return 0
-        return self.home_storage.withdraw_amounts_to(villager.inventory, amounts)
+        if source_obj is self.home_storage:
+            return self.home_storage.withdraw_amounts_to(villager.inventory, amounts)
+        # Farm surplus: honour haulable caps via per-key withdraw.
+        taken = 0
+        for key, want in amounts.items():
+            for _ in range(want):
+                if source_obj.haulable_amount(key) <= 0:
+                    break
+                if not villager.inventory.can_add(1, key=key):
+                    break
+                if int(getattr(source_obj, key, 0)) <= 0:
+                    break
+                setattr(source_obj, key, int(getattr(source_obj, key, 0)) - 1)
+                setattr(
+                    villager.inventory,
+                    key,
+                    int(getattr(villager.inventory, key, 0)) + 1,
+                )
+                taken += 1
+        return taken
 
     def _haul_source_sort_key(
         self, building: Building, origin: tuple[int, int]
@@ -12455,8 +12864,9 @@ class Game:
         can_sapling, can_berry, can_herb = self._can_plant_from(villager, building)
         if building.kind == BuildingKind.FORESTER and not can_sapling:
             return False
-        if building.kind == BuildingKind.FARM and not can_herb:
-            return False
+        if building.kind == BuildingKind.FARM:
+            if self._find_farm_sow_work(villager, building) is None:
+                return False
 
         villager.state = VillagerState.WORKING
         if (villager.x, villager.y) == dest:

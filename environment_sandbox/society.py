@@ -673,18 +673,20 @@ def random_name(rng: random.Random) -> str:
 
 
 def _pick_foods(rng: random.Random) -> tuple[list[str], list[str], bool]:
-    staples = list(HIRE_STAPLE_FOODS)
-    rng.shuffle(staples)
-    required = [staples[0]]
+    pool = ["meat", "fish", "bread", "meat/fish", "vegetables"]
+    rng.shuffle(pool)
+    required = [pool[0]]
     if rng.random() < 0.35:
-        required.append(staples[1])
+        extra = pool[1]
+        if extra not in required and extra != required[0]:
+            required.append(extra)
     favourites: list[str] = []
     junk = False
     if rng.random() < 0.45:
-        favourites = [rng.choice(("meat", "grilled_meat", "stew"))]
+        favourites = [rng.choice(("meat", "grilled_meat", "stew", "vegetable_soup"))]
         junk = rng.random() < 0.55
     elif rng.random() < 0.35:
-        favourites = [rng.choice(("bread", "berries", "honey", "fish"))]
+        favourites = [rng.choice(("bread", "berries", "honey", "fish", "grilled_fish"))]
     return required, favourites, junk
 
 
@@ -774,9 +776,11 @@ def spawn_travellers_from_templates(
 
 
 def staple_food_available(amounts: dict[str, int], required: list[str]) -> bool:
-    """True if every required staple key has stock > 0."""
+    """True if every required food category has stock > 0."""
+    from resource_balance import requirement_met_in_stock
+
     for key in required:
-        if int(amounts.get(key, 0)) <= 0:
+        if not requirement_met_in_stock(amounts, str(key)):
             return False
     return True
 
@@ -794,13 +798,15 @@ def hire_unmet_requirements(
     max_housing_level: int,
 ) -> list[str]:
     """Requirement keys unmet for a hire candidate (bed, housing, each staple)."""
+    from resource_balance import requirement_met_in_stock
+
     missing: list[str] = []
     if int(free_beds) <= 0:
         missing.append("bed")
     if int(max_housing_level) < int(housing_need):
         missing.append("housing")
     for food in required_foods:
-        if int(foods.get(food, 0)) <= 0:
+        if not requirement_met_in_stock(foods, str(food)):
             missing.append(str(food))
     return missing
 
@@ -811,6 +817,8 @@ def villager_unmet_requirements(
     foods: dict[str, int],
 ) -> list[str]:
     """Requirement keys unmet for a hired villager (housing + each staple)."""
+    from resource_balance import requirement_met_in_stock
+
     missing: list[str] = []
     if not villager.housed:
         missing.append("housing")
@@ -819,7 +827,7 @@ def villager_unmet_requirements(
         if house is None or housing_level_of(house.kind) < int(villager.housing_need):
             missing.append("housing")
     for food in list(getattr(villager, "required_foods", []) or []):
-        if int(foods.get(food, 0)) <= 0:
+        if not requirement_met_in_stock(foods, str(food)):
             missing.append(str(food))
     return missing
 
@@ -833,12 +841,25 @@ def requirement_label(key: str) -> str:
         return "Free bed"
     if key == "housing":
         return "Housing"
+    from resource_balance import REQUIREMENT_LABELS
+
+    if key in REQUIREMENT_LABELS:
+        return REQUIREMENT_LABELS[key]
     from resources import resource_label
 
     try:
         return resource_label(key)
     except Exception:
         return key.replace("_", " ").title()
+
+
+def requirement_icon(key: str) -> str:
+    from resource_balance import REQUIREMENT_ICONS
+    from resources import resource_icon
+
+    if key in REQUIREMENT_ICONS:
+        return REQUIREMENT_ICONS[key]
+    return resource_icon(key)
 
 
 def villager_requirement_rows(
@@ -849,8 +870,6 @@ def villager_requirement_rows(
     housing_icon: str = "tent",
 ) -> list[dict]:
     """Requirement icons for inspect UI: housing + each required staple."""
-    from resources import resource_icon
-
     rows: list[dict] = []
     need = int(getattr(villager, "housing_need", 1) or 1)
     housed = bool(getattr(villager, "housed", False))
@@ -872,11 +891,13 @@ def villager_requirement_rows(
     )
     for food in list(getattr(villager, "required_foods", []) or []):
         key = str(food)
-        met = int(foods.get(key, 0)) > 0
+        from resource_balance import requirement_met_in_stock
+
+        met = requirement_met_in_stock(foods, key)
         rows.append(
             {
                 "key": key,
-                "icon": resource_icon(key),
+                "icon": requirement_icon(key),
                 "met": met,
                 "label": (
                     f"{requirement_label(key)} in stock"
@@ -899,7 +920,7 @@ def candidate_requirement_rows(
     housing_icon: str = "tent",
 ) -> list[dict]:
     """Requirement icons for a hire candidate (bed/level + staples)."""
-    from resources import resource_icon
+    from resource_balance import requirement_met_in_stock
 
     need = int(housing_need)
     housing_met = int(free_beds) > 0 and int(max_housing_level) >= need
@@ -918,11 +939,11 @@ def candidate_requirement_rows(
     ]
     for food in required_foods:
         key = str(food)
-        met = int(foods.get(key, 0)) > 0
+        met = requirement_met_in_stock(foods, key)
         rows.append(
             {
                 "key": key,
-                "icon": resource_icon(key),
+                "icon": requirement_icon(key),
                 "met": met,
                 "label": (
                     f"{requirement_label(key)} in stock"

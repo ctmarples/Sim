@@ -7,6 +7,7 @@ menu was opened by interacting while standing on/near the villager.
 from __future__ import annotations
 
 from collections.abc import Callable
+from enum import Enum
 
 import pygame
 
@@ -74,6 +75,20 @@ SCROLL_STEP = 28
 ICON_BTN = 26
 BAR_W = 72
 BAR_H = 10
+CAT_TAB_H = BTN_H
+
+
+class DetailCategory(str, Enum):
+    SKILLS = "skills"
+    TOOLS = "tools"
+    BUFFS = "buffs"
+
+
+_DETAIL_TABS: tuple[tuple[DetailCategory, str, str], ...] = (
+    (DetailCategory.SKILLS, "Skills", "Skills and effect totals"),
+    (DetailCategory.TOOLS, "Tools", "Equipped tools and clothing"),
+    (DetailCategory.BUFFS, "Buffs", "Meals, buffs, debuffs, and events"),
+)
 
 
 class VillagerInspectDialog:
@@ -105,6 +120,7 @@ class VillagerInspectDialog:
         self._tooltip_key: str | None = None
         self._tooltip_text: str | None = None
         self.embedded = False
+        self.detail_category = DetailCategory.SKILLS
         self._scroll: dict[str, int] = {}
         self._scroll_areas: dict[str, tuple[pygame.Rect, int, int]] = {}
 
@@ -247,6 +263,12 @@ class VillagerInspectDialog:
             return True
         for action, rect in self._buttons:
             if rect.collidepoint(pos):
+                if action.startswith("detail_cat:"):
+                    try:
+                        self.detail_category = DetailCategory(action.split(":", 1)[1])
+                    except ValueError:
+                        pass
+                    return True
                 self._pending_action = action
                 return True
         for rect, action in self._tool_hits:
@@ -326,6 +348,38 @@ class VillagerInspectDialog:
 
     def _fonts(self) -> tuple[pygame.font.Font, pygame.font.Font, pygame.font.Font]:
         return self.font, self.font_small, self.font_tiny
+
+    @staticmethod
+    def _detail_category_panel_height() -> int:
+        skills_h = 14 + 14 + 4
+        tools_h = 18 + GRID_CELL + 8 + 18 + 12 + GRID_CELL + 8 + 14
+        buffs_h = 3 * (MOD_CELL + 4) + (ICON_BTN + 4) + (MOD_CELL + 4)
+        return max(skills_h, tools_h, buffs_h)
+
+    def _draw_detail_category_tabs(
+        self,
+        surface: pygame.Surface,
+        x: int,
+        y: int,
+        inner_w: int,
+        mouse_pos: tuple[int, int] | None,
+    ) -> int:
+        bx = x
+        row_y = y
+        for cat, label, tip in _DETAIL_TABS:
+            w = max(52, 10 + self.font_small.size(label)[0])
+            if bx + w > x + inner_w and bx > x:
+                row_y += CAT_TAB_H + 4
+                bx = x
+            rect = pygame.Rect(bx, row_y, w, CAT_TAB_H)
+            active = self.detail_category == cat
+            hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+            self._draw_button(surface, rect, label, active=active, hovered=hovered)
+            self._buttons.append((f"detail_cat:{cat.value}", rect))
+            if hovered:
+                self._icon_tips.append((rect, tip))
+            bx += w + 4
+        return row_y + CAT_TAB_H + 4
 
     def _draw_icon_btn(
         self,
@@ -412,26 +466,18 @@ class VillagerInspectDialog:
             self._panel_w = 380
 
         prio_extra = 4 * (SLOT_SIZE + 4) if villager.seasonal_priorities else (SLOT_SIZE + 8)
-        skill_row_h = 14 + 14 + 4
+        category_panel_h = self._detail_category_panel_height()
         body_h = (
             PAD
             + 18
-            + skill_row_h
+            + CAT_TAB_H
+            + 4
+            + category_panel_h
             + 16
             + BAR_H
             + 8
             + ICON_BTN
             + 4  # home
-            + MOD_CELL
-            + 4  # meal
-            + MOD_CELL
-            + 4  # buffs
-            + MOD_CELL
-            + 4  # debuffs
-            + ICON_BTN
-            + 4  # requirements
-            + MOD_CELL
-            + 4  # events
             + SLOT_SIZE
             + 6
             + SECTION_GAP
@@ -439,13 +485,6 @@ class VillagerInspectDialog:
             + ICON_BTN
             + 8
             + prio_extra
-            + SECTION_GAP
-            + ICON_BTN
-            + 8
-            + GRID_CELL
-            + 26
-            + GRID_CELL
-            + 24
             + SECTION_GAP
             + grid_h
             + PAD
@@ -513,28 +552,292 @@ class VillagerInspectDialog:
         surface.blit(self.font.render("Status", True, COLOUR_TEXT), (x, y))
         y += 18
 
-        skill_w, skill_tips = draw_skill_icons(
-            surface, x, y, villager.skills, self.font_tiny, icon_size=14
-        )
-        self._icon_tips.extend(skill_tips)
-        walk_t, work_t, hunger_t = effect_totals(
-            food_walk=villager.food_walk_mult,
-            food_work=villager.food_work_mult,
-            food_hunger=villager.food_hunger_mult,
+        all_mods = collect_status_mods(
+            last_meal=list(villager.last_meal),
             inventory=villager.inventory,
             calendar_day=calendar_day,
         )
-        _, total_tips = draw_effect_total_columns(
-            surface,
-            x + skill_w + 6,
-            y,
-            walk=walk_t,
-            work=work_t,
-            hunger=hunger_t,
-            font=self.font_tiny,
-        )
-        self._icon_tips.extend(total_tips)
-        y += 14 + 14 + 4
+        buffs = [m for m in all_mods if m.is_buff]
+        debuffs = [m for m in all_mods if m.is_debuff]
+        temp_ev = active_temp_event(villager.inventory, calendar_day)
+        tip_key: str | None = None
+
+        y = self._draw_detail_category_tabs(surface, x, y, inner_w, mouse_pos)
+        panel_top = y
+        panel_h = self._detail_category_panel_height()
+        content_x = x + 52
+
+        if self.detail_category == DetailCategory.SKILLS:
+            skill_w, skill_tips = draw_skill_icons(
+                surface, x, panel_top, villager.skills, self.font_tiny, icon_size=14
+            )
+            self._icon_tips.extend(skill_tips)
+            walk_t, work_t, hunger_t = effect_totals(
+                food_walk=villager.food_walk_mult,
+                food_work=villager.food_work_mult,
+                food_hunger=villager.food_hunger_mult,
+                inventory=villager.inventory,
+                calendar_day=calendar_day,
+            )
+            _, total_tips = draw_effect_total_columns(
+                surface,
+                x + skill_w + 6,
+                panel_top,
+                walk=walk_t,
+                work=work_t,
+                hunger=hunger_t,
+                font=self.font_tiny,
+            )
+            self._icon_tips.extend(total_tips)
+        elif self.detail_category == DetailCategory.TOOLS:
+            tool_y = panel_top
+            tool_h, tool_hits, tool_tip = draw_tool_slot(
+                surface,
+                origin=(x, tool_y),
+                equipped_tools=list(villager.inventory.equipped_tools),
+                mouse_pos=mouse_pos,
+                fonts=self._fonts(),
+                interactive=True,
+            )
+            self._tool_hits = tool_hits
+            clothes_y = tool_y + tool_h + 4
+            clothes_h, clothes_hits, clothes_tip = draw_clothing_slots(
+                surface,
+                origin=(x, clothes_y),
+                equipped_clothing=dict(villager.inventory.equipped_clothing),
+                mouse_pos=mouse_pos,
+                fonts=self._fonts(),
+                interactive=True,
+            )
+            self._clothing_hits = clothes_hits
+            hint_y = clothes_y + clothes_h + 2
+            surface.blit(
+                self.font_small.render(
+                    "Click a slot to equip or unequip tools / clothes.",
+                    True,
+                    COLOUR_TEXT_DIM,
+                ),
+                (x, hint_y),
+            )
+            tip_key = tool_tip or clothes_tip
+        else:
+            meal_y = panel_top
+            buff_y = meal_y + MOD_CELL + 4
+            debuff_y = buff_y + MOD_CELL + 4
+            req_y = debuff_y + MOD_CELL + 4
+            events_y = req_y + ICON_BTN + 4
+            hover = resolve_hover_state(
+                mouse_pos,
+                meal_keys=list(villager.last_meal[:3]),
+                meal_x=content_x,
+                meal_y=meal_y,
+                buffs=buffs,
+                debuffs=debuffs,
+                buff_x=content_x,
+                buff_y=buff_y,
+                debuff_x=content_x,
+                debuff_y=debuff_y,
+                temp_event=temp_ev,
+                event_x=content_x,
+                event_y=events_y,
+                cell_size=MOD_CELL,
+                gap=MOD_GAP,
+            )
+
+            surface.blit(
+                self.font_small.render("Meal:", True, COLOUR_TEXT_DIM),
+                (x, meal_y + MOD_CELL // 2 - 6),
+            )
+            meal_x = content_x
+            if villager.last_meal:
+                for key in villager.last_meal[:3]:
+                    mrect = pygame.Rect(meal_x, meal_y, MOD_CELL, MOD_CELL)
+                    hi = cause_is_highlighted("meal", key, hover)
+                    mhov = mouse_pos is not None and mrect.collidepoint(mouse_pos)
+                    self._draw_icon_btn(
+                        surface,
+                        mrect,
+                        icon=resource_icon(key),
+                        hovered=mhov or hi,
+                        border=HIGHLIGHT_BORDER if hi else None,
+                    )
+                    self._icon_tips.append((mrect, resource_label(key)))
+                    meal_x += MOD_CELL + MOD_GAP
+            else:
+                surface.blit(
+                    self.font_small.render("—", True, COLOUR_TEXT_DIM),
+                    (meal_x, meal_y + MOD_CELL // 2 - 6),
+                )
+
+            surface.blit(
+                self.font_small.render("Buffs:", True, COLOUR_TEXT_DIM),
+                (x, buff_y + MOD_CELL // 2 - 6),
+            )
+            if buffs:
+                _, buff_hits, _ = draw_mod_row(
+                    surface,
+                    content_x,
+                    buff_y,
+                    buffs,
+                    mouse_pos=mouse_pos,
+                    hover=hover,
+                    icon_size=MOD_CELL,
+                    gap=MOD_GAP,
+                )
+                for rect, mod in buff_hits:
+                    self._icon_tips.append((rect, mod.tip))
+            else:
+                surface.blit(
+                    self.font_small.render("—", True, COLOUR_TEXT_DIM),
+                    (content_x, buff_y + MOD_CELL // 2 - 6),
+                )
+
+            surface.blit(
+                self.font_small.render("Debuffs:", True, COLOUR_TEXT_DIM),
+                (x, debuff_y + MOD_CELL // 2 - 6),
+            )
+            if debuffs:
+                _, debuff_hits, _ = draw_mod_row(
+                    surface,
+                    content_x,
+                    debuff_y,
+                    debuffs,
+                    mouse_pos=mouse_pos,
+                    hover=hover,
+                    icon_size=MOD_CELL,
+                    gap=MOD_GAP,
+                )
+                for rect, mod in debuff_hits:
+                    self._icon_tips.append((rect, mod.tip))
+            else:
+                surface.blit(
+                    self.font_small.render("—", True, COLOUR_TEXT_DIM),
+                    (content_x, debuff_y + MOD_CELL // 2 - 6),
+                )
+
+            surface.blit(
+                self.font_small.render("Reqs:", True, COLOUR_TEXT_DIM),
+                (x, req_y + 5),
+            )
+            req_x = content_x
+            rows = list(requirement_rows or [])
+            if rows:
+                for row in rows:
+                    ic = str(row.get("icon") or "tent")
+                    met = bool(row.get("met"))
+                    coins = int(row.get("coins", 0) or 0)
+                    rrect = pygame.Rect(req_x, req_y, ICON_BTN, ICON_BTN)
+                    rhov = mouse_pos is not None and rrect.collidepoint(mouse_pos)
+                    border = (70, 160, 85) if met else (190, 70, 60)
+                    fill = (40, 70, 48) if met else (70, 40, 40)
+                    self._draw_icon_btn(
+                        surface,
+                        rrect,
+                        icon=ic,
+                        hovered=rhov,
+                        border=border,
+                        fill=fill,
+                    )
+                    tip = str(row.get("label") or "Requirement")
+                    if met:
+                        tip = f"{tip} (met)"
+                    else:
+                        tip = f"{tip} — {coins} coins/season"
+                        if coins > 0:
+                            coin_r = pygame.Rect(rrect.right + 2, req_y + 4, 18, 18)
+                            blit_icon(
+                                surface, "coins", coin_r.centerx, coin_r.centery, 14
+                            )
+                            cost = self.font_tiny.render(
+                                str(coins), True, (220, 180, 90)
+                            )
+                            surface.blit(cost, (coin_r.right + 1, req_y + 7))
+                            self._icon_tips.append(
+                                (coin_r, f"{coins} coins per season while unmet")
+                            )
+                            req_x = coin_r.right + cost.get_width() + 8
+                        else:
+                            req_x = rrect.right + 4
+                        self._icon_tips.append((rrect, tip))
+                        continue
+                    self._icon_tips.append((rrect, tip))
+                    req_x = rrect.right + 4
+            else:
+                surface.blit(
+                    self.font_small.render("—", True, COLOUR_TEXT_DIM),
+                    (req_x, req_y + 4),
+                )
+
+            surface.blit(
+                self.font_small.render("Events:", True, COLOUR_TEXT_DIM),
+                (x, events_y + MOD_CELL // 2 - 6),
+            )
+            event_x = content_x
+            any_event = False
+            if temp_ev is not None:
+                any_event = True
+                ic = str(temp_ev["icon"])
+                key = str(temp_ev["key"])
+                irect = pygame.Rect(event_x, events_y, MOD_CELL, MOD_CELL)
+                hi = cause_is_highlighted("events", key, hover)
+                ihov = mouse_pos is not None and irect.collidepoint(mouse_pos)
+                self._draw_icon_btn(
+                    surface,
+                    irect,
+                    icon=ic,
+                    hovered=ihov or hi,
+                    border=HIGHLIGHT_BORDER if hi else None,
+                )
+                self._icon_tips.append((irect, str(temp_ev["tip"])))
+                event_x += MOD_CELL + MOD_GAP
+            events = list(
+                getattr(villager, "happiness_events", None)
+                or getattr(villager, "happiness_impacts", None)
+                or []
+            )
+            if events:
+                for ev in events[-6:]:
+                    if not isinstance(ev, dict):
+                        continue
+                    any_event = True
+                    ic = str(ev.get("icon") or "coins")
+                    irect = pygame.Rect(event_x, events_y, ICON_BTN, ICON_BTN)
+                    ihov = mouse_pos is not None and irect.collidepoint(mouse_pos)
+                    self._draw_icon_btn(surface, irect, icon=ic, hovered=ihov)
+                    delta = int(round(float(ev.get("delta", 0) or 0)))
+                    sign = "+" if delta > 0 else ""
+                    label = str(ev.get("label") or "Event")
+                    if delta != 0:
+                        tip = (
+                            f"{label}"
+                            if f"{sign}{delta}" in label
+                            else f"{label} ({sign}{delta})"
+                        )
+                    else:
+                        tip = label
+                    badge = self.font_tiny.render(
+                        f"{sign}{delta}" if delta != 0 else "·",
+                        True,
+                        (120, 200, 120)
+                        if delta > 0
+                        else ((200, 120, 100) if delta < 0 else COLOUR_TEXT_DIM),
+                    )
+                    surface.blit(
+                        badge,
+                        (
+                            irect.x + (irect.w - badge.get_width()) // 2,
+                            irect.bottom - badge.get_height(),
+                        ),
+                    )
+                    self._icon_tips.append((irect, tip))
+                    event_x += ICON_BTN + 2
+            if not any_event:
+                surface.blit(
+                    self.font_small.render("—", True, COLOUR_TEXT_DIM),
+                    (event_x, events_y + MOD_CELL // 2 - 6),
+                )
+
+        y = panel_top + panel_h
 
         state = (
             "Seeking food"
@@ -581,236 +884,6 @@ class VillagerInspectDialog:
             home_tip = f"Needs housing level ≥{villager.housing_need} — click to assign"
         self._icon_tips.append((home_rect, home_tip))
         y += ICON_BTN + 4
-
-        all_mods = collect_status_mods(
-            last_meal=list(villager.last_meal),
-            inventory=villager.inventory,
-            calendar_day=calendar_day,
-        )
-        buffs = [m for m in all_mods if m.is_buff]
-        debuffs = [m for m in all_mods if m.is_debuff]
-        temp_ev = active_temp_event(villager.inventory, calendar_day)
-        content_x = x + 52
-        meal_y = y
-        buff_y = meal_y + MOD_CELL + 4
-        debuff_y = buff_y + MOD_CELL + 4
-        req_y = debuff_y + MOD_CELL + 4
-        events_y = req_y + ICON_BTN + 4
-        hover = resolve_hover_state(
-            mouse_pos,
-            meal_keys=list(villager.last_meal[:3]),
-            meal_x=content_x,
-            meal_y=meal_y,
-            buffs=buffs,
-            debuffs=debuffs,
-            buff_x=content_x,
-            buff_y=buff_y,
-            debuff_x=content_x,
-            debuff_y=debuff_y,
-            temp_event=temp_ev,
-            event_x=content_x,
-            event_y=events_y,
-            cell_size=MOD_CELL,
-            gap=MOD_GAP,
-        )
-
-        # Last meal icons
-        surface.blit(
-            self.font_small.render("Meal:", True, COLOUR_TEXT_DIM),
-            (x, meal_y + MOD_CELL // 2 - 6),
-        )
-        meal_x = content_x
-        if villager.last_meal:
-            for key in villager.last_meal[:3]:
-                mrect = pygame.Rect(meal_x, meal_y, MOD_CELL, MOD_CELL)
-                hi = cause_is_highlighted("meal", key, hover)
-                mhov = mouse_pos is not None and mrect.collidepoint(mouse_pos)
-                self._draw_icon_btn(
-                    surface,
-                    mrect,
-                    icon=resource_icon(key),
-                    hovered=mhov or hi,
-                    border=HIGHLIGHT_BORDER if hi else None,
-                )
-                self._icon_tips.append((mrect, resource_label(key)))
-                meal_x += MOD_CELL + MOD_GAP
-        else:
-            surface.blit(
-                self.font_small.render("—", True, COLOUR_TEXT_DIM),
-                (meal_x, meal_y + MOD_CELL // 2 - 6),
-            )
-        y = buff_y
-
-        # Buff / Debuff rows (compound cause→effect icons)
-        surface.blit(
-            self.font_small.render("Buffs:", True, COLOUR_TEXT_DIM),
-            (x, y + MOD_CELL // 2 - 6),
-        )
-        if buffs:
-            _, buff_hits, _ = draw_mod_row(
-                surface,
-                content_x,
-                y,
-                buffs,
-                mouse_pos=mouse_pos,
-                hover=hover,
-                icon_size=MOD_CELL,
-                gap=MOD_GAP,
-            )
-            for rect, mod in buff_hits:
-                self._icon_tips.append((rect, mod.tip))
-        else:
-            surface.blit(
-                self.font_small.render("—", True, COLOUR_TEXT_DIM),
-                (content_x, y + MOD_CELL // 2 - 6),
-            )
-        y = debuff_y
-
-        surface.blit(
-            self.font_small.render("Debuffs:", True, COLOUR_TEXT_DIM),
-            (x, y + MOD_CELL // 2 - 6),
-        )
-        if debuffs:
-            _, debuff_hits, _ = draw_mod_row(
-                surface,
-                content_x,
-                y,
-                debuffs,
-                mouse_pos=mouse_pos,
-                hover=hover,
-                icon_size=MOD_CELL,
-                gap=MOD_GAP,
-            )
-            for rect, mod in debuff_hits:
-                self._icon_tips.append((rect, mod.tip))
-        else:
-            surface.blit(
-                self.font_small.render("—", True, COLOUR_TEXT_DIM),
-                (content_x, y + MOD_CELL // 2 - 6),
-            )
-        y = req_y
-
-        # Requirements (green = met, red = unmet + 2 coins/season)
-        surface.blit(
-            self.font_small.render("Reqs:", True, COLOUR_TEXT_DIM),
-            (x, y + 5),
-        )
-        req_x = x + 52
-        rows = list(requirement_rows or [])
-        if rows:
-            for row in rows:
-                ic = str(row.get("icon") or "tent")
-                met = bool(row.get("met"))
-                coins = int(row.get("coins", 0) or 0)
-                rrect = pygame.Rect(req_x, y, ICON_BTN, ICON_BTN)
-                rhov = mouse_pos is not None and rrect.collidepoint(mouse_pos)
-                border = (70, 160, 85) if met else (190, 70, 60)
-                fill = (40, 70, 48) if met else (70, 40, 40)
-                self._draw_icon_btn(
-                    surface,
-                    rrect,
-                    icon=ic,
-                    hovered=rhov,
-                    border=border,
-                    fill=fill,
-                )
-                tip = str(row.get("label") or "Requirement")
-                if met:
-                    tip = f"{tip} (met)"
-                else:
-                    tip = f"{tip} — {coins} coins/season"
-                    if coins > 0:
-                        coin_r = pygame.Rect(rrect.right + 2, y + 4, 18, 18)
-                        blit_icon(surface, "coins", coin_r.centerx, coin_r.centery, 14)
-                        cost = self.font_tiny.render(str(coins), True, (220, 180, 90))
-                        surface.blit(cost, (coin_r.right + 1, y + 7))
-                        self._icon_tips.append(
-                            (coin_r, f"{coins} coins per season while unmet")
-                        )
-                        req_x = coin_r.right + cost.get_width() + 8
-                    else:
-                        req_x = rrect.right + 4
-                    self._icon_tips.append((rrect, tip))
-                    continue
-                self._icon_tips.append((rrect, tip))
-                req_x = rrect.right + 4
-        else:
-            surface.blit(
-                self.font_small.render("—", True, COLOUR_TEXT_DIM),
-                (req_x, y + 4),
-            )
-        y += ICON_BTN + 4
-
-        # Events: temperature cause + happiness history
-        surface.blit(
-            self.font_small.render("Events:", True, COLOUR_TEXT_DIM),
-            (x, events_y + MOD_CELL // 2 - 6),
-        )
-        event_x = content_x
-        any_event = False
-        if temp_ev is not None:
-            any_event = True
-            ic = str(temp_ev["icon"])
-            key = str(temp_ev["key"])
-            irect = pygame.Rect(event_x, events_y, MOD_CELL, MOD_CELL)
-            hi = cause_is_highlighted("events", key, hover)
-            ihov = mouse_pos is not None and irect.collidepoint(mouse_pos)
-            self._draw_icon_btn(
-                surface,
-                irect,
-                icon=ic,
-                hovered=ihov or hi,
-                border=HIGHLIGHT_BORDER if hi else None,
-            )
-            self._icon_tips.append((irect, str(temp_ev["tip"])))
-            event_x += MOD_CELL + MOD_GAP
-        events = list(
-            getattr(villager, "happiness_events", None)
-            or getattr(villager, "happiness_impacts", None)
-            or []
-        )
-        if events:
-            for ev in events[-6:]:
-                if not isinstance(ev, dict):
-                    continue
-                any_event = True
-                ic = str(ev.get("icon") or "coins")
-                irect = pygame.Rect(event_x, events_y, ICON_BTN, ICON_BTN)
-                ihov = mouse_pos is not None and irect.collidepoint(mouse_pos)
-                self._draw_icon_btn(surface, irect, icon=ic, hovered=ihov)
-                delta = int(round(float(ev.get("delta", 0) or 0)))
-                sign = "+" if delta > 0 else ""
-                label = str(ev.get("label") or "Event")
-                if delta != 0:
-                    tip = (
-                        f"{label}"
-                        if f"{sign}{delta}" in label
-                        else f"{label} ({sign}{delta})"
-                    )
-                else:
-                    tip = label
-                badge = self.font_tiny.render(
-                    f"{sign}{delta}" if delta != 0 else "·",
-                    True,
-                    (120, 200, 120)
-                    if delta > 0
-                    else ((200, 120, 100) if delta < 0 else COLOUR_TEXT_DIM),
-                )
-                surface.blit(
-                    badge,
-                    (
-                        irect.x + (irect.w - badge.get_width()) // 2,
-                        irect.bottom - badge.get_height(),
-                    ),
-                )
-                self._icon_tips.append((irect, tip))
-                event_x += ICON_BTN + 2
-        if not any_event:
-            surface.blit(
-                self.font_small.render("—", True, COLOUR_TEXT_DIM),
-                (event_x, events_y + MOD_CELL // 2 - 6),
-            )
-        y = events_y + MOD_CELL + 4
 
         display_season = current_season if villager.seasonal_priorities else None
         status_slots = villager.active_workplace_slot_ids(display_season)
@@ -966,36 +1039,6 @@ class VillagerInspectDialog:
 
         y += SECTION_GAP
 
-        tool_h, tool_hits, tool_tip = draw_tool_slot(
-            surface,
-            origin=(x, y),
-            equipped_tools=list(villager.inventory.equipped_tools),
-            mouse_pos=mouse_pos,
-            fonts=self._fonts(),
-            interactive=True,
-        )
-        self._tool_hits = tool_hits
-        y += tool_h + 4
-        clothes_h, clothes_hits, clothes_tip = draw_clothing_slots(
-            surface,
-            origin=(x, y),
-            equipped_clothing=dict(villager.inventory.equipped_clothing),
-            mouse_pos=mouse_pos,
-            fonts=self._fonts(),
-            interactive=True,
-        )
-        self._clothing_hits = clothes_hits
-        y += clothes_h + SECTION_GAP
-        surface.blit(
-            self.font_small.render(
-                "Click a slot to equip or unequip tools / clothes.",
-                True,
-                COLOUR_TEXT_DIM,
-            ),
-            (x, y - 6),
-        )
-
-        tip_key: str | None = tool_tip or clothes_tip
         if dual:
             col_w = (inner_w - INV_PANEL_GAP) // 2
             left_h, left_hits, left_tips, left_hov, *_ = draw_inv_grid(

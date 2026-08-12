@@ -29,12 +29,22 @@ _CROP_PRODUCE_FOOD = tuple(
     if c.key in _FOOD_CROP_KEYS
 )
 _CROP_PRODUCE_WARES = tuple(
-    ResourceDef(c.produce_key, c.label, "wares", c.short)
+    ResourceDef(
+        c.produce_key,
+        f"{c.label} sheaf" if c.key in ("wheat", "rye") else c.label,
+        "wares",
+        c.short,
+    )
     for c in CROPS
     if c.key not in _FOOD_CROP_KEYS
 )
 _CROP_SEEDS = tuple(
-    ResourceDef(c.seed_key, f"{c.label} seeds", "agriculture", f"{c.short}.s")
+    ResourceDef(
+        c.seed_key,
+        c.label if c.key in ("wheat", "rye") else f"{c.label} seeds",
+        "agriculture",
+        c.short if c.key in ("wheat", "rye") else f"{c.short}.s",
+    )
     for c in CROPS
 )
 _TREE_SAPLINGS = tuple(
@@ -352,24 +362,17 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
     if key == "reeds":
         return ResourceIconStyle(ICON_REED, {"stem": COLOUR_REED})
 
+    if key == "wheat_flour":
+        return ResourceIconStyle("flour_wheat", {})
+    if key == "rye_flour":
+        return ResourceIconStyle("flour_rye", {})
+
     if key == "fur":
         return ResourceIconStyle("fur", {"body": (210, 190, 170)})
     if key == "hide":
         return ResourceIconStyle("hide", {"body": (196, 168, 130)})
     if key == "leather":
         return ResourceIconStyle("leather", {"body": (139, 90, 43)})
-    if key == "wheat_flour":
-        return ResourceIconStyle(
-            ICON_SEEDS,
-            {"flower": (220, 200, 140)},
-            badge_key="wheat",
-        )
-    if key == "rye_flour":
-        return ResourceIconStyle(
-            ICON_SEEDS,
-            {"flower": (190, 160, 110)},
-            badge_key="rye",
-        )
     if key == "bread":
         return ResourceIconStyle(ICON_BREAD, {"body": (210, 170, 100)})
     if key == "stew":
@@ -402,6 +405,16 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
             "berry_jam",
             {"body": (160, 60, 90), "accent": (200, 80, 110)},
         )
+    if key == "berry_tart":
+        return ResourceIconStyle(
+            "berry_tart",
+            {"body": (180, 120, 70), "accent": (160, 50, 90)},
+        )
+    if key == "lebkuchen":
+        return ResourceIconStyle(
+            "lebkuchen",
+            {"body": (150, 90, 50), "accent": (100, 60, 30)},
+        )
     if key == "grilled_meat":
         # Same marker as raw meat, browned/cooked tint.
         return ResourceIconStyle(ICON_MEAT_MARKER, {"body": (160, 90, 45)})
@@ -433,6 +446,15 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
                 badge_key=crop_key,
             )
         return ResourceIconStyle(ICON_SEEDS, {"flower": _SEED_COLOUR})
+
+    if key.endswith("_grain"):
+        crop_key = key[: -len("_grain")]
+        if crop_key in CROP_BY_KEY:
+            return ResourceIconStyle(
+                ICON_SEEDS,
+                {"flower": _SEED_COLOUR},
+                badge_key=crop_key,
+            )
 
     crop = CROP_BY_KEY.get(key)
     if crop is not None:

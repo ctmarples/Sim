@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 40 40"
+   width="40"
+   height="40"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="leather_backpack.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1" />
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="8.7869021"
+     inkscape:cx="10.640838"
+     inkscape:cy="19.97291"
+     inkscape:window-width="1470"
+     inkscape:window-height="834"
+     inkscape:window-x="0"
+     inkscape:window-y="33"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg1" />
+  <title
+     id="title1">leather_satchel</title>
+  <path
+     id="rect1"
+     style="fill:#eeb96c;stroke-width:1.257;fill-opacity:1"
+     d="m 8.7258434,12.28992 c 7.1408446,-9.357505 14.0793256,-7.9896866 20.8928646,0 0.716031,1.817899 1.126368,3.80254 -0.245798,6.759456 4.668243,5.275859 1.536746,10.079007 0.245798,14.993702 -1.211641,1.39549 -6.48711,5.724415 -22.7363526,-1.228992 C 6.1520777,28.820542 8.8569486,26.413795 7.9346894,24.470183 6.4862788,21.417734 7.0282172,17.39285 8.7258434,12.28992 Z"
+     sodipodi:nodetypes="cccccsc" />
+  <path
+     id="rect1-9"
+     style="fill:#e9a645;fill-opacity:1;stroke-width:1.257"
+     d="m 8.6099639,9.3052801 c 7.1408431,-9.357505 14.0793241,-7.9896866 20.8928631,0 C 30.218858,11.123179 22.666259,16.287201 18.842338,15.865705 15.484018,15.49553 6.9123379,14.40821 8.6099639,9.3052801 Z"
+     sodipodi:nodetypes="ccsc" />
+  <path
+     id="rect2"
+     style="fill:#49310c;stroke-width:1.05082"
+     d="m 7.8533637,24.280581 c 5.9331863,3.142066 15.1965213,1.155594 23.9203363,0 v 2.363199 c -13.494452,2.818135 -19.439278,1.78265 -23.9203363,0 z"
+     sodipodi:nodetypes="ccccc" />
+  <path
+     id="rect2-7"
+     style="fill:#49310c;stroke-width:1.03004"
+     d="m 7.561554,14.777702 c 5.700863,3.142066 14.601476,1.155594 22.983696,0 v 2.363199 c -12.966054,2.818135 -18.678101,1.78265 -22.983696,0 z"
+     sodipodi:nodetypes="ccccc" />
+  <path
+     id="rect2-7-2"
+     style="fill:#2c1d07;stroke-width:0.542187;fill-opacity:1"
+     d="m 21.150249,10.4609 c 1.113818,-0.238744 1.26353,-0.4908376 2.161476,-0.288197 l 0.07205,6.230504 c -0.0214,-1.357543 -1.218134,2.444411 -2.089427,0.07205 z"
+     sodipodi:nodetypes="ccccc" />
+  <path
+     id="rect2-7-2-3"
+     style="fill:#2c1d07;fill-opacity:1;stroke-width:0.542187"
+     d="m 13.207459,11.195722 c 1.113818,-0.238744 1.26353,-0.490838 2.161476,-0.288197 l 0.07205,6.230504 c -0.0214,-1.357543 -1.218134,2.444411 -2.089427,0.07205 z"
+     sodipodi:nodetypes="ccccc" />
+</svg>

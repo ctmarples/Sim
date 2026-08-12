@@ -89,7 +89,7 @@ CROPS: tuple[CropDef, ...] = (
         key="wheat",
         label="Wheat",
         produce_key="wheat",
-        seed_key="wheat_seeds",
+        seed_key="wheat_grain",
         short="wht",
         stem_colour=(200, 170, 55),
         flower_colour=None,
@@ -195,7 +195,7 @@ CROPS: tuple[CropDef, ...] = (
         key="rye",
         label="Rye",
         produce_key="rye",
-        seed_key="rye_seeds",
+        seed_key="rye_grain",
         short="rye",
         stem_colour=(170, 140, 70),
         flower_colour=None,
@@ -299,7 +299,7 @@ CROPS: tuple[CropDef, ...] = (
 
 CROP_BY_KEY: dict[str, CropDef] = {c.key: c for c in CROPS}
 CROP_KEYS: tuple[str, ...] = tuple(c.key for c in CROPS)
-PRODUCE_KEYS: tuple[str, ...] = tuple(c.produce_key for c in CROPS)
+PRODUCE_KEYS: tuple[str, ...] = tuple(dict.fromkeys(c.produce_key for c in CROPS))
 SEED_KEYS: tuple[str, ...] = tuple(c.seed_key for c in CROPS)
 
 # Legacy save migration: generic herbs → sage.

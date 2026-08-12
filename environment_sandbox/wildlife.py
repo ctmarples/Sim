@@ -55,7 +55,6 @@ from resource_balance import (
     HUNT_SCARE_STEPS,
     MIN_BREEDING_CAPACITY,
     PATH_FIND_MAX_NODES,
-    RABBIT_MEAT_PER_LEVEL,
     RABBIT_MOVE_PAUSE,
     SMALL_GAME_FORAGE_RADIUS,
     WILDLIFE_RESEED_PAIR,
@@ -2126,7 +2125,7 @@ class WildlifeManager:
         if kind is not None and colony.kind != kind:
             return None
         if colony.kind == AnimalKind.RABBIT:
-            amount = RABBIT_MEAT_PER_LEVEL
+            amount = 1  # actual loot comes from hunter recipe outputs in game.py
         elif colony.kind == AnimalKind.BEE:
             amount = HONEY_PER_BEE_LEVEL
         else:

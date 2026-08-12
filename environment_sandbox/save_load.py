@@ -86,6 +86,18 @@ def _normalize_legacy_storage(data: dict[str, Any]) -> dict[str, Any]:
         out["wood"] = 0
     if "hardwood_logs" not in out and "hardwood" in out:
         out["hardwood_logs"] = int(out.get("hardwood", 0))
+    ws = int(out.get("wheat_seeds", 0))
+    if ws:
+        out["wheat_grain"] = int(out.get("wheat_grain", 0)) + ws
+        out["wheat_seeds"] = 0
+    rs = int(out.get("rye_seeds", 0))
+    if rs:
+        out["rye_grain"] = int(out.get("rye_grain", 0)) + rs
+        out["rye_seeds"] = 0
+    legacy = int(out.get("grain", 0))
+    if legacy:
+        out["wheat_grain"] = int(out.get("wheat_grain", 0)) + legacy
+        out["grain"] = 0
     return out
 
 
@@ -199,6 +211,7 @@ def _cell_to_dict(cell: Cell) -> dict[str, Any]:
         "deposit": cell.deposit,
         "meat_deposit": cell.meat_deposit,
         "hide_deposit": cell.hide_deposit,
+        "fur_deposit": cell.fur_deposit,
         "fish_deposit": cell.fish_deposit,
     }
     crop_kind = getattr(cell, "crop_kind", None)
@@ -227,6 +240,7 @@ def _cell_from_save(c: dict[str, Any]) -> Cell:
         deposit=int(c.get("deposit", 0)),
         meat_deposit=int(c.get("meat_deposit", 0)),
         hide_deposit=int(c.get("hide_deposit", 0)),
+        fur_deposit=int(c.get("fur_deposit", 0)),
         fish_deposit=int(c.get("fish_deposit", 0)),
     )
     crop_kind = c.get("crop_kind")

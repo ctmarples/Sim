@@ -5,12 +5,15 @@
    height="40"
    version="1.1"
    id="svg2"
-   sodipodi:docname="leather_shoes.svg"
+   sodipodi:docname="leather_boots.svg"
    inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns="http://www.w3.org/2000/svg"
-   xmlns:svg="http://www.w3.org/2000/svg">
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
   <defs
      id="defs2" />
   <sodipodi:namedview
@@ -34,15 +37,24 @@
   <title
      id="title1">leather_shoes</title>
   <path
-     d="M 8,26 C 8.7624088,22.950365 6.9354867,17.492921 9.3409862,17.31487 12.832299,17.05645 19.524818,16.762409 22,18 l 10,4 c 2,1 2,6 -2,6 H 12 C 8,28 6,26 8,26 Z"
-     fill="#8b5a2b"
-     stroke="#4a3020"
-     stroke-width="1.2"
-     id="path1"
-     sodipodi:nodetypes="csccssc" />
-  <path
-     d="M10 24 H26"
-     stroke="#6b3f1f"
-     stroke-width="1"
-     id="path2" />
+     id="rect2"
+     style="fill:#976618;stroke-width:1.39173"
+     d="m 5.9462061,12.461668 12.2152189,0.481799 c -5.220841,10.1817 4.808313,8.546126 11.437414,8.650406 2.875863,1.350007 8.542232,0.175 1.365076,10.621558 L 6.5334764,32.335881 C 6.2235862,28.557812 4.795664,32.115166 5.9462061,12.461668 Z"
+     sodipodi:nodetypes="cccccc" />
+  <rect
+     style="fill:#49310c;fill-opacity:1;stroke-width:1.27877"
+     id="rect3"
+     width="25.460476"
+     height="3.5451298"
+     x="6.5531187"
+     y="30.294746" />
+  <metadata
+     id="metadata3">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:title>leather_shoes</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
 </svg>

@@ -1,3 +1,5 @@
 name,label,inputs,outputs,icon_key,extraction,farming,hunting,crafting,labour,transport,resource_group,resource_short,clothing_slot,walk_speed,capacity_bonus,heat_protection,cold_protection
 leather_shoes,Leather shoes,leather:2,leather_shoes:1,leather_shoes,,,,2,,,wares,l.sh,shoes,1.2,,1.0,1.0
 leather_satchel,Leather satchel,leather:1,leather_satchel:1,leather_satchel,,,,2,,,wares,l.bag,bag,1.0,10,,
+leather_backpack,Leather backpack,"leather:2;linen_fabric:1;linen_thread:1",leather_backpack:1,leather_backpack,,,,3,,,wares,l.bts,bag,0.9,30
+leather_boots,Leather boots,leather:2;linen_fabric:1;linen_thread:1,leather_boots:1,leather_boots,,,,3,,,wares,l.bck,shoes,1.4,,1.0,1.0

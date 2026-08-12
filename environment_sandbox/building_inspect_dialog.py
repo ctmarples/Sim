@@ -608,14 +608,43 @@ class BuildingInspectDialog:
                     ),
                 )
                 self._buttons.append((f"cycle_recipe_priority:{recipe.name}", prio_cell))
-            ix = out_cell.right + GRID_GAP + 20
-            if recipe.inputs:
-                arrow = self.font_small.render("←", True, COLOUR_TEXT_DIM)
-                surface.blit(
-                    arrow,
-                    (ix, row_y + (RECIPE_OUT_CELL - arrow.get_height()) // 2),
+            ix = out_cell.right + GRID_GAP
+            for out_key_extra, out_n in list(recipe.outputs.items())[1:]:
+                if ix + GRID_CELL > x + inner_w:
+                    break
+                out_cell_extra = pygame.Rect(
+                    ix,
+                    row_y + (RECIPE_OUT_CELL - GRID_CELL) // 2,
+                    GRID_CELL,
+                    GRID_CELL,
                 )
-                ix += arrow.get_width() + 6
+                out_hov_extra = (
+                    view.collidepoint(mouse_pos or (-1, -1))
+                    and mouse_pos is not None
+                    and out_cell_extra.collidepoint(mouse_pos)
+                )
+                draw_resource_cell(
+                    surface,
+                    cell=out_cell_extra,
+                    key=out_key_extra,
+                    count=out_n,
+                    fonts=fonts,
+                    hovered=out_hov_extra,
+                    dimmed=not enabled,
+                )
+                if out_cell_extra.colliderect(view):
+                    self._inv_tip_hits.append((out_cell_extra, "recipe", out_key_extra))
+                if out_hov_extra:
+                    tip_key = out_key_extra
+                ix += GRID_CELL + GRID_GAP
+            if recipe.inputs:
+                arrow = self.font_small.render("→", True, COLOUR_TEXT_DIM)
+                if ix + arrow.get_width() + 6 + GRID_CELL <= x + inner_w:
+                    surface.blit(
+                        arrow,
+                        (ix, row_y + (RECIPE_OUT_CELL - arrow.get_height()) // 2),
+                    )
+                    ix += arrow.get_width() + GRID_GAP
                 for in_key, in_n in recipe.inputs.items():
                     if ix + GRID_CELL > x + inner_w:
                         break
@@ -646,13 +675,7 @@ class BuildingInspectDialog:
                     ix += GRID_CELL + GRID_GAP
             if show_fuel:
                 if ix + GRID_CELL > x + inner_w:
-                    ix = out_cell.right + GRID_GAP + 20
-                    arrow2 = self.font_small.render("←", True, COLOUR_TEXT_DIM)
-                    surface.blit(
-                        arrow2,
-                        (ix, row_y + (RECIPE_OUT_CELL - arrow2.get_height()) // 2),
-                    )
-                    ix += arrow2.get_width() + 6
+                    ix = out_cell.right + GRID_GAP
                 fuel_cell = pygame.Rect(
                     ix,
                     row_y + (RECIPE_OUT_CELL - GRID_CELL) // 2,
@@ -1418,11 +1441,17 @@ class BuildingInspectDialog:
             if plant_tip:
                 tip_key = plant_tip
         if craft_recipes:
+            craft_title = (
+                "Barn"
+                if building.kind == BuildingKind.FARM
+                and BuildingKind.BARN in building.linked_extensions
+                else "Recipes"
+            )
             block_h, craft_tip = self._draw_craft_recipes(
                 surface,
                 building=building,
                 recipes=craft_recipes,
-                title="Recipes",
+                title=craft_title,
                 x=x,
                 y=y,
                 inner_w=inner_w,

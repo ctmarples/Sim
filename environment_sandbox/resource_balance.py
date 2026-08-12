@@ -44,6 +44,23 @@ VILLAGER_FOOD_KEYS: list[str] = [
 MEAL_POINTS_FULL: float = 5.0
 # Max distinct food types in one meal (1 unit of each type).
 MAX_FOOD_TYPES_PER_MEAL: int = 3
+# Dessert extras after a full meat meal (kitchen sweets + honey).
+SWEET_FOOD_KEYS: set[str] = {"honey"}
+
+
+def register_sweet_food(key: str) -> None:
+    """Mark ``key`` as a dessert that can accompany a full meat meal."""
+    if key:
+        SWEET_FOOD_KEYS.add(str(key))
+
+
+def food_is_sweet(key: str) -> bool:
+    return str(key) in SWEET_FOOD_KEYS
+
+
+def meal_includes_meat(food_keys: list[str]) -> bool:
+    """True when the meal covers the meat staple (not fish-only)."""
+    return any(food_covers_requirement(k, "meat") for k in food_keys)
 
 
 @dataclass(frozen=True)
@@ -165,8 +182,42 @@ def storage_meal_score(
 # Local alias so this module does not import society (cycle risk).
 HIRE_STAPLE_FOODS_LOCAL: tuple[str, ...] = ("meat", "fish", "bread")
 
-# Which edible keys count toward hire staple requirements (meat / fish / bread).
-# Cooked dishes inherit the staple(s) in their recipe.
+# Raw produce keys that satisfy the ``vegetables`` hire requirement.
+VEGETABLE_KEYS: frozenset[str] = frozenset({"onion", "cabbage", "carrot", "garlic"})
+
+# Composite hire requirement keys (OR groups and category labels).
+REQUIREMENT_OR_GROUPS: dict[str, frozenset[str]] = {
+    "meat/fish": frozenset({"meat", "fish"}),
+}
+
+REQUIREMENT_LABELS: dict[str, str] = {
+    "meat/fish": "Meat or fish",
+    "vegetables": "Vegetables",
+}
+
+REQUIREMENT_ICONS: dict[str, str] = {
+    "meat/fish": "meat",
+    "vegetables": "vegetable_soup",
+}
+
+# Which hire requirement keys each edible item satisfies (includes cooked dishes).
+FOOD_REQUIREMENT_TAGS: dict[str, frozenset[str]] = {
+    "meat": frozenset({"meat", "meat/fish"}),
+    "fish": frozenset({"fish", "meat/fish"}),
+    "grilled_meat": frozenset({"meat", "meat/fish"}),
+    "grilled_fish": frozenset({"fish", "meat/fish"}),
+    "stew": frozenset({"meat", "meat/fish", "vegetables"}),
+    "spiced_stew": frozenset({"meat", "meat/fish", "vegetables"}),
+    "fish_stew": frozenset({"fish", "meat/fish"}),
+    "bread": frozenset({"bread"}),
+    "onion": frozenset({"vegetables"}),
+    "cabbage": frozenset({"vegetables"}),
+    "carrot": frozenset({"vegetables"}),
+    "garlic": frozenset({"vegetables"}),
+    "vegetable_soup": frozenset({"vegetables"}),
+}
+
+# Legacy staple tags kept for callers that only know meat / fish / bread.
 FOOD_STAPLE_TAGS: dict[str, frozenset[str]] = {
     "meat": frozenset({"meat"}),
     "grilled_meat": frozenset({"meat"}),
@@ -179,6 +230,17 @@ FOOD_STAPLE_TAGS: dict[str, frozenset[str]] = {
 }
 
 
+def food_requirement_tags(key: str) -> frozenset[str]:
+    tags = set(FOOD_REQUIREMENT_TAGS.get(key, ()))
+    tags.update(FOOD_STAPLE_TAGS.get(key, ()))
+    if key in VEGETABLE_KEYS:
+        tags.add("vegetables")
+    staples = tags & frozenset({"meat", "fish"})
+    if staples:
+        tags.add("meat/fish")
+    return frozenset(tags)
+
+
 def food_staple_tags(key: str) -> frozenset[str]:
     tags = FOOD_STAPLE_TAGS.get(key)
     if tags is not None:
@@ -189,7 +251,30 @@ def food_staple_tags(key: str) -> frozenset[str]:
 
 
 def food_covers_requirement(food_key: str, requirement: str) -> bool:
-    return requirement in food_staple_tags(food_key) or food_key == requirement
+    if food_key == requirement:
+        return True
+    return requirement in food_requirement_tags(food_key)
+
+
+def requirement_met_in_stock(amounts: dict[str, int], requirement: str) -> bool:
+    """True if village stock satisfies one hire food requirement key."""
+    req = str(requirement)
+    if req in REQUIREMENT_OR_GROUPS:
+        group = REQUIREMENT_OR_GROUPS[req]
+        if any(int(amounts.get(k, 0)) > 0 for k in group):
+            return True
+        return any(
+            int(qty) > 0 and food_covers_requirement(key, req)
+            for key, qty in amounts.items()
+        )
+    if req == "vegetables":
+        if any(int(amounts.get(k, 0)) > 0 for k in VEGETABLE_KEYS):
+            return True
+        return any(
+            int(qty) > 0 and food_covers_requirement(key, req)
+            for key, qty in amounts.items()
+        )
+    return int(amounts.get(req, 0)) > 0
 
 
 def food_covers_any_requirement(food_key: str, required: list[str] | None) -> bool:
@@ -236,9 +321,7 @@ ROCK_SMALL_MAX: int = 5
 ROCK_LARGE_MIN: int = 20
 ROCK_LARGE_MAX: int = 28
 
-DEER_MEAT_YIELD: int = 3
-BOAR_MEAT_YIELD: int = 5
-ANIMAL_MEAT_YIELD: int = DEER_MEAT_YIELD  # legacy alias
+# Deer / boar / rabbit hunt yields: recipes_data/hunter/recipes.csv (outputs column).
 # After a deer/boar kill: other deer & boar in this Chebyshev radius flee.
 HUNT_SCARE_RADIUS: int = 5
 # How many flee steps each scared animal takes.
@@ -304,11 +387,9 @@ COLONY_RABBIT_CROP_EAT_CHANCE: float = 0.30
 # After a hunt/honey collect: growth ticks before the colony can be harvested again.
 COLONY_HARVEST_COOLDOWN: int = 8
 # Hunter: one level drop yields this much meat (one hunt = one level).
-RABBIT_MEAT_PER_LEVEL: int = 3
-# Hunter: fur from each rabbit colony level drop (alongside meat).
-RABBIT_FUR_PER_LEVEL: int = 1
-# Farm: straw byproduct when harvesting wheat or rye.
-GRAIN_STRAW_YIELD: int = 2
+# Rabbit warren yields: recipes_data/hunter/recipes.csv (rabbit row).
+# Barn threshing: straw byproduct when processing wheat/rye into grain (recipes_data/barn).
+GRAIN_STRAW_YIELD: int = 2  # legacy; straw now comes from barn recipes
 # Forager: one level drop yields this much honey (one collect = one level).
 HONEY_PER_BEE_LEVEL: int = 5
 # Rabbit members: pause this many ticks after each one-tile hop.

@@ -24,6 +24,8 @@ MARKET_PRICES: dict[str, int] = {
     "garlic": 2,
     "wheat": 2,
     "rye": 2,
+    "wheat_grain": 2,
+    "rye_grain": 2,
     "flax": 2,
     "hemp": 2,
     "sage": 2,
@@ -107,6 +109,8 @@ _SEASON_BIAS: dict[str, tuple[str, ...]] = {
     "AUTUMN": (
         "wheat",
         "rye",
+        "wheat_grain",
+        "rye_grain",
         "wheat_flour",
         "rye_flour",
         "bread",
