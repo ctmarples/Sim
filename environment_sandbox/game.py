@@ -100,6 +100,7 @@ from entities import (
     default_processor_capacities,
     entity_draw_xy,
     note_cell_step,
+    preferred_clothing_for_temp,
     snap_entity_visual,
 )
 from indicators import (
@@ -138,6 +139,7 @@ from settings import (
     COLOUR_CRAFT_BENCH,
     COLOUR_ALCHEMIST,
     COLOUR_TAILOR,
+    COLOUR_COBBLER,
     COLOUR_MARKET,
     COLOUR_MASON,
     COLOUR_MEAT,
@@ -248,6 +250,7 @@ from seasons import (
     TICKS_PER_DAY,
     YEAR_DAYS,
     Season,
+    ambient_temperature_c,
     blend_colour,
     day_in_season,
     fishing_allowed,
@@ -256,6 +259,7 @@ from seasons import (
     season_for_day,
     seed_chance_multiplier,
     set_ticks_per_day,
+    temperature_impact,
     terrain_vibrancy,
     water_frozen,
 )
@@ -312,6 +316,7 @@ from villager_roster import (
     VillagerRosterDialog,
     entry_from_candidate,
     entry_from_villager,
+    villager_job_colour,
 )
 from ui import UI, draw_feature
 from terrain_tiles import (
@@ -371,6 +376,7 @@ FEATURE_FOR_BUILDING = {
     BuildingKind.CRAFT_BENCH: FeatureType.CRAFT_BENCH,
     BuildingKind.ALCHEMIST: FeatureType.ALCHEMIST,
     BuildingKind.TAILOR: FeatureType.TAILOR,
+    BuildingKind.COBBLER: FeatureType.COBBLER,
     BuildingKind.MARKET: FeatureType.MARKET,
     BuildingKind.TENT: FeatureType.TENT,
     BuildingKind.HOUSE_SMALL: FeatureType.HOUSE_SMALL,
@@ -2612,6 +2618,7 @@ class Game:
                     v,
                     job=job,
                     status=state,
+                    job_colour=villager_job_colour(v, self.buildings),
                     requirement_rows=villager_requirement_rows(
                         v,
                         self.buildings,
@@ -4521,6 +4528,12 @@ class Game:
                 key = action.split(":", 1)[1]
             self._villager_unequip_tool(key)
             return
+        if action.startswith("clothing_equip:"):
+            self._villager_equip_clothing(action.split(":", 1)[1])
+            return
+        if action.startswith("clothing_unequip:"):
+            self._villager_unequip_clothing(action.split(":", 1)[1])
+            return
         villager = self._get_villager(self.villager_inspect.villager_id or -1)
         if villager is None:
             return
@@ -4617,6 +4630,63 @@ class Game:
             self._set_status(f"Villager {villager.id} unequipped {label}.")
             return
         self._set_status("Cargo full — cannot unequip tool.")
+
+    def _villager_equip_clothing(self, slot: str) -> None:
+        from entities import CLOTHING_ITEM_SLOT
+        from resources import resource_label
+
+        villager = self._get_villager(self.villager_inspect.villager_id or -1)
+        if villager is None:
+            return
+        inv = villager.inventory
+        for key, item_slot in CLOTHING_ITEM_SLOT.items():
+            if item_slot != slot:
+                continue
+            if inv.equip_clothing(key):
+                self._set_status(
+                    f"Villager {villager.id} equipped {resource_label(key)}."
+                )
+                return
+            if self.villager_inspect.show_player and int(
+                getattr(self.player.inventory, key, 0)
+            ) > 0:
+                if not self.player.inventory.consume_item(key, 1):
+                    continue
+                if not inv.add_item(key, 1):
+                    self.player.inventory.add_item(key, 1)
+                    continue
+                if inv.equip_clothing(key):
+                    self._set_status(
+                        f"Villager {villager.id} equipped {resource_label(key)}."
+                    )
+                    return
+                inv.consume_item(key, 1)
+                self.player.inventory.add_item(key, 1)
+        self._set_status("No clothing for that slot.")
+
+    def _villager_unequip_clothing(self, slot: str) -> None:
+        from resources import resource_label
+
+        villager = self._get_villager(self.villager_inspect.villager_id or -1)
+        if villager is None:
+            return
+        inv = villager.inventory
+        key = inv.equipped_in_slot(slot)
+        if key is None:
+            return
+        label = resource_label(key)
+        if not inv.unequip_clothing(slot):
+            self._set_status("Cargo full — cannot unequip clothing.")
+            return
+        if (
+            self.villager_inspect.show_player
+            and self.player.inventory.can_add(1, key=key)
+            and inv.consume_item(key, 1)
+        ):
+            self.player.inventory.add_item(key, 1)
+            self._set_status(f"Gave {label} to player.")
+            return
+        self._set_status(f"Villager {villager.id} unequipped {label}.")
 
     def _transfer_villager_to_player(self, key: str) -> None:
         if not self.villager_inspect.show_player:
@@ -4890,7 +4960,11 @@ class Game:
         interval = self._player_move_interval()
         self.player.move_cooldown = interval
         arm_cell_step_visual(self.player, interval)
-        self.player.energy = max(0.0, self.player.energy - ENERGY_MOVE_DRAIN)
+        self.player.energy = max(
+            0.0,
+            self.player.energy
+            - ENERGY_MOVE_DRAIN * self._temp_energy_mult(self.player.inventory),
+        )
         if follow_camera:
             self._ensure_player_in_view()
 
@@ -5021,27 +5095,7 @@ class Game:
         return "unassigned"
 
     def _villager_job_colour(self, villager: Villager) -> tuple[int, int, int]:
-        if villager.assigned_to_home:
-            return COLOUR_HOME
-        if villager.building_id is not None:
-            building = self.buildings.get(villager.building_id)
-            if building is not None:
-                return {
-                    BuildingKind.FORESTER: COLOUR_FORESTER,
-                    BuildingKind.MASON: COLOUR_MASON,
-                    BuildingKind.HUNTER: COLOUR_HUNTER,
-                    BuildingKind.FORAGER: COLOUR_FORAGER,
-                    BuildingKind.FISHER: COLOUR_FISHER,
-                    BuildingKind.FARM: COLOUR_FARM,
-                    BuildingKind.FIELD: COLOUR_FARM,
-                    BuildingKind.MILL: COLOUR_MILL,
-                    BuildingKind.KITCHEN: COLOUR_KITCHEN,
-                    BuildingKind.CRAFT_BENCH: COLOUR_CRAFT_BENCH,
-                    BuildingKind.ALCHEMIST: COLOUR_ALCHEMIST,
-                    BuildingKind.TAILOR: COLOUR_TAILOR,
-                    BuildingKind.MARKET: COLOUR_MARKET,
-                }.get(building.kind, COLOUR_VILLAGER)
-        return COLOUR_VILLAGER
+        return villager_job_colour(villager, self.buildings)
 
     def _wake_building_workers(self, building_id: int) -> None:
         for villager in self.villagers:
@@ -6184,7 +6238,8 @@ class Game:
 
     def _spend_work_energy(self, villager: Villager) -> None:
         """Spend energy on an actual work tick (extract / process / build)."""
-        villager.energy = max(0.0, villager.energy - ENERGY_WORK_DRAIN)
+        drain = ENERGY_WORK_DRAIN * self._temp_energy_mult(villager.inventory)
+        villager.energy = max(0.0, villager.energy - drain)
 
     def _gain_job_skill(self, villager: Villager, kind_name: str) -> None:
         skill, _ = skill_for_building(kind_name)
@@ -6664,7 +6719,7 @@ class Game:
         return allowed
 
     def _villager_needs_home_restock(self, villager: Villager) -> bool:
-        """True when storehouse can refill a missing job tool or arrow stack."""
+        """True when storehouse can refill a missing job tool, arrows, or clothing."""
         inv = villager.inventory
         home = self.home_storage
         for tool in self._allowed_tools_for_villager(villager):
@@ -6679,10 +6734,93 @@ class Game:
             have = int(getattr(inv, "stone_arrows", 0))
             if have < stack and int(getattr(home, "stone_arrows", 0)) > 0:
                 return True
+        if self._clothing_upgrade_available(villager):
+            return True
         return False
 
+    def _best_clothing_for_slot(
+        self, inventory: Inventory, slot: str
+    ) -> tuple[str | None, str | None]:
+        """Return (item_key, source) where source is worn/cargo/home."""
+        prefs = preferred_clothing_for_temp(ambient_temperature_c(self.calendar_day))
+        keys = prefs.get(slot, ())
+        home = self.home_storage
+        for key in keys:
+            if inventory.equipped_in_slot(slot) == key:
+                return key, "worn"
+            if int(getattr(inventory, key, 0)) > 0:
+                return key, "cargo"
+            if int(getattr(home, key, 0)) > 0:
+                return key, "home"
+        return None, None
+
+    def _clothing_upgrade_available(self, villager: Villager) -> bool:
+        """True when a better seasonal garment is in cargo or the storehouse."""
+        inv = villager.inventory
+        prefs = preferred_clothing_for_temp(ambient_temperature_c(self.calendar_day))
+        for slot in prefs:
+            best, source = self._best_clothing_for_slot(inv, slot)
+            if best is None or source == "worn":
+                continue
+            worn = inv.equipped_in_slot(slot)
+            if worn is None:
+                return True
+            keys = prefs[slot]
+            if worn not in keys:
+                return True
+            if best in keys and keys.index(best) < keys.index(worn):
+                return True
+        return False
+
+    def _try_equip_preferred_clothing_from_cargo(self, villager: Villager) -> bool:
+        """Equip better seasonal clothing already in cargo. Returns True if any change."""
+        inv = villager.inventory
+        prefs = preferred_clothing_for_temp(ambient_temperature_c(self.calendar_day))
+        changed = False
+        for slot in prefs:
+            best, source = self._best_clothing_for_slot(inv, slot)
+            if best is None or source != "cargo":
+                continue
+            worn = inv.equipped_in_slot(slot)
+            if worn == best:
+                continue
+            if inv.equip_clothing(best):
+                changed = True
+        return changed
+
+    def _restock_clothing_at_home(self, villager: Villager) -> None:
+        """Swap in season/temp-appropriate clothing from cargo or storehouse."""
+        if (villager.x, villager.y) != self.world.home_pos:
+            return
+        inv = villager.inventory
+        home = self.home_storage
+        prefs = preferred_clothing_for_temp(ambient_temperature_c(self.calendar_day))
+        for slot in prefs:
+            best, source = self._best_clothing_for_slot(inv, slot)
+            if best is None or source == "worn":
+                continue
+            worn = inv.equipped_in_slot(slot)
+            if worn == best:
+                continue
+            if worn is not None:
+                if not inv.unequip_clothing(slot):
+                    continue
+                # Park the old garment in the storehouse so cargo stays free.
+                have = int(getattr(inv, worn, 0))
+                if have > 0:
+                    setattr(inv, worn, have - 1)
+                    setattr(home, worn, int(getattr(home, worn, 0)) + 1)
+            if source == "cargo":
+                inv.equip_clothing(best)
+                continue
+            stock = int(getattr(home, best, 0))
+            if stock <= 0:
+                continue
+            setattr(home, best, stock - 1)
+            inv.equip_clothing_from_transfer(best)
+
     def _restock_workplace_gear_at_home(self, villager: Villager) -> None:
-        """Equip missing job tools and top up arrows while standing at the storehouse."""
+        """Equip missing job tools, clothing, and top up arrows at the storehouse."""
         if (villager.x, villager.y) != self.world.home_pos:
             return
         inv = villager.inventory
@@ -6702,19 +6840,36 @@ class Game:
             stack = int(STACK_SIZES.get("stone_arrows", 10))
             have = int(getattr(inv, "stone_arrows", 0))
             need = stack - have
-            if need <= 0:
-                return
-            stock = int(getattr(self.home_storage, "stone_arrows", 0))
-            take = min(need, stock)
-            if take <= 0:
-                return
-            # Deposit may have freed cargo space; top up as many as fit.
-            while take > 0 and not inv.can_add(take, key="stone_arrows"):
-                take -= 1
-            if take <= 0:
-                return
-            setattr(self.home_storage, "stone_arrows", stock - take)
-            inv.add_item("stone_arrows", take)
+            if need > 0:
+                stock = int(getattr(self.home_storage, "stone_arrows", 0))
+                take = min(need, stock)
+                while take > 0 and not inv.can_add(take, key="stone_arrows"):
+                    take -= 1
+                if take > 0:
+                    setattr(
+                        self.home_storage,
+                        "stone_arrows",
+                        stock - take,
+                    )
+                    inv.add_item("stone_arrows", take)
+        self._try_equip_preferred_clothing_from_cargo(villager)
+        self._restock_clothing_at_home(villager)
+
+    def _update_home_restock(self, villager: Villager) -> None:
+        """Walk to the storehouse to withdraw tools / seasonal clothing."""
+        home = self.world.home_pos
+        villager.state = VillagerState.WORKING
+        villager.target = home
+        if (villager.x, villager.y) != home:
+            if villager.move_cooldown == 0:
+                self._step_villager_toward(villager, home)
+            return
+        if self._inventory_needs_store_deposit(villager.inventory):
+            self._deposit_home(villager.inventory, status=False)
+        self._restock_workplace_gear_at_home(villager)
+        villager.target = None
+        if villager.state == VillagerState.WORKING:
+            villager.state = VillagerState.IDLE
 
     def _unequip_mismatched_tools(self, villager: Villager) -> bool:
         """Unequip tools that don't match priority jobs. Returns True if any moved."""
@@ -6777,6 +6932,7 @@ class Game:
         villager.haul_building_id = None
         if (villager.x, villager.y) == home:
             self._deposit_home(villager.inventory, status=False)
+            self._restock_workplace_gear_at_home(villager)
             villager.job_change_deposit = False
             villager.state = VillagerState.IDLE
             villager.target = None
@@ -7092,6 +7248,21 @@ class Game:
                         continue
                     villager.seeking_food = False
 
+            # Withdraw tools / seasonal clothing from the storehouse when available.
+            if (
+                villager.state
+                not in (
+                    VillagerState.DELIVERING,
+                    VillagerState.HAULING,
+                    VillagerState.BUILDING,
+                )
+                and self._villager_needs_home_restock(villager)
+            ):
+                self._try_equip_preferred_clothing_from_cargo(villager)
+                if self._villager_needs_home_restock(villager):
+                    self._update_home_restock(villager)
+                    continue
+
             acted = False
             # Mid-build / carrying mats always finishes. Otherwise only preempt the
             # priority loop when BUILD is actually on this villager's list (S7).
@@ -7235,10 +7406,30 @@ class Game:
         scaled = self.balance.get_int("VILLAGER_WORK_INTERVAL") * self._day_length_scale()
         return max(6, int(round(scaled / max(0.15, factor))))
 
+    def _temp_impact(self, inventory: Inventory):
+        """Hot/cold impact for this inventory's equipped clothing."""
+        return temperature_impact(
+            ambient_temperature_c(self.calendar_day),
+            inventory.gear_heat_protection,
+            inventory.gear_cold_protection,
+        )
+
+    def _temp_walk_mult(self, inventory: Inventory) -> float:
+        """Walk speed multiplier from temperature impact (1.0 when comfortable)."""
+        return float(self._temp_impact(inventory).walk_mult)
+
+    def _temp_energy_mult(self, inventory: Inventory) -> float:
+        """Energy drain multiplier from temperature impact."""
+        return float(self._temp_impact(inventory).energy_mult)
+
     def _villager_move_interval(self, villager: Villager) -> int:
         return self._move_interval_for(
             satiation=villager.satiation,
-            food_walk_mult=villager.food_walk_mult,
+            food_walk_mult=(
+                villager.food_walk_mult
+                * villager.inventory.gear_walk_mult
+                * self._temp_walk_mult(villager.inventory)
+            ),
             happiness=villager.happiness,
             energy=villager.energy,
         )
@@ -7247,7 +7438,11 @@ class Game:
         p = self.player
         return self._move_interval_for(
             satiation=p.satiation,
-            food_walk_mult=p.food_walk_mult,
+            food_walk_mult=(
+                p.food_walk_mult
+                * p.inventory.gear_walk_mult
+                * self._temp_walk_mult(p.inventory)
+            ),
             happiness=p.happiness,
             energy=p.energy,
         )
@@ -7282,7 +7477,11 @@ class Game:
 
     def _finish_player_work(self) -> None:
         """Spend energy and start the villager-paced work cooldown after an action."""
-        self.player.energy = max(0.0, self.player.energy - ENERGY_WORK_DRAIN)
+        self.player.energy = max(
+            0.0,
+            self.player.energy
+            - ENERGY_WORK_DRAIN * self._temp_energy_mult(self.player.inventory),
+        )
         self.player.work_cooldown = self._player_work_interval()
 
     def _clear_player_build(self) -> None:
@@ -7726,6 +7925,33 @@ class Game:
                 self._set_status(f"Equipped {resource_label(key)}.")
             else:
                 self._set_status(f"Cannot equip {resource_label(key)}.")
+            return
+        if action.startswith("equip_clothing:"):
+            key = action.split(":", 1)[1]
+            if inv.equip_clothing(key):
+                self._set_status(f"Equipped {resource_label(key)}.")
+            else:
+                self._set_status(f"Cannot equip {resource_label(key)}.")
+            return
+        if action.startswith("clothing_equip:"):
+            slot = action.split(":", 1)[1]
+            from entities import CLOTHING_ITEM_SLOT
+
+            for key, item_slot in CLOTHING_ITEM_SLOT.items():
+                if item_slot != slot:
+                    continue
+                if inv.equip_clothing(key):
+                    self._set_status(f"Equipped {resource_label(key)}.")
+                    return
+            self._set_status("No clothing for that slot in cargo.")
+            return
+        if action.startswith("clothing_unequip:"):
+            slot = action.split(":", 1)[1]
+            key = inv.equipped_in_slot(slot)
+            if key and inv.unequip_clothing(slot):
+                self._set_status(f"Unequipped {resource_label(key)}.")
+            else:
+                self._set_status("Inventory full — cannot unequip clothing.")
             return
         if action.startswith("unequip:"):
             key = action.split(":", 1)[1]
@@ -8457,6 +8683,7 @@ class Game:
             BuildingKind.CRAFT_BENCH,
             BuildingKind.ALCHEMIST,
             BuildingKind.TAILOR,
+            BuildingKind.COBBLER,
         ):
             if self._craftable_recipe(building) is not None:
                 return True
@@ -8728,6 +8955,7 @@ class Game:
             villager.target = home
             if (villager.x, villager.y) == home:
                 self._deposit_home(villager.inventory, status=False)
+                self._restock_workplace_gear_at_home(villager)
                 villager.state = VillagerState.IDLE
                 villager.target = None
                 return True
@@ -8954,6 +9182,7 @@ class Game:
                 villager.target = home
                 if (villager.x, villager.y) == home:
                     self._deposit_home(villager.inventory, status=False)
+                    self._restock_workplace_gear_at_home(villager)
                     villager.state = VillagerState.IDLE
                     villager.target = None
                     return True
@@ -8994,6 +9223,7 @@ class Game:
             villager.target = home
             if (villager.x, villager.y) == home:
                 self._deposit_home(villager.inventory, status=False)
+                self._restock_workplace_gear_at_home(villager)
                 villager.state = VillagerState.IDLE
                 villager.target = None
                 return True
@@ -9360,6 +9590,7 @@ class Game:
                 return
             if dest == self.world.home_pos:
                 self._deposit_home(villager.inventory, status=False)
+                self._restock_workplace_gear_at_home(villager)
             elif building is not None:
                 building.deposit_from_inventory(villager.inventory)
             villager.work_cooldown = self._villager_work_interval(villager)
@@ -9650,6 +9881,7 @@ class Game:
             BuildingKind.CRAFT_BENCH,
             BuildingKind.ALCHEMIST,
             BuildingKind.TAILOR,
+            BuildingKind.COBBLER,
         ):
             self._update_processor(villager, building)
             return
@@ -10285,33 +10517,32 @@ class Game:
         recipes = building.addon_craft_recipes()
         if not recipes:
             return False
+
+        # Find a ready addon recipe before swapping tools (hunters need spear/bow).
+        prefer = villager.craft_recipe_name
+        ordered = list(recipes)
+        if prefer:
+            ordered.sort(key=lambda r: 0 if r.name == prefer else 1)
+        ready = None
+        for candidate in ordered:
+            if not building.is_recipe_enabled(candidate.name):
+                continue
+            probe = self._craftable_recipe(
+                building, worker=villager, prefer_name=candidate.name
+            )
+            if probe is not None and probe.name == candidate.name:
+                ready = probe
+                break
+        if ready is None:
+            villager.craft_recipe_name = None
+            return False
+
         # Leather needs a knife; barn seed recipes use the farm (hoe already held).
         if building.kind == BuildingKind.HUNTER:
             if not self._ensure_work_tool(villager, "knife"):
                 return False
-        recipe = self._craftable_recipe(
-            building,
-            worker=villager,
-            prefer_name=villager.craft_recipe_name,
-        )
-        if recipe is None or recipe not in recipes:
-            # craftable_recipe may pick gather-empty recipes first for hunter;
-            # filter to addon crafts only.
-            ready = None
-            for candidate in recipes:
-                if not building.is_recipe_enabled(candidate.name):
-                    continue
-                probe = self._craftable_recipe(
-                    building, worker=villager, prefer_name=candidate.name
-                )
-                if probe is not None and probe.name == candidate.name:
-                    ready = probe
-                    break
-            recipe = ready
-        if recipe is None:
-            villager.craft_recipe_name = None
-            return False
 
+        recipe = ready
         bx, by = building.center_cell()
         villager.target = (bx, by)
         villager.state = VillagerState.WORKING
@@ -10806,6 +11037,9 @@ class Game:
             if self._try_addon_craft(villager, building):
                 return
             self._maybe_assigned_transport(villager, building)
+            return
+        # Finish leather while hide is waiting — don't leave it for "no prey" only.
+        if self._try_addon_craft(villager, building):
             return
         if self._workplace_primary_available(villager, building):
             pass
@@ -11626,6 +11860,7 @@ class Game:
                 return
             if (villager.x, villager.y) == home:
                 self._deposit_home(villager.inventory, status=False)
+                self._restock_workplace_gear_at_home(villager)
                 self._gain_job_skill(villager, "HOME")
                 villager.haul_building_id = None
                 villager._haul_last_stop_id = None
@@ -13235,6 +13470,11 @@ class Game:
         self._record_path_traffic(step[0], step[1])
         villager.move_cooldown = interval
         arm_cell_step_visual(villager, interval)
+        villager.energy = max(
+            0.0,
+            villager.energy
+            - ENERGY_MOVE_DRAIN * self._temp_energy_mult(villager.inventory),
+        )
         return True
 
     def _clear_villager_path(self, villager: Villager) -> None:
@@ -13491,7 +13731,10 @@ class Game:
             self._selected_building(),
             self.sim_speed,
             mouse,
-            season_label=format_date(self.calendar_day),
+            season_label=(
+                f"{format_date(self.calendar_day)}  "
+                f"Temperature: {ambient_temperature_c(self.calendar_day):.0f}C"
+            ),
             field_crop=self.field_crop_kind,
             built_kinds=unlock_built_kinds(self.buildings),
         )
@@ -13598,6 +13841,7 @@ class Game:
                 building_icon_for=self._building_icon_for_id,
                 housing_icon=self._villager_housing_icon(inspect_v),
                 current_season=self.season,
+                calendar_day=self.calendar_day,
                 mouse_pos=mouse,
                 player_inventory=self.player.inventory,
                 requirement_rows=villager_requirement_rows(
@@ -15375,23 +15619,58 @@ class Game:
         )
 
     def _draw_player_status_hud(self) -> None:
-        """Compact vitals + tools overlay in the top-left of the map view."""
+        """Compact vitals + status effects overlay in the top-left of the map view."""
         from icons import blit_icon
-        from resources import resource_icon
+        from inventory_ui import GRID_CELL, draw_hover_tooltip
+        from resources import resource_icon, resource_label
+        from status_effects_ui import (
+            HIGHLIGHT_BORDER,
+            MOD_CELL,
+            MOD_GAP,
+            active_temp_event,
+            cause_is_highlighted,
+            collect_status_mods,
+            draw_effect_total_columns,
+            draw_mod_row,
+            effect_totals,
+            resolve_hover_state,
+        )
         from villager_roster import SORT_LABELS, RosterSort, draw_status_bar
 
         p = self.player
+        mouse = pygame.mouse.get_pos()
         pad = 8
         x0 = pad
         y0 = MAP_OFFSET_Y + pad
-        panel_w = 172
-        bar_w = 52
-        bar_h = 8
-        row_h = 14
-        slot = 18
-        meal_n = min(3, len(p.last_meal))
-        # title + 3 bars + buff + tools + optional meal + hint
-        panel_h = 18 + 3 * row_h + 14 + slot + 6 + (slot + 4 if meal_n else 0) + 14
+        content_x = x0 + 46
+        skill_row_h = 14 + 14 + 4
+        panel_w = max(260, content_x + MOD_CELL * 2 + MOD_GAP + pad)
+
+        all_mods = collect_status_mods(
+            last_meal=list(p.last_meal),
+            inventory=p.inventory,
+            calendar_day=self.calendar_day,
+        )
+        buffs = [m for m in all_mods if m.is_buff]
+        debuffs = [m for m in all_mods if m.is_debuff]
+        temp_ev = active_temp_event(p.inventory, self.calendar_day)
+
+        panel_h = (
+            18
+            + 3 * 14
+            + skill_row_h
+            + MOD_CELL
+            + 4
+            + MOD_CELL
+            + 4
+            + MOD_CELL
+            + 4
+            + MOD_CELL
+            + 4
+            + GRID_CELL
+            + 6
+            + 14
+        )
 
         panel = pygame.Rect(x0, y0, panel_w, panel_h)
         bg = pygame.Surface((panel.w, panel.h), pygame.SRCALPHA)
@@ -15403,10 +15682,13 @@ class Game:
         font_s = pygame.font.SysFont("menlo", 11)
         font_t = pygame.font.SysFont("menlo", 10)
         self.screen.blit(font.render("Player", True, COLOUR_TEXT), (x0 + 6, y0 + 4))
-        hint = font_t.render("F eat sel · Q tool", True, COLOUR_TEXT_DIM)
+        hint = font_t.render("F eat · Q tool", True, COLOUR_TEXT_DIM)
         self.screen.blit(hint, (x0 + panel_w - hint.get_width() - 6, y0 + 5))
 
         y = y0 + 20
+        bar_w = 52
+        bar_h = 8
+        row_h = 14
         for sort_key, kind, value in (
             (RosterSort.ENERGY, "energy", p.energy),
             (RosterSort.SATIATION, "sat", p.satiation),
@@ -15419,36 +15701,184 @@ class Game:
             )
             y += row_h
 
-        buff = f"Walk ×{p.food_walk_mult:g}  Work ×{p.food_work_mult:g}"
-        self.screen.blit(font_s.render(buff, True, COLOUR_TEXT_DIM), (x0 + 6, y))
-        y += 14
+        walk_t, work_t, hunger_t = effect_totals(
+            food_walk=p.food_walk_mult,
+            food_work=p.food_work_mult,
+            food_hunger=p.food_hunger_mult,
+            inventory=p.inventory,
+            calendar_day=self.calendar_day,
+        )
+        _, total_tips = draw_effect_total_columns(
+            self.screen,
+            x0 + 6,
+            y,
+            walk=walk_t,
+            work=work_t,
+            hunger=hunger_t,
+            font=font_t,
+        )
+        y += skill_row_h
 
-        self.screen.blit(font_t.render("Tools", True, COLOUR_TEXT_DIM), (x0 + 6, y + 4))
+        meal_y = y
+        buff_y = meal_y + MOD_CELL + 4
+        debuff_y = buff_y + MOD_CELL + 4
+        events_y = debuff_y + MOD_CELL + 4
+        hover = resolve_hover_state(
+            mouse,
+            meal_keys=list(p.last_meal[:3]),
+            meal_x=content_x,
+            meal_y=meal_y,
+            buffs=buffs,
+            debuffs=debuffs,
+            buff_x=content_x,
+            buff_y=buff_y,
+            debuff_x=content_x,
+            debuff_y=debuff_y,
+            temp_event=temp_ev,
+            event_x=content_x,
+            event_y=events_y,
+            cell_size=MOD_CELL,
+            gap=MOD_GAP,
+        )
+
+        tip_hits: list[tuple[pygame.Rect, str]] = list(total_tips)
+
+        # Meal
+        self.screen.blit(
+            font_t.render("Meal", True, COLOUR_TEXT_DIM),
+            (x0 + 6, meal_y + MOD_CELL // 2 - 6),
+        )
+        mx = content_x
+        if p.last_meal:
+            for key in p.last_meal[:3]:
+                cell = pygame.Rect(mx, meal_y, MOD_CELL, MOD_CELL)
+                hi = cause_is_highlighted("meal", key, hover)
+                pygame.draw.rect(self.screen, (36, 38, 44), cell, border_radius=3)
+                border = HIGHLIGHT_BORDER if hi else COLOUR_TOOLBAR_BORDER
+                pygame.draw.rect(
+                    self.screen, border, cell, 2 if hi else 1, border_radius=3
+                )
+                blit_icon(
+                    self.screen,
+                    resource_icon(key),
+                    cell.centerx,
+                    cell.centery,
+                    MOD_CELL - 14,
+                )
+                tip_hits.append((cell, resource_label(key)))
+                mx += MOD_CELL + MOD_GAP
+        else:
+            self.screen.blit(
+                font_t.render("—", True, COLOUR_TEXT_DIM),
+                (content_x, meal_y + MOD_CELL // 2 - 6),
+            )
+
+        # Buffs
+        self.screen.blit(
+            font_t.render("Buffs", True, COLOUR_TEXT_DIM),
+            (x0 + 6, buff_y + MOD_CELL // 2 - 6),
+        )
+        if buffs:
+            _, hits, _ = draw_mod_row(
+                self.screen,
+                content_x,
+                buff_y,
+                buffs,
+                mouse_pos=mouse,
+                hover=hover,
+                icon_size=MOD_CELL,
+                gap=MOD_GAP,
+            )
+            tip_hits.extend((rect, mod.tip) for rect, mod in hits)
+        else:
+            self.screen.blit(
+                font_t.render("—", True, COLOUR_TEXT_DIM),
+                (content_x, buff_y + MOD_CELL // 2 - 6),
+            )
+
+        # Debuffs
+        self.screen.blit(
+            font_t.render("Debuffs", True, COLOUR_TEXT_DIM),
+            (x0 + 6, debuff_y + MOD_CELL // 2 - 6),
+        )
+        if debuffs:
+            _, hits, _ = draw_mod_row(
+                self.screen,
+                content_x,
+                debuff_y,
+                debuffs,
+                mouse_pos=mouse,
+                hover=hover,
+                icon_size=MOD_CELL,
+                gap=MOD_GAP,
+            )
+            tip_hits.extend((rect, mod.tip) for rect, mod in hits)
+        else:
+            self.screen.blit(
+                font_t.render("—", True, COLOUR_TEXT_DIM),
+                (content_x, debuff_y + MOD_CELL // 2 - 6),
+            )
+
+        # Events (temperature)
+        self.screen.blit(
+            font_t.render("Events", True, COLOUR_TEXT_DIM),
+            (x0 + 6, events_y + MOD_CELL // 2 - 6),
+        )
+        if temp_ev is not None:
+            cell = pygame.Rect(content_x, events_y, MOD_CELL, MOD_CELL)
+            key = str(temp_ev["key"])
+            hi = cause_is_highlighted("events", key, hover)
+            pygame.draw.rect(self.screen, (36, 38, 44), cell, border_radius=3)
+            border = HIGHLIGHT_BORDER if hi else COLOUR_TOOLBAR_BORDER
+            pygame.draw.rect(
+                self.screen, border, cell, 2 if hi else 1, border_radius=3
+            )
+            blit_icon(
+                self.screen,
+                str(temp_ev["icon"]),
+                cell.centerx,
+                cell.centery,
+                MOD_CELL - 14,
+            )
+            tip_hits.append((cell, str(temp_ev["tip"])))
+        else:
+            self.screen.blit(
+                font_t.render("—", True, COLOUR_TEXT_DIM),
+                (content_x, events_y + MOD_CELL // 2 - 6),
+            )
+
+        # Tools
+        tools_y = events_y + MOD_CELL + 4
+        self.screen.blit(
+            font_t.render("Tools", True, COLOUR_TEXT_DIM),
+            (x0 + 6, tools_y + GRID_CELL // 2 - 6),
+        )
         self._player_hud_tool_hits = []
         tools = list(p.inventory.equipped_tools)
-        tx = x0 + 42
+        tx = content_x
         for i in range(3):
-            cell = pygame.Rect(tx + i * (slot + 2), y, slot, slot)
+            cell = pygame.Rect(tx + i * (GRID_CELL + MOD_GAP), tools_y, GRID_CELL, GRID_CELL)
             key = tools[i] if i < len(tools) else None
             pygame.draw.rect(self.screen, (36, 38, 44), cell, border_radius=3)
             pygame.draw.rect(self.screen, COLOUR_TOOLBAR_BORDER, cell, 1, border_radius=3)
             if key:
-                blit_icon(self.screen, resource_icon(key), cell.centerx, cell.centery, 14)
+                blit_icon(
+                    self.screen,
+                    resource_icon(key),
+                    cell.centerx,
+                    cell.centery,
+                    GRID_CELL - 14,
+                )
                 self._player_hud_tool_hits.append((cell, f"tool_unequip:{key}"))
             elif i == len(tools):
                 self._player_hud_tool_hits.append((cell, "tool_equip"))
-        y += slot + 4
 
-        if meal_n:
-            self.screen.blit(font_t.render("Meal", True, COLOUR_TEXT_DIM), (x0 + 6, y + 2))
-            mx = x0 + 42
-            for key in p.last_meal[:3]:
-                blit_icon(self.screen, resource_icon(key), mx + 7, y + 8, 14)
-                mx += 18
-            y += slot + 2
-
-        # Keep unused y bound for future expansion / lint clarity.
-        _ = y
+        for rect, text in tip_hits:
+            if rect.collidepoint(mouse):
+                draw_hover_tooltip(
+                    self.screen, mouse_pos=mouse, text=text, font=font_s
+                )
+                break
 
     def _draw_cell_set_outline(
         self,
@@ -15550,6 +15980,7 @@ class Game:
             COLOUR_CRAFT_BENCH,
             COLOUR_ALCHEMIST,
             COLOUR_TAILOR,
+            COLOUR_COBBLER,
             COLOUR_MARKET,
             COLOUR_FARM,
             COLOUR_FIELD,
@@ -15579,6 +16010,7 @@ class Game:
             BuildingKind.CRAFT_BENCH: COLOUR_CRAFT_BENCH,
             BuildingKind.ALCHEMIST: COLOUR_ALCHEMIST,
             BuildingKind.TAILOR: COLOUR_TAILOR,
+            BuildingKind.COBBLER: COLOUR_COBBLER,
             BuildingKind.MARKET: COLOUR_MARKET,
         }
         for building in self.buildings.values():

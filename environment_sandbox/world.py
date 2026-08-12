@@ -39,6 +39,8 @@ from seasons import (
     herb_spawn_rate,
     mushroom_despawn_rate,
     mushroom_spawn_rate,
+    reed_despawn_rate,
+    reed_spawn_rate,
     Season,
     season_for_day,
     trees_grow_factor,
@@ -56,6 +58,8 @@ from resource_balance import (
     NATURAL_SPROUT_CHANCE,
     NATURAL_SPROUT_INTERVAL,
     NATURAL_SPROUT_MIN_PATCH,
+    REED_INITIAL_FRACTION,
+    REED_SPAWN_ACTIVITY,
     ROCK_LARGE_MAX,
     ROCK_LARGE_MIN,
     ROCK_SMALL_MAX,
@@ -168,6 +172,7 @@ class FeatureType(Enum):
     CRAFT_BENCH = auto()
     ALCHEMIST = auto()
     TAILOR = auto()
+    COBBLER = auto()
     MARKET = auto()
     TENT = auto()
     HOUSE_SMALL = auto()
@@ -184,7 +189,7 @@ class FeatureType(Enum):
     HERB = auto()  # legacy; migrated to WILD_CROP on load
     WILD_CROP = auto()  # wild crop patches (any CropDef key)
     CROP_HERB = auto()  # farmed crop (growth_ticks > 0 while growing)
-    REED = auto()  # riparian reeds (forage, no seeds)
+    REED = auto()  # riparian reeds (forage; year-round, spread spring–summer)
     COMMUNITY = auto()  # map camp marker (decorative / clickable)
 
 
@@ -205,6 +210,7 @@ STRUCTURE_FEATURES: frozenset[FeatureType] = frozenset(
         FeatureType.CRAFT_BENCH,
         FeatureType.ALCHEMIST,
         FeatureType.TAILOR,
+        FeatureType.COBBLER,
         FeatureType.MARKET,
         FeatureType.TENT,
         FeatureType.HOUSE_SMALL,
@@ -648,6 +654,7 @@ class World:
 
         # Thin riparian strips on ~50% of land cells touching water.
         self._paint_riparian_strips(rng)
+        self._seed_initial_reeds(rng)
 
         for cx, cy in forest_centres:
             for ny, nx in self.neighbourhood(cx, cy, radius=3):
@@ -1180,6 +1187,18 @@ class World:
                     self.cells[y][x].terrain = TerrainType.MEADOW
                 else:
                     self.cells[y][x].terrain = TerrainType.GRASS
+
+    def _seed_initial_reeds(self, rng: random.Random) -> None:
+        """Place reeds on a fraction of riparian shoreline (available year-round)."""
+        for y in range(self.rows):
+            for x in range(self.cols):
+                cell = self.cells[y][x]
+                if (
+                    cell.feature == FeatureType.NONE
+                    and cell.terrain == TerrainType.RIPARIAN
+                    and rng.random() < REED_INITIAL_FRACTION
+                ):
+                    cell.feature = FeatureType.REED
 
     def _paint_riparian_strips(self, rng: random.Random) -> None:
         """Convert ~50% of land cells that touch water into riparian strips."""
@@ -1714,7 +1733,16 @@ class World:
         for y in range(self.rows):
             for x in range(self.cols):
                 cell = self.cells[y][x]
-                if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.REED):
+                if cell.feature == FeatureType.REED:
+                    if self._forage_rng.random() < reed_despawn_rate(day, x, y):
+                        terrain = cell.terrain
+                        cell.feature = FeatureType.NONE
+                        cell.deposit = 0
+                        cell.growth_ticks = 0
+                        cell.crop_kind = None
+                        if terrain in wild_n:
+                            wild_n[terrain] = max(0, wild_n[terrain] - 1)
+                elif cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP):
                     if self._forage_rng.random() < herb_despawn_rate(day, x, y):
                         terrain = cell.terrain
                         cell.feature = FeatureType.NONE
@@ -1728,8 +1756,8 @@ class World:
                     and cell.terrain == TerrainType.RIPARIAN
                     and room(TerrainType.RIPARIAN)
                     and self._forage_rng.random()
-                    < herb_spawn_rate(day, x, y)
-                    * 0.55
+                    < reed_spawn_rate(day, x, y)
+                    * REED_SPAWN_ACTIVITY
                     * disturbance_activity_multiplier(
                         effective_disturbance_at(self, x, y)
                     )

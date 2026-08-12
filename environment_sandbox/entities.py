@@ -11,6 +11,9 @@ from recipes import (
     ALCHEMIST_OUTPUT_KEYS,
     ALCHEMIST_RECIPES,
     BARN_RECIPES,
+    COBBLER_INPUT_KEYS,
+    COBBLER_OUTPUT_KEYS,
+    COBBLER_RECIPES,
     CRAFT_BENCH_INPUT_KEYS,
     CRAFT_BENCH_OUTPUT_KEYS,
     CRAFT_BENCH_RECIPES,
@@ -55,10 +58,61 @@ SEED_ITEM_KEYS: tuple[str, ...] = ("berry_seeds", *SEED_KEYS)
 # Tools carried in dedicated tool slots (not general cargo stacks).
 TOOL_KEYS: tuple[str, ...] = ("axe", "spear", "fishing_rod", "hoe", "knife", "bow")
 TOOL_SLOT_MAX: int = 3
+
+# Clothing: one item per slot; cannot equip two of the same slot type.
+CLOTHING_SLOTS: tuple[str, ...] = ("hat", "shirt", "trousers", "shoes", "bag")
+CLOTHING_SLOT_LABELS: dict[str, str] = {
+    "hat": "Hat",
+    "shirt": "Shirt",
+    "trousers": "Trousers",
+    "shoes": "Shoes",
+    "bag": "Bag",
+}
+# item key → clothing slot (CSV ``clothing_slot`` may add more via recipes).
+CLOTHING_ITEM_SLOT: dict[str, str] = {
+    "sun_hat": "hat",
+    "winter_hat": "hat",
+    "light_shirt": "shirt",
+    "winter_coat": "shirt",
+    "leather_shoes": "shoes",
+    "leather_satchel": "bag",
+}
+CLOTHING_KEYS: tuple[str, ...] = tuple(CLOTHING_ITEM_SLOT)
 # Chebyshev range for bow shots (hunter skill 4+).
 HUNTER_BOW_RANGE: int = 5
 HUNTER_BOW_MIN_SKILL: int = 4
 HUNTER_BOW_HIT_CHANCE: float = 0.5
+
+# Pull CSV clothing_slot overrides after recipes finish loading.
+try:
+    from recipes import CLOTHING_SLOT_FROM_CSV
+
+    for _item, _slot in CLOTHING_SLOT_FROM_CSV.items():
+        if _slot in CLOTHING_SLOTS:
+            CLOTHING_ITEM_SLOT[_item] = _slot
+    CLOTHING_KEYS = tuple(CLOTHING_ITEM_SLOT)  # type: ignore[misc]
+except Exception:
+    pass
+
+
+def preferred_clothing_for_temp(temp_c: float) -> dict[str, tuple[str, ...]]:
+    """Slot → preferred item keys (best first) for the current air temperature."""
+    t = float(temp_c)
+    if t <= 10.0:
+        hat = ("winter_hat", "sun_hat")
+        shirt = ("winter_coat", "light_shirt")
+    elif t >= 22.0:
+        hat = ("sun_hat", "winter_hat")
+        shirt = ("light_shirt", "winter_coat")
+    else:
+        hat = ("sun_hat", "winter_hat")
+        shirt = ("light_shirt", "winter_coat")
+    return {
+        "hat": hat,
+        "shirt": shirt,
+        "shoes": ("leather_shoes",),
+        "bag": ("leather_satchel",),
+    }
 
 
 class TaskType(Enum):
@@ -160,6 +214,7 @@ class BuildingKind(Enum):
     CRAFT_BENCH = auto()
     ALCHEMIST = auto()
     TAILOR = auto()
+    COBBLER = auto()
     MARKET = auto()
     TENT = auto()
     HOUSE_SMALL = auto()  # 1×2
@@ -200,6 +255,7 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
     BuildingKind.CRAFT_BENCH: "Craft bench",
     BuildingKind.ALCHEMIST: "Alchemist",
     BuildingKind.TAILOR: "Tailor",
+    BuildingKind.COBBLER: "Cobbler",
     BuildingKind.MARKET: "Market",
     BuildingKind.TENT: "Tent",
     BuildingKind.HOUSE_SMALL: "Cottage",
@@ -414,8 +470,53 @@ class Inventory:
     knife: int = 0
     bow: int = 0
     equipped_tools: list[str] = field(default_factory=list)
+    # Clothing slot → equipped item key (at most one item per slot).
+    equipped_clothing: dict[str, str] = field(default_factory=dict)
     capacity: int = INVENTORY_CAPACITY
     seed_capacity: int = SEED_CARRY_CAPACITY
+
+    @staticmethod
+    def clothing_slot_for(key: str) -> str | None:
+        return CLOTHING_ITEM_SLOT.get(key)
+
+    @property
+    def gear_walk_mult(self) -> float:
+        """Walk speed multiplier from equipped shoes (and future gear)."""
+        from recipes import clothing_walk_mult
+
+        mult = 1.0
+        for key in self.equipped_clothing.values():
+            mult *= clothing_walk_mult(key)
+        return max(0.1, mult)
+
+    @property
+    def gear_capacity_bonus(self) -> int:
+        from recipes import clothing_capacity_bonus
+
+        bonus = 0
+        for key in self.equipped_clothing.values():
+            bonus += clothing_capacity_bonus(key)
+        return max(0, bonus)
+
+    @property
+    def gear_heat_protection(self) -> float:
+        from recipes import clothing_heat_protection
+
+        return sum(
+            clothing_heat_protection(key) for key in self.equipped_clothing.values()
+        )
+
+    @property
+    def gear_cold_protection(self) -> float:
+        from recipes import clothing_cold_protection
+
+        return sum(
+            clothing_cold_protection(key) for key in self.equipped_clothing.values()
+        )
+
+    @property
+    def effective_capacity(self) -> int:
+        return max(1, int(self.capacity) + self.gear_capacity_bonus)
 
     @staticmethod
     def is_seed_key(key: str) -> bool:
@@ -479,7 +580,7 @@ class Inventory:
     @property
     def is_full(self) -> bool:
         """True when general cargo is full (seeds use a separate pool)."""
-        return self.cargo_total >= self.capacity
+        return self.cargo_total >= self.effective_capacity
 
     @property
     def seeds_full(self) -> bool:
@@ -494,13 +595,14 @@ class Inventory:
             return True
         if key is not None and self.is_seed_key(key):
             return self.seed_total + amount <= self.seed_capacity
+        cap = self.effective_capacity
         if key is not None:
             from resources import cargo_units_after_add, stack_size
 
             if stack_size(key) is not None:
                 have = int(getattr(self, key, 0))
-                return self.cargo_total + cargo_units_after_add(key, have, amount) <= self.capacity
-        return self.cargo_total + amount <= self.capacity
+                return self.cargo_total + cargo_units_after_add(key, have, amount) <= cap
+        return self.cargo_total + amount <= cap
 
     def add_item(self, key: str, n: int = 1) -> bool:
         if not hasattr(self, key) or not self.can_add(n, key=key):
@@ -641,6 +743,73 @@ class Inventory:
                 return True
         return False
 
+    def equipped_in_slot(self, slot: str) -> str | None:
+        return self.equipped_clothing.get(slot)
+
+    def can_equip_clothing(self, key: str) -> bool:
+        slot = CLOTHING_ITEM_SLOT.get(key)
+        if slot is None or slot not in CLOTHING_SLOTS:
+            return False
+        if int(getattr(self, key, 0)) <= 0:
+            return False
+        # Already wearing this exact item instance path: cargo must have a spare.
+        return True
+
+    def equip_clothing(self, key: str) -> bool:
+        """Equip clothing from cargo into its slot (unequips prior item in that slot)."""
+        slot = CLOTHING_ITEM_SLOT.get(key)
+        if slot is None or int(getattr(self, key, 0)) <= 0:
+            return False
+        current = self.equipped_clothing.get(slot)
+        if current == key:
+            # Already wearing one; need another in cargo to "re-equip" — no-op.
+            return False
+        if current is not None:
+            # Unequip first — must fit in cargo after removing the new item from cargo.
+            # Temporarily move new item out of cargo, unequip old, then put new in slot.
+            setattr(self, key, getattr(self, key) - 1)
+            if not self.can_add(1, key=current):
+                setattr(self, key, getattr(self, key) + 1)
+                return False
+            setattr(self, current, getattr(self, current) + 1)
+            self.equipped_clothing[slot] = key
+            return True
+        setattr(self, key, getattr(self, key) - 1)
+        self.equipped_clothing[slot] = key
+        return True
+
+    def equip_clothing_from_transfer(self, key: str) -> bool:
+        """Equip clothing that was transferred directly (not currently in cargo)."""
+        slot = CLOTHING_ITEM_SLOT.get(key)
+        if slot is None or slot not in CLOTHING_SLOTS:
+            return False
+        current = self.equipped_clothing.get(slot)
+        if current == key:
+            return True
+        if current is not None:
+            if not self.can_add(1, key=current):
+                return False
+            setattr(self, current, getattr(self, current) + 1)
+        self.equipped_clothing[slot] = key
+        return True
+
+    def unequip_clothing(self, slot_or_key: str) -> bool:
+        """Unequip by slot name or item key back into cargo."""
+        slot = slot_or_key
+        key = self.equipped_clothing.get(slot)
+        if key is None and slot_or_key in CLOTHING_ITEM_SLOT:
+            key = slot_or_key
+            slot = CLOTHING_ITEM_SLOT[key]
+            if self.equipped_clothing.get(slot) != key:
+                return False
+        if key is None or slot not in self.equipped_clothing:
+            return False
+        if not self.can_add(1, key=key):
+            return False
+        del self.equipped_clothing[slot]
+        setattr(self, key, getattr(self, key) + 1)
+        return True
+
     def has_delivery_cargo(self) -> bool:
         """Cargo worth delivering — loose tools stay on the worker."""
         cargo = self.cargo_total
@@ -650,6 +819,7 @@ class Inventory:
 
     def clear(self) -> dict[str, int]:
         saved_tools = list(self.equipped_tools)
+        saved_clothing = dict(self.equipped_clothing)
         deposited = {
             "logs": self.logs,
             "hardwood_logs": self.hardwood_logs,
@@ -680,6 +850,7 @@ class Inventory:
         }
         self.reset()
         self.equipped_tools = saved_tools
+        self.equipped_clothing = saved_clothing
         return deposited
 
     def reset(self) -> None:
@@ -690,6 +861,7 @@ class Inventory:
         for key in TOOL_KEYS:
             setattr(self, key, 0)
         self.equipped_tools.clear()
+        self.equipped_clothing.clear()
         for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS:
             setattr(self, key, 0)
 
@@ -1059,6 +1231,13 @@ _FORAGE_KEYS = ("mushrooms", "berries", "berry_seeds", "reeds", "honey") + PRODU
 RECIPE_PRIORITY_MIN = 1
 RECIPE_PRIORITY_MAX = 3
 RECIPE_PRIORITY_DEFAULT = 1
+# New kitchen buildings: stews highest, grill lowest (override per recipe in UI).
+_KITCHEN_CATEGORY_PRIORITY: dict[str, int] = {
+    "stews": 1,
+    "bakery": 2,
+    "sweet": 2,
+    "grill": 3,
+}
 
 
 @dataclass
@@ -1414,6 +1593,7 @@ class Building:
             BuildingKind.CRAFT_BENCH,
             BuildingKind.ALCHEMIST,
             BuildingKind.TAILOR,
+            BuildingKind.COBBLER,
         )
 
     def is_market(self) -> bool:
@@ -1511,6 +1691,8 @@ class Building:
             return ALCHEMIST_RECIPES
         if self.kind == BuildingKind.TAILOR:
             return TAILOR_RECIPES
+        if self.kind == BuildingKind.COBBLER:
+            return COBBLER_RECIPES
         if self.kind == BuildingKind.FORESTER:
             return FORESTER_RECIPES
         if self.kind == BuildingKind.HUNTER:
@@ -1578,7 +1760,12 @@ class Building:
         ):
             self.recipe_enabled.setdefault(recipe.name, True)
             self.recipe_progress.setdefault(recipe.name, 0)
-            self.recipe_priority.setdefault(recipe.name, RECIPE_PRIORITY_DEFAULT)
+            default_prio = RECIPE_PRIORITY_DEFAULT
+            if self.kind == BuildingKind.KITCHEN and recipe.category:
+                default_prio = _KITCHEN_CATEGORY_PRIORITY.get(
+                    recipe.category, RECIPE_PRIORITY_DEFAULT
+                )
+            self.recipe_priority.setdefault(recipe.name, default_prio)
 
     def is_recipe_enabled(self, name: str) -> bool:
         self.ensure_recipe_state()
@@ -1644,20 +1831,19 @@ class Building:
         return max(0.0, min(1.0, self.recipe_progress.get(name, 0) / steps))
 
     def active_supply_keys(self) -> tuple[str, ...]:
-        """Ingredient keys needed by currently enabled recipes."""
-        return input_keys_for_recipes(self.enabled_recipes())
+        """Ingredient keys needed by enabled gather/craft recipes."""
+        from recipes import input_keys_for_recipes
+
+        recipes = list(self.enabled_recipes())
+        recipes.extend(self.addon_craft_recipes())
+        return input_keys_for_recipes(tuple(recipes))
 
     def recipe_gap_demand(self) -> dict[str, int]:
-        """Missing recipe inputs only (no reserve top-ups), capped by room."""
+        """Missing inputs for the highest-priority target recipe(s) only."""
         from recipes import missing_inputs
 
         demand: dict[str, int] = {}
-        recipes = list(self.enabled_recipes())
-        if self.is_splitter():
-            recipes.extend(self.enabled_split_recipes())
-        for recipe in recipes:
-            if not recipe.inputs:
-                continue
+        for recipe in self._supply_target_recipes():
             for key, need in missing_inputs(self, recipe).items():
                 room = self.space_for_key(key)
                 if room <= 0:
@@ -1775,6 +1961,10 @@ class Building:
             n = int(recipe.inputs.get(key, 0))
             if n > 0:
                 keep = max(keep, n * 2)
+        for recipe in self.addon_craft_recipes():
+            n = int(recipe.inputs.get(key, 0))
+            if n > 0:
+                keep = max(keep, n * 2)
         return keep
 
     def reserve_amount(self, key: str) -> int:
@@ -1806,6 +1996,9 @@ class Building:
                 keep = self.market_stock_target(key)
                 return max(0, have - keep)
             return have
+        # Extension craft inputs (hide for leather, grain for barn seeds).
+        if key in self.active_supply_keys() and self.addon_craft_recipes():
+            return int(self.excess_input_amounts().get(key, 0))
         if self.is_processor():
             outputs = self.processor_output_keys()
             inputs = self.processor_input_keys()
@@ -1843,6 +2036,8 @@ class Building:
             return ALCHEMIST_INPUT_KEYS
         if self.kind == BuildingKind.TAILOR:
             return TAILOR_INPUT_KEYS
+        if self.kind == BuildingKind.COBBLER:
+            return COBBLER_INPUT_KEYS
         return ()
 
     def processor_output_keys(self) -> tuple[str, ...]:
@@ -1856,6 +2051,8 @@ class Building:
             return ALCHEMIST_OUTPUT_KEYS
         if self.kind == BuildingKind.TAILOR:
             return TAILOR_OUTPUT_KEYS
+        if self.kind == BuildingKind.COBBLER:
+            return COBBLER_OUTPUT_KEYS
         return ()
 
     def input_stored_total(self) -> int:
@@ -2036,6 +2233,88 @@ class Building:
             label += f"  · fuel {self.fuel_wood}/{self.fuel_capacity}"
         return label
 
+    def _recipe_craft_rank(self, recipe: Recipe) -> tuple[int, int, int]:
+        """Sort key: priority 1 first, then richer recipes (more input units)."""
+        return (
+            self.get_recipe_priority(recipe.name),
+            -sum(recipe.inputs.values()),
+            -len(recipe.inputs),
+        )
+
+    def _recipe_output_fits(
+        self,
+        recipe: Recipe,
+        *,
+        stock_amounts: dict[str, int] | None = None,
+    ) -> bool:
+        from recipes import recipe_output_fits
+
+        if self.output_capacity > 0:
+            return recipe_output_fits(
+                self,
+                recipe,
+                output_capacity=self.output_capacity,
+                output_keys=self.processor_output_keys(),
+                stock_amounts=stock_amounts,
+            )
+        return recipe_output_fits(
+            self,
+            recipe,
+            capacity=self.capacity,
+            stock_amounts=stock_amounts,
+        )
+
+    def _recipe_input_blocked_only(
+        self,
+        recipe: Recipe,
+        *,
+        worker=None,
+        worker_skill_level: int | None = None,
+        stock_amounts: dict[str, int] | None = None,
+    ) -> bool:
+        """True when a recipe could run except for missing inputs (not fuel/caps/skill)."""
+        from recipes import recipe_ready
+        from society import recipe_skill_gate
+
+        if not recipe.inputs or not self.is_recipe_enabled(recipe.name):
+            return False
+        if not recipe_skill_gate(
+            recipe, worker=worker, worker_skill_level=worker_skill_level
+        ):
+            return False
+        if self.kind == BuildingKind.KITCHEN and not self.has_cooking_fuel():
+            return False
+        if not self._recipe_output_fits(recipe, stock_amounts=stock_amounts):
+            return False
+        return not recipe_ready(self, recipe)
+
+    def _supply_target_recipes(self) -> list[Recipe]:
+        """Recipes whose missing inputs haulers should fetch (by priority tier)."""
+        from recipes import missing_inputs
+
+        recipes = [r for r in self.enabled_recipes() if r.inputs]
+        if self.is_splitter():
+            recipes.extend(r for r in self.enabled_split_recipes() if r.inputs)
+        if not recipes:
+            return []
+
+        def _missing_units(recipe: Recipe) -> int:
+            return sum(missing_inputs(self, recipe).values())
+
+        def _supply_rank(recipe: Recipe) -> tuple:
+            return (
+                self.get_recipe_priority(recipe.name),
+                _missing_units(recipe),
+                self._recipe_craft_rank(recipe),
+            )
+
+        for prio in range(RECIPE_PRIORITY_MIN, RECIPE_PRIORITY_MAX + 1):
+            tier = [r for r in recipes if self.get_recipe_priority(r.name) == prio]
+            blocked = [r for r in tier if self._recipe_input_blocked_only(r)]
+            if blocked:
+                return [min(blocked, key=_supply_rank)]
+        return []
+
     def craftable_recipe(
         self,
         *,
@@ -2059,7 +2338,7 @@ class Building:
         ``worker`` gates recipes by ``Recipe.skill_reqs`` when set.
         ``worker_skill_level`` is a legacy single-level fallback.
         """
-        from recipes import recipe_output_fits, recipe_ready
+        from recipes import recipe_ready
         from society import recipe_skill_gate
 
         recipes = self.enabled_recipes()
@@ -2067,7 +2346,6 @@ class Building:
             return None
         if self.kind == BuildingKind.KITCHEN and not self.has_cooking_fuel():
             return None
-        use_split_out = self.output_capacity > 0
         candidates: list[Recipe] = []
         for recipe in recipes:
             if not recipe.inputs:
@@ -2078,49 +2356,37 @@ class Building:
                 continue
             if not recipe_ready(self, recipe):
                 continue
-            if use_split_out:
-                fits = recipe_output_fits(
-                    self,
-                    recipe,
-                    output_capacity=self.output_capacity,
-                    output_keys=self.processor_output_keys(),
-                    stock_amounts=stock_amounts,
-                )
-            else:
-                fits = recipe_output_fits(
-                    self,
-                    recipe,
-                    capacity=self.capacity,
-                    stock_amounts=stock_amounts,
-                )
-            if not fits:
+            if not self._recipe_output_fits(recipe, stock_amounts=stock_amounts):
                 continue
             candidates.append(recipe)
         if not candidates:
             return None
 
-        def rank(recipe: Recipe) -> tuple[int, int, int]:
-            prio = self.get_recipe_priority(recipe.name)
-            return (prio, -sum(recipe.inputs.values()), -len(recipe.inputs))
-
+        rank = self._recipe_craft_rank
         avoid = avoid_names or ()
+        free = [r for r in candidates if r.name not in avoid]
+        pool = free if free else list(candidates)
+        best_rank = min(rank(r) for r in pool)
+        tier = [r for r in pool if rank(r) == best_rank]
+
+        in_progress = [
+            r
+            for r in tier
+            if int(self.recipe_progress.get(r.name, 0)) > 0
+        ]
+        if in_progress:
+            if prefer_name:
+                for recipe in in_progress:
+                    if recipe.name == prefer_name:
+                        return recipe
+            return min(in_progress, key=lambda r: r.name)
+
         if prefer_name:
-            for recipe in candidates:
+            for recipe in tier:
                 if recipe.name == prefer_name:
                     return recipe
 
-        # Keep warming in-progress orders (unless another worker claimed them).
-        in_progress = [
-            r
-            for r in candidates
-            if int(self.recipe_progress.get(r.name, 0)) > 0 and r.name not in avoid
-        ]
-        if in_progress:
-            return min(in_progress, key=rank)
-
-        free = [r for r in candidates if r.name not in avoid]
-        pool = free if free else list(candidates)
-        return min(pool, key=rank)
+        return min(tier, key=lambda r: r.name)
 
     def enabled_split_recipes(self) -> tuple[Recipe, ...]:
         self.ensure_recipe_state()
@@ -2315,6 +2581,8 @@ class Building:
             return ALCHEMIST_INPUT_KEYS + ALCHEMIST_OUTPUT_KEYS
         if self.kind == BuildingKind.TAILOR:
             return TAILOR_INPUT_KEYS + TAILOR_OUTPUT_KEYS
+        if self.kind == BuildingKind.COBBLER:
+            return COBBLER_INPUT_KEYS + COBBLER_OUTPUT_KEYS
         if self.kind == BuildingKind.MARKET:
             from market_economy import market_supply_resource_keys
 
@@ -2330,6 +2598,9 @@ class Building:
             return ("wood", "rock", *_FORAGE_KEYS)
         if self.kind == BuildingKind.FARM:
             return PRODUCE_KEYS + ("straw",)
+        if self.kind == BuildingKind.HUNTER:
+            # Hide stays at the hut for drying-rack tanning; haul meat/fur/leather only.
+            return ("meat", "fur", "leather")
         if self.is_market():
             from market_economy import market_supply_resource_keys
 
@@ -2395,6 +2666,9 @@ class Building:
             return True
         # Farm / forester plant stock — concrete demand is plan-aware in game code.
         if self.kind in (BuildingKind.FARM, BuildingKind.FORESTER):
+            return True
+        # Hunter drying rack / farm barn craft inputs (e.g. hide, grain).
+        if self.addon_craft_recipes() and self.active_supply_keys():
             return True
         return False
 
@@ -2494,6 +2768,7 @@ class Building:
             BuildingKind.CRAFT_BENCH,
             BuildingKind.ALCHEMIST,
             BuildingKind.TAILOR,
+            BuildingKind.COBBLER,
             BuildingKind.TENT,
             BuildingKind.HOUSE_SMALL,
             BuildingKind.HOUSE,

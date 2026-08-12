@@ -8,16 +8,32 @@ from typing import Any, Callable
 
 import pygame
 
+from entities import Building, BuildingKind
 from icons import blit_icon, get_icon
 from settings import (
+    COLOUR_ALCHEMIST,
+    COLOUR_COBBLER,
+    COLOUR_CRAFT_BENCH,
+    COLOUR_FARM,
+    COLOUR_FISHER,
+    COLOUR_FORESTER,
+    COLOUR_FORAGER,
+    COLOUR_HOME,
+    COLOUR_HUNTER,
+    COLOUR_KITCHEN,
+    COLOUR_MARKET,
+    COLOUR_MASON,
     COLOUR_MENU_BG,
+    COLOUR_MILL,
     COLOUR_SELECTED_ENTITY,
+    COLOUR_TAILOR,
     COLOUR_TEXT,
     COLOUR_TEXT_DIM,
     COLOUR_TOOLBAR_BORDER,
     COLOUR_TOOLBAR_BTN,
     COLOUR_TOOLBAR_BTN_ACTIVE,
     COLOUR_TOOLBAR_BTN_HOVER,
+    COLOUR_VILLAGER,
     MAP_OFFSET_Y,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
@@ -165,6 +181,7 @@ class RosterEntry:
     happiness: float = 0.7
     housed: bool = False
     portrait_seed: int = 0
+    job_colour: tuple[int, int, int] = COLOUR_VILLAGER
     job: str = ""
     status: str = ""
     kind: str = "villager"  # villager | traveller
@@ -178,8 +195,14 @@ def entry_from_villager(
     *,
     job: str = "",
     status: str = "",
+    job_colour: tuple[int, int, int] | None = None,
     requirement_rows: list[dict] | None = None,
+    buildings: dict[int, Building] | None = None,
 ) -> RosterEntry:
+    if job_colour is None and buildings is not None:
+        job_colour = villager_job_colour(v, buildings)
+    if job_colour is None:
+        job_colour = COLOUR_VILLAGER
     return RosterEntry(
         id=int(v.id),
         name=str(getattr(v, "name", None) or f"Villager {v.id}"),
@@ -194,6 +217,7 @@ def entry_from_villager(
         happiness=float(getattr(v, "happiness", 0.7)),
         housed=bool(getattr(v, "housed", False)),
         portrait_seed=int(getattr(v, "portrait_seed", 0) or (v.id * 9973)),
+        job_colour=job_colour,
         job=job,
         status=status,
         kind="villager",
@@ -324,14 +348,57 @@ def portrait_tint(seed: int) -> tuple[int, int, int]:
     return (r % 256, g % 256, b % 256)
 
 
+def portrait_skin_colour(seed: int) -> tuple[int, int, int]:
+    rng = seed * 1103515245 + 12345
+    r = 180 + (rng >> 8) % 55
+    g = 135 + (rng >> 16) % 65
+    b = 95 + (rng >> 24) % 75
+    return (r % 256, g % 256, b % 256)
+
+
+_JOB_COLOURS: dict[BuildingKind, tuple[int, int, int]] = {
+    BuildingKind.FORESTER: COLOUR_FORESTER,
+    BuildingKind.MASON: COLOUR_MASON,
+    BuildingKind.HUNTER: COLOUR_HUNTER,
+    BuildingKind.FORAGER: COLOUR_FORAGER,
+    BuildingKind.FISHER: COLOUR_FISHER,
+    BuildingKind.FARM: COLOUR_FARM,
+    BuildingKind.FIELD: COLOUR_FARM,
+    BuildingKind.MILL: COLOUR_MILL,
+    BuildingKind.KITCHEN: COLOUR_KITCHEN,
+    BuildingKind.CRAFT_BENCH: COLOUR_CRAFT_BENCH,
+    BuildingKind.ALCHEMIST: COLOUR_ALCHEMIST,
+    BuildingKind.TAILOR: COLOUR_TAILOR,
+    BuildingKind.COBBLER: COLOUR_COBBLER,
+    BuildingKind.MARKET: COLOUR_MARKET,
+}
+
+
+def villager_job_colour(
+    villager: Any,
+    buildings: dict[int, Building],
+) -> tuple[int, int, int]:
+    if getattr(villager, "assigned_to_home", False):
+        return COLOUR_HOME
+    building_id = getattr(villager, "building_id", None)
+    if building_id is not None:
+        building = buildings.get(building_id)
+        if building is not None:
+            return _JOB_COLOURS.get(building.kind, COLOUR_VILLAGER)
+    return COLOUR_VILLAGER
+
+
 def draw_portrait(
     surface: pygame.Surface,
     cx: int,
     cy: int,
     seed: int,
     size: int = PORTRAIT_SIZE,
+    *,
+    job_colour: tuple[int, int, int] | None = None,
 ) -> None:
-    tint = portrait_tint(seed)
+    job = job_colour or COLOUR_VILLAGER
+    skin = portrait_skin_colour(seed)
     try:
         blit_icon(
             surface,
@@ -339,11 +406,11 @@ def draw_portrait(
             cx,
             cy,
             size,
-            recolour={"body": tint, "skin": (220, 190, 160), "hair": tint},
+            recolour={"skin": skin, "shirt": job, "hat": job},
         )
     except Exception:
         rect = pygame.Rect(cx - size // 2, cy - size // 2, size, size)
-        pygame.draw.ellipse(surface, tint, rect)
+        pygame.draw.ellipse(surface, job, rect)
         pygame.draw.ellipse(surface, (60, 60, 70), rect, 1)
 
 
@@ -663,6 +730,7 @@ class VillagerRosterDialog:
                 cols["portrait"] + PORTRAIT_SIZE // 2,
                 row_y + ROW_H // 2 - 2,
                 entry.portrait_seed,
+                job_colour=entry.job_colour,
             )
 
             # Name + meta + traits (name column only — clipped width)
@@ -874,7 +942,14 @@ def draw_compact_roster_row(
     if selected:
         pygame.draw.rect(surface, (55, 70, 55), row, border_radius=3)
         pygame.draw.rect(surface, COLOUR_SELECTED_ENTITY, row, 1, border_radius=3)
-    draw_portrait(surface, x + 12, y + row_h // 2, entry.portrait_seed, size=22)
+    draw_portrait(
+        surface,
+        x + 12,
+        y + row_h // 2,
+        entry.portrait_seed,
+        size=22,
+        job_colour=entry.job_colour,
+    )
     tx = x + 28
     surface.blit(font.render(entry.name[:14], True, COLOUR_TEXT if selected else COLOUR_TEXT_DIM), (tx, y + 2))
     draw_status_bar(surface, tx, y + 18, 28, 5, entry.energy, kind="energy")

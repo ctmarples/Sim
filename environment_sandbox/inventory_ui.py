@@ -375,3 +375,74 @@ def draw_tool_slot(
             tip_key = key if key else "_empty_tool_"
     row_w = TOOL_SLOT_MAX * GRID_CELL + (TOOL_SLOT_MAX - 1) * GRID_GAP
     return y + GRID_CELL + 8 - y0, hits, tip_key
+
+
+def draw_clothing_slots(
+    surface: pygame.Surface,
+    *,
+    origin: tuple[int, int],
+    equipped_clothing: dict[str, str] | None,
+    mouse_pos: tuple[int, int] | None,
+    fonts: tuple[pygame.font.Font, pygame.font.Font, pygame.font.Font],
+    interactive: bool = True,
+    cols: int = 5,
+) -> tuple[int, list[tuple[pygame.Rect, str]], str | None]:
+    """Draw hat/shirt/trousers/shoes/bag slots. Returns (height, hits, tip_key)."""
+    from entities import CLOTHING_SLOT_LABELS, CLOTHING_SLOTS
+
+    font, font_small, _font_tiny = fonts
+    x0, y0 = origin
+    y = y0
+    worn = dict(equipped_clothing or {})
+    surface.blit(font.render("Clothes", True, COLOUR_TEXT), (x0, y))
+    y += 18
+    hits: list[tuple[pygame.Rect, str]] = []
+    tip_key: str | None = None
+    for i, slot in enumerate(CLOTHING_SLOTS):
+        col = i % max(1, cols)
+        row = i // max(1, cols)
+        cell = pygame.Rect(
+            x0 + col * (GRID_CELL + GRID_GAP),
+            y + row * (GRID_CELL + GRID_GAP + 12),
+            GRID_CELL,
+            GRID_CELL,
+        )
+        key = worn.get(slot)
+        hovered = mouse_pos is not None and cell.collidepoint(mouse_pos)
+        label = CLOTHING_SLOT_LABELS.get(slot, slot)
+        lab = font_small.render(label[:3], True, COLOUR_TEXT_DIM)
+        surface.blit(
+            lab,
+            (cell.centerx - lab.get_width() // 2, cell.y - 12),
+        )
+        if key:
+            draw_resource_cell(
+                surface,
+                cell=cell,
+                key=key,
+                fonts=fonts,
+                hovered=hovered,
+                active=True,
+            )
+        else:
+            bg = (55, 62, 50) if hovered else (36, 38, 44)
+            border = COLOUR_SELECTED_ENTITY if hovered else COLOUR_TOOLBAR_BORDER
+            pygame.draw.rect(surface, bg, cell, border_radius=4)
+            pygame.draw.rect(surface, border, cell, 1, border_radius=4)
+            dash = font_small.render("—", True, COLOUR_TEXT_DIM)
+            surface.blit(
+                dash,
+                (
+                    cell.centerx - dash.get_width() // 2,
+                    cell.centery - dash.get_height() // 2,
+                ),
+            )
+        if interactive:
+            if key:
+                hits.append((cell, f"clothing_unequip:{slot}"))
+            else:
+                hits.append((cell, f"clothing_equip:{slot}"))
+        if hovered:
+            tip_key = key if key else f"_empty_{slot}_"
+    rows = (len(CLOTHING_SLOTS) + cols - 1) // cols
+    return rows * (GRID_CELL + GRID_GAP + 12) + 8, hits, tip_key

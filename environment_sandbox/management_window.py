@@ -59,6 +59,7 @@ from villager_roster import (
     draw_status_bar,
     entry_from_villager,
     sort_entries,
+    villager_job_colour,
 )
 
 TITLE_BAR_H = 32
@@ -95,6 +96,7 @@ _BUILD_ICON: dict[BuildingKind, str] = {
     BuildingKind.MILL: "mill",
     BuildingKind.ALCHEMIST: "alchemist",
     BuildingKind.TAILOR: "tailor",
+    BuildingKind.COBBLER: "cobbler",
     BuildingKind.MARKET: "market",
     BuildingKind.TENT: "tent",
     BuildingKind.HOUSE_SMALL: "house_small",
@@ -744,6 +746,7 @@ class ManagementWindow:
             v,
             job=self._job_for_villager(v, buildings),
             status="EAT" if v.seeking_food else v.state.name.title(),
+            job_colour=villager_job_colour(v, buildings),
             requirement_rows=villager_requirement_rows(
                 v,
                 buildings,
@@ -865,6 +868,7 @@ class ManagementWindow:
                 cols["portrait"] + PORTRAIT_SIZE // 2,
                 row_y + ROW_H // 2 - 2,
                 entry.portrait_seed,
+                job_colour=entry.job_colour,
             )
 
             name_x = cols["name"]
@@ -1103,7 +1107,12 @@ class ManagementWindow:
                 for v in reversed(workers[:6]):
                     px -= 16
                     draw_portrait(
-                        surface, px, row.centery, v.portrait_seed, size=14
+                        surface,
+                        px,
+                        row.centery,
+                        v.portrait_seed,
+                        size=14,
+                        job_colour=villager_job_colour(v, buildings),
                     )
             self._list_hits.append((row, "building", b.id))
             y += LIST_ROW_H + 2

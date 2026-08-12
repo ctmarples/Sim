@@ -5,12 +5,15 @@
    height="400"
    version="1.1"
    id="svg1"
-   sodipodi:docname="villager.svg"
+   sodipodi:docname="walk_speed.svg"
    inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns="http://www.w3.org/2000/svg"
-   xmlns:svg="http://www.w3.org/2000/svg">
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
   <defs
      id="defs1" />
   <sodipodi:namedview
@@ -22,13 +25,13 @@
      inkscape:pageopacity="0.0"
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
-     inkscape:zoom="1.6858699"
-     inkscape:cx="248.2398"
-     inkscape:cy="216.80202"
+     inkscape:zoom="1.1592683"
+     inkscape:cx="265.25352"
+     inkscape:cy="229.02377"
      inkscape:window-width="1470"
      inkscape:window-height="834"
-     inkscape:window-x="0"
-     inkscape:window-y="33"
+     inkscape:window-x="1"
+     inkscape:window-y="34"
      inkscape:window-maximized="0"
      inkscape:current-layer="svg1" />
   <title
@@ -38,18 +41,18 @@
   <path
      id="path4"
      class="skin"
-     style="fill:#dc8c32;stroke-width:0.1"
-     inkscape:transform-center-x="-0.37729804"
-     inkscape:transform-center-y="-0.038690547"
-     transform="translate(4.2606206,2.3445866)"
-     d="m 19.843986,29.299062 c -0.557122,-0.21144 -1.116421,-0.453373 -1.825664,-2.794506 l -2.220499,-1.099687 c -0.485741,2.040408 -1.530673,3.297947 -2.790994,4.253943 -0.08603,-2.533637 -0.53588,-5.158228 0.548001,-7.399386 l 5.660408,-0.304238 c 0.845525,2.447958 1.028217,4.895916 0.628748,7.343874 z"
+     style="fill:#dc8c32;stroke-width:0.0782369"
+     inkscape:transform-center-x="-0.30814748"
+     inkscape:transform-center-y="-0.028997177"
+     d="m 18.537731,26.816885 c -0.455012,-0.158466 -0.911803,-0.339786 -1.491056,-2.094376 l -1.813526,-0.824173 c -0.396715,1.529208 -1.250132,2.471686 -2.279461,3.188168 -0.07026,-1.898864 -0.437664,-3.865896 0.447563,-5.545558 l 4.622969,-0.228015 c 0.690557,1.834651 0.839766,3.669303 0.513511,5.503954 z"
      sodipodi:nodetypes="ccccccc" />
   <g
      id="villager"
      inkscape:groupmode="layer"
      inkscape:label="villager" />
   <g
-     id="g4">
+     id="g4"
+     transform="matrix(0.81672012,0,0,0.74946199,-1.1489858,3.1011733)">
     <path
        id="path3"
        class="skin"
@@ -75,30 +78,49 @@
       <title
          id="title6">Hat</title>
     </path>
+    <path
+       id="path3-1-8"
+       class="shirt"
+       style="fill:#000080;fill-opacity:1;stroke:none"
+       inkscape:transform-center-x="-0.84131101"
+       inkscape:transform-center-y="0.060889911"
+       d="M 24.324148,25.364085 C 22.099663,24.934677 19.005645,24.289952 17.43099,24.781135 L 17.045553,16.10743 c 0.229856,-0.588639 1.15897,-2.440963 1.586108,-2.128277 0.421587,0.308621 0.78824,0.276195 1.390334,0.296782 0.728475,0.02491 1.402175,-0.03401 1.639474,-0.588981 0,0 3.271626,1.449353 3.581152,2.089039 z"
+       sodipodi:nodetypes="cccsscc">
+      <title
+         id="title5">Shirt</title>
+    </path>
     <g
        id="g5" />
   </g>
   <path
-     id="path3-1-8"
-     class="shirt"
-     style="fill:#000080;fill-opacity:1;stroke:none"
-     inkscape:transform-center-x="-0.84131101"
-     inkscape:transform-center-y="0.060889911"
-     d="M 24.324148,25.364085 C 22.099663,24.934677 19.005645,24.289952 17.43099,24.781135 L 17.045553,16.10743 c 0.229856,-0.588639 1.15897,-2.440963 1.586108,-2.128277 0.421587,0.308621 0.78824,0.276195 1.390334,0.296782 0.728475,0.02491 1.402175,-0.03401 1.639474,-0.588981 0,0 3.271626,1.449353 3.581152,2.089039 z"
-     sodipodi:nodetypes="cccsscc"
-     inkscape:label="shirt_overlay">
-    <title
-       id="title5">Shirt</title>
-  </path>
-  <path
      id="hat_overlay"
-     style="fill:#000080"
+     style="fill:#000080;stroke:none"
      class="hat"
-     d="m 15.4,8.6 h 9.2 l -2,-2.4 h -5.2 z"
+     d="m 11.428504,9.5465468 h 7.513825 l -1.63344,-1.7987092 h -4.246945 z"
      sodipodi:nodetypes="ccccc" />
   <polygon
      id="hat_brim_overlay"
      class="hat"
-     points="15.4,8.6 24.6,8.6 23.0,9.8 17.0,9.8"
-     style="fill:#000080;fill-opacity:1;stroke:none" />
+     points="23,9.8 17,9.8 15.4,8.6 24.6,8.6 "
+     style="fill:#000080;fill-opacity:1;stroke:none"
+     transform="matrix(0.81672012,0,0,0.74946199,-1.1489858,3.1011733)" />
+  <path
+     id="rect1"
+     style="fill:#e02800;fill-opacity:1;stroke-width:0.1257"
+     d="m 11.300232,27.172314 c 5.923277,3.335437 11.846553,1.610211 17.769829,-1.725226 v 1.638965 C 23.146785,29.7314 17.223509,31.801671 11.300232,29.156324 Z"
+     sodipodi:nodetypes="ccccc" />
+  <path
+     id="rect1-7"
+     style="fill:#e02800;fill-opacity:1;stroke-width:0.1257"
+     d="m 11.433558,30.085587 c 5.923277,3.335437 10.121327,2.041518 16.044603,-1.293919 v 1.638965 c -5.923276,2.645347 -9.344974,3.680482 -15.268251,1.035135 z"
+     sodipodi:nodetypes="ccccc" />
+  <metadata
+     id="metadata1">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:title>villager</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
 </svg>

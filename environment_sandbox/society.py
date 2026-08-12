@@ -74,6 +74,7 @@ JOB_SKILL_REQUIREMENTS: dict[str, tuple[SkillType, int]] = {
     "CRAFT_BENCH": (SkillType.CRAFTING, 1),
     "ALCHEMIST": (SkillType.CRAFTING, 1),
     "TAILOR": (SkillType.CRAFTING, 1),
+    "COBBLER": (SkillType.CRAFTING, 1),
     "MARKET": (SkillType.TRANSPORT, 1),
     "HOME": (SkillType.TRANSPORT, 1),
     "BUILD": (SkillType.LABOUR, 1),

@@ -209,6 +209,11 @@ BUILDING_STORAGE: dict[str, BuildingStorageSpec] = {
         input_capacity=_PROC_IN,
         output_capacity=_PROC_OUT,
     ),
+    "cobbler": BuildingStorageSpec(
+        capacity=_PROC_IN + _PROC_OUT,
+        input_capacity=_PROC_IN,
+        output_capacity=_PROC_OUT,
+    ),
     "market": BuildingStorageSpec(
         capacity=_PROC_IN + _PROC_OUT,
         input_capacity=_PROC_IN,
@@ -406,6 +411,7 @@ COLOUR_KITCHEN: Colour = (160, 112, 88)
 COLOUR_CRAFT_BENCH: Colour = (160, 144, 112)
 COLOUR_ALCHEMIST: Colour = (154, 120, 184)
 COLOUR_TAILOR: Colour = (122, 152, 176)
+COLOUR_COBBLER: Colour = (148, 118, 88)
 COLOUR_MARKET: Colour = (176, 120, 72)
 COLOUR_CROP: Colour = (110, 190, 80)
 

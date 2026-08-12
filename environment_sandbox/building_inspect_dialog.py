@@ -415,7 +415,9 @@ class BuildingInspectDialog:
 
         icon_size = max(16, cell.w - 28)
         try:
-            style = resource_icon_style(out_key)
+            # Prefer recipe icon_key (e.g. deer/boar) over the output stock key (meat).
+            icon_key = recipe.display_icon_key() or out_key
+            style = resource_icon_style(icon_key)
             blit_icon(
                 surface,
                 style.name,
@@ -1251,6 +1253,7 @@ class BuildingInspectDialog:
                 BuildingKind.CRAFT_BENCH,
                 BuildingKind.ALCHEMIST,
                 BuildingKind.TAILOR,
+                BuildingKind.COBBLER,
                 BuildingKind.MARKET,
             ):
                 clear_w = max(48, 10 + self.font_small.size("Clear")[0])
@@ -1374,7 +1377,7 @@ class BuildingInspectDialog:
                 )
                 self._buttons.append((f"cycle_recipe_priority:{recipe.name}", prio_cell))
                 if hov and not prio_hov and out_key:
-                    tip_key = out_key
+                    tip_key = recipe.display_icon_key() or out_key
             surface.set_clip(old_clip)
             self._draw_scrollbar(surface, view, content_h, scroll)
             y += view_h + SECTION_GAP

@@ -323,6 +323,11 @@ BERRY_INITIAL_COUNT: int = 6
 
 MUSHROOM_YIELD: int = 4  # per mushroom tile foraged
 REED_YIELD: int = 3
+# Fraction of riparian shoreline cells that start with reeds on a new map.
+REED_INITIAL_FRACTION: float = 0.55
+# Natural spread: chance per herb-tick on empty riparian (spring–summer only).
+REED_SPAWN_RATE_PEAK: float = 0.09
+REED_SPAWN_ACTIVITY: float = 0.85
 WOOD_BUSH_YIELD: int = 1  # processed wood from bush tiles
 # Chance an empty neighbour of a tree gets fallen wood when forests are seeded.
 WOOD_BUSH_SEED_CHANCE: float = 0.1

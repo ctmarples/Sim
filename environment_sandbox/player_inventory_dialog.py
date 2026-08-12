@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import pygame
 
-from entities import TOOL_KEYS, TOOL_SLOT_MAX, Player
+from entities import CLOTHING_ITEM_SLOT, CLOTHING_SLOTS, TOOL_KEYS, TOOL_SLOT_MAX, Player
 from inventory_ui import (
     GRID_CELL,
     GRID_GAP,
+    draw_clothing_slots,
     draw_inv_grid,
     draw_item_tooltip,
     draw_resource_cell,
@@ -55,9 +56,11 @@ class PlayerInventoryDialog:
         self._inv_hits: list[tuple[pygame.Rect, str, str]] = []
         self._tool_hits: list[tuple[pygame.Rect, str]] = []
         self._tool_slot_rects: list[pygame.Rect] = []
+        self._clothing_hits: list[tuple[pygame.Rect, str]] = []
+        self._clothing_slot_rects: dict[str, pygame.Rect] = {}
         self._cargo_rect = pygame.Rect(0, 0, 0, 0)
         self._drag_key: str | None = None
-        self._drag_from: str | None = None  # "cargo" | "tool"
+        self._drag_from: str | None = None  # "cargo" | "tool" | "clothing"
         self._drag_active = False
         self._tooltip_key: str | None = None
         self._auto_eat_rect = pygame.Rect(0, 0, 0, 0)
@@ -155,9 +158,31 @@ class PlayerInventoryDialog:
                 elif action == "tool_equip":
                     self._pending_action = "tool_equip"
                 return True
+        for rect, action in self._clothing_hits:
+            if rect.collidepoint(pos):
+                if action.startswith("clothing_unequip:"):
+                    slot = action.split(":", 1)[1]
+                    # Drag worn clothing out (item key resolved in draw via worn map).
+                    worn_key = None
+                    for s, r in self._clothing_slot_rects.items():
+                        if r == rect:
+                            # Find key from last drawn hits action pairing
+                            worn_key = slot  # temporary; draw stores slot→key
+                            break
+                    # Store slot for drag; mouseup unequips to cargo.
+                    self._drag_key = slot
+                    self._drag_from = "clothing"
+                    self._drag_active = True
+                elif action.startswith("clothing_equip:"):
+                    self._pending_action = action
+                return True
         for rect, side, key in self._inv_hits:
             if rect.collidepoint(pos):
                 if key in TOOL_KEYS:
+                    self._drag_key = key
+                    self._drag_from = "cargo"
+                    self._drag_active = True
+                elif key in CLOTHING_ITEM_SLOT:
                     self._drag_key = key
                     self._drag_from = "cargo"
                     self._drag_active = True
@@ -187,21 +212,35 @@ class PlayerInventoryDialog:
             # Drop onto a tool slot → equip from cargo.
             for i, slot in enumerate(self._tool_slot_rects):
                 if slot.collidepoint(pos):
-                    if origin == "cargo":
+                    if origin == "cargo" and key in TOOL_KEYS:
                         self._pending_action = f"equip:{key}"
                     elif origin == "tool":
-                        # Dropped back on tools — keep equipped.
                         pass
                     return True
-            # Drop onto cargo area → unequip tool.
+            # Drop onto a clothing slot matching the item's type.
+            for slot_name, slot_rect in self._clothing_slot_rects.items():
+                if slot_rect.collidepoint(pos):
+                    if origin == "cargo" and CLOTHING_ITEM_SLOT.get(key) == slot_name:
+                        self._pending_action = f"equip_clothing:{key}"
+                    elif origin == "clothing":
+                        pass
+                    return True
+            # Drop onto cargo area → unequip tool / clothing.
             if origin == "tool" and self._cargo_rect.collidepoint(pos):
                 self._pending_action = f"unequip:{key}"
                 return True
-            # Drop outside: cancel; click-equip if cargo tool released on itself.
+            if origin == "clothing" and self._cargo_rect.collidepoint(pos):
+                # drag_key is the clothing slot name when dragging from a slot.
+                self._pending_action = f"clothing_unequip:{key}"
+                return True
+            # Drop outside: click-equip if cargo item released on itself.
             if origin == "cargo":
                 for rect, _side, hit_key in self._inv_hits:
                     if hit_key == key and rect.collidepoint(pos):
-                        self._pending_action = f"equip:{key}"
+                        if key in TOOL_KEYS:
+                            self._pending_action = f"equip:{key}"
+                        elif key in CLOTHING_ITEM_SLOT:
+                            self._pending_action = f"equip_clothing:{key}"
                         return True
             return True
         return self.contains(pos)
@@ -244,9 +283,22 @@ class PlayerInventoryDialog:
         from inventory_ui import grid_height
 
         body_h = max(GRID_CELL, grid_height(max(1, len(keys))))
+        clothes_h = 18 + GRID_CELL + 12 + 8
         self._panel_h = (
-            TITLE_BAR_H + PAD + 18 + GRID_CELL + 10 + 18 + body_h + PAD + BTN_H + 10 + 8
+            TITLE_BAR_H
+            + PAD
+            + 18
+            + GRID_CELL
+            + 10
+            + clothes_h
+            + 18
+            + body_h
+            + PAD
+            + BTN_H
+            + 10
+            + 8
         )
+        self._panel_w = max(280, 5 * (GRID_CELL + GRID_GAP) + PAD * 2)
         self._clamp_panel()
         panel = self.panel_rect()
 
@@ -330,6 +382,24 @@ class PlayerInventoryDialog:
                     self._tool_hits.append((cell, "tool_equip"))
         y += GRID_CELL + 10
 
+        # Clothing slots
+        clothes_h, clothes_hits, _ctip = draw_clothing_slots(
+            surface,
+            origin=(x, y),
+            equipped_clothing=dict(inv.equipped_clothing),
+            mouse_pos=mouse_pos if not self._drag_active else None,
+            fonts=fonts,
+            interactive=True,
+        )
+        self._clothing_hits = clothes_hits
+        self._clothing_slot_rects = {}
+        # Rebuild slot rects from hits for drag targeting.
+        for rect, action in clothes_hits:
+            if ":" in action:
+                slot = action.split(":", 1)[1]
+                self._clothing_slot_rects[slot] = rect
+        y += clothes_h + 4
+
         # Cargo grid
         self._inv_hits = []
         h, hits, _tips, _hov, _ch, _vh = draw_inv_grid(
@@ -338,7 +408,7 @@ class PlayerInventoryDialog:
             width=inner_w,
             title="Cargo",
             subtitle=(
-                f"{inv.cargo_total}/{inv.capacity}"
+                f"{inv.cargo_total}/{inv.effective_capacity}"
                 f"  seeds {inv.seed_total}/{inv.seed_capacity}"
             ),
             amounts=amounts,

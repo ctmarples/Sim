@@ -48,6 +48,7 @@ from settings import (
     COLOUR_CRAFT_BENCH,
     COLOUR_ALCHEMIST,
     COLOUR_TAILOR,
+    COLOUR_COBBLER,
     COLOUR_MARKET,
     COLOUR_MASON,
     COLOUR_MEADOW,
@@ -540,6 +541,7 @@ class UI:
         selected: bool,
         assign_workplace_mode: bool,
         local_mouse: tuple[int, int] | None,
+        job_colour: tuple[int, int, int] | None = None,
     ) -> int:
         from villager_roster import draw_portrait, draw_status_bar
 
@@ -572,6 +574,7 @@ class UI:
             y + row_h // 2,
             int(getattr(villager, "portrait_seed", 0) or villager.id * 9973),
             size=20,
+            job_colour=job_colour,
         )
         text_x = x + 24
         max_text_w = PANEL_WIDTH - 48 - btn_space
@@ -821,6 +824,8 @@ class UI:
             local_mouse=local_mouse,
         )
         y += 22
+        from villager_roster import villager_job_colour
+
         for v in villagers:
             if v.assigned_to_home:
                 job = "home"
@@ -840,6 +845,7 @@ class UI:
                 selected=selected,
                 assign_workplace_mode=assign_workplace_mode,
                 local_mouse=local_mouse,
+                job_colour=villager_job_colour(v, buildings),
             )
         y += 4
 
@@ -1166,6 +1172,7 @@ class UI:
             (COLOUR_CRAFT_BENCH, "Craft bench"),
             (COLOUR_ALCHEMIST, "Alchemist"),
             (COLOUR_TAILOR, "Tailor"),
+            (COLOUR_COBBLER, "Cobbler"),
             (COLOUR_MARKET, "Market"),
             ((90, 90, 70), "Site"),
             (COLOUR_PLAYER, "Player"),
@@ -1562,6 +1569,7 @@ def draw_feature(
         ICON_CRAFT_BENCH,
         ICON_ALCHEMIST,
         ICON_TAILOR,
+        ICON_COBBLER,
         ICON_MARKET,
         ICON_MASON,
         ICON_MILL,
@@ -1864,6 +1872,22 @@ def draw_feature(
                 COLOUR_TAILOR,
                 roof=(50, 70, 100),
                 accent=(180, 200, 220),
+                vibrancy=vibrancy,
+                baked=True,
+            ),
+        )
+    elif feature == FeatureType.COBBLER:
+        blit_building(
+            surface,
+            ICON_COBBLER,
+            cx,
+            cy,
+            size,
+            variant=v,
+            recolour=_iso_building_recolour(
+                COLOUR_COBBLER,
+                roof=(70, 50, 35),
+                accent=(200, 170, 130),
                 vibrancy=vibrancy,
                 baked=True,
             ),

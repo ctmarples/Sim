@@ -200,10 +200,18 @@ def _presentation(elem: ET.Element, name: str) -> str | None:
 def _resolve_paint(
     elem: ET.Element, attr: str, recolour: Recolour
 ) -> Colour | None:
+    raw = _presentation(elem, attr)
+    explicit = _parse_colour(raw)
     for cls in _classes(elem):
         if cls in recolour:
+            # Class recolour replaces fill; only replace stroke when the SVG
+            # defines a stroke colour (avoid turning fill-only shapes into outlines).
+            if attr == "stroke" and (
+                raw is None or raw.strip().lower() in ("", "none")
+            ):
+                return explicit
             return recolour[cls]
-    return _parse_colour(_presentation(elem, attr))
+    return explicit
 
 
 def _elem_opacity(elem: ET.Element, *, paint: str = "fill") -> float:
@@ -1585,6 +1593,7 @@ ICON_KITCHEN = "kitchen"
 ICON_CRAFT_BENCH = "craft_bench"
 ICON_ALCHEMIST = "alchemist"
 ICON_TAILOR = "tailor"
+ICON_COBBLER = "cobbler"
 ICON_MARKET = "market"
 ICON_TENT = "tent"
 ICON_HOUSE_SMALL = "house_small"
@@ -1610,6 +1619,7 @@ BUILDING_ICON_NAMES: tuple[str, ...] = (
     ICON_CRAFT_BENCH,
     ICON_ALCHEMIST,
     ICON_TAILOR,
+    ICON_COBBLER,
     ICON_MARKET,
     ICON_TENT,
     ICON_HOUSE_SMALL,
@@ -1681,6 +1691,7 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_CRAFT_BENCH,
     ICON_ALCHEMIST,
     ICON_TAILOR,
+    ICON_COBBLER,
     ICON_MARKET,
     ICON_TENT,
     ICON_HOUSE_SMALL,
@@ -1724,6 +1735,8 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     "mushroom_stew",
     "hide",
     "leather",
+    "leather_shoes",
+    "leather_satchel",
 )
 
 
@@ -1777,6 +1790,7 @@ def icon_base_for_feature(
         FeatureType.CRAFT_BENCH: ICON_CRAFT_BENCH,
         FeatureType.ALCHEMIST: ICON_ALCHEMIST,
         FeatureType.TAILOR: ICON_TAILOR,
+        FeatureType.COBBLER: ICON_COBBLER,
         FeatureType.MARKET: ICON_MARKET,
         FeatureType.TENT: ICON_TENT,
         FeatureType.HOUSE_SMALL: ICON_HOUSE_SMALL,

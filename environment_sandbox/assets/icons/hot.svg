@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 40 40"
+   width="400"
+   height="400"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="hot.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <defs
+     id="defs1" />
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="1.1142622"
+     inkscape:cx="120.70767"
+     inkscape:cy="197.44006"
+     inkscape:window-width="1470"
+     inkscape:window-height="835"
+     inkscape:window-x="0"
+     inkscape:window-y="33"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="player" />
+  <title
+     id="title1">player</title>
+  <desc
+     id="desc1">Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <g
+     id="player"
+     inkscape:groupmode="layer"
+     inkscape:label="player">
+    <circle
+       style="fill:#e08200;stroke-width:0.157524"
+       id="path1"
+       cx="19.906012"
+       cy="19.591534"
+       r="10" />
+    <path
+       id="rect1"
+       style="fill:#e08200;stroke-width:0.1257"
+       d="m 17.925163,2.6730506 h 2.044098 l -0.131853,5.6655069 -1.450758,-0.19778 z"
+       sodipodi:nodetypes="ccccc" />
+    <path
+       id="rect1-72"
+       style="fill:#e08200;stroke-width:0.1257"
+       d="M 6.9835849,9.583788 8.8958295,6.7489408 11.46697,11.425547 9.9502857,12.282594 Z"
+       sodipodi:nodetypes="ccccc" />
+    <path
+       id="rect1-72-3"
+       style="fill:#e08200;stroke-width:0.1257"
+       d="m 29.106863,27.714296 0.989272,-1.318533 4.15338,1.248418 -2.175951,2.768921 z"
+       sodipodi:nodetypes="ccccc" />
+    <path
+       id="rect1-7"
+       style="fill:#e08200;stroke-width:0.1257"
+       d="m 19.815425,31.294869 1.58261,-0.39556 0.59334,5.335874 h -2.505584 z"
+       sodipodi:nodetypes="ccccc" />
+    <path
+       id="rect1-7-2"
+       style="fill:#e08200;stroke-width:0.121578"
+       d="m 3.2051253,20.804422 4.5599094,0.9889 0.5933401,1.055198 -5.1532495,0.9889 z"
+       sodipodi:nodetypes="ccccc" />
+    <path
+       id="rect1-7-2-5"
+       style="fill:#e08200;stroke-width:0.121578"
+       d="m 7.1058862,30.177126 4.4280558,-2.834847 1.120753,0.989271 -3.9006419,4.417087 z"
+       sodipodi:nodetypes="ccccc" />
+    <path
+       id="rect1-7-2-5-8"
+       style="fill:#e08200;stroke-width:0.121578"
+       d="M 27.605417,10.807231 30.91272,5.8627299 32.758666,7.7090477 28.858024,12.126135 Z"
+       sodipodi:nodetypes="ccccc" />
+    <path
+       id="rect1-7-2-0"
+       style="fill:#e08200;stroke-width:0.121578"
+       d="M 31.183064,17.771548 35.8089,16.255234 v 2.044098 l -4.559909,0.857047 z"
+       sodipodi:nodetypes="ccccc" />
+  </g>
+  <metadata
+     id="metadata1">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:title>player</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+</svg>

@@ -7,7 +7,8 @@ Columns:
   name, label, inputs, outputs, category, icon_key,
   extraction, farming, hunting, crafting, labour, transport,
   resource_group, resource_short,
-  food_satiation, food_walk_speed, food_work_efficiency, food_hunger_rate, food_edible
+  food_satiation, food_walk_speed, food_work_efficiency, food_hunger_rate, food_edible,
+  walk_speed, capacity_bonus, heat_protection, cold_protection, clothing_slot
 
 ``inputs`` / ``outputs`` use ``key:qty;key:qty`` (empty inputs = gather toggle).
 ``category`` groups recipes in the building inspect UI (kitchen: stews, grill, …).
@@ -19,6 +20,10 @@ Optional ``resource_*`` / ``food_*`` register catalogue entries for new outputs
 (icons: ``assets/icons/<icon_key or output key>.png`` / ``.svg``).
 Kitchen craft food buffs live in the kitchen CSV ``food_*`` columns — not in
 ``resource_balance.py`` (that file keeps raw / foraged foods only).
+
+Clothing outputs (tailor / cobbler) use ``walk_speed``, ``capacity_bonus``,
+``heat_protection``, ``cold_protection``, and optional ``clothing_slot``
+(hat / shirt / trousers / shoes / bag).
 
 Crop produce gather toggles for the forager are appended from ``crops.PRODUCE_KEYS``.
 Harvest yields and raw food buffs: ``resource_balance.py``.
@@ -45,6 +50,7 @@ _BUILDING_RECIPE_ATTR: dict[str, str] = {
     "craft_bench": "CRAFT_BENCH_RECIPES",
     "alchemist": "ALCHEMIST_RECIPES",
     "tailor": "TAILOR_RECIPES",
+    "cobbler": "COBBLER_RECIPES",
     "forester": "FORESTER_RECIPES",
     "forester_plant": "FORESTER_PLANT_RECIPES",
     "forester_split": "FORESTER_SPLIT_RECIPES",
@@ -92,6 +98,7 @@ KITCHEN_RECIPES: tuple[Recipe, ...] = ()
 CRAFT_BENCH_RECIPES: tuple[Recipe, ...] = ()
 ALCHEMIST_RECIPES: tuple[Recipe, ...] = ()
 TAILOR_RECIPES: tuple[Recipe, ...] = ()
+COBBLER_RECIPES: tuple[Recipe, ...] = ()
 FORESTER_RECIPES: tuple[Recipe, ...] = ()
 FORESTER_PLANT_RECIPES: tuple[Recipe, ...] = ()
 FORESTER_SPLIT_RECIPES: tuple[Recipe, ...] = ()
@@ -112,6 +119,30 @@ CATEGORY_LABELS: dict[str, str] = {
 }
 
 KITCHEN_FUEL_KEY: str = "wood"
+
+# Equipped clothing effects registered from tailor / cobbler CSV rows.
+CLOTHING_WALK_MULT: dict[str, float] = {}
+CLOTHING_CAPACITY_BONUS: dict[str, int] = {}
+CLOTHING_HEAT_PROTECTION: dict[str, float] = {}
+CLOTHING_COLD_PROTECTION: dict[str, float] = {}
+# Optional CSV overrides for item → slot (merged into entities.CLOTHING_ITEM_SLOT).
+CLOTHING_SLOT_FROM_CSV: dict[str, str] = {}
+
+
+def clothing_walk_mult(key: str) -> float:
+    return float(CLOTHING_WALK_MULT.get(key, 1.0))
+
+
+def clothing_capacity_bonus(key: str) -> int:
+    return int(CLOTHING_CAPACITY_BONUS.get(key, 0))
+
+
+def clothing_heat_protection(key: str) -> float:
+    return float(CLOTHING_HEAT_PROTECTION.get(key, 0.0))
+
+
+def clothing_cold_protection(key: str) -> float:
+    return float(CLOTHING_COLD_PROTECTION.get(key, 0.0))
 
 
 def _parse_amount_map(raw: str) -> dict[str, int]:
@@ -241,6 +272,34 @@ def _apply_row_metadata(row: dict[str, str], recipe: Recipe) -> None:
             edible=edible,
         )
 
+    _register_clothing_effects(row, recipe)
+
+
+def _register_clothing_effects(row: dict[str, str], recipe: Recipe) -> None:
+    """Apply optional clothing effect columns onto the primary output key."""
+    if not recipe.outputs:
+        return
+    out_key = next(iter(recipe.outputs))
+    slot = _cell(row, "clothing_slot", "slot").lower()
+    if slot:
+        CLOTHING_SLOT_FROM_CSV[out_key] = slot
+
+    walk_raw = _cell(row, "walk_speed", "gear_walk_speed")
+    if walk_raw:
+        CLOTHING_WALK_MULT[out_key] = float(walk_raw)
+
+    cap_raw = _cell(row, "capacity_bonus", "gear_capacity")
+    if cap_raw:
+        CLOTHING_CAPACITY_BONUS[out_key] = int(float(cap_raw))
+
+    heat_raw = _cell(row, "heat_protection")
+    if heat_raw:
+        CLOTHING_HEAT_PROTECTION[out_key] = float(heat_raw)
+
+    cold_raw = _cell(row, "cold_protection")
+    if cold_raw:
+        CLOTHING_COLD_PROTECTION[out_key] = float(cold_raw)
+
 
 def _recipe_from_json(data: dict) -> Recipe:
     name = str(data["name"])
@@ -347,7 +406,7 @@ def _append_forager_crop_produce(existing: list[Recipe], seen: set[str]) -> None
 def _load_directory_recipes() -> None:
     """Load ``recipes_data/<building>/recipes.csv`` (and legacy ``*.json``) into tuples."""
     global MILL_RECIPES, KITCHEN_RECIPES, CRAFT_BENCH_RECIPES, ALCHEMIST_RECIPES
-    global TAILOR_RECIPES
+    global TAILOR_RECIPES, COBBLER_RECIPES
     global FORESTER_RECIPES, FORESTER_PLANT_RECIPES, FORESTER_SPLIT_RECIPES
     global HUNTER_RECIPES, FORAGER_RECIPES, BARN_RECIPES, DRYING_RACK_RECIPES
 
@@ -399,6 +458,8 @@ ALCHEMIST_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(ALCHEMIST_RECIPES
 ALCHEMIST_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(ALCHEMIST_RECIPES)
 TAILOR_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(TAILOR_RECIPES)
 TAILOR_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(TAILOR_RECIPES)
+COBBLER_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(COBBLER_RECIPES)
+COBBLER_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(COBBLER_RECIPES)
 KITCHEN_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(KITCHEN_RECIPES)
 KITCHEN_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(KITCHEN_RECIPES)
 
@@ -411,6 +472,7 @@ PROCESSED_KEYS: tuple[str, ...] = tuple(
             *CRAFT_BENCH_OUTPUT_KEYS,
             *ALCHEMIST_OUTPUT_KEYS,
             *TAILOR_OUTPUT_KEYS,
+            *COBBLER_OUTPUT_KEYS,
         )
     )
 )

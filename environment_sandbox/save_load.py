@@ -119,12 +119,17 @@ def _inv_to_dict(inv: Inventory) -> dict[str, int]:
     data["capacity"] = inv.capacity
     if inv.equipped_tools:
         data["equipped_tools"] = list(inv.equipped_tools)
+    if inv.equipped_clothing:
+        data["equipped_clothing"] = {
+            str(slot): str(item) for slot, item in inv.equipped_clothing.items()
+        }
     return data
 
 
 def _inv_from_dict(data: dict[str, Any]) -> Inventory:
     data = _normalize_legacy_storage(data)
     from settings import INVENTORY_CAPACITY
+    from entities import CLOTHING_ITEM_SLOT, CLOTHING_SLOTS
 
     # Prefer current settings capacity so old saves (e.g. cap 8) aren't stuck
     # unable to carry FARM_PRODUCE_YIELD / other multi-unit harvests.
@@ -143,6 +148,15 @@ def _inv_from_dict(data: dict[str, Any]) -> Inventory:
         tool = data.get("equipped_tool")
         if tool in TOOL_KEYS:
             inv.equipped_tools = [str(tool)]
+    raw_clothes = data.get("equipped_clothing")
+    if isinstance(raw_clothes, dict):
+        worn: dict[str, str] = {}
+        for slot, item in raw_clothes.items():
+            slot_s = str(slot)
+            item_s = str(item)
+            if slot_s in CLOTHING_SLOTS and CLOTHING_ITEM_SLOT.get(item_s) == slot_s:
+                worn[slot_s] = item_s
+        inv.equipped_clothing = worn
     return inv
 
 
@@ -671,6 +685,7 @@ def _migrate_building_footprints(game: Game) -> None:
         BuildingKind.CRAFT_BENCH: FeatureType.CRAFT_BENCH,
         BuildingKind.ALCHEMIST: FeatureType.ALCHEMIST,
         BuildingKind.TAILOR: FeatureType.TAILOR,
+        BuildingKind.COBBLER: FeatureType.COBBLER,
         BuildingKind.MARKET: FeatureType.MARKET,
         BuildingKind.TENT: FeatureType.TENT,
         BuildingKind.HOUSE_SMALL: FeatureType.HOUSE_SMALL,
@@ -874,6 +889,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             BuildingKind.CRAFT_BENCH: TaskType.FULL_FORAGE,
             BuildingKind.ALCHEMIST: TaskType.FULL_FORAGE,
             BuildingKind.TAILOR: TaskType.FULL_FORAGE,
+            BuildingKind.COBBLER: TaskType.FULL_FORAGE,
             BuildingKind.MARKET: TaskType.FULL_FORAGE,
         }.get(kind, TaskType.FULL_MANAGE)
         raw_task = bdata.get("draw_task_type")

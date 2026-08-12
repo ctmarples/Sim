@@ -42,8 +42,10 @@ MARKET_PRICES: dict[str, int] = {
     "twine": 2,
     "sun_hat": 10,
     "winter_hat": 15,
-    "simple_shirt": 15,
+    "light_shirt": 15,
     "winter_coat": 20,
+    "leather_shoes": 18,
+    "leather_satchel": 14,
 }
 
 MARKET_SELLABLE_KEYS: tuple[str, ...] = tuple(MARKET_PRICES.keys())

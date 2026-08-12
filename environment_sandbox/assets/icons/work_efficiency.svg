@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 40 40"
+   width="400"
+   height="400"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="work_efficiency.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <defs
+     id="defs1" />
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="1.1592683"
+     inkscape:cx="265.25352"
+     inkscape:cy="229.02377"
+     inkscape:window-width="1470"
+     inkscape:window-height="834"
+     inkscape:window-x="1"
+     inkscape:window-y="34"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg1" />
+  <title
+     id="title1">villager</title>
+  <desc
+     id="desc1">Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <g
+     id="villager"
+     inkscape:groupmode="layer"
+     inkscape:label="villager" />
+  <metadata
+     id="metadata1">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:title>villager</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <path
+     id="path1"
+     style="fill:#c0681d;fill-opacity:1;stroke-width:0.0739642"
+     inkscape:transform-center-x="0.3246233"
+     inkscape:transform-center-y="-0.6085383"
+     d="m 32.845208,31.646177 -5.114293,-4.074254 -2.634224,5.656993 -3.55825,-0.350178 1.10343,-6.400709 -4.99768,-0.397304 -0.774231,-3.553766 5.915521,-0.794361 -0.157377,-5.720275 2.663344,-1.115677 2.79177,4.749115 4.86134,-2.083778 2.220135,2.970649 -4.086748,3.477678 4.028131,4.332547 z"
+     sodipodi:nodetypes="cccccccccccccccc" />
+  <path
+     id="path1-8"
+     style="fill:#c0681d;fill-opacity:1;stroke-width:0.0739642"
+     inkscape:transform-center-x="0.3246233"
+     inkscape:transform-center-y="-0.6085383"
+     d="M 20.304514,21.8493 15.190221,17.775046 12.555997,23.432039 8.9977473,23.081861 10.101177,16.681152 5.1034968,16.283848 4.3292658,12.730082 10.244787,11.935721 10.08741,6.2154456 l 2.663344,-1.115677 2.79177,4.749115 4.86134,-2.083778 2.220135,2.9706494 -4.086748,3.477678 4.028131,4.332547 z"
+     sodipodi:nodetypes="cccccccccccccccc" />
+  <ellipse
+     style="fill:#753f12;fill-opacity:1;stroke-width:0.149354"
+     id="path2"
+     cx="14.103724"
+     cy="14.060594"
+     rx="2.1134019"
+     ry="2.0702715" />
+  <ellipse
+     style="fill:#753f12;fill-opacity:1;stroke-width:0.149354"
+     id="path2-3"
+     cx="26.544941"
+     cy="24.081989"
+     rx="2.1134019"
+     ry="2.0702715" />
+</svg>

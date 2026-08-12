@@ -33,7 +33,7 @@ from society import (
     skills_used_by_building,
     villager_skill_level,
 )
-from villager_roster import SKILL_COL_W, draw_portrait, draw_skill_cell
+from villager_roster import SKILL_COL_W, draw_portrait, draw_skill_cell, villager_job_colour
 
 TITLE_BAR_H = 28
 FILTER_BAR_H = 30
@@ -58,6 +58,7 @@ _BUILD_ICON: dict[BuildingKind, str] = {
     BuildingKind.CRAFT_BENCH: "craft_bench",
     BuildingKind.ALCHEMIST: "alchemist",
     BuildingKind.TAILOR: "tailor",
+    BuildingKind.COBBLER: "cobbler",
     BuildingKind.MARKET: "market",
     BuildingKind.MASON: "mason",
     BuildingKind.HUNTER: "hunter",
@@ -398,7 +399,19 @@ class AssignPickerDialog:
                 pygame.draw.rect(surface, (55, 70, 55), row, border_radius=3)
             kind, data = visual
             if kind == "villager":
-                draw_portrait(surface, row.x + 16, row.centery, int(data), size=22)
+                job_colour = (
+                    villager_job_colour(villager, buildings)
+                    if villager is not None
+                    else None
+                )
+                draw_portrait(
+                    surface,
+                    row.x + 16,
+                    row.centery,
+                    int(data),
+                    size=22,
+                    job_colour=job_colour,
+                )
             else:
                 blit_icon(surface, str(data), row.x + 16, row.centery, 24)
             text_right = row.right - 4
