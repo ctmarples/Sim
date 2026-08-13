@@ -31,8 +31,9 @@ WINDOW_WIDTH: int = GRID_COLS * CELL_SIZE + PANEL_WIDTH
 WINDOW_HEIGHT: int = MAP_OFFSET_Y + GRID_ROWS * CELL_SIZE
 FPS: int = 60
 SIM_SPEEDS: tuple[int, ...] = (0, 1, 2, 4, 8, 16, 32, 64, 128)
-# In-game ticks per day (at 60 FPS: 480 ≈ 8 s/day at sim ×1). Cycled with [ ] in play.
-# Lower = faster calendar (better for path-traffic testing); villager pacing scales to match.
+# Calendar resolution: sim ticks per in-game day. At 60 FPS / ×1, wall time per day
+# is ticks_per_day / FPS (480 → ~8 s). Does NOT change walk/work pace — speed
+# buttons (×N) run N sim ticks each rendered frame.
 TICKS_PER_DAY_OPTIONS: tuple[int, ...] = (30, 60, 120, 240, 480, 960, 1920)
 REFERENCE_TICKS_PER_DAY: int = FPS * 8
 # Native terrain tile size (pre-rendered, then scaled to CELL_SIZE and stitched).
@@ -306,8 +307,8 @@ INDICATOR_RADIUS: int = 2
 
 # Resource yields, food effects, forage spawn rates: edit resource_balance.py
 
-VILLAGER_MOVE_INTERVAL: int = 48
-VILLAGER_WORK_INTERVAL: int = 144
+VILLAGER_MOVE_INTERVAL: int = 48  # sim ticks between steps (×N plays N ticks/frame)
+VILLAGER_WORK_INTERVAL: int = 144  # sim ticks between work actions
 # Work actions (each spaced by villager work interval) to finish one mill/kitchen craft.
 PROCESSOR_RECIPE_STEPS: int = 3
 

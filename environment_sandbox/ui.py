@@ -649,7 +649,7 @@ class UI:
         y = _blit_text(
             content,
             self.font_small,
-            f"Day {ticks_per_day}t (~{day_secs:.1f}s) [ ] — lower = faster",
+            f"Day {ticks_per_day}t (~{day_secs:.1f}s@×1) [ ] calendar",
             (x, y),
             COLOUR_TEXT_DIM,
         )

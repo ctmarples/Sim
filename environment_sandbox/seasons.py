@@ -59,7 +59,7 @@ SEASON_SYMBOLS_FANCY: dict[Season, str] = {
 
 DAYS_PER_SEASON: int = 28
 YEAR_DAYS: int = DAYS_PER_SEASON * 4  # 112
-# ~4 seconds of real time per in-game day at simulation ×1 (see set_ticks_per_day).
+# ~8 seconds of real time per in-game day at simulation ×1 with default ticks/day.
 TICKS_PER_DAY: int = FPS * 8
 
 # Kept for older saves that stored season_timer.

@@ -202,7 +202,6 @@ from settings import (
     AUTOLOAD_SAVE,
     STATUS_MESSAGE_FRAMES,
     TICKS_PER_DAY_OPTIONS,
-    REFERENCE_TICKS_PER_DAY,
     HEIGHT_SAMPLE_ENABLED_DEFAULT,
     HEIGHT_LIFT_PX,
     HEIGHT_EDIT_BRUSH_MIN,
@@ -505,6 +504,13 @@ class Game:
         self._last_save_path = None  # Path | None — last successful save/load
         self._loaded_save_name: str | None = None
         self.bug_log = BugLog(enabled=False)
+        # Bumped when stock/jobs change so sticky-IDLE workers wake early.
+        self._work_gen: int = 0
+        self._idle_skip_events: int = 0
+        self._idle_skip_ticks: int = 0
+        self._travel_skip_steps: int = 0
+        # Headless only: jump idle/cooldown waits. Live play ignores this path.
+        self._cooldown_skip_enabled: bool = True
 
         # Selection / drawing
         self.selected_building_id: int | None = None
@@ -794,6 +800,7 @@ class Game:
             self._update_camera_input(dt)
             self.camera.update(dt, self.world.cols, self.world.rows)
             if self.sim_speed > 0:
+                # Playback: fixed FPS; ×N means N sim ticks assigned to this frame.
                 for _ in range(self.sim_speed):
                     self._update_simulation()
             self._update_status_timer()
@@ -920,9 +927,104 @@ class Game:
 
     def record_produced(self, key: str, amount: int = 1) -> None:
         self.resource_history.record_produced(key, amount)
+        if amount > 0:
+            self._bump_work_gen()
 
     def record_consumed(self, key: str, amount: int = 1) -> None:
         self.resource_history.record_consumed(key, amount)
+        if amount > 0:
+            self._bump_work_gen()
+
+    def _bump_work_gen(self) -> None:
+        self._work_gen += 1
+
+    def _decision_slot_ticks(self) -> int:
+        """Max delay between IDLE replans (~4 slots per in-game day)."""
+        return max(1, self.ticks_per_day // 4)
+
+    def _park_idle_decision(self, villager: Villager) -> None:
+        """Stop re-probing workplace work until the next day-slot or a stock/job change."""
+        if not villager.inventory.is_empty:
+            villager.decision_cooldown = 0
+            return
+        villager.decision_cooldown = self._decision_slot_ticks()
+        villager.idle_work_gen = self._work_gen
+
+    def _idle_decision_pending(self, villager: Villager) -> bool:
+        """True when an IDLE villager is allowed to skip the full AI pass."""
+        return (
+            villager.state == VillagerState.IDLE
+            and villager.target is None
+            and not villager.seeking_food
+            and not villager.job_change_deposit
+            and villager.decision_cooldown > 0
+            and villager.idle_work_gen == self._work_gen
+            and not villager.needs_food()
+            and villager.inventory.is_empty
+        )
+
+    def _villager_needs_ai_pass(self, villager: Villager) -> bool:
+        """Whether this villager will run food/work selection this tick."""
+        if villager.state == VillagerState.SLEEPING:
+            return False
+        if villager.job_change_deposit:
+            return True
+        if villager.needs_food() or villager.seeking_food:
+            return True
+        if self._idle_decision_pending(villager):
+            return False
+        if villager.move_cooldown > 0 and villager.work_cooldown > 0:
+            return False
+        return True
+
+    def _reset_tick_claims(self) -> None:
+        self._tick_claim_stations = set()
+        self._tick_claim_cells = set()
+        self._tick_claim_animals = set()
+        self._tick_claim_colonies = set()
+        self._tick_claim_fish = set()
+        self._tick_claim_by_villager = {}
+        self._tick_has_general_hauler = False
+        self._tick_supply_demand = {}
+
+    def _rebuild_villager_claim_snapshot(self) -> None:
+        # One claim snapshot per tick — avoids rebuilding station sets / scans per villager.
+        self._tick_claim_stations = {b.center_cell() for b in self.buildings.values()}
+        self._tick_claim_stations.add(self.world.home_pos)
+        self._tick_claim_cells = set()
+        self._tick_claim_animals = set()
+        self._tick_claim_colonies = set()
+        self._tick_claim_fish = set()
+        self._tick_claim_by_villager = {}
+        self._tick_has_general_hauler = False
+        self._tick_supply_demand = {}
+        for other in self.villagers:
+            if other.building_id is None:
+                self._tick_has_general_hauler = True
+            cells: set[tuple[int, int]] = set()
+            if (
+                other.target is not None
+                and other.state == VillagerState.WORKING
+                and other.target not in self._tick_claim_stations
+            ):
+                cells.add(other.target)
+            if other.hunt_meat_pos is not None:
+                cells.add(other.hunt_meat_pos)
+            if other.fish_catch_pos is not None:
+                cells.add(other.fish_catch_pos)
+            if other.fish_post_pos is not None:
+                cells.add(other.fish_post_pos)
+            if cells:
+                self._tick_claim_by_villager[other.id] = cells
+                self._tick_claim_cells |= cells
+            if other.hunt_animal_id is not None:
+                self._tick_claim_animals.add(other.hunt_animal_id)
+            if other.hunt_colony_id is not None:
+                self._tick_claim_colonies.add(other.hunt_colony_id)
+            if other.forage_colony_id is not None:
+                self._tick_claim_colonies.add(other.forage_colony_id)
+            if other.fish_target_id is not None:
+                self._tick_claim_fish.add(other.fish_target_id)
 
     def _village_stock_amounts(self) -> dict[str, int]:
         """Storehouse + building storage totals (same scope as resource bar Total)."""
@@ -3001,6 +3103,7 @@ class Game:
         villager.state = VillagerState.IDLE
         villager.set_default_priorities()
         self._begin_job_change_deposit(villager)
+        self._bump_work_gen()
         self.assign_workplace_mode = False
         self.selected_villager_id = None
         self.selected_building_id = None
@@ -3125,13 +3228,9 @@ class Game:
         )
         secs = self.ticks_per_day / max(1, FPS)
         self._set_status(
-            f"Day length: {self.ticks_per_day} ticks (~{secs:.1f}s at ×1) — "
-            f"lower = faster calendar for path testing"
+            f"Calendar day: {self.ticks_per_day} ticks (~{secs:.1f}s at ×1). "
+            f"Walk/work pace stays fixed — use speed buttons for playback."
         )
-
-    def _day_length_scale(self) -> float:
-        """Scale tick-based intervals so villager moves/day stay ~constant."""
-        return self.ticks_per_day / max(1, REFERENCE_TICKS_PER_DAY)
 
     def _cycle_ticks_per_day(self, delta: int) -> None:
         opts = TICKS_PER_DAY_OPTIONS
@@ -3361,6 +3460,7 @@ class Game:
     def _advance_day(self) -> None:
         prev = self.season
         self.calendar_day = (self.calendar_day + 1) % YEAR_DAYS
+        self._bump_work_gen()
         self.resource_history.record_stock(self._village_stock_amounts())
         self.resource_history.advance_day()
         if self.season != prev:
@@ -4753,6 +4853,7 @@ class Game:
         villager.clear_assignment()
         villager.set_default_priorities()
         self._begin_job_change_deposit(villager)
+        self._bump_work_gen()
         self._set_status(f"Unassigned villager {villager.id}.")
 
     def _field_crop_counts(self, building: Building) -> dict[str, int]:
@@ -5127,6 +5228,7 @@ class Game:
             if villager.building_id != building_id:
                 continue
             villager.target = None
+            villager.decision_cooldown = 0
             villager._path_cache = None  # type: ignore[attr-defined]
             villager._path_goal = None  # type: ignore[attr-defined]
             if villager.state == VillagerState.IDLE:
@@ -5416,6 +5518,7 @@ class Game:
         # No map feature marker — the plot is shown as an outline while building.
         self.next_construction_id += 1
         self.construction_sites[site.id] = site
+        self._bump_work_gen()
         self.world.apply_disturbance(x0, y0)
         self._refresh_indicators()
         self.place_kind = None
@@ -5499,6 +5602,7 @@ class Game:
         )
         self.next_construction_id += 1
         self.construction_sites[site.id] = site
+        self._bump_work_gen()
         self.world.claim_structure_footprint(
             ox, oy, plot_w, plot_h, FeatureType.CONSTRUCTION_SITE
         )
@@ -5621,6 +5725,7 @@ class Game:
         )
         self.construction_sites[decon.id] = decon
         self.construction_sites[new_site.id] = new_site
+        self._bump_work_gen()
         self.world.claim_structure_footprint(
             old_x, old_y, old_w, old_h, FeatureType.CONSTRUCTION_SITE
         )
@@ -5665,6 +5770,7 @@ class Game:
         )
         sid = site.id
         del self.construction_sites[sid]
+        self._bump_work_gen()
         for villager in self.villagers:
             if villager.construction_id == sid:
                 villager.construction_id = None
@@ -5746,6 +5852,7 @@ class Game:
                 FEATURE_FOR_BUILDING[site.kind],
             )
         del self.construction_sites[site.id]
+        self._bump_work_gen()
         for villager in self.villagers:
             if villager.construction_id == site.id:
                 villager.construction_id = None
@@ -6977,6 +7084,7 @@ class Game:
 
     def _begin_job_change_deposit(self, villager: Villager) -> None:
         """After a job/slot change: return mismatched tools and deposit old cargo."""
+        self._bump_work_gen()
         self._unequip_mismatched_tools(villager)
         if not self._inventory_needs_store_deposit(villager.inventory):
             villager.job_change_deposit = False
@@ -7188,8 +7296,7 @@ class Game:
 
     def _hunter_flee_interval(self) -> int:
         """Match unbuffed healthy villager walk pace (after eating, no food speed buff)."""
-        scaled = self.balance.get_int("VILLAGER_MOVE_INTERVAL") * self._day_length_scale()
-        return max(4, int(round(scaled)))
+        return max(4, int(self.balance.get_int("VILLAGER_MOVE_INTERVAL")))
 
     def _tick_wildlife(self, day: float) -> None:
         self.wildlife.tick(
@@ -7245,51 +7352,21 @@ class Game:
     # Villager AI
     # ------------------------------------------------------------------
     def _update_villagers(self) -> None:
-        # One claim snapshot per tick — avoids rebuilding station sets / scans per villager.
-        self._tick_claim_stations = {b.center_cell() for b in self.buildings.values()}
-        self._tick_claim_stations.add(self.world.home_pos)
-        self._tick_claim_cells: set[tuple[int, int]] = set()
-        self._tick_claim_animals: set[int] = set()
-        self._tick_claim_colonies: set[int] = set()
-        self._tick_claim_fish: set[int] = set()
-        self._tick_claim_by_villager: dict[int, set[tuple[int, int]]] = {}
-        self._tick_has_general_hauler = False
-        self._tick_village_food = self._village_food_amounts()
-        self._tick_supply_demand: dict[int, dict[str, int]] = {}
-        for other in self.villagers:
-            if other.building_id is None:
-                self._tick_has_general_hauler = True
-            cells: set[tuple[int, int]] = set()
-            if (
-                other.target is not None
-                and other.state == VillagerState.WORKING
-                and other.target not in self._tick_claim_stations
-            ):
-                cells.add(other.target)
-            if other.hunt_meat_pos is not None:
-                cells.add(other.hunt_meat_pos)
-            if other.fish_catch_pos is not None:
-                cells.add(other.fish_catch_pos)
-            if other.fish_post_pos is not None:
-                cells.add(other.fish_post_pos)
-            if cells:
-                self._tick_claim_by_villager[other.id] = cells
-                self._tick_claim_cells |= cells
-            if other.hunt_animal_id is not None:
-                self._tick_claim_animals.add(other.hunt_animal_id)
-            if other.hunt_colony_id is not None:
-                self._tick_claim_colonies.add(other.hunt_colony_id)
-            if other.forage_colony_id is not None:
-                self._tick_claim_colonies.add(other.forage_colony_id)
-            if other.fish_target_id is not None:
-                self._tick_claim_fish.add(other.fish_target_id)
-
-        for villager in list(self.villagers):
+        for villager in self.villagers:
             if villager.move_cooldown > 0:
                 villager.move_cooldown -= 1
             if villager.work_cooldown > 0:
                 villager.work_cooldown -= 1
+            if villager.decision_cooldown > 0:
+                villager.decision_cooldown -= 1
 
+        self._tick_village_food = self._village_food_amounts()
+        if any(self._villager_needs_ai_pass(v) for v in self.villagers):
+            self._rebuild_villager_claim_snapshot()
+        else:
+            self._reset_tick_claims()
+
+        for villager in list(self.villagers):
             day_frac = 1.0 / max(1, self.ticks_per_day)
             self._update_villager_wellbeing(villager, day_frac)
             if villager.id not in {v.id for v in self.villagers}:
@@ -7312,6 +7389,9 @@ class Game:
                 villager.satiation
                 - VILLAGER_SATIATION_DECAY_PER_TICK * villager.food_hunger_mult,
             )
+
+            if self._idle_decision_pending(villager):
+                continue
 
             # Both timers blocking — no move or work this tick.
             if villager.move_cooldown > 0 and villager.work_cooldown > 0:
@@ -7453,6 +7533,13 @@ class Game:
                 elif villager.state not in (VillagerState.DELIVERING, VillagerState.HAULING, VillagerState.BUILDING):
                     villager.state = VillagerState.IDLE
                     villager.target = None
+            if (
+                not acted
+                and villager.state == VillagerState.IDLE
+                and villager.target is None
+                and not villager.seeking_food
+            ):
+                self._park_idle_decision(villager)
 
     def _satiation_speed_factor(self, satiation: float) -> float:
         """1.0 when full, down to 0.4 when starving — scales move/work pace."""
@@ -7467,14 +7554,15 @@ class Game:
         happiness: float,
         energy: float,
     ) -> int:
+        """Ticks between steps — fixed vs ticks/day; ×N playback runs N ticks/frame."""
         factor = (
             self._satiation_speed_factor(satiation)
             * max(0.1, float(food_walk_mult))
             * (0.7 + 0.3 * max(0.0, min(1.0, happiness)))
             * (0.55 + 0.45 * max(0.0, min(1.0, energy)))
         )
-        scaled = self.balance.get_int("VILLAGER_MOVE_INTERVAL") * self._day_length_scale()
-        return max(4, int(round(scaled / max(0.15, factor))))
+        base = self.balance.get_int("VILLAGER_MOVE_INTERVAL")
+        return max(4, int(round(base / max(0.15, factor))))
 
     def _work_interval_for(
         self,
@@ -7485,6 +7573,7 @@ class Game:
         energy: float,
         skill_mult: float = 1.0,
     ) -> int:
+        """Ticks between work actions — fixed vs ticks/day; speed buttons scale playback."""
         factor = (
             self._satiation_speed_factor(satiation)
             * max(0.1, float(food_work_mult))
@@ -7492,8 +7581,8 @@ class Game:
             * (0.65 + 0.35 * max(0.0, min(1.0, happiness)))
             * (0.5 + 0.5 * max(0.0, min(1.0, energy)))
         )
-        scaled = self.balance.get_int("VILLAGER_WORK_INTERVAL") * self._day_length_scale()
-        return max(6, int(round(scaled / max(0.15, factor))))
+        base = self.balance.get_int("VILLAGER_WORK_INTERVAL")
+        return max(6, int(round(base / max(0.15, factor))))
 
     def _temp_impact(self, inventory: Inventory):
         """Hot/cold impact for this inventory's equipped clothing."""
@@ -9377,6 +9466,7 @@ class Game:
         villager.haul_building_id = None
         villager.state = VillagerState.IDLE
         villager.target = None
+        self._park_idle_decision(villager)
 
     def _update_assigned_transport(
         self, villager: Villager, building: Building
@@ -11519,7 +11609,10 @@ class Game:
         if animal is None:
             if self._try_addon_craft(villager, building):
                 return
-            self._maybe_assigned_transport(villager, building)
+            if self._maybe_assigned_transport(villager, building):
+                return
+            villager._work_search_cd = self._decision_slot_ticks()
+            self._set_workplace_idle(villager)
             return
 
         villager.state = VillagerState.WORKING
@@ -11911,6 +12004,7 @@ class Game:
             )
         ]
         if not catchable:
+            villager.work_cooldown = max(4, self._villager_move_interval(villager) // 4)
             return
         target = min(
             catchable,
@@ -13999,23 +14093,42 @@ class Game:
             day = float(self.calendar_day) + (1.0 - self.day_tick / self.ticks_per_day)
 
             if skip > 1:
+                self._idle_skip_events += 1
+                self._idle_skip_ticks += skip
                 flush_eco(day)
                 for villager in self.villagers:
-                    villager.move_cooldown = max(0, villager.move_cooldown - skip)
+                    traveling = self._apply_travel_skip(villager, skip)
+                    if not traveling:
+                        villager.move_cooldown = max(0, villager.move_cooldown - skip)
                     villager.work_cooldown = max(0, villager.work_cooldown - skip)
-                    villager.satiation = max(
-                        0.0,
-                        villager.satiation
-                        - VILLAGER_SATIATION_DECAY_PER_TICK
-                        * villager.food_hunger_mult
-                        * skip,
+                    villager.decision_cooldown = max(
+                        0, villager.decision_cooldown - skip
                     )
+                    search_cd = int(getattr(villager, "_work_search_cd", 0) or 0)
+                    if search_cd > 0:
+                        villager._work_search_cd = max(0, search_cd - skip)  # type: ignore[attr-defined]
+                    if villager.state == VillagerState.SLEEPING:
+                        house = self.buildings.get(villager.housing_id or -1)
+                        at_home = (
+                            house is not None
+                            and (villager.x, villager.y) == house.center_cell()
+                        )
+                        if at_home:
+                            villager.energy = min(
+                                1.0, villager.energy + ENERGY_SLEEP_GAIN * skip
+                            )
+                            if villager.energy >= 0.95:
+                                villager.state = VillagerState.IDLE
+                                villager.target = None
+                    else:
+                        villager.satiation = max(
+                            0.0,
+                            villager.satiation
+                            - VILLAGER_SATIATION_DECAY_PER_TICK
+                            * villager.food_hunger_mult
+                            * skip,
+                        )
                 self._tick_player(skip)
-                for animal in self.wildlife.animals:
-                    animal.move_cooldown = max(0, animal.move_cooldown - skip)
-                for item in self.fish.fish:
-                    item.move_cooldown = max(0, item.move_cooldown - skip)
-
                 eco_left = skip
                 while eco_left > 0:
                     step = min(eco_left, self.day_tick)
@@ -14030,9 +14143,11 @@ class Game:
                     decay_per_tick=self.balance.get_float("DISTURBANCE_DECAY_PER_TICK"),
                     day=day,
                 )
-                self._tick_wildlife(day)
-                self.fish.tick(self.world, day)
-                wildlife_pending = 0
+                wildlife_pending += skip
+                while wildlife_pending >= 4:
+                    self._tick_wildlife(day)
+                    self.fish.tick(self.world, day)
+                    wildlife_pending -= 4
                 remaining -= skip
                 continue
 
@@ -14066,17 +14181,190 @@ class Game:
             self._tick_wildlife(day)
             self.fish.tick(self.world, day)
 
-    def _idle_cooldown_skip(self, limit: int) -> int:
-        """Largest N≤limit where every villager is blocked on move+work cooldowns."""
-        if limit <= 1 or not self.villagers:
+    def _villager_travel_goal(self, villager: Villager) -> tuple[int, int] | None:
+        """Cell this villager is currently walking toward, if any."""
+        if villager.hunt_shot is not None:
+            return None
+        if villager.target is not None and (villager.x, villager.y) != villager.target:
+            return villager.target
+        path_goal = getattr(villager, "_path_goal", None)
+        if (
+            path_goal is not None
+            and (villager.x, villager.y) != path_goal
+        ):
+            return path_goal
+        if (
+            villager.hunt_meat_pos is not None
+            and (villager.x, villager.y) != villager.hunt_meat_pos
+        ):
+            return villager.hunt_meat_pos
+        if villager.state == VillagerState.DELIVERING:
+            home = self.world.home_pos
+            if (villager.x, villager.y) != home:
+                return home
+        if (
+            villager.state == VillagerState.HAULING
+            and villager.haul_building_id is not None
+        ):
+            building = self.buildings.get(villager.haul_building_id)
+            if building is not None:
+                dest = building.center_cell()
+                if (villager.x, villager.y) != dest:
+                    return dest
+        return None
+
+    def _villager_is_traveling(self, villager: Villager) -> bool:
+        """True when the next real act is walking toward a destination."""
+        return self._villager_travel_goal(villager) is not None
+
+    def _ensure_travel_path(self, villager: Villager) -> list[tuple[int, int]] | None:
+        goal = self._villager_travel_goal(villager)
+        if goal is None:
+            return None
+        cache_goal = getattr(villager, "_path_goal", None)
+        cache: list[tuple[int, int]] | None = getattr(villager, "_path_cache", None)
+        if cache and cache_goal == goal:
+            nxt = cache[0]
+            if max(abs(nxt[0] - villager.x), abs(nxt[1] - villager.y)) <= 1:
+                return cache
+        path = self.world.find_path((villager.x, villager.y), goal)
+        villager._path_cache = path if path is not None else []  # type: ignore[attr-defined]
+        villager._path_goal = goal  # type: ignore[attr-defined]
+        cache = villager._path_cache  # type: ignore[attr-defined]
+        return cache or None
+
+    def _hunger_cap_ticks(self, villager: Villager, wait: int) -> int:
+        decay = VILLAGER_SATIATION_DECAY_PER_TICK * villager.food_hunger_mult
+        if decay <= 0:
+            return max(1, wait)
+        headroom = villager.satiation - villager.eat_threshold()
+        if headroom <= 0:
             return 1
-        skip = limit
-        for villager in self.villagers:
+        return max(1, min(wait, math.ceil(headroom / decay)))
+
+    def _travel_ticks_to_arrive(self, villager: Villager) -> int:
+        """Ticks until the last path step is taken (inclusive of that step)."""
+        # Moving prey: skip only the wait, then re-path on a real tick.
+        if villager.hunt_animal_id is not None or villager.hunt_colony_id is not None:
+            wait = max(1, villager.move_cooldown)
             if villager.needs_food() or villager.seeking_food:
+                return wait
+            return self._hunger_cap_ticks(villager, wait)
+        path = self._ensure_travel_path(villager)
+        if not path:
+            return 1
+        interval = max(1, self._villager_move_interval(villager))
+        steps = len(path)
+        cd = max(0, villager.move_cooldown)
+        if cd <= 0:
+            ticks = 1 + (steps - 1) * interval
+        else:
+            ticks = cd + (steps - 1) * interval
+        if villager.needs_food() or villager.seeking_food:
+            return max(1, ticks)
+        return self._hunger_cap_ticks(villager, ticks)
+
+    def _apply_travel_skip(self, villager: Villager, ticks: int) -> bool:
+        """Walk along a cached path for ``ticks``. Returns True if traveling."""
+        if ticks <= 0 or not self._villager_is_traveling(villager):
+            return False
+        chasing = (
+            villager.hunt_animal_id is not None or villager.hunt_colony_id is not None
+        )
+        path = None if chasing else self._ensure_travel_path(villager)
+        if not chasing and not path:
+            villager.move_cooldown = max(0, villager.move_cooldown - ticks)
+            return True
+        drain = ENERGY_MOVE_DRAIN * self._temp_energy_mult(villager.inventory)
+        goal = self._villager_travel_goal(villager)
+        for _ in range(ticks):
+            if villager.move_cooldown > 0:
+                villager.move_cooldown -= 1
+            if chasing or not path or goal is None:
+                continue
+            if (villager.x, villager.y) == goal:
+                continue
+            if villager.move_cooldown == 0:
+                step = path.pop(0)
+                interval = max(1, self._villager_move_interval(villager))
+                note_cell_step(villager, step[0], step[1])
+                self._record_path_traffic(step[0], step[1])
+                villager.move_cooldown = interval
+                arm_cell_step_visual(villager, interval)
+                villager.energy = max(0.0, villager.energy - drain)
+                self._travel_skip_steps += 1
+        return True
+
+    def _ticks_until_villager_action(self, villager: Villager) -> int:
+        """Ticks until this villager needs a real AI/work pass."""
+        if villager.hunt_shot is not None:
+            return 1
+
+        traveling = self._villager_is_traveling(villager)
+
+        if villager.seeking_food or villager.job_change_deposit:
+            if traveling:
+                return self._travel_ticks_to_arrive(villager)
+            return 1
+        if villager.needs_food():
+            return 1
+
+        if villager.state == VillagerState.SLEEPING:
+            house = self.buildings.get(villager.housing_id or -1)
+            at_home = (
+                house is not None
+                and (villager.x, villager.y) == house.center_cell()
+            )
+            if not at_home:
+                if traveling:
+                    return self._travel_ticks_to_arrive(villager)
+                return 1 if villager.move_cooldown <= 0 else villager.move_cooldown
+            remain = 0.95 - villager.energy
+            if remain <= 0:
                 return 1
-            if villager.move_cooldown <= 0 or villager.work_cooldown <= 0:
+            return max(1, math.ceil(remain / ENERGY_SLEEP_GAIN))
+
+        if self._idle_decision_pending(villager):
+            return self._hunger_cap_ticks(villager, max(1, villager.decision_cooldown))
+
+        search_cd = int(getattr(villager, "_work_search_cd", 0) or 0)
+        if search_cd > 0 and not traveling:
+            return self._hunger_cap_ticks(villager, search_cd)
+
+        # Standing on the work/haul cell: only work cooldown (not leftover move_cd).
+        if (
+            villager.target is not None
+            and (villager.x, villager.y) == villager.target
+        ):
+            if villager.work_cooldown <= 0:
                 return 1
-            skip = min(skip, villager.move_cooldown, villager.work_cooldown)
+            return self._hunger_cap_ticks(villager, villager.work_cooldown)
+
+        if traveling:
+            return self._travel_ticks_to_arrive(villager)
+
+        if villager.work_cooldown > 0:
+            return self._hunger_cap_ticks(villager, villager.work_cooldown)
+        if villager.move_cooldown > 0:
+            return self._hunger_cap_ticks(villager, villager.move_cooldown)
+        return 1
+
+    def _idle_cooldown_skip(self, limit: int) -> int:
+        """Largest N≤limit where every villager can be bulk-advanced."""
+        if (
+            not getattr(self, "_cooldown_skip_enabled", True)
+            or limit <= 1
+            or not self.villagers
+        ):
+            return 1
+        if getattr(self, "_arrow_shots", None):
+            return 1
+        skip = min(limit, max(1, self.day_tick))
+        for villager in self.villagers:
+            wait = self._ticks_until_villager_action(villager)
+            if wait <= 1:
+                return 1
+            skip = min(skip, wait)
         return max(1, skip)
 
     def simulate_fast_day(self) -> None:

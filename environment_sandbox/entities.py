@@ -3112,6 +3112,10 @@ class Villager:
     assigned_to_home: bool = False
     move_cooldown: int = 0
     work_cooldown: int = 0
+    # Ticks until an IDLE villager may replan; 0 = think now.
+    decision_cooldown: int = 0
+    # Work-generation snapshot when parked idle (wake if village work_gen moves).
+    idle_work_gen: int = 0
     target: tuple[int, int] | None = None
     haul_building_id: int | None = None
     hunt_animal_id: int | None = None
