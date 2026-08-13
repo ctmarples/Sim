@@ -12,6 +12,21 @@ os.environ.setdefault("SDL_VIDEO_CENTERED", "1")
 
 def main() -> None:
     pygame.init()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Environmental farming sandbox")
+    parser.add_argument(
+        "--time-demo",
+        action="store_true",
+        help="Open the ticks/cooldown demo window instead of the full game",
+    )
+    args = parser.parse_args()
+    if args.time_demo:
+        from time_demo import TimeDemo
+
+        TimeDemo().run()
+        return
+
     import settings
 
     info = pygame.display.Info()

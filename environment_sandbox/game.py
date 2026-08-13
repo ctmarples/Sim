@@ -52,7 +52,7 @@ from resource_balance import (
     SAPLING_DROP_CHANCE,
     STARTING_FOOD,
     VILLAGER_FOOD_KEYS,
-    VILLAGER_SATIATION_DECAY_PER_TICK,
+    satiation_decay_per_tick,
     WILD_PRODUCE_YIELD,
     combine_meal_buffs,
     food_def,
@@ -195,13 +195,15 @@ from settings import (
     MINIMAP_WIDTH,
     OVERLAY_ALPHA,
     SIM_SPEEDS,
+    DAY_SECONDS_OPTIONS,
+    seconds_to_ticks,
+    ticks_to_seconds,
     STARTING_ROCK,
     STARTING_WOOD,
     STARTING_TWINE,
     STARTING_VILLAGERS,
     AUTOLOAD_SAVE,
     STATUS_MESSAGE_FRAMES,
-    TICKS_PER_DAY_OPTIONS,
     HEIGHT_SAMPLE_ENABLED_DEFAULT,
     HEIGHT_LIFT_PX,
     HEIGHT_EDIT_BRUSH_MIN,
@@ -648,6 +650,7 @@ class Game:
             load_from_path(self, str(path))
             self._last_save_path = path
             self._loaded_save_name = path.name
+            self._sync_time_knobs_from_clock()
             self.status_message = f"Loaded {path.name}"
             self.status_timer = STATUS_MESSAGE_FRAMES
             return
@@ -737,6 +740,8 @@ class Game:
         self.world._seed_wood_near_trees(random.Random(int(self.world.seed) ^ 0xA70D))
         self._seed_map_communities()
         self._refresh_indicators()
+        self._apply_time_balance()
+        self.day_tick = self.ticks_per_day
 
     def _start_fresh_game(self) -> None:
         path = self._autoload_save_path()
@@ -794,15 +799,12 @@ class Game:
             dt = self.clock.get_time() / 1000.0
             self._handle_events()
             self._sync_camera_height_overscan()
-            # Arrows move the player; WASD pans — run both so neither cancels the other.
-            # Pan after move so edge-follow does not undo an active WASD pan.
+            # Sim first so cooldowns expire this frame; then arrows can step (matches time demo).
+            # WASD pans after walk so edge-follow does not undo an active pan.
+            self._step_sim()
             self._update_player_move_input(dt)
             self._update_camera_input(dt)
             self.camera.update(dt, self.world.cols, self.world.rows)
-            if self.sim_speed > 0:
-                # Playback: fixed FPS; ×N means N sim ticks assigned to this frame.
-                for _ in range(self.sim_speed):
-                    self._update_simulation()
             self._update_status_timer()
             self._draw()
             self.clock.tick(FPS)
@@ -1292,6 +1294,7 @@ class Game:
                     continue
                 if self.balance_dialog.open:
                     self.balance_dialog.handle_mouseup(event.pos, self.balance)
+                    self._apply_time_balance()
                     continue
                 if self.habitat_inspect.open and self.habitat_inspect._moving:
                     self.habitat_inspect.handle_mouseup(event.pos)
@@ -1465,6 +1468,7 @@ class Game:
                 load_from_path(self, path)
                 self._last_save_path = path
                 self._loaded_save_name = path.name
+                self._sync_time_knobs_from_clock()
                 self._invalidate_forage_index()
                 self._minimap_terrain = None
                 self._minimap_terrain_key = None
@@ -3206,6 +3210,20 @@ class Game:
     def season(self) -> Season:
         return season_for_day(self.calendar_day)
 
+    def _open_time_demo(self) -> None:
+        """Open the ticks/cooldown demo in a second process."""
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        script = Path(__file__).resolve().parent / "time_demo.py"
+        subprocess.Popen(
+            [sys.executable, str(script)],
+            cwd=str(script.parent),
+            start_new_session=True,
+        )
+        self._set_status("Opened time demo window.")
+
     def _set_sim_speed(self, speed: int) -> None:
         if speed not in SIM_SPEEDS:
             return
@@ -3217,28 +3235,94 @@ class Game:
         else:
             self._set_status(f"Simulation speed x{speed}")
 
+    def _playback_ticks(self) -> int:
+        """Sim ticks ×1 burns each frame."""
+        try:
+            return max(1, self.balance.get_int("PLAYBACK_TICKS_AT_X1"))
+        except Exception:
+            from settings import PLAYBACK_TICKS_AT_X1
+
+            return max(1, PLAYBACK_TICKS_AT_X1)
+
+    def _satiation_decay(self) -> float:
+        return satiation_decay_per_tick(self._playback_ticks())
+
+    def _legacy_per_tick(self, amount: float) -> float:
+        """Rates authored at 1 sim tick per frame."""
+        return float(amount) / self._playback_ticks()
+
+    def _sync_time_knobs_from_clock(self) -> None:
+        """Keep Balance day-seconds honest after loading a save's tick count."""
+        try:
+            self.balance.set(
+                "DAY_SECONDS_AT_X1",
+                ticks_to_seconds(self.ticks_per_day, self._playback_ticks()),
+            )
+        except Exception:
+            pass
+
+    def _walk_seconds(self) -> float:
+        try:
+            return float(self.balance.get_float("WALK_SECONDS_AT_X1"))
+        except Exception:
+            from settings import WALK_SECONDS_AT_X1
+
+            return WALK_SECONDS_AT_X1
+
+    def _work_seconds(self) -> float:
+        try:
+            return float(self.balance.get_float("WORK_SECONDS_AT_X1"))
+        except Exception:
+            from settings import WORK_SECONDS_AT_X1
+
+            return WORK_SECONDS_AT_X1
+
+    def _walk_interval_ticks(self) -> int:
+        return max(4, seconds_to_ticks(self._walk_seconds(), self._playback_ticks()))
+
+    def _work_interval_ticks(self) -> int:
+        return max(6, seconds_to_ticks(self._work_seconds(), self._playback_ticks()))
+
+    def _step_sim(self) -> int:
+        """Advance exactly speed × playback ticks this displayed frame."""
+        n = 0 if self.sim_speed <= 0 else self.sim_speed * self._playback_ticks()
+        for _ in range(n):
+            self._update_simulation()
+        return n
+
+    def _apply_time_balance(self) -> None:
+        """Keep calendar ticks in sync with day length in real seconds at ×1."""
+        day_s = self.balance.get_float("DAY_SECONDS_AT_X1")
+        target = seconds_to_ticks(day_s, self._playback_ticks())
+        if target != self.ticks_per_day:
+            self._set_ticks_per_day(target)
+
     def _set_ticks_per_day(self, ticks: int) -> None:
-        if ticks not in TICKS_PER_DAY_OPTIONS:
-            return
+        ticks = max(1, int(ticks))
         old = max(1, self.ticks_per_day)
         day_frac = 1.0 - (self.day_tick / old)
         self.ticks_per_day = set_ticks_per_day(ticks)
         self.day_tick = max(
             1, min(self.ticks_per_day, int(round(day_frac * self.ticks_per_day)))
         )
-        secs = self.ticks_per_day / max(1, FPS)
+        pb = self._playback_ticks()
+        secs = ticks_to_seconds(self.ticks_per_day, pb)
+        walk = ticks_to_seconds(self._walk_interval_ticks(), pb)
+        tiles = self.ticks_per_day / max(1, self._walk_interval_ticks())
+        try:
+            self.balance.set("DAY_SECONDS_AT_X1", secs)
+        except Exception:
+            pass
         self._set_status(
-            f"Calendar day: {self.ticks_per_day} ticks (~{secs:.1f}s at ×1). "
-            f"Walk/work pace stays fixed — use speed buttons for playback."
+            f"Day {secs:g}s at ×1  ·  walk {walk:.2f}s/tile  ·  ~{tiles:.0f} tiles/day"
         )
 
     def _cycle_ticks_per_day(self, delta: int) -> None:
-        opts = TICKS_PER_DAY_OPTIONS
-        try:
-            idx = opts.index(self.ticks_per_day)
-        except ValueError:
-            idx = min(range(len(opts)), key=lambda i: abs(opts[i] - self.ticks_per_day))
-        self._set_ticks_per_day(opts[(idx + delta) % len(opts)])
+        current = ticks_to_seconds(self.ticks_per_day, self._playback_ticks())
+        opts = DAY_SECONDS_OPTIONS
+        idx = min(range(len(opts)), key=lambda i: abs(opts[i] - current))
+        self.balance.set("DAY_SECONDS_AT_X1", opts[(idx + delta) % len(opts)])
+        self._apply_time_balance()
 
     def _toggle_pause(self) -> None:
         if self.sim_speed == 0:
@@ -4037,8 +4121,15 @@ class Game:
             self.resource_tracker.toggle(self.resource_history)
         elif action == "file_balance":
             self.balance_dialog.toggle()
+            if self.balance_dialog.open:
+                self.balance.set(
+                    "DAY_SECONDS_AT_X1",
+                    ticks_to_seconds(self.ticks_per_day, self._playback_ticks()),
+                )
         elif action == "file_reset":
             self.reset()
+        elif action == "file_time_demo":
+            self._open_time_demo()
         elif action == "file_quit":
             self.running = False
         elif action == "build_off":
@@ -6139,7 +6230,9 @@ class Game:
                 and (villager.x, villager.y) == house.center_cell()
             )
             if at_home:
-                villager.energy = min(1.0, villager.energy + ENERGY_SLEEP_GAIN)
+                villager.energy = min(
+                    1.0, villager.energy + self._legacy_per_tick(ENERGY_SLEEP_GAIN)
+                )
                 if villager.energy >= 0.95:
                     villager.state = VillagerState.IDLE
                     villager.target = None
@@ -7296,7 +7389,7 @@ class Game:
 
     def _hunter_flee_interval(self) -> int:
         """Match unbuffed healthy villager walk pace (after eating, no food speed buff)."""
-        return max(4, int(self.balance.get_int("VILLAGER_MOVE_INTERVAL")))
+        return max(4, self._walk_interval_ticks())
 
     def _tick_wildlife(self, day: float) -> None:
         self.wildlife.tick(
@@ -7387,7 +7480,7 @@ class Game:
             villager.satiation = max(
                 0.0,
                 villager.satiation
-                - VILLAGER_SATIATION_DECAY_PER_TICK * villager.food_hunger_mult,
+                - self._satiation_decay() * villager.food_hunger_mult,
             )
 
             if self._idle_decision_pending(villager):
@@ -7561,7 +7654,7 @@ class Game:
             * (0.7 + 0.3 * max(0.0, min(1.0, happiness)))
             * (0.55 + 0.45 * max(0.0, min(1.0, energy)))
         )
-        base = self.balance.get_int("VILLAGER_MOVE_INTERVAL")
+        base = self._walk_interval_ticks()
         return max(4, int(round(base / max(0.15, factor))))
 
     def _work_interval_for(
@@ -7581,7 +7674,7 @@ class Game:
             * (0.65 + 0.35 * max(0.0, min(1.0, happiness)))
             * (0.5 + 0.5 * max(0.0, min(1.0, energy)))
         )
-        base = self.balance.get_int("VILLAGER_WORK_INTERVAL")
+        base = self._work_interval_ticks()
         return max(6, int(round(base / max(0.15, factor))))
 
     def _temp_impact(self, inventory: Inventory):
@@ -7988,10 +8081,13 @@ class Game:
         p.work_cooldown = max(0, p.work_cooldown - ticks)
         p.satiation = max(
             0.0,
-            p.satiation - VILLAGER_SATIATION_DECAY_PER_TICK * p.food_hunger_mult * ticks,
+            p.satiation - self._satiation_decay() * p.food_hunger_mult * ticks,
         )
         # Idle recovery (no sleep bed) — slower than villager sleep.
-        p.energy = min(1.0, p.energy + ENERGY_SLEEP_GAIN * 0.35 * ticks)
+        p.energy = min(
+            1.0,
+            p.energy + self._legacy_per_tick(ENERGY_SLEEP_GAIN) * 0.35 * ticks,
+        )
         if p.auto_eat and p.needs_food() and self._food_count(p.inventory) > 0:
             eaten = self._eat_random_from(p.inventory, p)
             if eaten > 0:
@@ -14115,7 +14211,9 @@ class Game:
                         )
                         if at_home:
                             villager.energy = min(
-                                1.0, villager.energy + ENERGY_SLEEP_GAIN * skip
+                                1.0,
+                                villager.energy
+                                + self._legacy_per_tick(ENERGY_SLEEP_GAIN) * skip,
                             )
                             if villager.energy >= 0.95:
                                 villager.state = VillagerState.IDLE
@@ -14124,7 +14222,7 @@ class Game:
                         villager.satiation = max(
                             0.0,
                             villager.satiation
-                            - VILLAGER_SATIATION_DECAY_PER_TICK
+                            - self._satiation_decay()
                             * villager.food_hunger_mult
                             * skip,
                         )
@@ -14234,7 +14332,7 @@ class Game:
         return cache or None
 
     def _hunger_cap_ticks(self, villager: Villager, wait: int) -> int:
-        decay = VILLAGER_SATIATION_DECAY_PER_TICK * villager.food_hunger_mult
+        decay = self._satiation_decay() * villager.food_hunger_mult
         if decay <= 0:
             return max(1, wait)
         headroom = villager.satiation - villager.eat_threshold()
@@ -14322,7 +14420,9 @@ class Game:
             remain = 0.95 - villager.energy
             if remain <= 0:
                 return 1
-            return max(1, math.ceil(remain / ENERGY_SLEEP_GAIN))
+            return max(
+                1, math.ceil(remain / max(1e-9, self._legacy_per_tick(ENERGY_SLEEP_GAIN)))
+            )
 
         if self._idle_decision_pending(villager):
             return self._hunger_cap_ticks(villager, max(1, villager.decision_cooldown))
@@ -14413,6 +14513,9 @@ class Game:
             self.status_message,
             sim_speed=self.sim_speed,
             ticks_per_day=self.ticks_per_day,
+            playback_ticks=self._playback_ticks(),
+            walk_seconds=self._walk_seconds(),
+            work_seconds=self._work_seconds(),
             fish_manager=self.fish,
             construction_sites=self.construction_sites,
             assign_workplace_mode=self.assign_workplace_mode,
@@ -15525,7 +15628,7 @@ class Game:
         to_period = self._season_fade_to
         if to_period is None:
             return True
-        speed = max(0, int(self.sim_speed))
+        speed = max(0, int(self.sim_speed) * self._playback_ticks())
         if speed <= 0:
             return False
         total = max(1, int(self.ticks_per_day * self._season_fade_days()))

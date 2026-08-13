@@ -25,9 +25,11 @@ from settings import (
     PATH_TRAFFIC_OVERLAY_MAX,
     PATH_TRAFFIC_STEP,
     PATH_TRAFFIC_THRESHOLD,
+    PLAYBACK_TICKS_AT_X1,
+    DAY_SECONDS_AT_X1,
+    WALK_SECONDS_AT_X1,
+    WORK_SECONDS_AT_X1,
     URBAN_MIN_BUILDINGS,
-    VILLAGER_MOVE_INTERVAL,
-    VILLAGER_WORK_INTERVAL,
 )
 
 ParamKind = Literal["float", "int"]
@@ -43,6 +45,7 @@ class BalanceParam:
     maximum: float
     step: float
     hint: str = ""
+    suffix: str = ""
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,55 @@ class BalanceCategory:
 
 
 BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
+    BalanceCategory(
+        "time",
+        "Time & pace",
+        (
+            BalanceParam(
+                "DAY_SECONDS_AT_X1",
+                "Calendar day length at ×1",
+                "float",
+                DAY_SECONDS_AT_X1,
+                1.0,
+                60.0,
+                1.0,
+                "Real seconds for one calendar day at ×1. 1s lasts 1s; ×2 makes that day elapse in 0.5s.",
+                "s",
+            ),
+            BalanceParam(
+                "WALK_SECONDS_AT_X1",
+                "Walk one tile at ×1",
+                "float",
+                WALK_SECONDS_AT_X1,
+                0.05,
+                2.0,
+                0.05,
+                "Real seconds to cross one tile. Lower = snappier walking.",
+                "s",
+            ),
+            BalanceParam(
+                "WORK_SECONDS_AT_X1",
+                "One work action at ×1",
+                "float",
+                WORK_SECONDS_AT_X1,
+                0.15,
+                6.0,
+                0.15,
+                "Real seconds between chops / harvests / craft steps.",
+                "s",
+            ),
+            BalanceParam(
+                "PLAYBACK_TICKS_AT_X1",
+                "Sim steps per frame at ×1",
+                "int",
+                float(PLAYBACK_TICKS_AT_X1),
+                1,
+                8,
+                1,
+                "Usually leave at 2. Speed buttons multiply this. Higher = more sim per displayed frame.",
+            ),
+        ),
+    ),
     BalanceCategory(
         "paths_urban",
         "Paths & urban",
@@ -116,32 +168,6 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
                 12,
                 1,
                 "Fewer clusters stay grass/path from traffic only.",
-            ),
-        ),
-    ),
-    BalanceCategory(
-        "villagers",
-        "Villagers",
-        (
-            BalanceParam(
-                "VILLAGER_MOVE_INTERVAL",
-                "Move interval (ticks)",
-                "int",
-                float(VILLAGER_MOVE_INTERVAL),
-                4,
-                240,
-                4,
-                "Base ticks between steps at reference day length.",
-            ),
-            BalanceParam(
-                "VILLAGER_WORK_INTERVAL",
-                "Work interval (ticks)",
-                "int",
-                float(VILLAGER_WORK_INTERVAL),
-                6,
-                360,
-                6,
-                "Base ticks between work actions.",
             ),
         ),
     ),

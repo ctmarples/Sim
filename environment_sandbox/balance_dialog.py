@@ -16,6 +16,7 @@ from settings import (
     MAP_OFFSET_Y,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
+    seconds_to_ticks,
 )
 
 TITLE_BAR_H = 28
@@ -23,6 +24,24 @@ PAD = 10
 ROW_H = 26
 CAT_HEADER_H = 24
 BTN_W = 22
+HINT_H = 44
+
+
+def _wrap_hint(text: str, font: pygame.font.Font, max_w: int) -> list[str]:
+    words = text.split()
+    lines: list[str] = []
+    cur = ""
+    for word in words:
+        trial = f"{cur} {word}".strip()
+        if font.size(trial)[0] <= max_w:
+            cur = trial
+        else:
+            if cur:
+                lines.append(cur)
+            cur = word
+    if cur:
+        lines.append(cur)
+    return lines[:2]
 
 
 class BalanceDialog:
@@ -84,12 +103,19 @@ class BalanceDialog:
             h += CAT_HEADER_H
             if not self._collapsed.get(cat.id, False):
                 h += len(cat.params) * ROW_H
+                if cat.id == "time":
+                    h += ROW_H
         return h + PAD + 8
 
     def _view_rect(self) -> pygame.Rect:
         panel = self.panel_rect()
         top = panel.y + TITLE_BAR_H + 34
-        return pygame.Rect(panel.x + PAD, top, panel.w - 2 * PAD, panel.h - (top - panel.y) - PAD)
+        return pygame.Rect(
+            panel.x + PAD,
+            top,
+            panel.w - 2 * PAD,
+            panel.h - (top - panel.y) - PAD - HINT_H,
+        )
 
     def _clamp_scroll(self) -> None:
         view = self._view_rect()
@@ -204,7 +230,7 @@ class BalanceDialog:
         )
 
         hint = self.font_small.render(
-            "Defaults live in settings.py · add categories in balance_config.py",
+            "Seconds are real time at ×1. Hover a row for what it changes.",
             True,
             COLOUR_TEXT_DIM,
         )
@@ -225,6 +251,7 @@ class BalanceDialog:
         clip = surface.get_clip()
         surface.set_clip(view)
         y = view.y - self._scroll
+        hovered_hint = ""
 
         for cat in BALANCE_CATEGORIES:
             collapsed = self._collapsed.get(cat.id, False)
@@ -251,6 +278,12 @@ class BalanceDialog:
                 row = pygame.Rect(view.x, y, view.w, ROW_H - 2)
                 minus_r = pygame.Rect(row.x + row.w - 58, row.y + 2, BTN_W, ROW_H - 6)
                 plus_r = pygame.Rect(minus_r.right + 4, row.y + 2, BTN_W, ROW_H - 6)
+                if (
+                    mouse_pos is not None
+                    and row.collidepoint(mouse_pos)
+                    and param.hint
+                ):
+                    hovered_hint = param.hint
                 if row.colliderect(view):
                     surface.blit(
                         self.font_small.render(param.label, True, COLOUR_TEXT),
@@ -259,8 +292,10 @@ class BalanceDialog:
                     val = (
                         str(balance.get_int(param.key))
                         if param.kind == "int"
-                        else f"{balance.get_float(param.key):.2g}"
+                        else f"{balance.get_float(param.key):.2f}"
                     )
+                    if param.suffix:
+                        val = f"{val}{param.suffix}"
                     val_s = self.font.render(val, True, COLOUR_TEXT)
                     val_x = row.x + row.w - 118
                     surface.blit(val_s, (val_x, row.y + 3))
@@ -277,6 +312,22 @@ class BalanceDialog:
                 self._hit_regions.append((plus_r, "inc", param.key))
                 y += ROW_H
 
+            if cat.id == "time":
+                pb = max(1, balance.get_int("PLAYBACK_TICKS_AT_X1"))
+                day_t = seconds_to_ticks(balance.get_float("DAY_SECONDS_AT_X1"), pb)
+                walk_t = max(4, seconds_to_ticks(balance.get_float("WALK_SECONDS_AT_X1"), pb))
+                work_t = max(6, seconds_to_ticks(balance.get_float("WORK_SECONDS_AT_X1"), pb))
+                summary = (
+                    f"≈ {day_t / walk_t:.0f} tiles/day  ·  "
+                    f"≈ {day_t / work_t:.1f} work actions/day"
+                )
+                if pygame.Rect(view.x, y, view.w, ROW_H - 2).colliderect(view):
+                    surface.blit(
+                        self.font_small.render(summary, True, COLOUR_TEXT_DIM),
+                        (view.x + 4, y + 4),
+                    )
+                y += ROW_H
+
         surface.set_clip(clip)
 
         if content_h > view.h:
@@ -285,3 +336,12 @@ class BalanceDialog:
             thumb_h = max(24, int(view.h * view.h / content_h))
             thumb_y = view.y + int((view.h - thumb_h) * (self._scroll / max(1, content_h - view.h)))
             pygame.draw.rect(surface, (140, 144, 160), pygame.Rect(track.x, thumb_y, 4, thumb_h))
+
+        hint_text = hovered_hint or "Hover a row for what it changes. Defaults live in settings.py."
+        hint_y = view.bottom + 6
+        for line in _wrap_hint(hint_text, self.font_small, panel.w - 2 * PAD):
+            surface.blit(
+                self.font_small.render(line, True, COLOUR_TEXT_DIM),
+                (panel.x + PAD, hint_y),
+            )
+            hint_y += 13

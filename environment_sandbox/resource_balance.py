@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from settings import FPS
+from settings import pace_ticks, seconds_to_ticks
 
 # ---------------------------------------------------------------------------
 # Starting stock (home storehouse)
@@ -24,7 +24,14 @@ STARTING_FOOD: int = 12  # berries so early hires can eat
 # ---------------------------------------------------------------------------
 # Satiation 1.0 → 0.0 over this many seconds at ×1.
 VILLAGER_SATIATION_SECONDS: float = 180.0
-VILLAGER_SATIATION_DECAY_PER_TICK: float = 1.0 / (FPS * VILLAGER_SATIATION_SECONDS)
+
+
+def satiation_decay_per_tick(playback: int | None = None) -> float:
+    """Hunger drain per sim tick so 180s at ×1 is independent of playback."""
+    return 1.0 / seconds_to_ticks(VILLAGER_SATIATION_SECONDS, playback)
+
+
+VILLAGER_SATIATION_DECAY_PER_TICK: float = satiation_decay_per_tick()
 
 # Prefer these HomeStorage / inventory food keys when eating.
 # Kitchen craft outputs are appended via ``register_food`` when recipes.csv loads.
@@ -329,7 +336,7 @@ HUNT_SCARE_STEPS: int = 4
 # Deer/boar start fleeing when a hunter/player is within this Chebyshev radius.
 HUNT_APPROACH_RADIUS: int = 6
 # Flee pace fallback (= healthy unbuffed villager walk). Game passes scaled interval.
-HUNT_SCARE_MOVE_INTERVAL: int = 48
+HUNT_SCARE_MOVE_INTERVAL: int = pace_ticks(48)
 FISH_YIELD: int = 2
 
 # ---------------------------------------------------------------------------
@@ -453,17 +460,17 @@ WILD_PLANT_MAX_FRACTION: float = 0.20
 
 NATURAL_SPROUT_MIN_PATCH: int = 4
 NATURAL_SPROUT_CHANCE: float = 1.0 / 8.0
-NATURAL_SPROUT_INTERVAL: int = 180
+NATURAL_SPROUT_INTERVAL: int = pace_ticks(180)
 
 BERRY_SPREAD_CHANCE: float = 0.01  # legacy; seasonal rates drive spawn now
-BERRY_SPREAD_INTERVAL: int = 600
+BERRY_SPREAD_INTERVAL: int = pace_ticks(600)
 
 MUSHROOM_SPAWN_CHANCE: float = 0.006  # legacy peak; see seasonal peaks below
 MUSHROOM_SPREAD_CHANCE: float = 0.01  # into neighbouring soil
-MUSHROOM_TICK_INTERVAL: int = 360
+MUSHROOM_TICK_INTERVAL: int = pace_ticks(360)
 
 HERB_SPAWN_CHANCE: float = 0.03  # legacy peak; see seasonal peaks below
-HERB_TICK_INTERVAL: int = 150
+HERB_TICK_INTERVAL: int = pace_ticks(150)
 
 # Peak multipliers used by seasons.py spawn envelopes (chance per forage tick).
 HERB_SPAWN_RATE_PEAK: float = 0.045
@@ -475,4 +482,4 @@ BERRY_DESPAWN_LEFTOVER: float = 0.18
 MUSHROOM_SPAWN_RATE_PEAK: float = 0.015
 
 # Farm crop growth fallback (~32 in-game days at TICKS_PER_DAY = FPS*4).
-FARM_CROP_GROWTH_TICKS: int = FPS * 4 * 32
+FARM_CROP_GROWTH_TICKS: int = seconds_to_ticks(4.0 * 32)

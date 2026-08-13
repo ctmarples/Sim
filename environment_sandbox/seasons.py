@@ -17,7 +17,7 @@ from resource_balance import (
     REED_SPAWN_RATE_PEAK,
     WOOD_BUSH_SPAWN_RATE_PEAK,
 )
-from settings import FPS
+from settings import FPS, TICKS_PER_DAY as TICKS_PER_DAY_DEFAULT
 
 
 class Season(Enum):
@@ -59,8 +59,8 @@ SEASON_SYMBOLS_FANCY: dict[Season, str] = {
 
 DAYS_PER_SEASON: int = 28
 YEAR_DAYS: int = DAYS_PER_SEASON * 4  # 112
-# ~8 seconds of real time per in-game day at simulation ×1 with default ticks/day.
-TICKS_PER_DAY: int = FPS * 8
+# Default day length is wall-clock seconds at ×1 (see settings.DAY_SECONDS_AT_X1).
+TICKS_PER_DAY: int = TICKS_PER_DAY_DEFAULT
 
 # Kept for older saves that stored season_timer.
 SEASON_LENGTH_TICKS: int = TICKS_PER_DAY * DAYS_PER_SEASON

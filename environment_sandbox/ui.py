@@ -40,7 +40,11 @@ from settings import (
     COLOUR_GRASS,
     COLOUR_HERB,
     COLOUR_HOME,
-    FPS,
+    PLAYBACK_TICKS_AT_X1,
+    WALK_SECONDS_AT_X1,
+    WORK_SECONDS_AT_X1,
+    seconds_to_ticks,
+    ticks_to_seconds,
     COLOUR_HOME_ROOF,
     COLOUR_HUNTER,
     COLOUR_ICE,
@@ -633,6 +637,9 @@ class UI:
         status_message: str,
         sim_speed: int,
         ticks_per_day: int,
+        playback_ticks: int,
+        walk_seconds: float,
+        work_seconds: float,
         fish_manager: FishManager | None,
         construction_sites: dict[int, ConstructionSite] | None,
         assign_workplace_mode: bool,
@@ -645,11 +652,26 @@ class UI:
         y = _blit_text(content, self.font_title, "Environment Sandbox", (x, y))
         y = _blit_text(content, self.font_small, "WASD · Enter/E · Y map edit · H warp", (x, y), COLOUR_TEXT_DIM)
         y = _blit_text(content, self.font_small, f"Speed x{sim_speed}" if sim_speed else "Paused", (x, y), COLOUR_TEXT_DIM)
-        day_secs = ticks_per_day / max(1, FPS)
+        day_secs = ticks_to_seconds(ticks_per_day, playback_ticks)
+        tiles = ticks_per_day / max(1, seconds_to_ticks(walk_seconds, playback_ticks)) if walk_seconds else 0
         y = _blit_text(
             content,
             self.font_small,
-            f"Day {ticks_per_day}t (~{day_secs:.1f}s@×1) [ ] calendar",
+            f"Day {day_secs:g}s at ×1   [ ] change",
+            (x, y),
+            COLOUR_TEXT_DIM,
+        )
+        y = _blit_text(
+            content,
+            self.font_small,
+            f"Walk {walk_seconds:.2f}s/tile  ·  ~{tiles:.0f}/day",
+            (x, y),
+            COLOUR_TEXT_DIM,
+        )
+        y = _blit_text(
+            content,
+            self.font_small,
+            f"Work {work_seconds:.2f}s/action  ·  File→Balance",
             (x, y),
             COLOUR_TEXT_DIM,
         )
@@ -958,6 +980,9 @@ class UI:
         status_message: str,
         sim_speed: int = 1,
         ticks_per_day: int = 480,
+        playback_ticks: int = PLAYBACK_TICKS_AT_X1,
+        walk_seconds: float = WALK_SECONDS_AT_X1,
+        work_seconds: float = WORK_SECONDS_AT_X1,
         fish_manager: FishManager | None = None,
         construction_sites: dict[int, ConstructionSite] | None = None,
         assign_workplace_mode: bool = False,
@@ -1065,6 +1090,9 @@ class UI:
                 status_message=status_message,
                 sim_speed=sim_speed,
                 ticks_per_day=ticks_per_day,
+                playback_ticks=playback_ticks,
+                walk_seconds=walk_seconds,
+                work_seconds=work_seconds,
                 fish_manager=fish_manager,
                 construction_sites=construction_sites,
                 assign_workplace_mode=assign_workplace_mode,
@@ -1092,6 +1120,9 @@ class UI:
                 status_message,
                 sim_speed=sim_speed,
                 ticks_per_day=ticks_per_day,
+                playback_ticks=playback_ticks,
+                walk_seconds=walk_seconds,
+                work_seconds=work_seconds,
                 fish_manager=fish_manager,
                 construction_sites=construction_sites,
                 assign_workplace_mode=assign_workplace_mode,

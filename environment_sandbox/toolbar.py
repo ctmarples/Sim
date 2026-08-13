@@ -155,9 +155,10 @@ class Toolbar:
                 "file_balance", "Balance…", 8, TOOLBAR_HEIGHT + 82, 110, 24, "menu"
             ),
             self._make_btn("file_reset", "Reset", 8, TOOLBAR_HEIGHT + 108, 110, 24, "menu"),
-            self._make_btn("day_slower", "Day length −", 8, TOOLBAR_HEIGHT + 134, 110, 24, "menu"),
-            self._make_btn("day_faster", "Day length +", 8, TOOLBAR_HEIGHT + 160, 110, 24, "menu"),
-            self._make_btn("file_quit", "Quit", 8, TOOLBAR_HEIGHT + 186, 110, 24, "menu"),
+            self._make_btn("day_slower", "Shorter day", 8, TOOLBAR_HEIGHT + 134, 110, 24, "menu"),
+            self._make_btn("day_faster", "Longer day", 8, TOOLBAR_HEIGHT + 160, 110, 24, "menu"),
+            self._make_btn("file_time_demo", "Time demo…", 8, TOOLBAR_HEIGHT + 186, 110, 24, "menu"),
+            self._make_btn("file_quit", "Quit", 8, TOOLBAR_HEIGHT + 212, 110, 24, "menu"),
         ]
 
     def task_buttons_for(
@@ -330,7 +331,7 @@ class Toolbar:
                 surface.blit(text, (left - text.get_width(), 10))
 
         if self.file_menu_open:
-            menu_rect = pygame.Rect(6, TOOLBAR_HEIGHT - 2, 108, 7 * 26 + 10)
+            menu_rect = pygame.Rect(6, TOOLBAR_HEIGHT - 2, 108, 9 * 26 + 10)
             pygame.draw.rect(surface, COLOUR_MENU_BG, menu_rect)
             pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, menu_rect, 1)
             for btn in self._menu_buttons:

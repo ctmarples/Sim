@@ -1438,11 +1438,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         season_for_day,
         set_ticks_per_day,
     )
-    from settings import TICKS_PER_DAY_OPTIONS
 
-    saved_tpd = int(data.get("ticks_per_day", TICKS_PER_DAY))
-    if saved_tpd not in TICKS_PER_DAY_OPTIONS:
-        saved_tpd = min(TICKS_PER_DAY_OPTIONS, key=lambda x: abs(x - saved_tpd))
+    saved_tpd = max(1, int(data.get("ticks_per_day", TICKS_PER_DAY)))
     game.ticks_per_day = set_ticks_per_day(saved_tpd)
 
     if "calendar_day" in data:

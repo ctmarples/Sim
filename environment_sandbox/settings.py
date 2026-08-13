@@ -31,11 +31,56 @@ WINDOW_WIDTH: int = GRID_COLS * CELL_SIZE + PANEL_WIDTH
 WINDOW_HEIGHT: int = MAP_OFFSET_Y + GRID_ROWS * CELL_SIZE
 FPS: int = 60
 SIM_SPEEDS: tuple[int, ...] = (0, 1, 2, 4, 8, 16, 32, 64, 128)
-# Calendar resolution: sim ticks per in-game day. At 60 FPS / ×1, wall time per day
-# is ticks_per_day / FPS (480 → ~8 s). Does NOT change walk/work pace — speed
-# buttons (×N) run N sim ticks each rendered frame.
-TICKS_PER_DAY_OPTIONS: tuple[int, ...] = (30, 60, 120, 240, 480, 960, 1920)
-REFERENCE_TICKS_PER_DAY: int = FPS * 8
+
+# --- Time feel (edit these; ticks are derived) ---
+# Seconds are wall-clock at ×1 *if* the display holds 60 FPS.
+# ×1 burns PLAYBACK_TICKS_AT_X1 sim ticks each rendered frame (not extra catch-up).
+PLAYBACK_TICKS_AT_X1: int = 2  # sim ticks per displayed frame at ×1; speed ×N multiplies this
+DAY_SECONDS_AT_X1: float = 10.0  # real seconds for one calendar day at ×1 / 60 FPS
+WALK_SECONDS_AT_X1: float = 0.40  # real seconds to walk one tile at ×1 / 60 FPS
+WORK_SECONDS_AT_X1: float = 1.20  # real seconds between work actions at ×1 / 60 FPS
+DAY_SECONDS_OPTIONS: tuple[float, ...] = (1.0, 2.0, 5.0, 10.0, 20.0, 30.0)
+
+
+def sim_hz_at_x1(playback: int | None = None) -> int:
+    """Sim ticks per wall-clock second at ×1 when the display holds 60 FPS."""
+    return FPS * max(1, int(playback if playback is not None else PLAYBACK_TICKS_AT_X1))
+
+
+def seconds_to_ticks(seconds: float, playback: int | None = None) -> int:
+    """Wall-clock seconds at ×1 → sim ticks (assumes 60 FPS playback)."""
+    return max(1, int(round(float(seconds) * sim_hz_at_x1(playback))))
+
+
+def ticks_to_seconds(ticks: int | float, playback: int | None = None) -> float:
+    return float(ticks) / max(1, sim_hz_at_x1(playback))
+
+
+def pace_ticks(ticks_at_one_per_frame: int | float, playback: int | None = None) -> int:
+    """Intervals authored at 1 sim tick per displayed frame (60 FPS).
+
+    ×1 now burns PLAYBACK ticks each frame; use this so those old tick
+    counts keep the same wall-clock duration.
+    """
+    return seconds_to_ticks(float(ticks_at_one_per_frame) / FPS, playback)
+
+
+def playback_ticks_this_frame(speed: int, playback: int) -> int:
+    """Sim ticks to run on this displayed frame. Pause → 0."""
+    if speed <= 0:
+        return 0
+    return int(speed) * max(1, int(playback))
+
+
+# Derived (do not edit directly — change the seconds knobs above).
+SIM_TICKS_AT_X1: int = PLAYBACK_TICKS_AT_X1
+TICKS_PER_DAY: int = seconds_to_ticks(DAY_SECONDS_AT_X1)
+TICKS_PER_DAY_OPTIONS: tuple[int, ...] = tuple(
+    seconds_to_ticks(s) for s in DAY_SECONDS_OPTIONS
+)
+REFERENCE_TICKS_PER_DAY: int = TICKS_PER_DAY
+VILLAGER_MOVE_INTERVAL: int = max(4, seconds_to_ticks(WALK_SECONDS_AT_X1))
+VILLAGER_WORK_INTERVAL: int = max(6, seconds_to_ticks(WORK_SECONDS_AT_X1))
 # Native terrain tile size (pre-rendered, then scaled to CELL_SIZE and stitched).
 TERRAIN_SUBDIV: int = 25
 # Terrain edge backend: "procedural" (MS opaque joins + mottling) or "png"
@@ -298,8 +343,8 @@ STARTING_VILLAGERS: int = 3
 # to storehouse-only + starting villagers.
 AUTOLOAD_SAVE: str = "valley_trial.json"
 BUILD_SECONDS_PER_ITEM: float = 2.0
-# Ticks of construction work required per wood/rock unit (at simulation ×1).
-BUILD_TICKS_PER_ITEM: int = int(FPS * BUILD_SECONDS_PER_ITEM)
+# Ticks of construction work required per wood/rock unit (wall-clock seconds at ×1).
+BUILD_TICKS_PER_ITEM: int = seconds_to_ticks(BUILD_SECONDS_PER_ITEM)
 # Square footprint (cells) for storehouse, hiring hall, and production buildings.
 BUILDING_FOOTPRINT: int = 3
 
@@ -307,17 +352,15 @@ INDICATOR_RADIUS: int = 2
 
 # Resource yields, food effects, forage spawn rates: edit resource_balance.py
 
-VILLAGER_MOVE_INTERVAL: int = 48  # sim ticks between steps (×N plays N ticks/frame)
-VILLAGER_WORK_INTERVAL: int = 144  # sim ticks between work actions
 # Work actions (each spaced by villager work interval) to finish one mill/kitchen craft.
 PROCESSOR_RECIPE_STEPS: int = 3
 
-# Wildlife tick cadence (ecology amounts live in resource_balance.py).
-ANIMAL_MOVE_INTERVAL: int = 80
-ANIMAL_GROWTH_INTERVAL: int = 480
+# Wildlife tick cadence (authored at 1 tick/frame; scaled for current playback).
+ANIMAL_MOVE_INTERVAL: int = pace_ticks(80)
+ANIMAL_GROWTH_INTERVAL: int = pace_ticks(480)
 
-FISH_MOVE_INTERVAL: int = 80
-FISH_GROWTH_INTERVAL: int = 480
+FISH_MOVE_INTERVAL: int = pace_ticks(80)
+FISH_GROWTH_INTERVAL: int = pace_ticks(480)
 
 DISTURBANCE_DECAY_PER_TICK: float = 0.002
 DISTURBANCE_INTERACTION_BOOST: float = 0.25
