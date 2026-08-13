@@ -228,6 +228,10 @@ def _cell_to_dict(cell: Cell) -> dict[str, Any]:
     shade = getattr(cell, "terrain_shade", 0.55)
     if abs(shade - 0.55) > 0.001:
         data["terrain_shade"] = float(shade)
+    data["fertility"] = float(getattr(cell, "fertility", 0.8))
+    weeds = float(getattr(cell, "weeds", 0.0))
+    if weeds > 0.001:
+        data["weeds"] = weeds
     return data
 
 
@@ -259,6 +263,13 @@ def _cell_from_save(c: dict[str, Any]) -> Cell:
         cell.terrain_cluster = int(c["terrain_cluster"])
     if c.get("terrain_shade") is not None:
         cell.terrain_shade = float(c["terrain_shade"])
+    from soil import clamp01, fertility_base_for
+
+    if c.get("fertility") is not None:
+        cell.fertility = clamp01(float(c["fertility"]))
+    else:
+        cell.fertility = fertility_base_for(cell.terrain)
+    cell.weeds = clamp01(float(c.get("weeds", 0.0)))
     return cell
 
 
@@ -1470,6 +1481,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     _ = season_for_day(game.calendar_day)
 
     overlay_name = data.get("overlay_mode", "NONE")
+    if overlay_name == "PATH_TRAFFIC":
+        overlay_name = "DISTURBANCE"
     try:
         game.overlay_mode = OverlayMode[overlay_name]
     except KeyError:
@@ -1511,6 +1524,22 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         game._biodiversity_samples.clear()
         if hasattr(game, "_sample_biodiversity"):
             game._sample_biodiversity()
+
+    if hasattr(game, "_bake_erosion"):
+        erosion = (
+            (data.get("env_maps") or {}).get("erosion")
+            if isinstance(data.get("env_maps"), dict)
+            else None
+        )
+        rows, cols = game.world.rows, game.world.cols
+        needs_bake = (
+            not isinstance(erosion, list)
+            or len(erosion) != rows
+            or not erosion
+            or len(erosion[0]) != cols
+        )
+        if needs_bake:
+            game._bake_erosion()
 
     # Villager wear map for PATH painting (optional; older saves omit it).
     if hasattr(game, "_path_traffic"):

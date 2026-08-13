@@ -1653,6 +1653,7 @@ ICON_AXE = "axe"
 ICON_SPEAR = "wooden_spear"
 ICON_KNIFE = "knife"
 ICON_HOE = "hoe"
+ICON_CROP_WEEDS = "crop_weeds"
 ICON_FISHING_ROD = "fishing_rod"
 ICON_BOW = "bow"
 ICON_STONE_ARROWS = "stone_arrows"
@@ -1723,6 +1724,7 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_SPEAR,
     ICON_KNIFE,
     ICON_HOE,
+    ICON_CROP_WEEDS,
     ICON_FISHING_ROD,
     ICON_BOW,
     ICON_STONE_ARROWS,

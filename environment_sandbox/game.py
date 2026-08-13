@@ -27,7 +27,7 @@ from crops import (
 )
 from resource_balance import (
     BERRY_SEED_DROP_CHANCE,
-    FARM_PRODUCE_YIELD,
+    farm_produce_yield,
     FARM_SEED_AMOUNTS,
     FISH_YIELD,
     FISH_POST_LOCAL_RADIUS,
@@ -46,7 +46,6 @@ from resource_balance import (
     POLLINATOR_RADIUS_PER_LEVEL,
     POLLINATOR_STRENGTH_PER_LEVEL,
     FIELD_PEST_BOOST_MAX,
-    INSECT_REPELLANT_PEST_BOOST,
     MINERAL_POWDER_PEST_BOOST,
     REED_YIELD,
     SAPLING_DROP_CHANCE,
@@ -115,9 +114,9 @@ from indicators import (
 from environment import (
     EnvLayer,
     EnvMaps,
-    PEST_CONTROL_MULT_HIGH,
-    POLLINATION_YIELD_HIGH,
     crop_health_cap_from_pest_control,
+    crop_health_max_drop,
+    crop_health_min,
     is_env_sample_day,
     pollination_yield_multiplier,
 )
@@ -540,6 +539,7 @@ class Game:
         # Compat aliases used by overlay draw / older diagnostics.
         self._biodiversity_samples = self.env_maps.biodiversity_samples
         self._biodiversity_average = self.env_maps.biodiversity
+        self._bake_erosion()
         # Rebuilt at most once per sim tick; avoids full-map forage scans per villager.
         self._forage_cell_index: dict[str, list[tuple[int, int]]] | None = None
         self._minimap_terrain: pygame.Surface | None = None
@@ -902,6 +902,7 @@ class Game:
         self.env_maps.resize(self.world.rows, self.world.cols)
         self._biodiversity_samples = self.env_maps.biodiversity_samples
         self._biodiversity_average = self.env_maps.biodiversity
+        self._bake_erosion()
         self._sample_environment()
         self._set_status("World reset to valley start.")
 
@@ -1182,6 +1183,17 @@ class Game:
                     if detail.w > 0 and detail.collidepoint(event.pos):
                         if (
                             self.management.tab == MgmtTab.BUILDINGS
+                            and self.field_plan_dialog.open
+                            and self.management.selected_construction_id is None
+                        ):
+                            building = self._field_plan_building()
+                            self.field_plan_dialog.handle_mousedown(
+                                event.pos, building
+                            )
+                            self._apply_pending_field_plan()
+                            self._finish_field_plan_dialog()
+                        elif (
+                            self.management.tab == MgmtTab.BUILDINGS
                             and self.building_inspect.open
                             and self.management.selected_construction_id is None
                         ):
@@ -1197,8 +1209,10 @@ class Game:
                         self._apply_management_action()
                     continue
                 # Floating field editor: only consume clicks on the panel itself.
-                if self.field_plan_dialog.open and self.field_plan_dialog.contains(
-                    event.pos
+                if (
+                    self.field_plan_dialog.open
+                    and not self.field_plan_dialog.embedded
+                    and self.field_plan_dialog.contains(event.pos)
                 ):
                     building = self._field_plan_building()
                     self.field_plan_dialog.handle_mousedown(event.pos, building)
@@ -1363,6 +1377,12 @@ class Game:
                 if self.management.open and self.management.contains(mouse):
                     detail = self.management.detail_rect()
                     if detail.w > 0 and detail.collidepoint(mouse):
+                        if (
+                            self.management.tab == MgmtTab.BUILDINGS
+                            and self.field_plan_dialog.open
+                            and self.management.selected_construction_id is None
+                        ):
+                            continue
                         if (
                             self.management.tab == MgmtTab.BUILDINGS
                             and self.building_inspect.open
@@ -1627,7 +1647,9 @@ class Game:
         elif key == pygame.K_8:
             self._set_overlay(OverlayMode.POLLINATION)
         elif key == pygame.K_9:
-            self._set_overlay(OverlayMode.PATH_TRAFFIC)
+            self._set_overlay(OverlayMode.EROSION)
+        elif key == pygame.K_0 and not self.height_edit_mode:
+            self._set_overlay(OverlayMode.FERTILITY)
         elif key in (pygame.K_LEFTBRACKET, pygame.K_COMMA):
             self._cycle_ticks_per_day(-1)
         elif key in (pygame.K_RIGHTBRACKET, pygame.K_PERIOD):
@@ -1876,6 +1898,14 @@ class Game:
             corners=self.world.height_corners,
         )
         self._invalidate_height_sample_cache()
+        self._bake_erosion()
+
+    def _bake_erosion(self) -> None:
+        from soil import bake_erosion_grid
+
+        self.env_maps.erosion = bake_erosion_grid(self.world)
+        if getattr(self, "overlay_mode", OverlayMode.NONE) == OverlayMode.EROSION:
+            self._refresh_indicators()
 
     def _paint_height_at(self, x: int, y: int) -> None:
         """Dispatch the active map-edit brush stamp at cell (x, y)."""
@@ -1923,6 +1953,7 @@ class Game:
                         peak = v
             self.height_sample.max_height = peak
         self._invalidate_height_sample_cache()
+        self._bake_erosion()
 
     def _invalidate_height_sample_cache(self) -> None:
         self._height_sample_cache = None
@@ -2851,11 +2882,13 @@ class Game:
         if action == "mgmt_closed":
             self.building_inspect.close()
             self.villager_inspect.close()
+            self.field_plan_dialog.close()
             self.selected_construction_id = None
             return
         if action == "tab_people":
             self.management.tab = MgmtTab.PEOPLE
             self.management._layout_panel()
+            self.field_plan_dialog.close()
             self._mgmt_auto_select_people()
             return
         if action == "tab_buildings":
@@ -2866,6 +2899,7 @@ class Game:
         if action == "tab_wildlife":
             self.management.tab = MgmtTab.WILDLIFE
             self.management._layout_panel()
+            self.field_plan_dialog.close()
             self._mgmt_auto_select_wildlife()
             return
         if action == "toggle_detail":
@@ -3642,8 +3676,8 @@ class Game:
         and never below CROP_HEALTH_MIN. Values crushed by the old harsh curve
         are lifted to the new floor.
         """
-        from environment import CROP_HEALTH_MAX_DROP, CROP_HEALTH_MIN
-
+        hmin = crop_health_min()
+        drop = crop_health_max_drop()
         for building in self.buildings.values():
             if building.kind != BuildingKind.FIELD:
                 continue
@@ -3653,16 +3687,14 @@ class Game:
             pc = self.env_maps.farm_pest_control(cells)
             target = crop_health_cap_from_pest_control(pc)
             current = float(getattr(building, "crop_health", 1.0))
-            # Lift out of the obsolete sub-floor range from the old formula.
-            current = max(current, CROP_HEALTH_MIN)
+            current = max(current, hmin)
             if current > target:
-                current = max(target, current - CROP_HEALTH_MAX_DROP)
-            building.crop_health = max(CROP_HEALTH_MIN, min(1.0, current))
+                current = max(target, current - drop)
+            building.crop_health = max(hmin, min(1.0, current))
 
     def _field_crop_health(self, field: Building) -> float:
-        from environment import CROP_HEALTH_MIN
-
-        return max(CROP_HEALTH_MIN, min(1.0, float(getattr(field, "crop_health", 1.0))))
+        hmin = crop_health_min()
+        return max(hmin, min(1.0, float(getattr(field, "crop_health", 1.0))))
 
     def _record_path_traffic(self, x: int, y: int) -> None:
         """Accumulate villager wear on a cell (every logical step)."""
@@ -3674,6 +3706,26 @@ class Game:
         key = (x, y)
         step = self.balance.get_float("PATH_TRAFFIC_STEP")
         self._path_traffic[key] = float(self._path_traffic.get(key, 0.0)) + step
+        self._apply_traffic_disturbance_at(x, y)
+
+    def _apply_traffic_disturbance_at(self, x: int, y: int) -> None:
+        """Fold current wear on (x, y) into the disturbance field."""
+        cell = self.world.get_cell(x, y)
+        if cell is None:
+            return
+        cap = max(1e-6, self.balance.get_float("PATH_TRAFFIC_OVERLAY_MAX"))
+        dmax = self.balance.get_float("DISTURBANCE_MAX")
+        wear_d = min(dmax, float(self._path_traffic.get((x, y), 0.0)) / cap)
+        if cell.terrain == TerrainType.URBAN:
+            cell.disturbance = max(
+                self.balance.get_float("DISTURBANCE_URBAN_LEVEL"), wear_d
+            )
+        elif cell.terrain == TerrainType.PATH:
+            cell.disturbance = max(
+                self.balance.get_float("DISTURBANCE_PATH_LEVEL"), wear_d
+            )
+        else:
+            cell.disturbance = max(cell.disturbance, wear_d)
 
     @staticmethod
     def _cell_buildable(cell) -> bool:
@@ -3815,7 +3867,7 @@ class Game:
         """Recompute urban patches and worn paths."""
         self._update_urban_terrain()
         self._update_path_terrain(decay_traffic=decay_traffic)
-        self.world.sync_hardscape_disturbance()
+        self.world.sync_hardscape_disturbance(self._path_traffic)
 
     def _update_urban_terrain(self) -> None:
         """Paint URBAN for 3+ building clusters; merge 1-cell gaps; protect fields."""
@@ -3976,7 +4028,10 @@ class Game:
         if int(getattr(inv, "insect_repellant", 0)) > 0 and field_b is not None:
             if not inv.consume_item("insect_repellant", 1):
                 return False
-            added = self._apply_field_pest_boost(field_b, INSECT_REPELLANT_PEST_BOOST)
+            added = self._apply_field_pest_boost(
+                field_b,
+                float(self.balance.get_float("INSECT_REPELLANT_PEST_BOOST")),
+            )
             self.world.apply_disturbance(x, y)
             self.record_consumed("insect_repellant", 1)
             self._set_status(
@@ -4034,9 +4089,24 @@ class Game:
             if cell is not None
             else 1.0
         )
+        from soil import overlay_fertility, weed_yield_multiplier
+
+        fert = overlay_fertility(cell) if cell is not None else 1.0
+        weeds = float(getattr(cell, "weeds", 0.0)) if cell is not None else 0.0
+        weed_mult = weed_yield_multiplier(weeds)
         return max(
             1,
-            int(round(FARM_PRODUCE_YIELD * pest * health * poll * ecology)),
+            int(
+                round(
+                    farm_produce_yield()
+                    * pest
+                    * health
+                    * poll
+                    * ecology
+                    * fert
+                    * weed_mult
+                )
+            ),
         )
 
     def _farm_produce_yield_budget(self) -> int:
@@ -4045,9 +4115,9 @@ class Game:
             1,
             int(
                 round(
-                    FARM_PRODUCE_YIELD
-                    * PEST_CONTROL_MULT_HIGH
-                    * POLLINATION_YIELD_HIGH
+                    farm_produce_yield()
+                    * self.balance.get_float("PEST_CONTROL_MULT_HIGH")
+                    * self.balance.get_float("POLLINATION_YIELD_HIGH")
                 )
             ),
         )
@@ -4100,6 +4170,7 @@ class Game:
                 cell.growth_ticks = 0
                 cell.crop_kind = None
                 cell.deposit = 0
+                cell.weeds = 0.0
                 cleared = True
 
         if cleared:
@@ -4190,7 +4261,9 @@ class Game:
         if building.draw_task_type not in TASK_LABELS:
             building.draw_task_type = building.default_draw_task()
         if building.kind == BuildingKind.FIELD:
-            self._open_field_plan(building)
+            self._open_field_plan(
+                building, show_player=show_player, detail_only=detail_only
+            )
             return
         self._open_building_inspect(
             building, show_player=show_player, detail_only=detail_only
@@ -4236,12 +4309,22 @@ class Game:
             return None
         return building
 
-    def _open_field_plan(self, building: Building) -> None:
+    def _open_field_plan(
+        self,
+        building: Building,
+        *,
+        show_player: bool = False,
+        detail_only: bool = False,
+    ) -> None:
         self.building_inspect.close()
         self.villager_inspect.close()
         self.resource_inspect.close()
         self.selected_building_id = building.id
+        self.selected_construction_id = None
         self.field_plan_dialog.open_for(building, season=self.season)
+        self.management.select_building(
+            building.id, show_player=show_player, detail_only=detail_only
+        )
         self._set_status(
             f"Plan Field #{building.id} ({building.plot_size_label()}). "
             f"Select season & crop, drag to plant."
@@ -4973,18 +5056,6 @@ class Game:
         self._bump_work_gen()
         self._set_status(f"Unassigned villager {villager.id}.")
 
-    def _field_crop_counts(self, building: Building) -> dict[str, int]:
-        counts: dict[str, int] = {}
-        left, top, right, bottom = building.plot_bounds()
-        for y in range(top, bottom + 1):
-            for x in range(left, right + 1):
-                cell = self.world.get_cell(x, y)
-                if cell is None or cell.feature != FeatureType.CROP_HERB:
-                    continue
-                kind = cell.crop_kind or "sage"
-                counts[kind] = counts.get(kind, 0) + 1
-        return counts
-
     def _map_resource_at(
         self, x: int, y: int
     ) -> tuple[str, int, str, str] | None:
@@ -5103,6 +5174,7 @@ class Game:
             if cell is not None and cell.feature == FeatureType.FIELD:
                 cell.feature = FeatureType.NONE
         del self.buildings[building_id]
+        left, top, right, bottom = building.plot_bounds()
         if self.selected_building_id == building_id:
             self.selected_building_id = None
         if self.field_plan_dialog.building_id == building_id:
@@ -5112,6 +5184,22 @@ class Game:
         self._set_status(f"Deleted Field #{building_id}.")
         self._wake_all_farm_workers()
         self._refresh_indicators()
+        nearest: Building | None = None
+        best = FARM_FIELD_RADIUS + 1
+        for farm in self.buildings.values():
+            if farm.kind != BuildingKind.FARM:
+                continue
+            fcx, fcy = farm.center_cell()
+            cx = min(max(fcx, left), right)
+            cy = min(max(fcy, top), bottom)
+            d = max(abs(cx - fcx), abs(cy - fcy))
+            if d < best:
+                nearest = farm
+                best = d
+        if nearest is not None and best <= FARM_FIELD_RADIUS:
+            self._select_building(nearest)
+        elif self.management.open:
+            self._mgmt_auto_select_building()
 
     def _save_game(self) -> None:
         self._pending_file_action = "save"
@@ -5482,11 +5570,21 @@ class Game:
             return
 
         if cell.feature == FeatureType.CROP_HERB:
+            weeds = float(getattr(cell, "weeds", 0.0))
+            hoe = self.player.inventory.has_equipped_tool("hoe")
+            if weeds > 0.05 and hoe:
+                if self.world.clear_weeds(x, y):
+                    self.world.apply_disturbance(x, y)
+                    self._finish_player_work()
+                    self._set_status("Pulled weeds.")
+                return
             if self.world.crop_herb_ready(x, y):
                 if self._harvest_farm_herb(x, y, self.player.inventory, status=True):
                     self._finish_player_work()
             elif self._try_apply_alchemist_treatment(x, y):
                 return
+            elif weeds > 0.05 and not hoe:
+                self._set_status("Equip a hoe (Q) to pull weeds.")
             else:
                 self._set_status("Crop still growing.")
             return
@@ -6816,6 +6914,9 @@ class Game:
                 cell.growth_ticks = 0
                 cell.crop_kind = None
                 cell.deposit = 0
+                from soil import drop_fertility_on_harvest
+
+                drop_fertility_on_harvest(cell)
                 crop_key = crop.key
             crop = CROP_BY_KEY.get(crop_key, crop)
             if crop.key not in ("wheat", "rye"):
@@ -9159,12 +9260,16 @@ class Game:
                 # Still allow harvest/sow with local stock before seed trips.
                 if self._find_farm_harvest(villager, building) is not None:
                     return True
+                if self._find_farm_weed_work(villager, building) is not None:
+                    return True
                 if self._find_farm_sow_work(villager, building) is not None:
                     return True
                 return False
             if sticky_ok:
                 return True
             if self._find_farm_harvest(villager, building) is not None:
+                return True
+            if self._find_farm_weed_work(villager, building) is not None:
                 return True
             if self._find_farm_sow_work(villager, building) is not None:
                 return True
@@ -10776,6 +10881,8 @@ class Game:
             return False
         if self._find_farm_harvest(villager, building) is not None:
             return True
+        if self._find_farm_weed_work(villager, building) is not None:
+            return True
         if self._find_farm_plant_work(villager, building) is not None:
             return True
         return self._find_farm_work(villager, building) is not None
@@ -10916,8 +11023,12 @@ class Game:
                     return
                 if self._update_plant_stock_withdraw(villager, building):
                     return
-            target = harvest_first or plough_or_sow or self._find_farm_work(
-                villager, building
+            weed_first = self._find_farm_weed_work(villager, building)
+            target = (
+                weed_first
+                or harvest_first
+                or plough_or_sow
+                or self._find_farm_work(villager, building)
             )
             if target is None:
                 if self._try_farm_barn_work(villager, building):
@@ -11347,6 +11458,26 @@ class Game:
                     harvest.append((x, y))
         return self._closest_of((villager.x, villager.y), harvest)
 
+    def _find_farm_weed_work(
+        self, villager: Villager, building: Building
+    ) -> tuple[int, int] | None:
+        """Closest crop tile whose weeds need the hoe (not a harvest)."""
+        threshold = self.balance.get_float("WEED_ACTION_THRESHOLD")
+        claimed = self._claimed_work_cells(villager.id)
+        weedy: list[tuple[int, int]] = []
+        for field_b in self._fields_near_farm(building):
+            for x, y in field_b.plot_cells():
+                if (x, y) in claimed:
+                    continue
+                if not self.world.is_walkable(x, y):
+                    continue
+                cell = self.world.get_cell(x, y)
+                if cell is None or cell.feature != FeatureType.CROP_HERB:
+                    continue
+                if float(getattr(cell, "weeds", 0.0)) >= threshold:
+                    weedy.append((x, y))
+        return self._closest_of((villager.x, villager.y), weedy)
+
     def _farm_target_still_valid(
         self, villager: Villager, building: Building, pos: tuple[int, int]
     ) -> bool:
@@ -11354,10 +11485,16 @@ class Game:
         x, y = pos
         if not self.world.is_walkable(x, y):
             return False
-        if self.world.crop_herb_ready(x, y):
-            return villager.inventory.can_add(1)
         cell = self.world.get_cell(x, y)
-        if cell is None or cell.feature == FeatureType.CROP_HERB:
+        if cell is None:
+            return False
+        if cell.feature == FeatureType.CROP_HERB:
+            if float(getattr(cell, "weeds", 0.0)) >= self.balance.get_float(
+                "WEED_ACTION_THRESHOLD"
+            ):
+                return True
+            if self.world.crop_herb_ready(x, y):
+                return villager.inventory.can_add(1)
             return False
         plan = self._plan_at_cell(building, x, y)
         if plan is None:
@@ -11488,7 +11625,10 @@ class Game:
     def _find_farm_work(
         self, villager: Villager, building: Building
     ) -> tuple[int, int] | None:
-        """Priority: harvest → sow → plough on nearby Field buildings' plans."""
+        """Priority: weed → harvest → sow → plough on nearby Field buildings' plans."""
+        found = self._find_farm_weed_work(villager, building)
+        if found is not None:
+            return found
         found = self._find_farm_harvest(villager, building)
         if found is not None:
             return found
@@ -11507,6 +11647,161 @@ class Game:
             if max(abs(cx - fcx), abs(cy - fcy)) <= FARM_FIELD_RADIUS:
                 nearby.append(building)
         return nearby
+
+    def _crop_overview_from_cells(
+        self, cells_by_crop: dict[str, set[tuple[int, int]]]
+    ) -> list[dict]:
+        from crops import CROP_BY_KEY, PHASE_SHORT
+
+        base = farm_produce_yield()
+        rows: list[dict] = []
+        for key in sorted(
+            cells_by_crop,
+            key=lambda k: (CROP_BY_KEY[k].label if k in CROP_BY_KEY else k),
+        ):
+            crop = CROP_BY_KEY.get(key)
+            if crop is None:
+                continue
+            cells = cells_by_crop[key]
+            rows.append(
+                {
+                    "key": key,
+                    "label": crop.label,
+                    "icon": crop.produce_key or key,
+                    "phases": tuple(PHASE_SHORT[p] for p in crop.year_phases),
+                    "tiles": len(cells),
+                    "max_yield": len(cells) * base,
+                    "est_yield": sum(
+                        self._farm_produce_yield_at(x, y) for x, y in cells
+                    ),
+                }
+            )
+        return rows
+
+    def _farm_crop_overview(self, farm: Building) -> list[dict]:
+        """Crops planned on nearby fields: season phases, max and estimated yield."""
+        from collections import defaultdict
+
+        cells_by_crop: dict[str, set[tuple[int, int]]] = defaultdict(set)
+        for field in self._fields_near_farm(farm):
+            for plan in field.plans:
+                for cell in plan.cells():
+                    if field.contains_plot(*cell):
+                        cells_by_crop[plan.crop_kind].add(cell)
+        return self._crop_overview_from_cells(cells_by_crop)
+
+    def _field_crop_overview(self, field: Building) -> list[dict]:
+        from collections import defaultdict
+
+        cells_by_crop: dict[str, set[tuple[int, int]]] = defaultdict(set)
+        for plan in field.plans:
+            for cell in plan.cells():
+                if field.contains_plot(*cell):
+                    cells_by_crop[plan.crop_kind].add(cell)
+        return self._crop_overview_from_cells(cells_by_crop)
+
+    def _field_env_status(self, field: Building) -> dict:
+        """Live ecology chips for one field (pest, health, pollination, ecology)."""
+        from world import disturbance_activity_multiplier, effective_disturbance_at
+
+        cells = field.plot_cells()
+        boost = max(0.0, float(getattr(field, "pest_boost", 0.0)))
+        pest_bio = self.env_maps.farm_pest_control(cells)
+        pest = pest_bio + boost
+        poll = self.env_maps.farm_pollination(cells)
+        poll_mult = pollination_yield_multiplier(poll)
+        health = self._field_crop_health(field)
+        cap = crop_health_cap_from_pest_control(pest_bio)
+        dist_vals = [
+            effective_disturbance_at(self.world, x, y) for x, y in cells
+        ] or [0.0]
+        dist = sum(dist_vals) / len(dist_vals)
+        ecology = disturbance_activity_multiplier(dist)
+        from soil import overlay_fertility, weed_yield_multiplier
+
+        fert_vals = []
+        weed_vals = []
+        for x, y in cells:
+            cell = self.world.get_cell(x, y)
+            if cell is None:
+                continue
+            fert_vals.append(overlay_fertility(cell))
+            weed_vals.append(float(getattr(cell, "weeds", 0.0)))
+        fertility = (sum(fert_vals) / len(fert_vals)) if fert_vals else 0.0
+        weeds = (sum(weed_vals) / len(weed_vals)) if weed_vals else 0.0
+        weed_mult = weed_yield_multiplier(weeds)
+        erosion_grid = self.env_maps.erosion
+        ero_vals = []
+        for x, y in cells:
+            if 0 <= y < len(erosion_grid) and 0 <= x < len(erosion_grid[y]):
+                ero_vals.append(float(erosion_grid[y][x]))
+        erosion = (sum(ero_vals) / len(ero_vals)) if ero_vals else 0.0
+        base = farm_produce_yield()
+        got = max(
+            1,
+            int(
+                round(
+                    base * pest * health * poll_mult * ecology * fertility * weed_mult
+                )
+            ),
+        )
+        return {
+            "biodiversity": self.env_maps.farm_biodiversity(cells),
+            "bio_lo": self.balance.get_float("PEST_CONTROL_RICHNESS_LOW"),
+            "bio_mid": self.balance.get_float("PEST_CONTROL_RICHNESS_MID"),
+            "bio_hi": self.balance.get_float("PEST_CONTROL_RICHNESS_HIGH"),
+            "pest_from_bio": pest_bio,
+            "pest_boost": boost,
+            "pest_mult": pest,
+            "pest_lo": self.balance.get_float("PEST_CONTROL_MULT_LOW"),
+            "pest_hi": self.balance.get_float("PEST_CONTROL_MULT_HIGH"),
+            "health": health,
+            "health_cap": cap,
+            "health_min": crop_health_min(),
+            "health_drop": crop_health_max_drop(),
+            "poll_coverage": poll,
+            "poll_mult": poll_mult,
+            "ecology": ecology,
+            "disturbance": dist,
+            "ecology_floor": self.balance.get_float("DISTURBANCE_ACTIVITY_FLOOR"),
+            "fertility": fertility,
+            "weeds": weeds,
+            "weed_mult": weed_mult,
+            "weed_threshold": self.balance.get_float("WEED_ACTION_THRESHOLD"),
+            "weed_penalty": self.balance.get_float("WEED_HARVEST_PENALTY"),
+            "erosion": erosion,
+            "base_yield": base,
+            "harvest_yield": got,
+        }
+
+    def _farm_env_status(self, farm: Building) -> dict | None:
+        fields = self._fields_near_farm(farm)
+        if not fields:
+            return None
+        statuses = [self._field_env_status(f) for f in fields]
+        n = len(statuses)
+        avg = statuses[0].copy()
+        for key in (
+            "biodiversity",
+            "pest_from_bio",
+            "pest_boost",
+            "pest_mult",
+            "health",
+            "health_cap",
+            "poll_coverage",
+            "poll_mult",
+            "ecology",
+            "disturbance",
+            "harvest_yield",
+            "fertility",
+            "weeds",
+            "weed_mult",
+            "erosion",
+        ):
+            avg[key] = sum(float(s[key]) for s in statuses) / n
+        avg["harvest_yield"] = max(1, int(round(avg["harvest_yield"])))
+        avg["base_yield"] = farm_produce_yield()
+        return avg
 
     def _field_building_at(self, x: int, y: int) -> Building | None:
         for building in self.buildings.values():
@@ -11554,6 +11849,16 @@ class Game:
         mode = building.work_mode
         allow_harvest = mode in (WorkMode.COLLECT, WorkMode.ALL)
         allow_plant = mode in (WorkMode.PLANT, WorkMode.ALL)
+
+        if (
+            cell.feature == FeatureType.CROP_HERB
+            and float(getattr(cell, "weeds", 0.0)) > 0.0
+        ):
+            if self.world.clear_weeds(x, y):
+                self.world.apply_disturbance(x, y)
+                self._spend_work_energy(villager)
+                self._gain_job_skill(villager, building.kind.name)
+            return
 
         # Harvest uses the crop actually on the tile (ripe = harvestable any season).
         if self.world.crop_herb_ready(x, y):
@@ -14148,8 +14453,8 @@ class Game:
         if self.overlay_mode == OverlayMode.POLLINATION:
             self.overlay_values = [row[:] for row in self.env_maps.pollination]
             return
-        if self.overlay_mode == OverlayMode.PATH_TRAFFIC:
-            self.overlay_values = self._path_traffic_overlay_grid()
+        if self.overlay_mode == OverlayMode.EROSION:
+            self.overlay_values = [row[:] for row in self.env_maps.erosion]
             return
         self.overlay_values = build_overlay_grid(self.world, self.overlay_mode)
 
@@ -14180,7 +14485,7 @@ class Game:
             OverlayMode.BIODIVERSITY,
             OverlayMode.FLORAL_RESOURCES,
             OverlayMode.POLLINATION,
-            OverlayMode.PATH_TRAFFIC,
+            OverlayMode.EROSION,
         ):
             self._refresh_indicators()
         try:
@@ -14578,39 +14883,14 @@ class Game:
             built_kinds=unlock_built_kinds(self.buildings),
         )
         field_b = self._field_plan_building()
-        field_pc = None
-        field_bio = None
-        field_health = None
-        field_poll = None
-        field_harvest = None
-        if field_b is not None:
-            cells = field_b.plot_cells()
-            boost = max(0.0, float(getattr(field_b, "pest_boost", 0.0)))
-            field_pc = self.env_maps.farm_pest_control(cells) + boost
-            field_bio = self.env_maps.farm_biodiversity(cells)
-            field_health = self._field_crop_health(field_b)
-            field_poll = self.env_maps.farm_pollination(cells)
-            field_harvest = max(
-                1,
-                int(
-                    round(
-                        FARM_PRODUCE_YIELD
-                        * field_pc
-                        * field_health
-                        * pollination_yield_multiplier(field_poll)
-                    )
-                ),
-            )
-        self.field_plan_dialog.draw(
-            self.screen,
-            field_b,
-            crop_counts=self._field_crop_counts(field_b) if field_b else None,
-            pest_control=field_pc,
-            biodiversity=field_bio,
-            crop_health=field_health,
-            pollination=field_poll,
-            base_yield=FARM_PRODUCE_YIELD if field_b else None,
-            harvest_yield=field_harvest,
+        field_overview = (
+            self._field_crop_overview(field_b) if field_b is not None else None
+        )
+        field_env = self._field_env_status(field_b) if field_b is not None else None
+        embed_field = (
+            self.management.open
+            and self.management.tab == MgmtTab.BUILDINGS
+            and self.field_plan_dialog.open
         )
         inspect_b = self._inspect_building()
         hire_candidates = None
@@ -14643,6 +14923,17 @@ class Game:
             hired_count = 0
 
         def _draw_building_detail(surf: pygame.Surface, rect: pygame.Rect) -> None:
+            if field_b is not None and embed_field:
+                self.field_plan_dialog.configure_embed(rect)
+                self.field_plan_dialog.draw(
+                    surf,
+                    field_b,
+                    crop_overview=field_overview,
+                    env_status=field_env,
+                    current_season=self.season,
+                    mouse_pos=mouse,
+                )
+                return
             if inspect_b is None:
                 return
             self.building_inspect.configure_embed(rect)
@@ -14667,6 +14958,17 @@ class Game:
                     else None
                 ),
                 village_stock=self._village_stock_amounts(),
+                crop_overview=(
+                    self._farm_crop_overview(inspect_b)
+                    if inspect_b.kind == BuildingKind.FARM
+                    else None
+                ),
+                env_status=(
+                    self._farm_env_status(inspect_b)
+                    if inspect_b.kind == BuildingKind.FARM
+                    else None
+                ),
+                current_season=self.season,
             )
 
         def _draw_villager_detail(surf: pygame.Surface, rect: pygame.Rect) -> None:
@@ -14735,6 +15037,8 @@ class Game:
                 self.building_inspect.close()
             if self.villager_inspect.open:
                 self.villager_inspect.close()
+            if self.field_plan_dialog.open and self.field_plan_dialog.embedded:
+                self.field_plan_dialog.close()
         if self.assign_picker.open:
             self.assign_picker.draw(
                 self.screen,
@@ -15895,6 +16199,12 @@ class Game:
                 deposit=cell.deposit,
                 growth_ticks=cell.growth_ticks,
             )
+            weeds = float(getattr(cell, "weeds", 0.0))
+            if cell.feature == FeatureType.CROP_HERB and weeds > 0.04:
+                from icons import blit_icon
+
+                weed_size = max(8, int(round(draw_size * (0.4 + 0.6 * weeds))))
+                blit_icon(self.screen, "crop_weeds", cx, cy, weed_size)
             if cell.feature == FeatureType.CONSTRUCTION_SITE:
                 site = self._construction_at(x, y)
                 if site is not None and site.center_cell() == (x, y):

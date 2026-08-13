@@ -17,6 +17,8 @@ from settings import (
     BUFF_STRENGTH_REF,
     BUFF_STRENGTH_SPEED,
     BUFF_STRENGTH_WORK,
+    FARM_PRODUCE_YIELD,
+    INSECT_REPELLANT_PEST_BOOST,
     pace_ticks,
     seconds_to_ticks,
 )
@@ -428,7 +430,6 @@ POLLINATOR_BASE_STRENGTH: float = 0.85
 POLLINATOR_STRENGTH_PER_LEVEL: float = 0.05
 
 # Alchemist field treatments (player applies with Enter on a field / soil).
-INSECT_REPELLANT_PEST_BOOST: float = 0.12
 MINERAL_POWDER_PEST_BOOST: float = 0.04
 FIELD_PEST_BOOST_MAX: float = 0.30
 # Initial colonies seeded per kind on new maps.
@@ -493,7 +494,16 @@ FISH_POST_MIN_FISH: int = 2
 FISH_POST_LOCAL_RADIUS: int = 16
 
 WILD_PRODUCE_YIELD: int = 3  # wild crop / herb produce per harvest
-FARM_PRODUCE_YIELD: int = 9  # farmed crop produce per harvest
+
+
+def farm_produce_yield() -> int:
+    """Live File → Balance harvest units per farmed tile."""
+    try:
+        from balance_config import active_balance
+
+        return max(1, active_balance().get_int("FARM_PRODUCE_YIELD"))
+    except Exception:
+        return int(FARM_PRODUCE_YIELD)
 
 # Crop seed drops (defaults applied on every CropDef in crops.py).
 WILD_SEED_CHANCE: float = 1.0 / 3.0  # forage: chance of 1 seed

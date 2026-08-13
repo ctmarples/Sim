@@ -29,6 +29,7 @@ from inventory_ui import (
     grid_height,
     present_keys,
 )
+from seasons import Season
 from settings import (
     COLOUR_MENU_BG,
     COLOUR_SELECTED_ENTITY,
@@ -915,6 +916,9 @@ class BuildingInspectDialog:
         home_storage=None,
         market_offer_fn=None,
         village_stock: dict[str, int] | None = None,
+        crop_overview: list[dict] | None = None,
+        env_status: dict | None = None,
+        current_season: Season | None = None,
     ) -> None:
         if not self.open or building is None or building.kind == BuildingKind.FIELD:
             return
@@ -967,6 +971,15 @@ class BuildingInspectDialog:
 
         if extensions_for_parent(building.kind):
             options_h += BTN_H + 8
+
+        overview_h = 0
+        if building.kind == BuildingKind.FARM:
+            from crop_status_ui import env_factors_height, overview_height
+
+            n = max(1, len(crop_overview or []))
+            overview_h = overview_height(n)
+            if env_status:
+                overview_h += env_factors_height(356)
 
         gather_recipes = (
             building.known_recipes() if building.is_gather_recipe_building() else ()
@@ -1075,6 +1088,7 @@ class BuildingInspectDialog:
 
         body_h = (
             PAD
+            + overview_h
             + 18
             + options_h
             + SECTION_GAP
@@ -1135,6 +1149,7 @@ class BuildingInspectDialog:
         self._worker_hits = []
         self._inv_hits = []
         self._inv_tip_hits: list[tuple[pygame.Rect, str, str]] = []
+        env_hover_tip = ""
         content_top = panel.y + TITLE_BAR_H
         old_body_clip = surface.get_clip()
         body_clip = client_rect.clip(old_body_clip) if old_body_clip.width else client_rect
@@ -1142,6 +1157,30 @@ class BuildingInspectDialog:
         x = panel.x + PAD
         y = content_top + PAD - panel_scroll
         inner_w = panel.w - PAD * 2
+
+        if building.kind == BuildingKind.FARM:
+            from crop_status_ui import draw_crop_overview, draw_env_factors
+
+            y = draw_crop_overview(
+                surface,
+                x,
+                y,
+                inner_w,
+                crop_overview or [],
+                current_season,
+                fonts=self._fonts(),
+                empty_label="No crop plans on nearby fields",
+            )
+            if env_status:
+                y, env_hover_tip = draw_env_factors(
+                    surface,
+                    x,
+                    y,
+                    inner_w,
+                    env_status,
+                    fonts=self._fonts(),
+                    mouse_pos=mouse_pos,
+                )
 
         # --- Options ---
         surface.blit(self.font.render("Options", True, COLOUR_TEXT), (x, y))
@@ -2087,7 +2126,11 @@ class BuildingInspectDialog:
 
         if tip_key is not None:
             self._tooltip_key = tip_key
-        if self._tooltip_key and mouse_pos is not None:
+        if env_hover_tip:
+            from crop_status_ui import draw_env_hover
+
+            draw_env_hover(surface, mouse_pos, env_hover_tip, self.font_small)
+        elif self._tooltip_key and mouse_pos is not None:
             extra = None
             if building.kind == BuildingKind.MARKET:
                 from market_economy import MARKET_PRICES

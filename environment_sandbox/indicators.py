@@ -20,8 +20,10 @@ from settings import (
     COLOUR_DISTURBANCE_LOW,
     COLOUR_DIVERSITY_HIGH,
     COLOUR_DIVERSITY_LOW,
-    COLOUR_PATH_TRAFFIC_HIGH,
-    COLOUR_PATH_TRAFFIC_LOW,
+    COLOUR_EROSION_HIGH,
+    COLOUR_EROSION_LOW,
+    COLOUR_FERTILITY_HIGH,
+    COLOUR_FERTILITY_LOW,
     COLOUR_SPECIES_DIVERSITY_HIGH,
     COLOUR_SPECIES_DIVERSITY_LOW,
     COLOUR_TREE_DENSITY_HIGH,
@@ -51,7 +53,8 @@ class OverlayMode(Enum):
     BIODIVERSITY = auto()
     FLORAL_RESOURCES = auto()
     POLLINATION = auto()
-    PATH_TRAFFIC = auto()
+    EROSION = auto()
+    FERTILITY = auto()
 
 
 OVERLAY_LABELS: dict[OverlayMode, str] = {
@@ -63,7 +66,8 @@ OVERLAY_LABELS: dict[OverlayMode, str] = {
     OverlayMode.BIODIVERSITY: "Biodiversity",
     OverlayMode.FLORAL_RESOURCES: "Floral resources",
     OverlayMode.POLLINATION: "Pollination",
-    OverlayMode.PATH_TRAFFIC: "Path traffic",
+    OverlayMode.EROSION: "Soil erosion",
+    OverlayMode.FERTILITY: "Soil fertility",
 }
 
 
@@ -126,6 +130,15 @@ def disturbance_value(world: World, x: int, y: int) -> float:
     from world import effective_disturbance_at
 
     return effective_disturbance_at(world, x, y)
+
+
+def fertility_value(world: World, x: int, y: int) -> float:
+    from soil import overlay_fertility
+
+    cell = world.get_cell(x, y)
+    if cell is None:
+        return 0.0
+    return overlay_fertility(cell)
 
 
 def species_on_cell(cell) -> set[str]:
@@ -324,12 +337,6 @@ def pollination_colour(value: float) -> Colour:
     return lerp_colour((25, 25, 20), (255, 210, 60), t)
 
 
-def path_traffic_colour(value: float) -> Colour:
-    """Villager wear hotspot: cool dim → hot orange."""
-    t = max(0.0, min(1.0, float(value)))
-    return lerp_colour(COLOUR_PATH_TRAFFIC_LOW, COLOUR_PATH_TRAFFIC_HIGH, t)
-
-
 def indicator_value(world: World, mode: OverlayMode, x: int, y: int) -> float:
     if mode == OverlayMode.HABITAT_DIVERSITY:
         return habitat_diversity(world, x, y)
@@ -339,7 +346,9 @@ def indicator_value(world: World, mode: OverlayMode, x: int, y: int) -> float:
         return species_diversity(world, x, y)
     if mode == OverlayMode.DISTURBANCE:
         return disturbance_value(world, x, y)
-    # Biodiversity / floral / pollination are sample-based; Game supplies grids.
+    if mode == OverlayMode.FERTILITY:
+        return fertility_value(world, x, y)
+    # Biodiversity / floral / pollination / erosion are supplied by Game.
     return 0.0
 
 
@@ -360,8 +369,10 @@ def overlay_colour(mode: OverlayMode, value: float) -> Colour:
         return floral_colour(value)
     if mode == OverlayMode.POLLINATION:
         return pollination_colour(value)
-    if mode == OverlayMode.PATH_TRAFFIC:
-        return path_traffic_colour(value)
+    if mode == OverlayMode.EROSION:
+        return lerp_colour(COLOUR_EROSION_LOW, COLOUR_EROSION_HIGH, value)
+    if mode == OverlayMode.FERTILITY:
+        return lerp_colour(COLOUR_FERTILITY_LOW, COLOUR_FERTILITY_HIGH, value)
     return (0, 0, 0)
 
 
@@ -372,7 +383,7 @@ def build_overlay_grid(world: World, mode: OverlayMode) -> list[list[float]]:
         OverlayMode.BIODIVERSITY,
         OverlayMode.FLORAL_RESOURCES,
         OverlayMode.POLLINATION,
-        OverlayMode.PATH_TRAFFIC,
+        OverlayMode.EROSION,
     ):
         return [[0.0] * world.cols for _ in range(world.rows)]
     return [

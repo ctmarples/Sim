@@ -30,25 +30,21 @@ from resource_balance import (
     POLLINATOR_STRENGTH_PER_LEVEL,
 )
 from seasons import DAYS_PER_SEASON, day_in_season
+from settings import (
+    CROP_HEALTH_MAX_DROP,
+    CROP_HEALTH_MIN,
+    PEST_CONTROL_MULT_HIGH,
+    PEST_CONTROL_MULT_LOW,
+    PEST_CONTROL_MULT_MID,
+    PEST_CONTROL_RICHNESS_HIGH,
+    PEST_CONTROL_RICHNESS_LOW,
+    PEST_CONTROL_RICHNESS_MID,
+    POLLINATION_YIELD_HIGH,
+    POLLINATION_YIELD_LOW,
+)
 from world import World
 
 ENV_SAMPLES_PER_YEAR: int = BIODIVERSITY_SAMPLES_PER_YEAR
-
-# Biodiversity richness (species count) → pest-control quality / yield mult.
-PEST_CONTROL_RICHNESS_LOW: float = 1.0
-PEST_CONTROL_RICHNESS_MID: float = 5.0
-PEST_CONTROL_RICHNESS_HIGH: float = 10.0
-PEST_CONTROL_MULT_LOW: float = 0.75
-PEST_CONTROL_MULT_MID: float = 1.0
-PEST_CONTROL_MULT_HIGH: float = 1.15
-
-# Pollination coverage (0–1) → farm yield multiplier.
-POLLINATION_YIELD_LOW: float = 0.9
-POLLINATION_YIELD_HIGH: float = 1.2
-
-# Field crop health: floor + max drop per 8-cycle sample (only decreases).
-CROP_HEALTH_MIN: float = 0.7
-CROP_HEALTH_MAX_DROP: float = 0.05
 
 
 class EnvLayer(Enum):
@@ -76,19 +72,45 @@ def env_sample_period(calendar_day: int) -> int:
     return si * 2 + (0 if day_in_season(day) < half else 1)
 
 
+def _bal_float(key: str, default: float) -> float:
+    try:
+        from balance_config import active_balance
+
+        return float(active_balance().get_float(key))
+    except Exception:
+        return float(default)
+
+
+def _bal_int(key: str, default: int) -> int:
+    try:
+        from balance_config import active_balance
+
+        return int(active_balance().get_int(key))
+    except Exception:
+        return int(default)
+
+
+def crop_health_min() -> float:
+    return _bal_float("CROP_HEALTH_MIN", CROP_HEALTH_MIN)
+
+
+def crop_health_max_drop() -> float:
+    return _bal_float("CROP_HEALTH_MAX_DROP", CROP_HEALTH_MAX_DROP)
+
+
 def pest_control_multiplier(richness: float) -> float:
     """Map neighbourhood species richness to a farm yield multiplier."""
     v = max(0.0, float(richness))
-    lo, mid, hi = (
-        PEST_CONTROL_RICHNESS_LOW,
-        PEST_CONTROL_RICHNESS_MID,
-        PEST_CONTROL_RICHNESS_HIGH,
-    )
-    m_lo, m_mid, m_hi = (
-        PEST_CONTROL_MULT_LOW,
-        PEST_CONTROL_MULT_MID,
-        PEST_CONTROL_MULT_HIGH,
-    )
+    lo = _bal_float("PEST_CONTROL_RICHNESS_LOW", PEST_CONTROL_RICHNESS_LOW)
+    mid = _bal_float("PEST_CONTROL_RICHNESS_MID", PEST_CONTROL_RICHNESS_MID)
+    hi = _bal_float("PEST_CONTROL_RICHNESS_HIGH", PEST_CONTROL_RICHNESS_HIGH)
+    m_lo = _bal_float("PEST_CONTROL_MULT_LOW", PEST_CONTROL_MULT_LOW)
+    m_mid = _bal_float("PEST_CONTROL_MULT_MID", PEST_CONTROL_MULT_MID)
+    m_hi = _bal_float("PEST_CONTROL_MULT_HIGH", PEST_CONTROL_MULT_HIGH)
+    if mid <= lo:
+        mid = lo + 0.01
+    if hi <= mid:
+        hi = mid + 0.01
     if v <= lo:
         t = v / lo if lo > 0 else 1.0
         return m_lo * (0.85 + 0.15 * t)
@@ -102,24 +124,29 @@ def pest_control_multiplier(richness: float) -> float:
 
 
 def crop_health_cap_from_pest_control(pest_control: float) -> float:
-    """Environmental health target from pest-control pressure (0.7–1.0).
+    """Environmental health target from pest-control pressure.
 
-    Full health when pest control ≥ mid (bio ≈ 5). Below that, scales gently
-    down to ``CROP_HEALTH_MIN`` at/under MULT_LOW — cleared fields stay usable.
+    Full health when pest control ≥ mid. Below that, scales gently down to
+    the health floor at/under MULT_LOW — cleared fields stay usable.
     """
-    if pest_control >= PEST_CONTROL_MULT_MID:
+    m_lo = _bal_float("PEST_CONTROL_MULT_LOW", PEST_CONTROL_MULT_LOW)
+    m_mid = _bal_float("PEST_CONTROL_MULT_MID", PEST_CONTROL_MULT_MID)
+    hmin = crop_health_min()
+    if pest_control >= m_mid:
         return 1.0
-    if pest_control <= PEST_CONTROL_MULT_LOW:
-        return CROP_HEALTH_MIN
-    span = PEST_CONTROL_MULT_MID - PEST_CONTROL_MULT_LOW
-    t = (pest_control - PEST_CONTROL_MULT_LOW) / span
-    return CROP_HEALTH_MIN + (1.0 - CROP_HEALTH_MIN) * t
+    if pest_control <= m_lo:
+        return hmin
+    span = m_mid - m_lo
+    t = (pest_control - m_lo) / span if span > 0 else 1.0
+    return hmin + (1.0 - hmin) * t
 
 
 def pollination_yield_multiplier(coverage: float) -> float:
     """Map nest coverage 0–1 to a yield multiplier."""
     t = max(0.0, min(1.0, float(coverage)))
-    return POLLINATION_YIELD_LOW + (POLLINATION_YIELD_HIGH - POLLINATION_YIELD_LOW) * t
+    lo = _bal_float("POLLINATION_YIELD_LOW", POLLINATION_YIELD_LOW)
+    hi = _bal_float("POLLINATION_YIELD_HIGH", POLLINATION_YIELD_HIGH)
+    return lo + (hi - lo) * t
 
 
 def average_cells(
@@ -160,6 +187,7 @@ class EnvMaps:
     pest_control: list[list[float]] = field(default_factory=list)
     floral_resources: list[list[float]] = field(default_factory=list)
     pollination: list[list[float]] = field(default_factory=list)
+    erosion: list[list[float]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.biodiversity:
@@ -170,6 +198,8 @@ class EnvMaps:
             self.floral_resources = _zero_grid(self.rows, self.cols)
         if not self.pollination:
             self.pollination = _zero_grid(self.rows, self.cols)
+        if not self.erosion:
+            self.erosion = _zero_grid(self.rows, self.cols)
 
     @classmethod
     def blank(cls, rows: int, cols: int) -> EnvMaps:
@@ -184,6 +214,7 @@ class EnvMaps:
         self.pest_control = _zero_grid(rows, cols)
         self.floral_resources = _zero_grid(rows, cols)
         self.pollination = _zero_grid(rows, cols)
+        self.erosion = _zero_grid(rows, cols)
 
     def layer_grid(self, layer: EnvLayer) -> list[list[float]]:
         if layer == EnvLayer.BIODIVERSITY:
@@ -279,6 +310,7 @@ class EnvMaps:
             "floral_samples": self.floral_samples,
             "floral_resources": self.floral_resources,
             "pollination": self.pollination,
+            "erosion": self.erosion,
         }
 
     def load_save_dict(self, data: dict | None) -> None:
@@ -312,3 +344,11 @@ class EnvMaps:
 
         if isinstance(data.get("pollination"), list):
             self.pollination = data["pollination"]
+        erosion = data.get("erosion")
+        if (
+            isinstance(erosion, list)
+            and len(erosion) == self.rows
+            and erosion
+            and len(erosion[0]) == self.cols
+        ):
+            self.erosion = erosion

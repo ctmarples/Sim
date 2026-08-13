@@ -48,6 +48,36 @@ BUFF_STRENGTH_SPEED: int = 3
 BUFF_STRENGTH_HUNGER: int = 3
 BUFF_STRENGTH_WORK: int = 3
 
+# Farm ecology (File → Balance → Farm & fields). Biodiversity richness → pest
+# control yield multiplier; pest control also sets the sticky crop-health cap.
+PEST_CONTROL_RICHNESS_LOW: float = 1.0
+PEST_CONTROL_RICHNESS_MID: float = 5.0
+PEST_CONTROL_RICHNESS_HIGH: float = 10.0
+PEST_CONTROL_MULT_LOW: float = 0.75
+PEST_CONTROL_MULT_MID: float = 1.0
+PEST_CONTROL_MULT_HIGH: float = 1.15
+POLLINATION_YIELD_LOW: float = 0.9
+POLLINATION_YIELD_HIGH: float = 1.2
+CROP_HEALTH_MIN: float = 0.7
+CROP_HEALTH_MAX_DROP: float = 0.05
+FARM_PRODUCE_YIELD: int = 9
+INSECT_REPELLANT_PEST_BOOST: float = 0.12
+# Soil fertility 0–1 by terrain (File → Balance → Farm & fields).
+FERTILITY_FOREST: float = 1.0
+FERTILITY_MEADOW: float = 1.0
+FERTILITY_GRASS: float = 1.0
+FERTILITY_SOIL: float = 0.8
+FERTILITY_RIPARIAN: float = 0.8
+FERTILITY_ROCK: float = 0.0
+FERTILITY_WATER: float = 0.0
+FERTILITY_HARVEST_DROP: float = 0.1
+# Weeds grow faster on fertile crop tiles (per day at fertility 1.0).
+WEED_GROWTH_RATE: float = 0.05
+WEED_HARVEST_PENALTY: float = 0.5  # yield lost at weeds = 1.0
+WEED_ACTION_THRESHOLD: float = 0.2  # farmer hoes when weeds reach this
+# Slope (height units per cell) mapped to 1.0 erosion potential.
+EROSION_SLOPE_SCALE: float = 8.0
+
 
 def sim_hz_at_x1(playback: int | None = None) -> int:
     """Sim ticks per wall-clock second at ×1 when the display holds 60 FPS."""
@@ -492,7 +522,7 @@ PATH_TRAFFIC_STEP: float = 1.0  # added each villager cell-enter
 PATH_TRAFFIC_THRESHOLD: float = 4.0  # wear needed to first paint PATH
 PATH_TRAFFIC_DECAY: float = 0.78  # multiply traffic each env sample (8×/year)
 PATH_TRAFFIC_KEEP: float = 0.75  # PATH stays until wear falls below this
-PATH_TRAFFIC_OVERLAY_MAX: float = 12.0  # wear mapped to 1.0 on traffic overlay
+PATH_TRAFFIC_OVERLAY_MAX: float = 12.0  # wear mapped to 1.0 disturbance
 URBAN_MIN_BUILDINGS: int = 3  # fewer → no urban core; only worn PATH under footprints
 
 COLOUR_TREE_CANOPY: Colour = (34, 120, 45)
@@ -519,3 +549,7 @@ COLOUR_DISTURBANCE_LOW: Colour = (40, 20, 20)
 COLOUR_DISTURBANCE_HIGH: Colour = (255, 70, 40)
 COLOUR_PATH_TRAFFIC_LOW: Colour = (35, 35, 55)
 COLOUR_PATH_TRAFFIC_HIGH: Colour = (255, 130, 45)
+COLOUR_EROSION_LOW: Colour = (40, 36, 28)
+COLOUR_EROSION_HIGH: Colour = (210, 90, 40)
+COLOUR_FERTILITY_LOW: Colour = (90, 40, 30)
+COLOUR_FERTILITY_HIGH: Colour = (70, 200, 80)

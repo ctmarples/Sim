@@ -6,14 +6,13 @@ The player interacts only with the cell they currently stand on (press E).
 Mouse drag draws rectangular task areas for hired villagers.
 
 Future extension points:
-- soil fertility / moisture fields (cyclic EnvMaps layers)
-- crop / seasonal state per cell
+- soil moisture fields
 - habitat connectivity graphs
-- erosion risk maps
 - GIS-derived terrain import
 
-Production modifiers from cyclic layers live in ``environment.EnvMaps``
-(sampled 8×/year with biodiversity). Disturbance remains a live per-cell field.
+Soil fertility and weeds are per-cell. Erosion potential is a prebaked
+slope grid on ``environment.EnvMaps``. Disturbance is a live per-cell field
+(urban floors mixed with path-traffic wear).
 """
 
 from __future__ import annotations
@@ -277,6 +276,8 @@ class Cell:
     # Visual sub-patch within a terrain biome (seasonal masking / speckles).
     terrain_cluster: int = 0
     terrain_shade: float = 0.55  # 0..1 seasonal wash strength for this subcluster
+    fertility: float = 0.8  # 0–1 soil fertility (harvests deplete)
+    weeds: float = 0.0  # 0–1 weed cover on farm crops
 
     def habitat_category(self) -> str:
         if self.feature == FeatureType.TREE:
@@ -488,6 +489,9 @@ class World:
                     changed = True
                 if cell.terrain != terrain:
                     cell.terrain = terrain
+                    from soil import apply_terrain_fertility
+
+                    apply_terrain_fertility(cell, reset=True)
                     self.mark_terrain_dirty(x, y)
                     changed = True
         if changed:
@@ -532,6 +536,9 @@ class World:
                     changed = True
                 if cell.terrain != TerrainType.FOREST_FLOOR:
                     cell.terrain = TerrainType.FOREST_FLOOR
+                    from soil import apply_terrain_fertility
+
+                    apply_terrain_fertility(cell, reset=True)
                     self.mark_terrain_dirty(x, y)
                     changed = True
                 if cell.feature in (FeatureType.TREE, FeatureType.SAPLING):
@@ -828,7 +835,16 @@ class World:
         self.update_forest_floor()
         self._paint_terrain_subclusters(rng)
         self._build_valley_heightfield()
+        self.init_fertility()
         self.bump_terrain()
+
+    def init_fertility(self) -> None:
+        """Set every cell's fertility from its terrain base (world gen / missing saves)."""
+        from soil import init_cell_fertility
+
+        for row in self.cells:
+            for cell in row:
+                init_cell_fertility(cell)
 
     def _seed_wood_near_trees(self, rng: random.Random) -> None:
         """Place fallen wood on empty tiles adjacent to trees (forest edges)."""
@@ -1668,10 +1684,20 @@ class World:
                     cell.growth_ticks = max(
                         0, cell.growth_ticks - max(0, int(round(ticks * grow_mult)))
                     )
+                if cell.feature == FeatureType.CROP_HERB:
+                    from soil import grow_weeds_on_cell
+
+                    grow_weeds_on_cell(cell, ticks)
                 if cell.terrain == TerrainType.URBAN:
-                    cell.disturbance = active_balance().get_float("DISTURBANCE_URBAN_LEVEL")
+                    cell.disturbance = max(
+                        cell.disturbance,
+                        active_balance().get_float("DISTURBANCE_URBAN_LEVEL"),
+                    )
                 elif cell.terrain == TerrainType.PATH:
-                    cell.disturbance = active_balance().get_float("DISTURBANCE_PATH_LEVEL")
+                    cell.disturbance = max(
+                        cell.disturbance,
+                        active_balance().get_float("DISTURBANCE_PATH_LEVEL"),
+                    )
                 elif decay_per_tick > 0 and cell.disturbance > 0:
                     cell.disturbance = max(0.0, cell.disturbance - decay_per_tick * ticks)
 
@@ -2072,6 +2098,9 @@ class World:
         cell.deposit = 0
         cell.crop_kind = None
         cell.tree_species = None
+        from soil import cap_fertility_for_soil
+
+        cap_fertility_for_soil(cell)
         self.mark_terrain_dirty(x, y)
         return True
 
@@ -2088,6 +2117,7 @@ class World:
         cell.crop_kind = crop_key
         cell.growth_ticks = max(1, growth_ticks)
         cell.deposit = 0
+        cell.weeds = 0.0
         return True
 
     def sow_herb_crop(self, x: int, y: int) -> bool:
@@ -2114,11 +2144,24 @@ class World:
         if cell.growth_ticks > 0:
             return None
         kind = cell.crop_kind or "sage"
+        from soil import drop_fertility_on_harvest
+
+        drop_fertility_on_harvest(cell)
         cell.feature = FeatureType.NONE
         cell.growth_ticks = 0
         cell.crop_kind = None
         cell.deposit = 0
         return kind
+
+    def clear_weeds(self, x: int, y: int) -> bool:
+        """Hoe weeds off a crop square. Does not harvest."""
+        cell = self.get_cell(x, y)
+        if cell is None or cell.feature != FeatureType.CROP_HERB:
+            return False
+        if float(getattr(cell, "weeds", 0.0)) <= 0.0:
+            return False
+        cell.weeds = 0.0
+        return True
 
     def harvest_mushroom(self, x: int, y: int) -> bool:
         cell = self.get_cell(x, y)
@@ -2378,20 +2421,28 @@ class World:
             spread_key="DISTURBANCE_EXTRACTION_SPREAD",
         )
 
-    def sync_hardscape_disturbance(self) -> None:
-        """Apply constant urban/path disturbance floors immediately after terrain paint."""
+    def sync_hardscape_disturbance(
+        self, traffic: dict[tuple[int, int], float] | None = None
+    ) -> None:
+        """Mix urban floors with path-traffic wear into the disturbance field."""
         from balance_config import active_balance
 
         bal = active_balance()
         urban = bal.get_float("DISTURBANCE_URBAN_LEVEL")
         path = bal.get_float("DISTURBANCE_PATH_LEVEL")
+        cap = max(1e-6, bal.get_float("PATH_TRAFFIC_OVERLAY_MAX"))
+        dmax = bal.get_float("DISTURBANCE_MAX")
+        wear_map = traffic or {}
         for y in range(self.rows):
             for x in range(self.cols):
                 cell = self.cells[y][x]
+                wear_d = min(dmax, float(wear_map.get((x, y), 0.0)) / cap)
                 if cell.terrain == TerrainType.URBAN:
-                    cell.disturbance = urban
+                    cell.disturbance = max(urban, wear_d)
                 elif cell.terrain == TerrainType.PATH:
-                    cell.disturbance = path
+                    cell.disturbance = max(path, wear_d)
+                elif wear_d > 0:
+                    cell.disturbance = max(cell.disturbance, wear_d)
 
     def _apply_disturbance_at(
         self,

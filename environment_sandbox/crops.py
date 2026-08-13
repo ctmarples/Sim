@@ -32,6 +32,14 @@ PHASE_LABELS: dict[SeasonPhase, str] = {
     SeasonPhase.HARVEST_PLOUGH_PLANT: "Harvest/Plough/Plant",
 }
 
+PHASE_SHORT: dict[SeasonPhase, str] = {
+    SeasonPhase.FALLOW: "—",
+    SeasonPhase.GROW: "G",
+    SeasonPhase.HARVEST: "H",
+    SeasonPhase.PLOUGH_PLANT: "P",
+    SeasonPhase.HARVEST_PLOUGH_PLANT: "H/P",
+}
+
 # Map overlay tints for seasonal plan indicators (RGB).
 PHASE_COLOURS: dict[SeasonPhase, Colour] = {
     SeasonPhase.FALLOW: (90, 90, 90),

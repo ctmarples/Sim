@@ -14,6 +14,7 @@ from typing import Any, Callable
 import pygame
 
 from entities import BUILDING_LABELS, Building, BuildingKind, ConstructionSite, Villager
+from extensions import is_extension_kind, linked_extensions
 from habitat_inspect_dialog import HabitatInspectView
 from icons import blit_icon
 from settings import (
@@ -25,6 +26,7 @@ from settings import (
     COLOUR_TOOLBAR_BTN,
     COLOUR_TOOLBAR_BTN_ACTIVE,
     COLOUR_TOOLBAR_BTN_HOVER,
+    FARM_FIELD_RADIUS,
     MAP_OFFSET_Y,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
@@ -136,6 +138,105 @@ def _draw_list_glyph(
     mid = rect.centery
     for dy in (-5, 0, 5):
         pygame.draw.line(surface, colour, (x0, mid + dy), (x1, mid + dy), 2)
+
+
+def _chebyshev_to_plot(
+    farm: Building, left: int, top: int, right: int, bottom: int
+) -> int:
+    fcx, fcy = farm.center_cell()
+    cx = min(max(fcx, left), right)
+    cy = min(max(fcy, top), bottom)
+    return max(abs(cx - fcx), abs(cy - fcy))
+
+
+def _nearest_farm(
+    buildings: dict[int, Building], left: int, top: int, right: int, bottom: int
+) -> Building | None:
+    best: Building | None = None
+    best_d = FARM_FIELD_RADIUS + 1
+    for farm in buildings.values():
+        if farm.kind != BuildingKind.FARM:
+            continue
+        d = _chebyshev_to_plot(farm, left, top, right, bottom)
+        if d < best_d:
+            best = farm
+            best_d = d
+    return best if best_d <= FARM_FIELD_RADIUS else None
+
+
+def _fields_for_farm(
+    farm: Building, buildings: dict[int, Building]
+) -> list[Building]:
+    out: list[Building] = []
+    for b in buildings.values():
+        if b.kind != BuildingKind.FIELD:
+            continue
+        left, top, right, bottom = b.plot_bounds()
+        home = _nearest_farm(buildings, left, top, right, bottom)
+        if home is not None and home.id == farm.id:
+            out.append(b)
+    out.sort(key=lambda b: b.id)
+    return out
+
+
+def _iter_building_list_rows(
+    buildings: dict[int, Building], sites: dict[int, ConstructionSite]
+) -> list[tuple[str, object, int]]:
+    """Yield (kind, entity, indent) for the Buildings list.
+
+    Fields nest under the nearest farm; extensions (and their sites) nest
+    under their parent workplace. Orphan fields stay top-level.
+    """
+    nested_building_ids: set[int] = set()
+    nested_site_ids: set[int] = set()
+    rows: list[tuple[str, object, int]] = []
+
+    for b in buildings.values():
+        if is_extension_kind(b.kind):
+            if b.parent_building_id is not None and b.parent_building_id in buildings:
+                nested_building_ids.add(b.id)
+        elif b.kind == BuildingKind.FIELD:
+            left, top, right, bottom = b.plot_bounds()
+            if _nearest_farm(buildings, left, top, right, bottom) is not None:
+                nested_building_ids.add(b.id)
+    for site in sites.values():
+        parent_id = getattr(site, "parent_building_id", None)
+        if parent_id is not None and parent_id in buildings:
+            nested_site_ids.add(site.id)
+        elif site.kind == BuildingKind.FIELD:
+            left, top, right, bottom = site.plot_bounds()
+            if _nearest_farm(buildings, left, top, right, bottom) is not None:
+                nested_site_ids.add(site.id)
+
+    for site in sites.values():
+        if site.id in nested_site_ids:
+            continue
+        rows.append(("construction", site, 0))
+
+    top_level = [
+        b
+        for b in buildings.values()
+        if b.id not in nested_building_ids
+    ]
+    top_level.sort(key=lambda b: (BUILDING_LABELS[b.kind], b.id))
+    for b in top_level:
+        rows.append(("building", b, 0))
+        if b.kind == BuildingKind.FARM:
+            for field in _fields_for_farm(b, buildings):
+                rows.append(("building", field, 1))
+            for site in sites.values():
+                if site.kind != BuildingKind.FIELD or site.id not in nested_site_ids:
+                    continue
+                left, top, right, bottom = site.plot_bounds()
+                home = _nearest_farm(buildings, left, top, right, bottom)
+                if home is not None and home.id == b.id:
+                    rows.append(("construction", site, 1))
+        for ext in linked_extensions(b, buildings):
+            rows.append(("building", ext, 1))
+        for site in sites.values():
+            if getattr(site, "parent_building_id", None) == b.id:
+                rows.append(("construction", site, 1))
+    return rows
 
 
 class ManagementWindow:
@@ -1050,8 +1151,19 @@ class ManagementWindow:
         old = surface.get_clip()
         surface.set_clip(view)
 
-        for site in sites.values():
-            row = pygame.Rect(view.x + 2, y, view.w - 8, LIST_ROW_H)
+        def _workers_for(b: Building) -> list[Villager]:
+            if b.kind == BuildingKind.HOME:
+                return [v for v in villagers if v.assigned_to_home]
+            if is_housing_kind(b.kind):
+                return [v for v in villagers if v.housed and v.housing_id == b.id]
+            if b.kind == BuildingKind.FIELD:
+                return []
+            return [v for v in villagers if v.building_id == b.id]
+
+        def _draw_site_row(site: ConstructionSite, indent: int) -> None:
+            nonlocal y
+            pad = 10 * indent
+            row = pygame.Rect(view.x + 2 + pad, y, view.w - 8 - pad, LIST_ROW_H)
             selected = self.selected_construction_id == site.id
             if selected:
                 pygame.draw.rect(surface, (55, 70, 55), row, border_radius=3)
@@ -1059,11 +1171,11 @@ class ManagementWindow:
                     surface, COLOUR_SELECTED_ENTITY, row, 1, border_radius=3
                 )
             icon = _BUILD_ICON.get(site.kind, "construction_site")
-            blit_icon(surface, icon, row.x + 18, row.centery, 28)
+            blit_icon(surface, icon, row.x + 14, row.centery, 24 if indent else 28)
             label = f"{BUILDING_LABELS[site.kind]} (site)"
             surface.blit(
                 self.font_small.render(label, True, COLOUR_TEXT),
-                (row.x + 36, row.y + 4),
+                (row.x + 32, row.y + 4),
             )
             pct = int(
                 (
@@ -1077,15 +1189,15 @@ class ManagementWindow:
                 self.font_tiny.render(
                     f"{site.phase_label()} {pct}%", True, COLOUR_TEXT_DIM
                 ),
-                (row.x + 36, row.y + 20),
+                (row.x + 32, row.y + 20),
             )
             self._list_hits.append((row, "construction", site.id))
             y += LIST_ROW_H + 2
 
-        for b in buildings.values():
-            if b.kind == BuildingKind.FIELD:
-                continue
-            row = pygame.Rect(view.x + 2, y, view.w - 8, LIST_ROW_H)
+        def _draw_building_row(b: Building, indent: int) -> None:
+            nonlocal y
+            pad = 10 * indent
+            row = pygame.Rect(view.x + 2 + pad, y, view.w - 8 - pad, LIST_ROW_H)
             selected = self.selected_building_id == b.id
             if selected:
                 pygame.draw.rect(surface, (55, 70, 55), row, border_radius=3)
@@ -1093,21 +1205,16 @@ class ManagementWindow:
                     surface, COLOUR_SELECTED_ENTITY, row, 1, border_radius=3
                 )
             icon = _BUILD_ICON.get(b.kind, "construction_site")
-            blit_icon(surface, icon, row.x + 18, row.centery, 28)
-            surface.blit(
-                self.font_small.render(
-                    f"{BUILDING_LABELS[b.kind]} #{b.id}", True, COLOUR_TEXT
-                ),
-                (row.x + 36, row.y + 10),
-            )
-            if b.kind == BuildingKind.HOME:
-                workers = [v for v in villagers if v.assigned_to_home]
-            elif is_housing_kind(b.kind):
-                workers = [
-                    v for v in villagers if v.housed and v.housing_id == b.id
-                ]
+            blit_icon(surface, icon, row.x + 14, row.centery, 24 if indent else 28)
+            if b.kind == BuildingKind.FIELD:
+                name = f"Field #{b.id} · {b.plot_size_label()}"
             else:
-                workers = [v for v in villagers if v.building_id == b.id]
+                name = f"{BUILDING_LABELS[b.kind]} #{b.id}"
+            surface.blit(
+                self.font_small.render(name, True, COLOUR_TEXT),
+                (row.x + 32, row.y + 10),
+            )
+            workers = _workers_for(b)
             if workers:
                 px = row.right - 8
                 for v in reversed(workers[:6]):
@@ -1122,6 +1229,12 @@ class ManagementWindow:
                     )
             self._list_hits.append((row, "building", b.id))
             y += LIST_ROW_H + 2
+
+        for kind, entity, indent in _iter_building_list_rows(buildings, sites):
+            if kind == "construction":
+                _draw_site_row(entity, indent)  # type: ignore[arg-type]
+            else:
+                _draw_building_row(entity, indent)  # type: ignore[arg-type]
         surface.set_clip(old)
 
     def _draw_wildlife_list(
