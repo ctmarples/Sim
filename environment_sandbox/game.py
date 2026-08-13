@@ -1382,6 +1382,7 @@ class Game:
                             and self.field_plan_dialog.open
                             and self.management.selected_construction_id is None
                         ):
+                            self.field_plan_dialog.handle_scroll(mouse, event.y)
                             continue
                         if (
                             self.management.tab == MgmtTab.BUILDINGS
@@ -1399,6 +1400,7 @@ class Game:
                         continue
                     continue
                 if self.field_plan_dialog.open and self.field_plan_dialog.contains(mouse):
+                    self.field_plan_dialog.handle_scroll(mouse, event.y)
                     continue
                 if self.building_inspect.open and self.building_inspect.contains(mouse):
                     self.building_inspect.handle_mousewheel(event.y, mouse)
@@ -4076,37 +4078,37 @@ class Game:
         return self.env_maps.value_at(EnvLayer.POLLINATION, x, y)
 
     def _farm_produce_yield_at(self, x: int, y: int) -> int:
-        """Farmed produce after pest × health × pollination (min 1)."""
+        """Farmed produce after pest × health × pollination × … (min 1)."""
+        return self._farm_produce_breakdown_at(x, y).final_rounded
+
+    def _farm_produce_breakdown_at(self, x: int, y: int):
+        """Shared yield factors for harvest + UI (same product)."""
+        from field_yield import calculate_tile_yield_breakdown
+        from world import disturbance_activity_multiplier, effective_disturbance_at
+        from soil import overlay_fertility, weed_yield_multiplier
+
         pest = self._farm_pest_control_at(x, y)
         poll = pollination_yield_multiplier(self._farm_pollination_at(x, y))
         field_b = self._field_building_at(x, y)
         health = self._field_crop_health(field_b) if field_b is not None else 1.0
-        from world import disturbance_activity_multiplier, effective_disturbance_at
-
         cell = self.world.get_cell(x, y)
         ecology = (
             disturbance_activity_multiplier(effective_disturbance_at(self.world, x, y))
             if cell is not None
             else 1.0
         )
-        from soil import overlay_fertility, weed_yield_multiplier
-
         fert = overlay_fertility(cell) if cell is not None else 1.0
         weeds = float(getattr(cell, "weeds", 0.0)) if cell is not None else 0.0
         weed_mult = weed_yield_multiplier(weeds)
-        return max(
-            1,
-            int(
-                round(
-                    farm_produce_yield()
-                    * pest
-                    * health
-                    * poll
-                    * ecology
-                    * fert
-                    * weed_mult
-                )
-            ),
+        return calculate_tile_yield_breakdown(
+            base=farm_produce_yield(),
+            pest_control=pest,
+            crop_health=health,
+            pollination=poll,
+            ecology=ecology,
+            fertility=fert,
+            weed_penalty=weed_mult,
+            weeds=weeds,
         )
 
     def _farm_produce_yield_budget(self) -> int:
@@ -5142,6 +5144,7 @@ class Game:
         self._wake_all_farm_workers()
 
     def _finish_field_plan_dialog(self) -> None:
+        self._apply_field_plan_ui_requests()
         result = self.field_plan_dialog.take_result()
         if result is None:
             return
@@ -5158,6 +5161,22 @@ class Game:
             if bid is not None:
                 self._delete_field_building(bid)
             return
+
+    def _apply_field_plan_ui_requests(self) -> None:
+        """Overlay / yield-map actions queued by the field Status panel."""
+        key = self.field_plan_dialog.take_pending_overlay()
+        if key:
+            try:
+                mode = OverlayMode[key]
+            except KeyError:
+                mode = None
+            if mode is not None:
+                self._set_overlay(mode)
+        if self.field_plan_dialog.take_yield_map_request():
+            if self.overlay_mode == OverlayMode.FIELD_YIELD:
+                self._set_overlay(OverlayMode.NONE)
+            else:
+                self._set_overlay(OverlayMode.FIELD_YIELD)
 
     def _wake_all_farm_workers(self) -> None:
         for building in self.buildings.values():
@@ -11736,15 +11755,19 @@ class Game:
             if 0 <= y < len(erosion_grid) and 0 <= x < len(erosion_grid[y]):
                 ero_vals.append(float(erosion_grid[y][x]))
         erosion = (sum(ero_vals) / len(ero_vals)) if ero_vals else 0.0
+        from field_yield import calculate_tile_yield_breakdown
+
         base = farm_produce_yield()
-        got = max(
-            1,
-            int(
-                round(
-                    base * pest * health * poll_mult * ecology * fertility * weed_mult
-                )
-            ),
-        )
+        got = calculate_tile_yield_breakdown(
+            base=base,
+            pest_control=pest,
+            crop_health=health,
+            pollination=poll_mult,
+            ecology=ecology,
+            fertility=fertility,
+            weed_penalty=weed_mult,
+            weeds=weeds,
+        ).final_rounded
         return {
             "biodiversity": self.env_maps.farm_biodiversity(cells),
             "bio_lo": self.balance.get_float("PEST_CONTROL_RICHNESS_LOW"),
@@ -11773,6 +11796,107 @@ class Game:
             "base_yield": base,
             "harvest_yield": got,
         }
+
+    def _field_yield_cells(self, field: Building) -> set[tuple[int, int]]:
+        """Planned and/or planted cells used for field yield estimates."""
+        cells: set[tuple[int, int]] = set()
+        for plan in getattr(field, "plans", ()) or ():
+            for cell in plan.cells():
+                if field.contains_plot(*cell):
+                    cells.add(cell)
+        for x, y in field.plot_cells():
+            cell = self.world.get_cell(x, y)
+            if cell is not None and cell.feature == FeatureType.CROP_HERB:
+                cells.add((x, y))
+        return cells
+
+    def _field_yield_summary(self, field: Building):
+        """Per-tile expected yields for the Status panel (same maths as harvest)."""
+        from field_yield import summarize_tile_yields
+
+        base = float(farm_produce_yield())
+        tile_yields: dict[tuple[int, int], int] = {}
+        unrounded: list[float] = []
+        after_land: list[float] = []
+        after_crop: list[float] = []
+        any_locked = False
+        for x, y in self._field_yield_cells(field):
+            cell = self.world.get_cell(x, y)
+            bd = self._farm_produce_breakdown_at(x, y)
+            unrounded.append(bd.final_unrounded)
+            after_land.append(bd.after_landscape)
+            after_crop.append(bd.after_crop_condition)
+            # Ripe tile with deposit > 0: harvest lock in progress — use remaining.
+            if (
+                cell is not None
+                and cell.feature == FeatureType.CROP_HERB
+                and cell.growth_ticks <= 0
+                and int(cell.deposit) > 0
+            ):
+                tile_yields[(x, y)] = int(cell.deposit)
+                any_locked = True
+            else:
+                tile_yields[(x, y)] = bd.final_rounded
+        n = len(unrounded)
+        mean_u = (sum(unrounded) / n) if n else 0.0
+        mean_land = (sum(after_land) / n) if n else 0.0
+        mean_crop = (sum(after_crop) / n) if n else 0.0
+        summary = summarize_tile_yields(
+            tile_yields,
+            base_per_tile=base,
+            locked_total=None,
+            unrounded_mean=mean_u,
+            mean_after_landscape=mean_land,
+            mean_after_crop_condition=mean_crop,
+        )
+        if any_locked:
+            summary.locked_total = summary.expected_total
+        return summary
+
+    def _field_headline(self, field: Building) -> str:
+        """Dominant crop + phase line for the Status tab."""
+        from collections import Counter
+        from crops import CROP_BY_KEY, PHASE_LABELS, phase_for_crop
+
+        counts: Counter[str] = Counter()
+        for x, y in field.plot_cells():
+            cell = self.world.get_cell(x, y)
+            if cell is not None and cell.feature == FeatureType.CROP_HERB and cell.crop_kind:
+                counts[cell.crop_kind] += 1
+        if not counts:
+            for plan in getattr(field, "plans", ()) or ():
+                n = sum(1 for c in plan.cells() if field.contains_plot(*c))
+                if n:
+                    counts[plan.crop_kind] += n
+        if not counts:
+            return ""
+        kind = counts.most_common(1)[0][0]
+        crop = CROP_BY_KEY.get(kind)
+        label = crop.label if crop else kind
+        if crop is not None:
+            phase = phase_for_crop(crop, self.season)
+            phase_txt = PHASE_LABELS.get(phase, str(phase))
+            harvest = ", ".join(s.name.title() for s in crop.harvest_seasons) or "—"
+            # Live plant state overrides schedule phase when planted.
+            planted = any(
+                (c := self.world.get_cell(x, y)) is not None
+                and c.feature == FeatureType.CROP_HERB
+                and (c.crop_kind or "") == kind
+                for x, y in field.plot_cells()
+            )
+            if planted:
+                ripe = any(
+                    (c := self.world.get_cell(x, y)) is not None
+                    and c.feature == FeatureType.CROP_HERB
+                    and (c.crop_kind or "") == kind
+                    and c.growth_ticks <= 0
+                    for x, y in field.plot_cells()
+                )
+                state = "Ready" if ripe else "Growing"
+            else:
+                state = phase_txt
+            return f"{label} · {state} · Harvest {harvest}"
+        return label
 
     def _farm_env_status(self, farm: Building) -> dict | None:
         fields = self._fields_near_farm(farm)
@@ -14456,6 +14580,22 @@ class Game:
         if self.overlay_mode == OverlayMode.EROSION:
             self.overlay_values = [row[:] for row in self.env_maps.erosion]
             return
+        if self.overlay_mode == OverlayMode.FIELD_YIELD:
+            cols, rows = self.world.cols, self.world.rows
+            grid = [[0.0] * cols for _ in range(rows)]
+            field = self._field_plan_building()
+            if field is None:
+                sel = self._selected_building()
+                if sel is not None and sel.kind == BuildingKind.FIELD:
+                    field = sel
+            base = float(farm_produce_yield()) or 1.0
+            if field is not None:
+                for x, y in field.plot_cells():
+                    yld = self._farm_produce_yield_at(x, y)
+                    # High = good; normalised to base so ~1.0 is max potential.
+                    grid[y][x] = max(0.0, min(1.0, float(yld) / base))
+            self.overlay_values = grid
+            return
         self.overlay_values = build_overlay_grid(self.world, self.overlay_mode)
 
     def _update_status_timer(self) -> None:
@@ -14486,6 +14626,7 @@ class Game:
             OverlayMode.FLORAL_RESOURCES,
             OverlayMode.POLLINATION,
             OverlayMode.EROSION,
+            OverlayMode.FIELD_YIELD,
         ):
             self._refresh_indicators()
         try:
@@ -14887,6 +15028,10 @@ class Game:
             self._field_crop_overview(field_b) if field_b is not None else None
         )
         field_env = self._field_env_status(field_b) if field_b is not None else None
+        field_yield = (
+            self._field_yield_summary(field_b) if field_b is not None else None
+        )
+        field_headline = self._field_headline(field_b) if field_b is not None else ""
         embed_field = (
             self.management.open
             and self.management.tab == MgmtTab.BUILDINGS
@@ -14925,13 +15070,19 @@ class Game:
         def _draw_building_detail(surf: pygame.Surface, rect: pygame.Rect) -> None:
             if field_b is not None and embed_field:
                 self.field_plan_dialog.configure_embed(rect)
+                if self.overlay_mode == OverlayMode.FIELD_YIELD:
+                    self._refresh_indicators()
                 self.field_plan_dialog.draw(
                     surf,
                     field_b,
                     crop_overview=field_overview,
                     env_status=field_env,
+                    yield_summary=field_yield,
+                    headline=field_headline,
                     current_season=self.season,
                     mouse_pos=mouse,
+                    yield_map_active=self.overlay_mode == OverlayMode.FIELD_YIELD,
+                    debug=bool(getattr(self.bug_log, "enabled", False)),
                 )
                 return
             if inspect_b is None:
@@ -16454,11 +16605,14 @@ class Game:
         map_clip = pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())
         self.screen.set_clip(map_clip)
         x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
+        field_only = self.overlay_mode == OverlayMode.FIELD_YIELD
         for y in range(y0, y1 + 1):
             for x in range(x0, x1 + 1):
                 if not self.world.in_bounds(x, y):
                     continue
                 value = self.overlay_values[y][x]
+                if field_only and value <= 0.0:
+                    continue
                 colour = overlay_colour(self.overlay_mode, value)
                 self._draw_height_quad(x, y, colour, OVERLAY_ALPHA)
         self.screen.set_clip(None)

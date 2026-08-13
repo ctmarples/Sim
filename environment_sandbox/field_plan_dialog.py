@@ -1,4 +1,4 @@
-"""Floating in-game building editor window (Field crop plans for now)."""
+"""Field management panel: Status (yield / environment) and Rotation (crop plans)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import pygame
 
 from crops import (
     CROP_BY_KEY,
+    PHASE_SHORT,
     PLAN_COLOUR_GROW,
     PLAN_COLOUR_HARVEST,
     PLAN_COLOUR_PLANT,
@@ -15,14 +16,16 @@ from crops import (
     phase_allows_plough_plant,
     phase_for_crop,
 )
-from crop_status_ui import (
-    draw_crop_overview,
-    draw_env_factors,
-    draw_env_hover,
-    env_factors_height,
-    overview_height,
-)
+from crop_status_ui import draw_crop_overview, draw_env_hover
 from entities import Building, BuildingKind
+from field_yield import (
+    SEVERITY_COLOUR,
+    FieldFactorDisplay,
+    FieldYieldSummary,
+    Severity,
+    build_field_factors,
+    main_limitation,
+)
 from seasons import SEASON_LABELS, SEASON_ORDER, Season
 from settings import (
     COLOUR_MENU_BG,
@@ -41,6 +44,10 @@ from settings import (
 TITLE_BAR_H = 28
 PAD = 12
 BTN_H = 24
+TAB_H = 24
+ROW_H = 22
+SECTION_GAP = 10
+SCROLL_STEP = 28
 
 
 def _draw_crop_glyph(
@@ -75,25 +82,36 @@ def _draw_crop_glyph(
 
 
 class FieldPlanDialog:
-    """Movable floating editor for a Field building. Does not dim or block the map."""
+    """Field inspect + crop planner. Status tab by default; Rotation holds plans."""
 
     def __init__(self) -> None:
         self.font = pygame.font.SysFont("menlo", 14)
         self.font_small = pygame.font.SysFont("menlo", 12)
         self.font_tiny = pygame.font.SysFont("menlo", 11, bold=True)
+        self.font_title = pygame.font.SysFont("menlo", 15, bold=True)
         self.building_id: int | None = None
         self._crop_overview: list[dict] = []
         self._env_status: dict | None = None
+        self._yield_summary: FieldYieldSummary | None = None
+        self._headline: str = ""
+        self._factors: list[FieldFactorDisplay] = []
+        self.tab: str = "status"  # status | rotation
+        self.expanded_factor: str | None = None
+        self._scroll = 0
+        self._content_h = 0
+        self._view_rect = pygame.Rect(0, 0, 0, 0)
+        self._pending_overlay: str | None = None
+        self._pending_yield_map = False
+        self._debug = False
         self.season: Season = Season.SPRING
         self.crop_kind: str = "sage"
-        self._drag_start: tuple[int, int] | None = None  # local grid coords
+        self._drag_start: tuple[int, int] | None = None
         self._drag_current: tuple[int, int] | None = None
         self._buttons: list[tuple[str, pygame.Rect]] = []
         self._grid_origin = (0, 0)
         self._cell_px = 24
         self._result: str | None = None
         self._pending_plan: tuple[int, int, int, int, str] | None = None
-        # Floating window position (top-left of panel).
         self._panel_x = 80
         self._panel_y = MAP_OFFSET_Y + 40
         self._panel_w = 420
@@ -109,7 +127,6 @@ class FieldPlanDialog:
         return self.building_id is not None
 
     def configure_embed(self, rect: pygame.Rect) -> None:
-        """Draw as an embedded pane (no close/drag chrome)."""
         self.embedded = True
         self._panel_x = rect.x
         self._panel_y = rect.y
@@ -121,6 +138,9 @@ class FieldPlanDialog:
             return
         self.building_id = building.id
         self.season = season or Season.SPRING
+        self.tab = "status"
+        self.expanded_factor = None
+        self._scroll = 0
         options = crop_for_season(self.season)
         if options:
             if self.crop_kind not in {c.key for c in options}:
@@ -131,13 +151,14 @@ class FieldPlanDialog:
         self._drag_current = None
         self._result = None
         self._pending_plan = None
+        self._pending_overlay = None
+        self._pending_yield_map = False
         self._moving = False
         self._layout_for(building)
         if self.embedded:
             return
-        # Place near the field on the map when possible.
         from settings import CELL_SIZE
-        
+
         map_w = map_view_width()
         prefer_x = building.x * CELL_SIZE + building.plot_w * CELL_SIZE + 16
         prefer_y = MAP_OFFSET_Y + building.y * CELL_SIZE
@@ -165,39 +186,51 @@ class FieldPlanDialog:
         self._pending_plan = None
         return plan
 
+    def take_pending_overlay(self) -> str | None:
+        key = self._pending_overlay
+        self._pending_overlay = None
+        return key
+
+    def take_yield_map_request(self) -> bool:
+        flag = self._pending_yield_map
+        self._pending_yield_map = False
+        return flag
+
     def panel_rect(self) -> pygame.Rect:
         return pygame.Rect(self._panel_x, self._panel_y, self._panel_w, self._panel_h)
 
     def contains(self, pos: tuple[int, int]) -> bool:
         return self.open and self.panel_rect().collidepoint(pos)
 
-    def _status_chrome(self, inner_w: int) -> int:
-        n = max(1, len(self._crop_overview))
-        extra = overview_height(n)
-        if self._env_status:
-            extra += env_factors_height(inner_w)
-        return extra
-
     def _layout_for(self, building: Building) -> None:
         pw, ph = max(1, building.plot_w), max(1, building.plot_h)
         if self.embedded:
-            inner_w = max(40, self._panel_w - PAD * 2)
-            crop_rows = self._crop_row_count(inner_w)
-            chrome = (
-                TITLE_BAR_H
-                + PAD
-                + self._status_chrome(inner_w)
-                + BTN_H
-                + 6
-                + crop_rows * (BTN_H + 4)
-                + 8
-                + 22
-                + PAD
-            )
-            avail_h = max(24, self._panel_h - chrome)
-            cell_w = max(8, inner_w // pw)
-            cell_h = max(8, avail_h // ph)
-            self._cell_px = min(28, cell_w, cell_h)
+            if self.tab == "rotation":
+                inner_w = max(40, self._panel_w - PAD * 2)
+                crop_rows = self._crop_row_count(inner_w)
+                n = max(1, len(self._crop_overview))
+                chrome = (
+                    TITLE_BAR_H
+                    + TAB_H
+                    + 8
+                    + PAD
+                    + 18
+                    + 16
+                    + n * 18
+                    + 10
+                    + BTN_H
+                    + 6
+                    + crop_rows * (BTN_H + 4)
+                    + 8
+                    + 22
+                    + PAD
+                )
+                avail_h = max(24, self._panel_h - chrome)
+                cell_w = max(8, inner_w // pw)
+                cell_h = max(8, avail_h // ph)
+                self._cell_px = min(28, cell_w, cell_h)
+            else:
+                self._cell_px = 16
             return
         max_grid_w = min(WINDOW_WIDTH - 60, 560)
         max_grid_h = min(WINDOW_HEIGHT - 220, 420)
@@ -205,12 +238,12 @@ class FieldPlanDialog:
         self._cell_px = cell
         grid_w = pw * cell
         grid_h = ph * cell
-        inner_w = max(420, grid_w + PAD * 2) - PAD * 2
         crop_rows = self._crop_row_count(max(420, grid_w + PAD * 2))
         chrome = (
             TITLE_BAR_H
+            + TAB_H
+            + 8
             + PAD
-            + self._status_chrome(inner_w)
             + BTN_H
             + 6
             + crop_rows * (BTN_H + 4)
@@ -219,7 +252,7 @@ class FieldPlanDialog:
             + PAD
         )
         self._panel_w = max(420, grid_w + PAD * 2)
-        self._panel_h = chrome + grid_h
+        self._panel_h = chrome + grid_h + 120
 
     def _crop_row_count(self, inner_w: int) -> int:
         options = crop_for_season(self.season)
@@ -243,7 +276,6 @@ class FieldPlanDialog:
         )
 
     def handle_keydown(self, event: pygame.event.Event) -> bool:
-        """Return True if consumed. Esc closes; other keys pass through."""
         if not self.open:
             return False
         if event.key == pygame.K_ESCAPE:
@@ -251,86 +283,92 @@ class FieldPlanDialog:
             return True
         return False
 
-    def handle_mousedown(self, pos: tuple[int, int], building: Building | None) -> bool:
-        """Return True if the event was consumed by this window."""
-        if not self.open or building is None or not self.contains(pos):
-            return False
-        if not self.embedded:
-            # Close button
-            if self._close_rect.collidepoint(pos):
-                self.close()
-                return True
-            # Title bar drag
-            if self._title_rect.collidepoint(pos):
-                self._moving = True
-                self._move_offset = (pos[0] - self._panel_x, pos[1] - self._panel_y)
-                return True
+    def handle_mousedown(self, pos: tuple[int, int], building: Building) -> None:
+        if not self.open or building is None:
+            return
+        if self._close_rect.collidepoint(pos):
+            self.close()
+            return
+        if not self.embedded and self._title_rect.collidepoint(pos):
+            self._moving = True
+            self._move_offset = (pos[0] - self._panel_x, pos[1] - self._panel_y)
+            return
         for action, rect in self._buttons:
             if rect.collidepoint(pos):
                 self._on_action(action, building)
-                return True
-        local = self._pos_to_local(pos, building)
-        if local is not None and crop_for_season(self.season):
-            self._drag_start = local
-            self._drag_current = local
-        return True
+                return
+        if self.tab == "rotation":
+            local = self._pos_to_local(pos, building)
+            if local is not None:
+                self._drag_start = local
+                self._drag_current = local
 
-    def handle_mousemotion(self, pos: tuple[int, int], building: Building | None) -> bool:
-        if not self.open:
-            return False
+    def handle_mousemotion(self, pos: tuple[int, int], building: Building) -> None:
         if self._moving:
             self._panel_x = pos[0] - self._move_offset[0]
             self._panel_y = pos[1] - self._move_offset[1]
             self._clamp_panel()
-            return True
-        if self._drag_start is None or building is None:
-            return False
-        local = self._pos_to_local(pos, building)
-        if local is not None:
-            self._drag_current = local
-        return True
+            return
+        if self._drag_start is not None and self.tab == "rotation":
+            local = self._pos_to_local(pos, building)
+            if local is not None:
+                self._drag_current = local
 
-    def handle_mouseup(self, pos: tuple[int, int], building: Building | None) -> bool:
-        if not self.open:
-            return False
+    def handle_mouseup(self, pos: tuple[int, int], building: Building) -> None:
         if self._moving:
             self._moving = False
-            self._clamp_panel()
-            return True
-        if self._drag_start is None:
-            return self.contains(pos)
-        if building is None:
+            return
+        if self._drag_start is not None and building is not None and self.tab == "rotation":
+            local = self._pos_to_local(pos, building) or self._drag_current
+            if local is not None:
+                sx, sy = self._drag_start
+                cx, cy = local
+                x0, x1 = min(sx, cx), max(sx, cx)
+                y0, y1 = min(sy, cy), max(sy, cy)
+                self._pending_plan = (
+                    building.x + x0,
+                    building.y + y0,
+                    building.x + x1,
+                    building.y + y1,
+                    self.crop_kind,
+                )
             self._drag_start = None
             self._drag_current = None
-            return True
-        end = self._pos_to_local(pos, building) or self._drag_current or self._drag_start
-        start = self._drag_start
-        self._drag_start = None
-        self._drag_current = None
-        if start is None or end is None or not crop_for_season(self.season):
-            return True
-        lx0, ly0 = min(start[0], end[0]), min(start[1], end[1])
-        lx1, ly1 = max(start[0], end[0]), max(start[1], end[1])
-        self._pending_plan = (
-            building.x + lx0,
-            building.y + ly0,
-            building.x + lx1,
-            building.y + ly1,
-            self.crop_kind,
-        )
+
+    def handle_scroll(self, pos: tuple[int, int], dy: int) -> bool:
+        if not self.open or self.tab != "status":
+            return False
+        if not self._view_rect.collidepoint(pos):
+            return False
+        max_scroll = max(0, self._content_h - self._view_rect.h)
+        self._scroll = max(0, min(max_scroll, self._scroll - dy * SCROLL_STEP))
         return True
 
     def _on_action(self, action: str, building: Building) -> None:
-        if action == "close":
-            self.close()
+        if action == "tab_status":
+            self.tab = "status"
+            self._scroll = 0
+            self._drag_start = None
+            self._drag_current = None
+        elif action == "tab_rotation":
+            self.tab = "rotation"
+            self.expanded_factor = None
+            self._layout_for(building)
         elif action == "clear_plans":
             self._result = "cleared"
         elif action == "delete_field":
             self._result = "deleted"
-            self.building_id = None
+        elif action == "show_yield_map":
+            self._pending_yield_map = True
+        elif action.startswith("overlay_"):
+            self._pending_overlay = action[len("overlay_") :]
+        elif action.startswith("factor_"):
+            key = action[len("factor_") :]
+            self.expanded_factor = None if self.expanded_factor == key else key
         elif action.startswith("season_"):
+            name = action[len("season_") :]
             try:
-                self.season = Season[action[len("season_") :]]
+                self.season = Season[name]
             except KeyError:
                 return
             options = crop_for_season(self.season)
@@ -368,13 +406,21 @@ class FieldPlanDialog:
         *,
         crop_overview: list[dict] | None = None,
         env_status: dict | None = None,
+        yield_summary: FieldYieldSummary | None = None,
+        headline: str = "",
         current_season: Season | None = None,
         mouse_pos: tuple[int, int] | None = None,
+        yield_map_active: bool = False,
+        debug: bool = False,
     ) -> None:
         if not self.open or building is None or building.kind != BuildingKind.FIELD:
             return
         self._crop_overview = list(crop_overview or [])
         self._env_status = env_status
+        self._yield_summary = yield_summary
+        self._headline = headline
+        self._factors = build_field_factors(env_status) if env_status else []
+        self._debug = debug
         self._layout_for(building)
         if not self.embedded:
             self._clamp_panel()
@@ -386,16 +432,13 @@ class FieldPlanDialog:
         if self.embedded:
             surface.set_clip(panel)
         else:
-            # Soft drop shadow (no full-screen dim).
             shadow = panel.move(3, 4)
             sh = pygame.Surface((shadow.w, shadow.h), pygame.SRCALPHA)
             sh.fill((0, 0, 0, 70))
             surface.blit(sh, shadow.topleft)
-
             pygame.draw.rect(surface, COLOUR_MENU_BG, panel, border_radius=6)
             pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, panel, 2, border_radius=6)
 
-        # Title bar
         title_bar = pygame.Rect(panel.x, panel.y, panel.w, TITLE_BAR_H)
         pygame.draw.rect(
             surface,
@@ -413,9 +456,8 @@ class FieldPlanDialog:
         if self.embedded:
             self._close_rect = pygame.Rect(0, 0, 0, 0)
         else:
-            # X close
             self._close_rect = pygame.Rect(panel.right - 28, panel.y + 4, 22, 20)
-            hover = self._close_rect.collidepoint(pygame.mouse.get_pos())
+            hover = self._close_rect.collidepoint(mouse_pos)
             pygame.draw.rect(
                 surface,
                 COLOUR_TOOLBAR_BTN_HOVER if hover else COLOUR_TOOLBAR_BTN,
@@ -432,45 +474,410 @@ class FieldPlanDialog:
             )
 
         self._buttons = []
-        y = panel.y + TITLE_BAR_H + PAD
+        y = panel.y + TITLE_BAR_H + 6
         inner_left = panel.x + PAD
         inner_right = panel.right - PAD
         inner_w = max(40, inner_right - inner_left)
-        fonts = self._fonts()
+
+        # Tabs
+        for label, key in (("Status", "status"), ("Rotation", "rotation")):
+            w = max(64, 12 + self.font_small.size(label)[0])
+            rect = pygame.Rect(inner_left if key == "status" else inner_left + 72, y, w, TAB_H)
+            self._draw_btn(surface, rect, label, self.tab == key)
+            self._buttons.append((f"tab_{key}", rect))
+        y += TAB_H + 8
+
         hover_tip = ""
+        if self.tab == "status":
+            hover_tip = self._draw_status(
+                surface,
+                building,
+                x=inner_left,
+                y=y,
+                inner_w=inner_w,
+                bottom=panel.bottom - PAD,
+                mouse_pos=mouse_pos,
+                current_season=current_season or self.season,
+                yield_map_active=yield_map_active,
+            )
+        else:
+            self._draw_rotation(
+                surface,
+                building,
+                x=inner_left,
+                y=y,
+                inner_w=inner_w,
+                mouse_pos=mouse_pos,
+                current_season=current_season or self.season,
+            )
+
+        surface.set_clip(old_clip)
+        draw_env_hover(surface, mouse_pos, hover_tip, self.font_small)
+
+    def _draw_status(
+        self,
+        surface: pygame.Surface,
+        building: Building,
+        *,
+        x: int,
+        y: int,
+        inner_w: int,
+        bottom: int,
+        mouse_pos: tuple[int, int] | None,
+        current_season: Season,
+        yield_map_active: bool,
+    ) -> str:
+        from icons import blit_icon
+
+        view = pygame.Rect(x, y, inner_w, max(40, bottom - y))
+        self._view_rect = view
+        hover_tip = ""
+        summary = self._yield_summary
+        sections = (
+            ("LANDSCAPE", "landscape"),
+            ("FIELD CONDITION", "condition"),
+            ("SOIL", "soil"),
+        )
+
+        # First pass: measure content height
+        cy = 0
+        cy += 20 if self._headline else 18
+        cy += 18
+        if summary is None or summary.tile_count <= 0:
+            cy += 20
+        else:
+            cy += 14 + self.font_title.get_height() + 2 + 16
+            if summary.min_expected != summary.max_expected:
+                cy += 14
+            cy += 16 + 16 + 16 + 20
+        for _t, sec in sections:
+            rows = [f for f in self._factors if f.section == sec]
+            if not rows:
+                continue
+            cy += 18
+            for fac in rows:
+                cy += ROW_H + 4
+                if self.expanded_factor == fac.key:
+                    cy += len(fac.detail_lines) * 14
+                    if fac.overlay_key:
+                        cy += BTN_H + 4
+                    cy += 4
+            cy += 6
+        if summary is not None and summary.tile_count > 0 and self._env_status:
+            cy += 18 + 4 * 16 + 8
+        cy += BTN_H + 8
+        self._content_h = cy
+        max_scroll = max(0, self._content_h - view.h)
+        self._scroll = max(0, min(max_scroll, self._scroll))
+
+        old = surface.get_clip()
+        surface.set_clip(view.clip(old) if old.width else view)
+        sy = view.y - self._scroll
+
+        def _blit(font, text, colour, ox, oy):
+            surface.blit(font.render(text, True, colour), (view.x + ox, oy))
+
+        if self._headline:
+            _blit(self.font_title, self._headline, COLOUR_TEXT, 0, sy)
+            sy += 20
+        else:
+            _blit(self.font_small, "No active crop on this field", COLOUR_TEXT_DIM, 0, sy)
+            sy += 18
+
+        _blit(self.font, "EXPECTED HARVEST", COLOUR_TEXT, 0, sy)
+        sy += 18
+        if summary is None or summary.tile_count <= 0:
+            _blit(
+                self.font_small,
+                "No planned / planted tiles to estimate.",
+                COLOUR_TEXT_DIM,
+                0,
+                sy,
+            )
+            sy += 20
+        else:
+            locked = summary.locked_total is not None
+            total = summary.locked_total if locked else summary.expected_total
+            _blit(
+                self.font_tiny,
+                "Locked harvest" if locked else "Expected harvest",
+                COLOUR_TEXT_DIM,
+                0,
+                sy,
+            )
+            sy += 14
+            big = self.font_title.render(
+                f"{total} / {summary.max_total}", True, COLOUR_TEXT
+            )
+            surface.blit(big, (view.x, sy))
+            sy += big.get_height() + 2
+            _blit(
+                self.font_small,
+                f"{summary.mean_expected:.1f} / {summary.base_per_tile:g} per tile",
+                COLOUR_TEXT,
+                0,
+                sy,
+            )
+            sy += 16
+            if summary.min_expected != summary.max_expected:
+                _blit(
+                    self.font_tiny,
+                    f"Range {summary.min_expected}–{summary.max_expected} per tile",
+                    COLOUR_TEXT_DIM,
+                    0,
+                    sy,
+                )
+                sy += 14
+            _blit(
+                self.font_tiny,
+                "Harvest varies by tile (disturbance, fertility, weeds).",
+                COLOUR_TEXT_DIM,
+                0,
+                sy,
+            )
+            sy += 16
+            ratio = total / summary.max_total if summary.max_total > 0 else 0.0
+            ratio = max(0.0, min(1.0, ratio))
+            bar = pygame.Rect(view.x, sy, inner_w, 10)
+            pygame.draw.rect(surface, (40, 42, 48), bar, border_radius=3)
+            fill = pygame.Rect(view.x, sy, max(2, int(inner_w * ratio)), 10)
+            colour = (
+                (90, 170, 100)
+                if ratio >= 0.75
+                else ((200, 160, 60) if ratio >= 0.45 else (200, 80, 60))
+            )
+            pygame.draw.rect(surface, colour, fill, border_radius=3)
+            sy += 16
+            _blit(
+                self.font_tiny,
+                f"{ratio * 100:.0f}% of potential",
+                COLOUR_TEXT_DIM,
+                0,
+                sy,
+            )
+            sy += 16
+            limit = main_limitation(self._factors)
+            if limit:
+                _blit(
+                    self.font_small,
+                    f"Main limitation: {limit}",
+                    SEVERITY_COLOUR[Severity.WARNING],
+                    0,
+                    sy,
+                )
+            else:
+                _blit(
+                    self.font_small,
+                    "No major limitations",
+                    SEVERITY_COLOUR[Severity.POSITIVE],
+                    0,
+                    sy,
+                )
+            sy += 20
+
+        for title, sec in sections:
+            rows = [f for f in self._factors if f.section == sec]
+            if not rows:
+                continue
+            _blit(self.font, title, COLOUR_TEXT, 0, sy)
+            sy += 18
+            for fac in rows:
+                colour = SEVERITY_COLOUR[fac.severity]
+                fill_c = (
+                    colour[0] // 6 + 30,
+                    colour[1] // 6 + 30,
+                    colour[2] // 6 + 30,
+                )
+                rect = pygame.Rect(view.x, sy, inner_w, ROW_H)
+                pygame.draw.rect(surface, fill_c, rect, border_radius=3)
+                pygame.draw.rect(surface, colour, rect, 1, border_radius=3)
+                try:
+                    blit_icon(surface, fac.icon, view.x + 12, sy + ROW_H // 2, 14)
+                except Exception:
+                    pass
+                surface.blit(
+                    self.font_small.render(fac.label, True, COLOUR_TEXT),
+                    (view.x + 24, sy + (ROW_H - self.font_small.get_height()) // 2),
+                )
+                surface.blit(
+                    self.font_small.render(fac.state_text, True, COLOUR_TEXT_DIM),
+                    (view.x + 130, sy + (ROW_H - self.font_small.get_height()) // 2),
+                )
+                right = fac.effect_text or fac.value_text
+                if fac.effect_text and fac.effect_text.startswith("+"):
+                    right = f"▲ {fac.effect_text}"
+                elif fac.effect_text and fac.effect_text.startswith("-"):
+                    right = f"▼ {fac.effect_text}"
+                rt = self.font_small.render(right, True, colour)
+                surface.blit(
+                    rt,
+                    (
+                        view.x + inner_w - rt.get_width() - 6,
+                        sy + (ROW_H - rt.get_height()) // 2,
+                    ),
+                )
+                if view.colliderect(rect):
+                    self._buttons.append((f"factor_{fac.key}", rect))
+                if mouse_pos is not None and rect.collidepoint(mouse_pos):
+                    bits = [fac.value_text]
+                    if fac.effect_text:
+                        bits.append(f"yield {fac.effect_text}")
+                    hover_tip = " · ".join(bits)
+                sy += ROW_H + 4
+                if self.expanded_factor == fac.key:
+                    for line in fac.detail_lines:
+                        surface.blit(
+                            self.font_tiny.render(line, True, COLOUR_TEXT_DIM),
+                            (view.x + 8, sy),
+                        )
+                        sy += 14
+                    if fac.overlay_key:
+                        btn = pygame.Rect(view.x + 8, sy, min(180, inner_w - 8), BTN_H)
+                        hovered = mouse_pos is not None and btn.collidepoint(mouse_pos)
+                        self._draw_btn(
+                            surface, btn, "Show map layer", hovered
+                        )
+                        if view.colliderect(btn):
+                            self._buttons.append(
+                                (f"overlay_{fac.overlay_key}", btn)
+                            )
+                        sy += BTN_H + 4
+                    sy += 4
+            sy += 6
+
+        if summary is not None and summary.tile_count > 0 and self._env_status:
+            sy = self._draw_why_block(surface, view.x, sy, inner_w)
+
+        map_label = "Hide yield map" if yield_map_active else "Show yield map"
+        map_rect = pygame.Rect(view.x, sy, min(160, inner_w), BTN_H)
+        hovered = mouse_pos is not None and map_rect.collidepoint(mouse_pos)
+        self._draw_btn(surface, map_rect, map_label, yield_map_active or hovered)
+        if view.colliderect(map_rect):
+            self._buttons.append(("show_yield_map", map_rect))
+
+        surface.set_clip(old)
+
+        if max_scroll > 0:
+            track = pygame.Rect(view.right - 4, view.y, 3, view.h)
+            pygame.draw.rect(surface, (50, 52, 58), track, border_radius=2)
+            thumb_h = max(16, int(view.h * view.h / max(1, self._content_h)))
+            thumb_y = view.y + int((view.h - thumb_h) * (self._scroll / max_scroll))
+            pygame.draw.rect(
+                surface,
+                COLOUR_TOOLBAR_BORDER,
+                pygame.Rect(track.x, thumb_y, 3, thumb_h),
+                border_radius=2,
+            )
+        return hover_tip
+
+    def _draw_why_block(
+        self, surface: pygame.Surface, x: int, y: int, inner_w: int
+    ) -> int:
+        summary = self._yield_summary
+        base = float(summary.base_per_tile) if summary is not None else float(
+            (self._env_status or {}).get("base_yield") or 0
+        )
+        mean = summary.mean_unrounded if summary is not None else base
+        after_land = (
+            summary.mean_after_landscape if summary is not None else mean
+        )
+        after_crop = (
+            summary.mean_after_crop_condition if summary is not None else mean
+        )
+        surface.blit(
+            self.font.render(f"WHY {mean:.1f} / {base:g}?", True, COLOUR_TEXT),
+            (x, y),
+        )
+        y += 18
+        lines = [
+            ("Base potential", base),
+            ("After landscape", after_land),
+            ("After crop condition", after_crop),
+            ("After soil", mean),
+        ]
+        for label, val in lines:
+            surface.blit(
+                self.font_small.render(f"{label:<22} {val:5.1f}", True, COLOUR_TEXT_DIM),
+                (x, y),
+            )
+            y += 16
+        if getattr(self, "_debug", False) and self._env_status:
+            y += 4
+            surface.blit(
+                self.font_tiny.render("DEBUG multipliers", True, COLOUR_TEXT_DIM),
+                (x, y),
+            )
+            y += 14
+            st = self._env_status
+            dbg = (
+                f"pest={float(st.get('pest_mult') or 0):.3f}  "
+                f"health={float(st.get('health') or 0):.3f}  "
+                f"poll={float(st.get('poll_mult') or 0):.3f}"
+            )
+            surface.blit(self.font_tiny.render(dbg, True, COLOUR_TEXT_DIM), (x, y))
+            y += 12
+            dbg2 = (
+                f"ecology={float(st.get('ecology') or 0):.3f}  "
+                f"fert={float(st.get('fertility') or 0):.3f}  "
+                f"weed={float(st.get('weed_mult') or 0):.3f}"
+            )
+            surface.blit(self.font_tiny.render(dbg2, True, COLOUR_TEXT_DIM), (x, y))
+            y += 14
+        y += 8
+        return y
+
+    def _draw_rotation(
+        self,
+        surface: pygame.Surface,
+        building: Building,
+        *,
+        x: int,
+        y: int,
+        inner_w: int,
+        mouse_pos: tuple[int, int] | None,
+        current_season: Season,
+    ) -> None:
+        fonts = self._fonts()
         y = draw_crop_overview(
             surface,
-            inner_left,
+            x,
             y,
             inner_w,
             self._crop_overview,
-            current_season or self.season,
+            current_season,
             fonts=fonts,
             empty_label="No crop plans on this field",
+            title="ROTATION PLAN",
         )
         if self._env_status:
-            y, hover_tip = draw_env_factors(
-                surface,
-                inner_left,
-                y,
-                inner_w,
-                self._env_status,
-                fonts=fonts,
-                mouse_pos=mouse_pos,
+            fert = float(self._env_status.get("fertility") or 0.0)
+            surface.blit(
+                self.font_small.render(
+                    f"Current fertility  {fert:.2f}", True, COLOUR_TEXT_DIM
+                ),
+                (x, y),
             )
+            y += 18
+            surface.blit(
+                self.font_tiny.render(
+                    "Crop fertility effects: prepared for rotation data (not active yet).",
+                    True,
+                    COLOUR_TEXT_DIM,
+                ),
+                (x, y),
+            )
+            y += 16
 
         # Season row
-        x = inner_left
+        sx = x
         for season in SEASON_ORDER:
             label = SEASON_LABELS[season][:3]
             w = max(44, 10 + self.font_small.size(label)[0])
-            rect = pygame.Rect(x, y, w, BTN_H)
+            rect = pygame.Rect(sx, y, w, BTN_H)
             self._draw_btn(surface, rect, label, season == self.season)
             self._buttons.append((f"season_{season.name}", rect))
-            x += w + 4
-
-        # Utility actions on the season row (right-aligned)
-        ax = inner_right
+            sx += w + 4
+        ax = x + inner_w
         for label, action in (("Clr plans", "clear_plans"), ("Delete", "delete_field")):
             w = max(56, 10 + self.font_small.size(label)[0])
             ax -= w
@@ -478,11 +885,10 @@ class FieldPlanDialog:
             self._draw_btn(surface, rect, label, False)
             self._buttons.append((action, rect))
             ax -= 4
-
-        # Crop row(s) below seasons
         y += BTN_H + 6
+
         options = crop_for_season(self.season)
-        x = inner_left
+        cx = x
         if not options:
             surface.blit(
                 self.font_small.render(
@@ -495,28 +901,27 @@ class FieldPlanDialog:
             for crop in options:
                 label = crop.label[:6]
                 w = max(44, 10 + self.font_small.size(label)[0])
-                if x > inner_left and x + w > inner_right:
+                if cx > x and cx + w > x + inner_w:
                     y += BTN_H + 4
-                    x = inner_left
-                rect = pygame.Rect(x, y, w, BTN_H)
+                    cx = x
+                rect = pygame.Rect(cx, y, w, BTN_H)
                 self._draw_btn(surface, rect, label, crop.key == self.crop_kind)
                 self._buttons.append((f"crop_{crop.key}", rect))
-                x += w + 4
+                cx += w + 4
             y += BTN_H + 8
 
-        # Grid
         pw, ph = max(1, building.plot_w), max(1, building.plot_h)
         cell = self._cell_px
         grid_w, grid_h = pw * cell, ph * cell
-        gx = panel.x + (panel.w - grid_w) // 2
+        gx = x + max(0, (inner_w - grid_w) // 2)
         gy = y
         self._grid_origin = (gx, gy)
 
         sel: tuple[int, int, int, int] | None = None
         if self._drag_start is not None and self._drag_current is not None:
-            sx, sy = self._drag_start
-            cx, cy = self._drag_current
-            sel = (min(sx, cx), min(sy, cy), max(sx, cx), max(sy, cy))
+            sx0, sy0 = self._drag_start
+            cx0, cy0 = self._drag_current
+            sel = (min(sx0, cx0), min(sy0, cy0), max(sx0, cx0), max(sy0, cy0))
 
         for ly in range(ph):
             for lx in range(pw):
@@ -537,9 +942,7 @@ class FieldPlanDialog:
                 if harvest_crop is not None and plant_crop is not None:
                     self._paint_split_cell(surface, rect, harvest_crop, plant_crop)
                 elif harvest_crop is not None:
-                    self._paint_cell(
-                        surface, rect, harvest_crop, SeasonPhase.HARVEST
-                    )
+                    self._paint_cell(surface, rect, harvest_crop, SeasonPhase.HARVEST)
                 elif plant_crop is not None:
                     self._paint_cell(
                         surface, rect, plant_crop, SeasonPhase.PLOUGH_PLANT
@@ -572,13 +975,10 @@ class FieldPlanDialog:
                 else "switch season to plant"
             )
         )
-        tip_y = gy + grid_h + 6
         surface.blit(
             self.font_small.render(tip, True, COLOUR_TEXT_DIM),
-            (panel.x + PAD, tip_y),
+            (x, gy + grid_h + 6),
         )
-        surface.set_clip(old_clip)
-        draw_env_hover(surface, mouse_pos, hover_tip, self.font_small)
 
     def _paint_split_cell(
         self,
@@ -623,30 +1023,7 @@ class FieldPlanDialog:
             pygame.draw.rect(surface, (55, 58, 64), rect)
             return
         if phase == SeasonPhase.HARVEST_PLOUGH_PLANT:
-            tl = (rect.left, rect.top)
-            tr = (rect.right, rect.top)
-            br = (rect.right, rect.bottom)
-            bl = (rect.left, rect.bottom)
-            pygame.draw.polygon(surface, PLAN_COLOUR_HARVEST, [tl, tr, bl])
-            pygame.draw.polygon(surface, PLAN_COLOUR_PLANT, [tr, br, bl])
-            _draw_crop_glyph(
-                surface,
-                rect.left + rect.w // 3,
-                rect.top + rect.h // 3,
-                crop.stem_colour,
-                crop.flower_colour,
-                scale=rect.w / 28,
-                icon_base=crop.plant_icon(),
-            )
-            _draw_crop_glyph(
-                surface,
-                rect.left + 2 * rect.w // 3,
-                rect.top + 2 * rect.h // 3,
-                crop.stem_colour,
-                crop.flower_colour,
-                scale=rect.w / 28,
-                icon_base=crop.plant_icon(),
-            )
+            self._paint_split_cell(surface, rect, crop, crop)
             return
         if phase_allows_harvest(phase):
             colour = PLAN_COLOUR_HARVEST

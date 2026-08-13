@@ -55,6 +55,7 @@ class OverlayMode(Enum):
     POLLINATION = auto()
     EROSION = auto()
     FERTILITY = auto()
+    FIELD_YIELD = auto()
 
 
 OVERLAY_LABELS: dict[OverlayMode, str] = {
@@ -68,6 +69,7 @@ OVERLAY_LABELS: dict[OverlayMode, str] = {
     OverlayMode.POLLINATION: "Pollination",
     OverlayMode.EROSION: "Soil erosion",
     OverlayMode.FERTILITY: "Soil fertility",
+    OverlayMode.FIELD_YIELD: "Field yield",
 }
 
 
@@ -373,6 +375,9 @@ def overlay_colour(mode: OverlayMode, value: float) -> Colour:
         return lerp_colour(COLOUR_EROSION_LOW, COLOUR_EROSION_HIGH, value)
     if mode == OverlayMode.FERTILITY:
         return lerp_colour(COLOUR_FERTILITY_LOW, COLOUR_FERTILITY_HIGH, value)
+    if mode == OverlayMode.FIELD_YIELD:
+        # Green good → red poor (value already normalised high=good)
+        return lerp_colour(COLOUR_DISTURBANCE_HIGH, COLOUR_FERTILITY_HIGH, value)
     return (0, 0, 0)
 
 
@@ -384,6 +389,7 @@ def build_overlay_grid(world: World, mode: OverlayMode) -> list[list[float]]:
         OverlayMode.FLORAL_RESOURCES,
         OverlayMode.POLLINATION,
         OverlayMode.EROSION,
+        OverlayMode.FIELD_YIELD,
     ):
         return [[0.0] * world.cols for _ in range(world.rows)]
     return [
