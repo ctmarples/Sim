@@ -58,6 +58,7 @@ from resource_balance import (
     food_def,
     food_is_sweet,
     food_preference_key,
+    format_buff_mult,
     meal_covers_any_requirement,
     meal_includes_meat,
     satiation_from_points,
@@ -1295,6 +1296,7 @@ class Game:
                 if self.balance_dialog.open:
                     self.balance_dialog.handle_mouseup(event.pos, self.balance)
                     self._apply_time_balance()
+                    self._refresh_active_meal_buffs()
                     continue
                 if self.habitat_inspect.open and self.habitat_inspect._moving:
                     self.habitat_inspect.handle_mouseup(event.pos)
@@ -3296,6 +3298,30 @@ class Game:
         target = seconds_to_ticks(day_s, self._playback_ticks())
         if target != self.ticks_per_day:
             self._set_ticks_per_day(target)
+
+    def _combine_eater_meal_buffs(
+        self, eater: object, food_keys: list[str]
+    ) -> tuple[float, float, float]:
+        walk, work, hunger = combine_meal_buffs(food_keys)
+        if (
+            isinstance(eater, Villager)
+            and eater.favourite_is_junk
+            and any(f in food_keys for f in eater.favourite_foods)
+        ):
+            work = round(work * 0.85, 1)
+        return walk, work, hunger
+
+    def _refresh_active_meal_buffs(self) -> None:
+        """Re-scale current meals when File → Balance buff strength changes."""
+        eaters: list[object] = [self.player, *self.villagers]
+        for eater in eaters:
+            keys = list(getattr(eater, "last_meal", None) or [])
+            if not keys:
+                continue
+            walk, work, hunger = self._combine_eater_meal_buffs(eater, keys)
+            apply = getattr(eater, "apply_food_buffs", None)
+            if apply is not None:
+                apply(walk, work, hunger)
 
     def _set_ticks_per_day(self, ticks: int) -> None:
         ticks = max(1, int(ticks))
@@ -8093,8 +8119,8 @@ class Game:
             if eaten > 0:
                 meal = ", ".join(p.last_meal) if p.last_meal else "food"
                 self._set_status(
-                    f"Auto-ate {meal}. Walk ×{p.food_walk_mult:g} · "
-                    f"Work ×{p.food_work_mult:g}."
+                    f"Auto-ate {meal}. Walk ×{format_buff_mult(p.food_walk_mult)} · "
+                    f"Work ×{format_buff_mult(p.food_work_mult)}."
                 )
         # Continue an active craft / build job when the work cooldown rolls over.
         if (
@@ -8155,14 +8181,15 @@ class Game:
         fx = food_def(key)
         p.satiation = min(1.0, p.satiation + satiation_from_points(fx.satiation))
         p.last_meal = [key]
-        walk, work, hunger = combine_meal_buffs([key])
+        walk, work, hunger = self._combine_eater_meal_buffs(p, [key])
         p.apply_food_buffs(walk=walk, work=work, hunger=hunger)
         if self.player_inventory.selected_key == key and getattr(
             p.inventory, key, 0
         ) <= 0:
             self.player_inventory.selected_key = None
         self._set_status(
-            f"Ate {label}. Walk ×{p.food_walk_mult:g} · Work ×{p.food_work_mult:g}."
+            f"Ate {label}. Walk ×{format_buff_mult(p.food_walk_mult)} · "
+            f"Work ×{format_buff_mult(p.food_work_mult)}."
         )
 
     def _player_cycle_tool(self) -> None:
@@ -8394,13 +8421,8 @@ class Game:
 
         if eater is not None and eaten_keys:
             eater.last_meal = list(eaten_keys)
-            walk, work, hunger = combine_meal_buffs(eaten_keys)
+            walk, work, hunger = self._combine_eater_meal_buffs(eater, eaten_keys)
             if isinstance(eater, Villager):
-                # Junk favourites: get the craving but take a work rebuff.
-                if eater.favourite_is_junk and any(
-                    f in eaten_keys for f in eater.favourite_foods
-                ):
-                    work *= 0.85
                 # Missing hire staple in this meal lowers happiness immediately.
                 if eater.required_foods and not meal_covers_any_requirement(
                     eaten_keys, eater.required_foods

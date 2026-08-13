@@ -131,7 +131,9 @@ CLOTHING_SLOT_FROM_CSV: dict[str, str] = {}
 
 
 def clothing_walk_mult(key: str) -> float:
-    return float(CLOTHING_WALK_MULT.get(key, 1.0))
+    from resource_balance import scale_recipe_mult
+
+    return scale_recipe_mult(float(CLOTHING_WALK_MULT.get(key, 1.0)), "speed")
 
 
 def clothing_capacity_bonus(key: str) -> int:

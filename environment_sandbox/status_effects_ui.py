@@ -12,7 +12,7 @@ import pygame
 
 from icons import blit_icon
 from inventory_ui import GRID_CELL, GRID_GAP
-from resource_balance import food_def
+from resource_balance import food_def, format_buff_mult, scale_recipe_mult
 from resources import resource_icon
 from seasons import ambient_temperature_c, temperature_impact
 from settings import (
@@ -67,7 +67,7 @@ class StatusMod:
 
     @property
     def tip(self) -> str:
-        return f"{self.label} ×{self.mult:g}"
+        return f"{self.label} ×{format_buff_mult(self.mult)}"
 
     @property
     def is_buff(self) -> bool:
@@ -172,9 +172,9 @@ def collect_status_mods(
         fx = food_def(key)
         icon = resource_icon(key)
         for effect, mult in (
-            ("walk", float(fx.walk_speed)),
-            ("work", float(fx.work_efficiency)),
-            ("hunger", float(fx.hunger_rate)),
+            ("walk", scale_recipe_mult(float(fx.walk_speed), "speed")),
+            ("work", scale_recipe_mult(float(fx.work_efficiency), "work")),
+            ("hunger", scale_recipe_mult(float(fx.hunger_rate), "hunger")),
         ):
             if abs(mult - 1.0) <= 0.01:
                 continue
@@ -269,7 +269,8 @@ def active_temp_event(inventory, calendar_day: int) -> dict | None:
         "label": f"{label} (level {impact.level})",
         "tip": (
             f"{label} level {impact.level} at {impact.temp_c:.0f}C — "
-            f"walk ×{impact.walk_mult:g}, energy drain ×{impact.energy_mult:g}"
+            f"walk ×{format_buff_mult(impact.walk_mult)}, "
+            f"energy drain ×{format_buff_mult(impact.energy_mult)}"
         ),
     }
 
@@ -295,10 +296,11 @@ def draw_effect_total_columns(
             blit_icon(surface, effect_icon(effect), cx, y + icon_size // 2, icon_size)
         except Exception:
             pass
-        mult_t = font.render(f"×{mult:g}", True, COLOUR_TEXT)
+        shown = format_buff_mult(mult)
+        mult_t = font.render(f"×{shown}", True, COLOUR_TEXT)
         surface.blit(mult_t, (cx - mult_t.get_width() // 2, y + icon_size + 1))
         tip_rect = pygame.Rect(cur, y, col_w, icon_size + 14)
-        tips.append((tip_rect, f"{EFFECT_LABELS[effect]} ×{mult:g}"))
+        tips.append((tip_rect, f"{EFFECT_LABELS[effect]} ×{shown}"))
         cur += col_w
     return cur - x, tips
 

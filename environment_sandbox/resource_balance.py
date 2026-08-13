@@ -12,7 +12,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from settings import pace_ticks, seconds_to_ticks
+from settings import (
+    BUFF_STRENGTH_HUNGER,
+    BUFF_STRENGTH_REF,
+    BUFF_STRENGTH_SPEED,
+    BUFF_STRENGTH_WORK,
+    pace_ticks,
+    seconds_to_ticks,
+)
 
 # ---------------------------------------------------------------------------
 # Starting stock (home storehouse)
@@ -298,20 +305,62 @@ def meal_covers_any_requirement(
     return any(food_covers_any_requirement(k, required) for k in eaten_keys)
 
 
+def _buff_strength(kind: str) -> int:
+    """Live File → Balance fifths (0–5). Falls back to settings defaults."""
+    key = {
+        "speed": "BUFF_STRENGTH_SPEED",
+        "work": "BUFF_STRENGTH_WORK",
+        "hunger": "BUFF_STRENGTH_HUNGER",
+    }[kind]
+    try:
+        from balance_config import active_balance
+
+        return active_balance().get_int(key)
+    except Exception:
+        return {
+            "speed": BUFF_STRENGTH_SPEED,
+            "work": BUFF_STRENGTH_WORK,
+            "hunger": BUFF_STRENGTH_HUNGER,
+        }[kind]
+
+
+def scale_recipe_mult(raw: float, kind: str) -> float:
+    """Scale the gap from 1.0 on a recipe multiplier authored at ``BUFF_STRENGTH_REF``/5.
+
+    0.8 is a −0.2 debuff; 1.2 is a +0.2 buff. Strength 0 turns the effect off
+    (returns 1.0). Example: ±0.2 at 3/5 → 4/5 is 0.27; the multiplier is then
+    rounded to one decimal: 0.8 → 0.7, 1.2 → 1.3.
+    """
+    value = float(raw)
+    if abs(value - 1.0) <= 1e-9:
+        return 1.0
+    n = _buff_strength(kind)
+    if n <= 0:
+        return 1.0
+    ref = max(1, int(BUFF_STRENGTH_REF))
+    return round(1.0 + (value - 1.0) * n / ref, 1)
+
+
+def format_buff_mult(value: float) -> str:
+    """Always one decimal, e.g. 0.8 or 1.3."""
+    return f"{float(value):.1f}"
+
+
 def combine_meal_buffs(food_keys: list[str]) -> tuple[float, float, float]:
     """Return (walk_speed, work_efficiency, hunger_rate) for a finished meal.
 
-    Multipliers stack multiplicatively so debuffs (<1) and buffs (>1) both apply.
+    Recipe weights are scaled by the live speed / work / hunger strengths,
+    then stack multiplicatively so debuffs (<1) and buffs (>1) both apply.
     """
     walk = 1.0
     work = 1.0
     hunger = 1.0
     for key in food_keys:
         fx = food_def(key)
-        walk *= fx.walk_speed
-        work *= fx.work_efficiency
-        hunger *= fx.hunger_rate
-    return walk, work, hunger
+        walk *= scale_recipe_mult(fx.walk_speed, "speed")
+        work *= scale_recipe_mult(fx.work_efficiency, "work")
+        hunger *= scale_recipe_mult(fx.hunger_rate, "hunger")
+    return round(walk, 1), round(work, 1), round(hunger, 1)
 
 
 # ---------------------------------------------------------------------------
