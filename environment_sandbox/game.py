@@ -247,6 +247,7 @@ from recipes import (
     hunt_recipe,
     recipe_outputs_fit,
 )
+from bug_log import BugLog
 from save_load import load_from_path, save_to_path
 from seasons import (
     DAYS_PER_SEASON,
@@ -502,6 +503,8 @@ class Game:
         self.day_tick = self.ticks_per_day
         self._pending_file_action: str | None = None
         self._last_save_path = None  # Path | None — last successful save/load
+        self._loaded_save_name: str | None = None
+        self.bug_log = BugLog(enabled=False)
 
         # Selection / drawing
         self.selected_building_id: int | None = None
@@ -638,6 +641,7 @@ class Game:
         if path is not None:
             load_from_path(self, str(path))
             self._last_save_path = path
+            self._loaded_save_name = path.name
             self.status_message = f"Loaded {path.name}"
             self.status_timer = STATUS_MESSAGE_FRAMES
             return
@@ -1350,6 +1354,7 @@ class Game:
             try:
                 save_to_path(self, path)
                 self._last_save_path = path
+                self._loaded_save_name = path.name
                 self._set_status(f"Saved to {path.name}")
             except Exception as exc:
                 self._set_status(f"Save failed: {exc}")
@@ -1357,6 +1362,7 @@ class Game:
             try:
                 load_from_path(self, path)
                 self._last_save_path = path
+                self._loaded_save_name = path.name
                 self._invalidate_forage_index()
                 self._minimap_terrain = None
                 self._minimap_terrain_key = None
@@ -1380,6 +1386,7 @@ class Game:
         try:
             save_to_path(self, path)
             self._last_save_path = path
+            self._loaded_save_name = path.name
             self._set_status(f"Quick-saved to {path.name}")
         except Exception as exc:
             self._set_status(f"Save failed: {exc}")
@@ -1519,6 +1526,10 @@ class Game:
             self._cycle_ticks_per_day(1)
         elif key == pygame.K_F6:
             self._toggle_autotile_diagnostic()
+        elif key == pygame.K_F8:
+            self.bug_log.enabled = not self.bug_log.enabled
+            state = "ON" if self.bug_log.enabled else "OFF"
+            self._set_status(f"Bug log {state} (writes saves/bug_log.jsonl)")
         elif key == pygame.K_TAB:
             collapsed = toggle_panel_collapsed()
             self._set_status(
@@ -13960,6 +13971,11 @@ class Game:
             OverlayMode.PATH_TRAFFIC,
         ):
             self._refresh_indicators()
+        try:
+            if self.bug_log.enabled:
+                self.bug_log.scan(self)
+        except Exception:
+            pass
 
     def _advance_sim_ticks(self, ticks: int) -> None:
         """Advance `ticks` simulation steps, batching idle waits and ecology."""
