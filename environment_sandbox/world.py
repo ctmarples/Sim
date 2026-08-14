@@ -355,6 +355,8 @@ class World:
         self._forage_rng = random.Random(seed + 123)
         self._growth_cells: list[tuple[int, int]] | None = None
         self._growth_index_age = 0
+        self._water_patches_cache: list[list[tuple[int, int]]] | None = None
+        self._water_patches_rev = -1
         self.terrain_revision = 0
         self.terrain_dirty: set[tuple[int, int]] = set()
         # Valley hydrology / heightfield (filled during generate).
@@ -597,6 +599,7 @@ class World:
         """Force a full terrain layer rebuild (generation / load)."""
         self.terrain_revision += 1
         self.terrain_dirty.clear()
+        self._water_patches_cache = None
 
     def mark_terrain_dirty(self, x: int, y: int, radius: int = 1) -> None:
         """Mark a cell and neighbours for incremental tile re-stitch."""
@@ -613,6 +616,8 @@ class World:
         rng = random.Random(self.seed)
         self._growth_cells = None
         self._growth_index_age = 0
+        self._water_patches_cache = None
+        self._water_patches_rev = -1
         self.cells = [
             [Cell(terrain=TerrainType.SOIL) for _ in range(self.cols)]
             for _ in range(self.rows)
@@ -2448,7 +2453,14 @@ class World:
 
     def water_patches(self) -> list[list[tuple[int, int]]]:
         """Connected components of water cells."""
-        return self._connected_patches(set(self.water_cells()))
+        rev = self.terrain_revision
+        cache = getattr(self, "_water_patches_cache", None)
+        if cache is not None and getattr(self, "_water_patches_rev", None) == rev:
+            return cache
+        cache = self._connected_patches(set(self.water_cells()))
+        self._water_patches_cache = cache
+        self._water_patches_rev = rev
+        return cache
 
     def _connected_patches(
         self, cells: set[tuple[int, int]]

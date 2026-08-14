@@ -749,18 +749,29 @@ class WildlifeManager:
 
         Total = present + outbound migrants still affiliated with this home.
         """
-        present = [
-            a for a in self.animals if a.kind == kind and a.patch_id == patch_id
-        ]
-        outbound = [
-            a
-            for a in self.animals
-            if a.kind == kind
-            and a.migrate_home_id == patch_id
-            and a.patch_id is None
-        ]
-        paired = sum(1 for a in present + outbound if a.mate_id is not None) // 2
-        return len(present), len(outbound), len(present) + len(outbound), paired
+        cache = getattr(self, "_occ_cache", None)
+        if cache is None:
+            present_map: dict[tuple[AnimalKind, int], list[Animal]] = {}
+            outbound_map: dict[tuple[AnimalKind, int], list[Animal]] = {}
+            for a in self.animals:
+                if a.patch_id is not None:
+                    present_map.setdefault((a.kind, a.patch_id), []).append(a)
+                elif a.migrate_home_id is not None:
+                    outbound_map.setdefault((a.kind, a.migrate_home_id), []).append(a)
+            cache = {}
+            keys = set(present_map) | set(outbound_map)
+            for key in keys:
+                present = present_map.get(key, [])
+                outbound = outbound_map.get(key, [])
+                paired = sum(1 for a in present + outbound if a.mate_id is not None) // 2
+                cache[key] = (
+                    len(present),
+                    len(outbound),
+                    len(present) + len(outbound),
+                    paired,
+                )
+            self._occ_cache = cache
+        return cache.get((kind, patch_id), (0, 0, 0, 0))
 
     def _count_in_patch(self, kind: AnimalKind, patch_id: int) -> int:
         return self.count_in_patch(kind, patch_id)
@@ -983,6 +994,7 @@ class WildlifeManager:
     ) -> None:
         if not self.habitats and not self.open_habitats:
             self.refresh_habitats(world)
+        self._occ_cache = None
         self._index_animals()
         season = season_for_day(int(day))
         if self._prev_season is None:
@@ -2246,7 +2258,12 @@ class FishManager:
         self.rng.seed(RANDOM_SEED + 17)
 
     def total_capacity(self, world: World) -> int:
-        return sum(len(p) // FISH_WATER_PER_CAP for p in world.water_patches())
+        rev = getattr(world, "terrain_revision", 0)
+        if getattr(self, "_cap_rev", None) == rev and hasattr(self, "_cap_cache"):
+            return self._cap_cache
+        self._cap_rev = rev
+        self._cap_cache = sum(len(p) // FISH_WATER_PER_CAP for p in world.water_patches())
+        return self._cap_cache
 
     def fish_at(self, x: int, y: int) -> Fish | None:
         for item in self.fish:

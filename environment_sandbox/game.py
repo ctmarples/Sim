@@ -1809,6 +1809,17 @@ class Game:
 
     def _cell_center(self, x: float, y: float) -> tuple[int, int]:
         """Return screen center point for given world cell coordinates (may be fractional)."""
+        cache = getattr(self, "_center_cache", None)
+        if cache is not None and x == int(x) and y == int(y):
+            key = (int(x), int(y))
+            hit = cache.get(key)
+            if hit is not None:
+                return hit
+            cx, cy = self.camera.world_to_screen(float(x) + 0.5, float(y) + 0.5)
+            dy = self._height_screen_lift(float(x) + 0.5, float(y) + 0.5)
+            result = (cx, cy - int(round(dy)))
+            cache[key] = result
+            return result
         cx, cy = self.camera.world_to_screen(float(x) + 0.5, float(y) + 0.5)
         dy = self._height_screen_lift(float(x) + 0.5, float(y) + 0.5)
         return cx, cy - int(round(dy))
@@ -15259,6 +15270,7 @@ class Game:
     # Rendering
     # ------------------------------------------------------------------
     def _draw(self) -> None:
+        self._center_cache = {}
         self.screen.fill(COLOUR_BG)
         self._draw_world()
         if self.height_edit_mode:
@@ -15784,6 +15796,22 @@ class Game:
             int(140 + 115 * t),
             int(148 + 107 * t),
             int(158 + 97 * t),
+        )
+
+    def _blit_season_mute(
+        self, mute: tuple[int, int, int] | None, map_clip: pygame.Rect
+    ) -> None:
+        if mute is None:
+            return
+        key = (map_clip.w, map_clip.h, mute)
+        surf = getattr(self, "_mute_tint_surf", None)
+        if surf is None or getattr(self, "_mute_tint_key", None) != key:
+            surf = pygame.Surface((map_clip.w, map_clip.h))
+            surf.fill(mute)
+            self._mute_tint_surf = surf
+            self._mute_tint_key = key
+        self.screen.blit(
+            surf, map_clip.topleft, special_flags=pygame.BLEND_RGB_MULT
         )
 
     def _ensure_lake_ice_mask(self) -> pygame.Surface:
@@ -16545,6 +16573,11 @@ class Game:
         if src.w < 1 or src.h < 1:
             return
         piece = surf.subsurface(src)
+        if abs(zoom - 1.0) < 1e-4:
+            ox = dest[0] - int(round(sx - src.x))
+            oy = dest[1] - int(round(sy - src.y))
+            self.screen.blit(piece, (ox, oy), special_flags=special_flags)
+            return
         scaled = pygame.transform.scale(
             piece,
             (max(1, int(round(src.w * zoom))), max(1, int(round(src.h * zoom)))),
@@ -16558,38 +16591,51 @@ class Game:
         day = float(self.calendar_day) + (1.0 - self.day_tick / self.ticks_per_day)
         freeze = freeze_amount(day)
         vibrancy = terrain_vibrancy(day)
+        map_clip = pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())
+        layer_key = (
+            round(self.camera.x, 3),
+            round(self.camera.y, 3),
+            self.camera.view_cell_px(),
+            self.world.terrain_revision,
+            int(self.calendar_day),
+            self.day_tick // 16,
+            getattr(self, "_work_gen", 0),
+            round(vibrancy, 1),
+            int(freeze * 5),
+            bool(self.height_sample_enabled),
+        )
+        layer = getattr(self, "_world_layer", None)
+        if (
+            layer is not None
+            and getattr(self, "_world_layer_key", None) == layer_key
+            and layer.get_width() == map_clip.w
+            and layer.get_height() == map_clip.h
+        ):
+            self.screen.blit(layer, map_clip.topleft)
+            return
+
         farm_cells = self._farm_field_cells()
         base, water_mask, grass_mask, soil_mask = self._ensure_terrain_base(farm_cells)
-
-        map_clip = pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())
         self.screen.set_clip(map_clip)
 
         origin = (0, MAP_OFFSET_Y)
         mute = self._ensure_season_mute(vibrancy)
+        # Opaque grass underfill: height-warp gaps and SRCALPHA icon punches
+        # must not leave dest-alpha holes that later show COLOUR_BG through
+        # villager / wildlife sprites.
+        self.screen.fill(COLOUR_GRASS, map_clip)
 
         if self.height_sample_enabled and self.height_sample is not None:
             self._refresh_season_masks(grass_mask, soil_mask, water_mask)
-            # Grass underfill so warp gaps don't read as black seams.
-            self.screen.fill(COLOUR_GRASS, map_clip)
             self._draw_height_sample(base)
-            if mute is not None:
-                tint = pygame.Surface((map_clip.w, map_clip.h))
-                tint.fill(mute)
-                self.screen.blit(
-                    tint, map_clip.topleft, special_flags=pygame.BLEND_RGB_MULT
-                )
+            self._blit_season_mute(mute, map_clip)
             if self._season_period_overlay is not None:
                 self._blit_camera_world_surface(self._season_period_overlay, origin)
         else:
             self._refresh_season_masks(grass_mask, soil_mask, water_mask)
             ice = self._ensure_ice_overlay(freeze, water_mask)
             self._blit_camera_world_surface(base, origin)
-            if mute is not None:
-                tint = pygame.Surface((map_clip.w, map_clip.h))
-                tint.fill(mute)
-                self.screen.blit(
-                    tint, map_clip.topleft, special_flags=pygame.BLEND_RGB_MULT
-                )
+            self._blit_season_mute(mute, map_clip)
             if self._season_period_overlay is not None:
                 self._blit_camera_world_surface(self._season_period_overlay, origin)
             if ice is not None:
@@ -16612,7 +16658,11 @@ class Game:
                 cell = self.world.cells[y][x]
                 if cell.feature in overhang and cell.feature != FeatureType.STRUCTURE_PAD:
                     tall_cells.append((x, y))
-                else:
+                elif (
+                    cell.feature != FeatureType.NONE
+                    or cell.meat_deposit > 0
+                    or cell.fish_deposit > 0
+                ):
                     ground_cells.append((x, y))
         # Include one-cell halo so off-screen tree canopies still overhang in.
         for y in range(max(0, y0 - 1), min(self.world.rows, y1 + 2)):
@@ -16705,6 +16755,30 @@ class Game:
             _draw_cell_feature(x, y)
 
         self.screen.set_clip(None)
+        self._store_opaque_world_layer(map_clip, layer_key)
+
+    def _store_opaque_world_layer(
+        self, map_clip: pygame.Rect, layer_key: tuple
+    ) -> None:
+        """Flatten the map view to 24-bit so entity icons cannot punch to COLOUR_BG.
+
+        SRCALPHA tree/crop blits on a display surface often set dest-alpha to 0
+        in transparent texels. Caching that and blitting it back leaves black
+        holes behind idle villagers and wildlife.
+        """
+        size = (map_clip.w, map_clip.h)
+        layer = getattr(self, "_world_layer", None)
+        if (
+            layer is None
+            or layer.get_size() != size
+            or layer.get_bitsize() != 24
+        ):
+            layer = pygame.Surface(size, depth=24)
+            self._world_layer = layer
+        layer.fill(COLOUR_GRASS)
+        layer.blit(self.screen, (0, 0), map_clip)
+        self._world_layer_key = layer_key
+        self.screen.blit(layer, map_clip.topleft)
 
     def _draw_height_sample(
         self,
@@ -16772,6 +16846,11 @@ class Game:
         src = pygame.Rect(ix, iy, int(sw) + 2, int(sh) + 2).clip(cache.get_rect())
         if src.w <= 0 or src.h <= 0:
             return
+        dest_x = int(round((ix - sx) * zoom))
+        dest_y = MAP_OFFSET_Y + int(round((iy - sy) * zoom))
+        if abs(zoom - 1.0) < 1e-4:
+            self.screen.blit(cache, (dest_x, dest_y), src)
+            return
         scaled = pygame.transform.scale(
             cache.subsurface(src),
             (max(1, int(round(src.w * zoom))), max(1, int(round(src.h * zoom)))),
@@ -16780,8 +16859,6 @@ class Game:
             opaque = pygame.Surface(scaled.get_size(), depth=24)
             opaque.blit(scaled, (0, 0))
             scaled = opaque
-        dest_x = int(round((ix - sx) * zoom))
-        dest_y = MAP_OFFSET_Y + int(round((iy - sy) * zoom))
         self.screen.blit(scaled, (dest_x, dest_y))
 
     def _draw_construction_progress(self, site: ConstructionSite, rect: pygame.Rect) -> None:
@@ -17143,8 +17220,14 @@ class Game:
         from settings import COLOUR_BOAR, COLOUR_DEER
 
         size = self.camera.view_cell_px()
+        # Draw cull only — wildlife.tick still moves every animal.
+        x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
+        pad = 1
+        vx0, vy0, vx1, vy1 = x0 - pad, y0 - pad, x1 + pad, y1 + pad
         for animal in self.wildlife.animals:
             if animal.kind not in (AnimalKind.DEER, AnimalKind.BOAR):
+                continue
+            if not (vx0 <= animal.x <= vx1 and vy0 <= animal.y <= vy1):
                 continue
             ax, ay = entity_draw_xy(animal)
             cx, cy = self._cell_center(ax, ay)
@@ -17173,15 +17256,22 @@ class Game:
 
         # Colony nests + members — use SVG colours (no body wash).
         member_size = max(8, size * 2 // 3)
+        cpad = 3
+        cx0, cy0, cx1, cy1 = x0 - cpad, y0 - cpad, x1 + cpad, y1 + cpad
         for colony in self.wildlife.colonies:
+            if not (cx0 <= colony.x <= cx1 and cy0 <= colony.y <= cy1):
+                continue
             nest_name = (
                 ICON_BEE_HIVE if colony.kind == AnimalKind.BEE else ICON_BURROW
             )
             member_name = ICON_BEE if colony.kind == AnimalKind.BEE else ICON_RABBIT
-            nx, ny = entity_draw_xy(colony)
-            cx, cy = self._cell_center(nx, ny)
-            blit_icon(self.screen, nest_name, cx, cy, size)
+            if vx0 <= colony.x <= vx1 and vy0 <= colony.y <= vy1:
+                nx, ny = entity_draw_xy(colony)
+                cx, cy = self._cell_center(nx, ny)
+                blit_icon(self.screen, nest_name, cx, cy, size)
             for member in colony.members:
+                if not (vx0 <= member.x <= vx1 and vy0 <= member.y <= vy1):
+                    continue
                 mx, my = entity_draw_xy(member)
                 cx, cy = self._cell_center(mx, my)
                 cy += max(1, size // 20)
@@ -17195,7 +17285,11 @@ class Game:
         )
         colour = blend_colour(COLOUR_FISH, (150, 190, 210), freeze)
         size = self.camera.view_cell_px()
+        # Draw cull only — FishManager.tick still moves every fish.
+        x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
         for item in self.fish.fish:
+            if not (x0 <= item.x <= x1 and y0 <= item.y <= y1):
+                continue
             fx, fy = entity_draw_xy(item)
             cx, cy = self._cell_center(fx, fy)
             blit_icon(self.screen, ICON_FISH, cx, cy, size, recolour={"body": colour})

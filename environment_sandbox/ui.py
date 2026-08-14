@@ -118,9 +118,53 @@ def _blit_text(
     pos: tuple[int, int],
     colour: tuple[int, int, int] = COLOUR_TEXT,
 ) -> int:
-    rendered = font.render(text, True, colour)
+    rendered = _cached_font_surf(font, text, colour)
     surface.blit(rendered, pos)
     return pos[1] + rendered.get_height() + 4
+
+
+_FONT_SURF_CACHE: dict[tuple, pygame.Surface] = {}
+_FONT_SURF_CACHE_MAX = 768
+_FONT_SIZE_CACHE: dict[tuple, int] = {}
+_ELLIPSIZE_CACHE: dict[tuple, str] = {}
+
+
+def _cached_font_surf(
+    font: pygame.font.Font, text: str, colour: tuple[int, int, int]
+) -> pygame.Surface:
+    key = (id(font), text, colour)
+    surf = _FONT_SURF_CACHE.get(key)
+    if surf is None:
+        surf = font.render(text, True, colour)
+        if len(_FONT_SURF_CACHE) >= _FONT_SURF_CACHE_MAX:
+            _FONT_SURF_CACHE.clear()
+        _FONT_SURF_CACHE[key] = surf
+    return surf
+
+
+def _cached_font_width(font: pygame.font.Font, text: str) -> int:
+    key = (id(font), text)
+    width = _FONT_SIZE_CACHE.get(key)
+    if width is None:
+        width = font.size(text)[0]
+        if len(_FONT_SIZE_CACHE) >= _FONT_SURF_CACHE_MAX:
+            _FONT_SIZE_CACHE.clear()
+        _FONT_SIZE_CACHE[key] = width
+    return width
+
+
+def _ellipsize(font: pygame.font.Font, text: str, max_w: int) -> str:
+    key = (id(font), text, max_w)
+    cached = _ELLIPSIZE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    label = text
+    while _cached_font_width(font, label) > max_w and len(label) > 4:
+        label = label[:-2] + "…"
+    if len(_ELLIPSIZE_CACHE) >= _FONT_SURF_CACHE_MAX:
+        _ELLIPSIZE_CACHE.clear()
+    _ELLIPSIZE_CACHE[key] = label
+    return label
 
 
 class UI:
@@ -182,6 +226,47 @@ class UI:
         if self._content.get_height() < height:
             self._content = pygame.Surface((PANEL_WIDTH, height))
         return self._content
+
+    def _blit_panel_to_screen(
+        self,
+        surface: pygame.Surface,
+        panel_x: int,
+        panel_h: int,
+        mouse_pos: tuple[int, int] | None = None,
+    ) -> None:
+        content = self._content
+        max_scroll = max(0, self.content_height - panel_h)
+        self.scroll_y = max(0, min(self.scroll_y, max_scroll))
+        panel = pygame.Rect(panel_x, MAP_OFFSET_Y, PANEL_WIDTH, panel_h)
+        pygame.draw.rect(surface, COLOUR_PANEL_BG, panel)
+        surface.blit(
+            content,
+            (panel_x, MAP_OFFSET_Y),
+            pygame.Rect(0, self.scroll_y, PANEL_WIDTH, panel_h),
+        )
+        pygame.draw.line(
+            surface,
+            COLOUR_PANEL_BORDER,
+            (panel_x, MAP_OFFSET_Y),
+            (panel_x, WINDOW_HEIGHT),
+            2,
+        )
+        if max_scroll > 0:
+            track_h = panel_h - 16
+            thumb_h = max(24, int(track_h * panel_h / self.content_height))
+            thumb_y = MAP_OFFSET_Y + 8 + int(
+                (track_h - thumb_h) * (self.scroll_y / max_scroll)
+            )
+            bar_x = panel_x + PANEL_WIDTH - 8
+            pygame.draw.rect(
+                surface, (60, 62, 70), pygame.Rect(bar_x, MAP_OFFSET_Y + 8, 4, track_h)
+            )
+            pygame.draw.rect(
+                surface, (140, 144, 160), pygame.Rect(bar_x, thumb_y, 4, thumb_h)
+            )
+        if self._tooltip is not None and mouse_pos is not None:
+            tip, _anchor = self._tooltip
+            self._draw_tooltip(surface, tip, mouse_pos)
 
     def _draw_icon_button(
         self,
@@ -457,12 +542,10 @@ class UI:
         btns = trailing_btns or []
         btn_space = len(btns) * (self._ICON_SIZE + 3) + (4 if btns else 0)
         max_text_w = PANEL_WIDTH - 28 - btn_space
-        label = text
-        while self.font_small.size(label)[0] > max_text_w and len(label) > 4:
-            label = label[:-2] + "…"
+        label = _ellipsize(self.font_small, text, max_text_w)
 
         colour = COLOUR_TEXT if selected else COLOUR_TEXT_DIM
-        surface.blit(self.font_small.render(label, True, colour), (x, y + 2))
+        surface.blit(_cached_font_surf(self.font_small, label, colour), (x, y + 2))
         self.list_hits.append((row, hit_kind, hit_id))
 
         bx = row.right - 4 - self._ICON_SIZE
@@ -574,7 +657,7 @@ class UI:
 
         btn_space = 0
         for glyph, _a, _t, _act in trailing:
-            btn_w = max(self._ICON_SIZE, 8 + self.font_small.size(glyph)[0])
+            btn_w = max(self._ICON_SIZE, 8 + _cached_font_width(self.font_small, glyph))
             btn_space += btn_w + 3
         btn_space += 4
         draw_portrait(
@@ -587,12 +670,10 @@ class UI:
         )
         text_x = x + 24
         max_text_w = PANEL_WIDTH - 48 - btn_space
-        text = label
-        while self.font_small.size(text)[0] > max_text_w and len(text) > 4:
-            text = text[:-2] + "…"
+        text = _ellipsize(self.font_small, label, max_text_w)
 
         colour = COLOUR_TEXT if selected else COLOUR_TEXT_DIM
-        surface.blit(self.font_small.render(text, True, colour), (text_x, y + 2))
+        surface.blit(_cached_font_surf(self.font_small, text, colour), (text_x, y + 2))
         self.list_hits.append((row, "villager", villager.id))
 
         bar_y = y + 20
@@ -1041,6 +1122,34 @@ class UI:
                 self._draw_tooltip(surface, "Show sidebar (Tab)", mouse_pos or tab.center)
             return
 
+        mouse_over = mouse_pos is not None and mouse_pos[0] >= panel_x
+        fp = (
+            calendar_day,
+            selected_building_id,
+            selected_villager_id,
+            selected_habitat_kind,
+            selected_habitat_id,
+            overlay_mode,
+            sim_speed,
+            assign_workplace_mode,
+            status_message,
+            map_edit_mode,
+            place_kind,
+        )
+        wait = getattr(self, "_panel_rebuild_wait", 0)
+        if (
+            not mouse_over
+            and getattr(self, "_panel_fp", None) == fp
+            and wait > 0
+            and getattr(self, "_panel_built", False)
+        ):
+            self._panel_rebuild_wait = wait - 1
+            self._blit_panel_to_screen(surface, panel_x, panel_h)
+            return
+        self._panel_rebuild_wait = 4
+        self._panel_fp = fp
+        self._panel_built = True
+
         content = self._ensure_content_surface(max(self.content_height, panel_h + 200))
         content.fill(COLOUR_PANEL_BG)
 
@@ -1147,35 +1256,7 @@ class UI:
             )
 
         self.content_height = max(panel_h, y)
-        max_scroll = max(0, self.content_height - panel_h)
-        self.scroll_y = max(0, min(self.scroll_y, max_scroll))
-
-        panel = pygame.Rect(panel_x, MAP_OFFSET_Y, PANEL_WIDTH, panel_h)
-        pygame.draw.rect(surface, COLOUR_PANEL_BG, panel)
-        surface.blit(
-            content,
-            (panel_x, MAP_OFFSET_Y),
-            pygame.Rect(0, self.scroll_y, PANEL_WIDTH, panel_h),
-        )
-        pygame.draw.line(
-            surface,
-            COLOUR_PANEL_BORDER,
-            (panel_x, MAP_OFFSET_Y),
-            (panel_x, WINDOW_HEIGHT),
-            2,
-        )
-
-        if max_scroll > 0:
-            track_h = panel_h - 16
-            thumb_h = max(24, int(track_h * panel_h / self.content_height))
-            thumb_y = MAP_OFFSET_Y + 8 + int((track_h - thumb_h) * (self.scroll_y / max_scroll))
-            bar_x = panel_x + PANEL_WIDTH - 8
-            pygame.draw.rect(surface, (60, 62, 70), pygame.Rect(bar_x, MAP_OFFSET_Y + 8, 4, track_h))
-            pygame.draw.rect(surface, (140, 144, 160), pygame.Rect(bar_x, thumb_y, 4, thumb_h))
-
-        if self._tooltip is not None and mouse_pos is not None:
-            tip, _anchor = self._tooltip
-            self._draw_tooltip(surface, tip, mouse_pos)
+        self._blit_panel_to_screen(surface, panel_x, panel_h, mouse_pos)
 
     def _draw_tooltip(
         self, surface: pygame.Surface, text: str, mouse_pos: tuple[int, int]
