@@ -75,6 +75,9 @@ class CropDef:
     year_phases: tuple[SeasonPhase, SeasonPhase, SeasonPhase, SeasonPhase]
     # Icon folder base: crop_plant / flower_plant (dense → ``{base}_dense``).
     icon_base: str = "crop_plant"
+    # Optional fertility delta applied on harvest/fallow once rotation effects exist.
+    # None = not defined yet (UI shows projection only when set).
+    fertility_effect: float | None = None
 
     def plant_icon(self, *, dense: bool = False) -> str:
         return f"{self.icon_base}_dense" if dense else self.icon_base

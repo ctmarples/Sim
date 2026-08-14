@@ -244,30 +244,30 @@ def _env_chips(
     )
     pest_tip = (
         f"Pest control ×{pest:.2f} (from bio ×{pest_bio:.2f}"
-        + (f" + repellant {boost:+.2f}" if boost else "")
-        + "). Yield multiplier. Also sets the crop-health cap "
-        f"(now {cap * 100:.0f}%). Repellant boosts yield, not the health cap."
+        + (f" + treatment {boost:+.2f}" if boost else "")
+        + "). Sets the crop-health cap "
+        f"(now {cap * 100:.0f}%); does not multiply harvest directly."
     )
     health_tip = (
-        f"Crop health {health * 100:.0f}% (cap {cap * 100:.0f}% from pest control). "
+        f"Crop health {health * 100:.0f}% (cap {cap * 100:.0f}% from pest pressure). "
         f"Health only falls, at most {drop * 100:.0f}% each env sample "
         f"(8× per year), never below {hmin * 100:.0f}%. "
-        f"Poor pest control slowly lowers this; it does not recover on its own."
+        f"This is the yield pathway for pest pressure."
     )
     poll_tip = (
         f"Bee coverage {poll * 100:.0f}% → yield ×{poll_mult:.2f}. "
         f"Nests in range pollinate the field."
     )
     eco_tip = (
-        f"Disturbance {dist * 100:.0f}% → ecology ×{ecology:.2f} "
+        f"Disturbance {dist * 100:.0f}% → yield ×{ecology:.2f} "
         f"(floor {eco_floor:.2f} at max disturbance). "
-        f"Urban and path traffic share this layer."
+        f"Urban, paths and extraction feed this layer."
     )
+    fert_pot = float(status.get("fertility_potential") or fertility or 1.0)
     fert_tip = (
-        f"Soil fertility {fertility * 100:.0f}%. "
-        f"Forest/meadow/grass start at 100%, soil and riparian at 80%, "
-        f"rock and water at 0%. Each harvest drops fertility by 10% on that square. "
-        f"Higher fertility grows weeds faster and multiplies harvest."
+        f"Soil fertility {fertility:.2f} / potential {fert_pot:.2f}. "
+        f"Healthy cultivated soil is 1.0; harvests deplete the square. "
+        f"Higher fertility also grows weeds faster."
     )
     weed_tip = (
         f"Weeds {weeds * 100:.0f}% → harvest ×{weed_mult:.2f} "
@@ -281,9 +281,10 @@ def _env_chips(
     )
     harvest_tip = (
         f"Harvest {base}→{got} per tile. "
-        f"{base} × pest {pest:.2f} × health {health:.2f} "
-        f"× poll {poll_mult:.2f} × ecology {ecology:.2f} "
-        f"× fertility {fertility:.2f} × weeds {weed_mult:.2f}."
+        f"{base} × poll {poll_mult:.2f} × disturbance {ecology:.2f} "
+        f"× health {health:.2f} × fertility {fertility:.2f} "
+        f"× weeds {weed_mult:.2f} "
+        f"(pest control shapes health over time, not this product)."
     )
     harvest_t = _score_t(got, max(1, int(base * 0.6)), max(base, got))
     return [

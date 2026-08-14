@@ -4,13 +4,15 @@ Recipes live in ``recipes_data/<building>/recipes.csv`` (one sheet per building)
 Edit those CSVs to add or tweak recipes — no Python changes needed for I/O amounts.
 
 Columns:
-  name, label, inputs, outputs, category, icon_key,
+  name, label, inputs, outputs, steps, category, icon_key,
   extraction, farming, hunting, crafting, labour, transport,
   resource_group, resource_short,
   food_satiation, food_walk_speed, food_work_efficiency, food_hunger_rate, food_edible,
   walk_speed, capacity_bonus, heat_protection, cold_protection, clothing_slot
 
 ``inputs`` / ``outputs`` use ``key:qty;key:qty`` (empty inputs = gather toggle).
+``steps`` is how many work ticks finish one craft (blank = ``PROCESSOR_RECIPE_STEPS``,
+usually 3). Barn threshing uses ``1`` so it completes in a single work action.
 ``category`` groups recipes in the building inspect UI (kitchen: stews, grill, …).
 Skill columns are minimum levels (1–10); leave blank for no requirement on that skill.
 A recipe may require several skills at once. Optional compact ``skills`` column
@@ -75,6 +77,8 @@ class Recipe:
     skill_reqs: tuple[tuple[SkillType, int], ...] = ()
     # Optional UI group (e.g. kitchen stews / grill / bakery).
     category: str | None = None
+    # Work ticks to finish one craft (CSV ``steps``). 0 = use PROCESSOR_RECIPE_STEPS.
+    steps: int = 0
 
     def display_icon_key(self) -> str:
         if self.icon_key:
@@ -92,6 +96,14 @@ class Recipe:
         if not self.skill_reqs:
             return 1
         return max(level for _, level in self.skill_reqs)
+
+    def work_steps(self) -> int:
+        """How many work ticks complete one craft of this recipe."""
+        from settings import PROCESSOR_RECIPE_STEPS
+
+        if int(self.steps) > 0:
+            return max(1, int(self.steps))
+        return max(1, int(PROCESSOR_RECIPE_STEPS))
 
 
 MILL_RECIPES: tuple[Recipe, ...] = ()
@@ -223,6 +235,8 @@ def _recipe_from_row(row: dict[str, str]) -> Recipe:
     skill_reqs = _parse_skill_reqs(row)
     cat_raw = _cell(row, "category")
     category = cat_raw or None
+    steps_raw = _cell(row, "steps", "work_steps")
+    steps = max(0, int(float(steps_raw))) if steps_raw else 0
     return Recipe(
         name,
         inputs,
@@ -230,6 +244,7 @@ def _recipe_from_row(row: dict[str, str]) -> Recipe:
         icon_key=icon_key,
         skill_reqs=skill_reqs,
         category=category,
+        steps=steps,
     )
 
 
@@ -327,12 +342,18 @@ def _recipe_from_json(data: dict) -> Recipe:
         # Flat per-skill keys or legacy min_skill.
         flat = {k: str(v) for k, v in data.items() if isinstance(v, (int, float, str))}
         skill_reqs = list(_parse_skill_reqs(flat))
+    cat = data.get("category")
+    category = str(cat) if cat else None
+    steps_raw = data.get("steps", data.get("work_steps"))
+    steps = max(0, int(steps_raw)) if steps_raw is not None and str(steps_raw).strip() else 0
     return Recipe(
         name,
         inputs,
         outputs,
         icon_key=icon_key,
         skill_reqs=tuple(skill_reqs),
+        category=category,
+        steps=steps,
     )
 
 
@@ -505,6 +526,19 @@ def recipe_inputs_text(recipe: Recipe) -> str:
 
 def recipe_ready(storage: object, recipe: Recipe) -> bool:
     return all(int(getattr(storage, key, 0)) >= n for key, n in recipe.inputs.items())
+
+
+def recipe_ready_with_extra(
+    storage: object, recipe: Recipe, extra: object | None
+) -> bool:
+    """True if storage + optional extra inventory cover recipe inputs."""
+    if extra is None:
+        return recipe_ready(storage, recipe)
+    for key, n in recipe.inputs.items():
+        have = int(getattr(storage, key, 0)) + int(getattr(extra, key, 0))
+        if have < int(n):
+            return False
+    return True
 
 
 def recipe_output_fits(

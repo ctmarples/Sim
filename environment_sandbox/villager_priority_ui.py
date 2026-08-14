@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 import pygame
 
+from entities import PRIORITY_ICONS, WorkPriority
 from icons import blit_icon
 from seasons import SEASON_LABELS, SEASON_ORDER, Season
 from settings import (
@@ -109,6 +110,80 @@ def draw_seasonal_workplace_grid(
             row_y,
             row,
             icon_for_building=icon_for_building,
+            font=font,
+            mouse_pos=mouse_pos,
+            season=season,
+        )
+        hits.extend(row_hits)
+        row_y += rh + 4
+    return hits, row_y - y
+
+
+def draw_priority_slot_row(
+    surface: pygame.Surface,
+    x: int,
+    y: int,
+    prios: list[WorkPriority],
+    *,
+    font: pygame.font.Font,
+    mouse_pos: tuple[int, int] | None = None,
+    season: Season | None = None,
+    interactive: bool = True,
+) -> tuple[list[tuple[str, pygame.Rect]], int]:
+    hits: list[tuple[str, pygame.Rect]] = []
+    while len(prios) < 3:
+        prios.append(WorkPriority.NONE)
+    bx = x
+    for slot in range(3):
+        rect = pygame.Rect(bx, y, SLOT_SIZE, SLOT_SIZE)
+        mode = prios[slot]
+        icon = PRIORITY_ICONS.get(mode) or None
+        hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+        draw_workplace_slot(surface, rect, icon=icon, font=font, hovered=hovered)
+        if not icon:
+            glyph = "—" if mode == WorkPriority.NONE else PRIORITY_LABELS[mode][:1]
+            label = font.render(glyph, True, COLOUR_TEXT_DIM)
+            surface.blit(
+                label,
+                (
+                    rect.x + (rect.w - label.get_width()) // 2,
+                    rect.y + (rect.h - label.get_height()) // 2,
+                ),
+            )
+        if interactive:
+            if season is not None:
+                action = f"prio_kind:{slot}:{season.name}"
+            else:
+                action = f"prio_kind:{slot}"
+            hits.append((action, rect))
+        bx += SLOT_SIZE + SLOT_GAP
+    return hits, SLOT_SIZE
+
+
+def draw_seasonal_priority_grid(
+    surface: pygame.Surface,
+    x: int,
+    y: int,
+    season_prios: dict[str, list[WorkPriority]],
+    *,
+    font: pygame.font.Font,
+    font_small: pygame.font.Font,
+    current_season: Season | None = None,
+    mouse_pos: tuple[int, int] | None = None,
+) -> tuple[list[tuple[str, pygame.Rect]], int]:
+    hits: list[tuple[str, pygame.Rect]] = []
+    row_y = y
+    for season in SEASON_ORDER:
+        label = SEASON_LABELS[season]
+        if current_season == season:
+            label = f"▸ {label}"
+        surface.blit(font_small.render(label, True, COLOUR_TEXT), (x, row_y + 6))
+        row = list(season_prios.get(season.name, [WorkPriority.NONE] * 3))
+        row_hits, rh = draw_priority_slot_row(
+            surface,
+            x + SEASON_LABEL_W,
+            row_y,
+            row,
             font=font,
             mouse_pos=mouse_pos,
             season=season,

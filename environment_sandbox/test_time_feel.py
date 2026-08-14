@@ -132,13 +132,13 @@ def test_game_one_tick_per_playback_slot_each_frame() -> None:
     g.day_tick = g.ticks_per_day
 
     calls = {"n": 0}
-    original = g._update_simulation
+    original = g._advance_sim_ticks
 
-    def _count() -> None:
-        calls["n"] += 1
-        original()
+    def _count(ticks: int, *, flush: bool = True) -> None:
+        calls["n"] += ticks
+        original(ticks, flush=flush)
 
-    g._update_simulation = _count  # type: ignore[method-assign]
+    g._advance_sim_ticks = _count  # type: ignore[method-assign]
     n = g._step_sim()
     assert n == pb, f"×1 should burn {pb} ticks this frame, got {n}"
     for _ in range(FPS - 1):

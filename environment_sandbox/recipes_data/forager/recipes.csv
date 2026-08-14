@@ -1,7 +1,7 @@
-name,label,inputs,outputs,icon_key,extraction,farming,hunting,crafting,labour,transport,resource_group,resource_short,food_satiation,food_walk_speed,food_work_efficiency,food_hunger_rate,food_edible
-wood,Wood,,wood:1,,,,,,,,,,,,,,
-rock,Rock,,rock:1,,,,,,,,,,,,,,
-berries,Berries,,berries:1,,,,,,,,,,,,,,
-mushrooms,Mushrooms,,mushrooms:1,,,,,,,,,,,,,,
-honey,Honey,,honey:1,,,,,,,,,,,,,,
-reeds,Reeds,,reeds:1
+name,label,inputs,outputs,steps,icon_key,extraction,farming,hunting,crafting,labour,transport,resource_group,resource_short,food_satiation,food_walk_speed,food_work_efficiency,food_hunger_rate,food_edible
+wood,Wood,,wood:1,,,,,,,,,,,,,,,
+rock,Rock,,rock:1,,,,,,,,,,,,,,,
+berries,Berries,,berries:1,,,,,,,,,,,,,,,
+mushrooms,Mushrooms,,mushrooms:1,,,,,,,,,,,,,,,
+honey,Honey,,honey:1,,,,,,,,,,,,,,,
+reeds,Reeds,,reeds:1,,,,,,,,,,,,,,,

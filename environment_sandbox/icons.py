@@ -1206,11 +1206,13 @@ def _save_stipple_tmp(icon: IconImage, png_path: Path, meta_path: Path, *, tile_
 
 
 _SURFACE_CACHE: dict[tuple, IconImage] = {}
+_HIT_CACHE: dict[tuple, IconImage] = {}
 _VARIANT_CACHE: dict[str, tuple[str, ...]] = {}
 
 
 def clear_cache() -> None:
     _SURFACE_CACHE.clear()
+    _HIT_CACHE.clear()
     _VARIANT_CACHE.clear()
     reload_png_manifest()
 
@@ -1344,10 +1346,30 @@ def get_icon(
     """
     cell_px = max(4, int(cell_px))
     omit = frozenset(omit_classes) if omit_classes else None
-    png_path = _ICONS_DIR / f"{name}.png"
-    svg_path = _ICONS_DIR / f"{name}.svg"
     want_png = _prefer_png() if prefer_png is None else bool(prefer_png)
     want_stipple = bool(stipple)
+    rc = tuple(sorted((k, v) for k, v in (recolour or {}).items()))
+    sc = tuple(sorted((k, round(v, 3)) for k, v in (class_scales or {}).items()))
+    oc = tuple(sorted(omit or ()))
+    hit_key = (name, cell_px, rc, sc, oc, want_png, want_stipple)
+    hit = _HIT_CACHE.get(hit_key)
+    if hit is not None:
+        return hit
+    png_hit_key = (name, cell_px, (), (), (), True, want_stipple)
+    if want_png:
+        hit = _HIT_CACHE.get(png_hit_key)
+        if hit is not None:
+            _HIT_CACHE[hit_key] = hit
+            return hit
+
+    def remember(icon: IconImage) -> IconImage:
+        _HIT_CACHE[hit_key] = icon
+        if want_png:
+            _HIT_CACHE[png_hit_key] = icon
+        return icon
+
+    png_path = _ICONS_DIR / f"{name}.png"
+    svg_path = _ICONS_DIR / f"{name}.svg"
     tile_px = _stipple_native_px() if want_stipple else cell_px
 
     if want_png and png_path.is_file():
@@ -1392,10 +1414,10 @@ def get_icon(
         )
         cached = _SURFACE_CACHE.get(key)
         if cached is not None:
-            return cached
+            return remember(cached)
         icon = _scale_icon_image(base, cell_px, tile_px)
         _SURFACE_CACHE[key] = icon
-        return icon
+        return remember(icon)
 
     key = _cache_key(
         f"{source}:{name}",
@@ -1408,7 +1430,7 @@ def get_icon(
     )
     cached = _SURFACE_CACHE.get(key)
     if cached is not None:
-        return cached
+        return remember(cached)
 
     if want_stipple:
         token = _stipple_variant_token(recolour, class_scales, omit)
@@ -1418,7 +1440,7 @@ def get_icon(
         loaded = _load_stipple_tmp(tmp_png, tmp_meta, tile_px=tile_px)
         if loaded is not None:
             _SURFACE_CACHE[key] = loaded
-            return loaded
+            return remember(loaded)
 
     if source == "png":
         icon = _load_png_icon(name, cell_px)
@@ -1450,7 +1472,7 @@ def get_icon(
         _save_stipple_tmp(icon, tmp_png, tmp_meta, tile_px=tile_px)
 
     _SURFACE_CACHE[key] = icon
-    return icon
+    return remember(icon)
 
 
 

@@ -12,6 +12,7 @@ from enum import Enum
 import pygame
 
 from entities import (
+    PRIORITY_LABELS,
     RATION_LABELS,
     Inventory,
     RationMode,
@@ -61,6 +62,7 @@ from status_effects_ui import (
 from villager_priority_ui import (
     SLOT_GAP,
     SLOT_SIZE,
+    draw_seasonal_priority_grid,
     draw_seasonal_workplace_grid,
     draw_workplace_slot_row,
 )
@@ -465,7 +467,11 @@ class VillagerInspectDialog:
             grid_h = 18 + 16 + grid_height(v_items) + 8
             self._panel_w = 380
 
-        prio_extra = 4 * (SLOT_SIZE + 4) if villager.seasonal_priorities else (SLOT_SIZE + 8)
+        prio_extra = (
+            8 * (SLOT_SIZE + 4) + 22
+            if villager.seasonal_priorities
+            else (SLOT_SIZE + 8)
+        )
         category_panel_h = self._detail_category_panel_height()
         body_h = (
             PAD
@@ -1003,6 +1009,41 @@ class VillagerInspectDialog:
                         pass
                 self._icon_tips.append((rect, tip))
             y += max(grid_h, SLOT_SIZE) + 8
+            surface.blit(
+                self.font_small.render("Jobs", True, COLOUR_TEXT_DIM),
+                (x, y + 6),
+            )
+            villager.ensure_season_priorities()
+            prio_hits, prio_h = draw_seasonal_priority_grid(
+                surface,
+                x + 58,
+                y,
+                villager.season_priorities,
+                font=self.font_small,
+                font_small=self.font_tiny,
+                current_season=current_season,
+                mouse_pos=mouse_pos,
+            )
+            for action, rect in prio_hits:
+                self._buttons.append((action, rect))
+                parts = action.split(":")
+                tip = "Job priority (click to cycle)"
+                if len(parts) >= 3:
+                    try:
+                        slot_i = int(parts[1])
+                        season_name = parts[2]
+                        row = list(
+                            villager.season_priorities.get(
+                                season_name, [None, None, None]
+                            )
+                        )
+                        mode = row[slot_i] if 0 <= slot_i < len(row) else None
+                        label = PRIORITY_LABELS.get(mode, "—") if mode else "—"
+                        tip = f"{season_name.title()} P{slot_i + 1}: {label}"
+                    except ValueError:
+                        pass
+                self._icon_tips.append((rect, tip))
+            y += max(prio_h, SLOT_SIZE) + 8
         else:
             surface.blit(
                 self.font_small.render("Priority", True, COLOUR_TEXT_DIM),

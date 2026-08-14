@@ -66,15 +66,20 @@ INSECT_REPELLANT_PEST_BOOST: float = 0.12
 FERTILITY_FOREST: float = 1.0
 FERTILITY_MEADOW: float = 1.0
 FERTILITY_GRASS: float = 1.0
-FERTILITY_SOIL: float = 0.8
+# Healthy cultivated soil is 1.0 so base harvest is reachable without a hidden terrain tax.
+FERTILITY_SOIL: float = 1.0
 FERTILITY_RIPARIAN: float = 0.8
 FERTILITY_ROCK: float = 0.0
 FERTILITY_WATER: float = 0.0
 FERTILITY_HARVEST_DROP: float = 0.1
+# Pre–Model-A cultivated soil baseline (for save migration of absolute fertility).
+FERTILITY_SOIL_LEGACY: float = 0.8
 # Weeds grow faster on fertile crop tiles (per day at fertility 1.0).
 WEED_GROWTH_RATE: float = 0.05
 WEED_HARVEST_PENALTY: float = 0.5  # yield lost at weeds = 1.0
 WEED_ACTION_THRESHOLD: float = 0.2  # farmer hoes when weeds reach this
+# How many times weeds may begin growing on a square each season (0 = never).
+WEED_MAX_APPEARANCES_PER_SEASON: int = 1
 # Slope (height units per cell) mapped to 1.0 erosion potential.
 EROSION_SLOPE_SCALE: float = 8.0
 
@@ -252,7 +257,7 @@ class BuildingStorageSpec:
 
 _CARGO: int = 40
 _PROC_IN: int = 40
-_PROC_OUT: int = 10
+_PROC_OUT: int = 20
 _FUEL: int = 10
 _SEEDS: int = 40
 
@@ -267,8 +272,8 @@ BUILDING_STORAGE: dict[str, BuildingStorageSpec] = {
     "farm": BuildingStorageSpec(capacity=100, seed_capacity=_SEEDS),
     "field": BuildingStorageSpec(capacity=0),
     "mill": BuildingStorageSpec(
-        capacity=_PROC_IN + _PROC_OUT,
-        input_capacity=_PROC_IN,
+        capacity=100 + _PROC_OUT,
+        input_capacity=100,
         output_capacity=_PROC_OUT,
     ),
     "kitchen": BuildingStorageSpec(
@@ -406,10 +411,11 @@ DISTURBANCE_EXTRACTION_BOOST: float = 0.55
 DISTURBANCE_EXTRACTION_SPREAD: float = 0.14
 DISTURBANCE_MAX: float = 1.0
 # Permanent floors while terrain type is present (no decay on these tiles).
-DISTURBANCE_URBAN_LEVEL: float = 0.85
-DISTURBANCE_PATH_LEVEL: float = 0.45
-# Ecology/farming multiplier at full disturbance (0.25 → 25% effectiveness).
-DISTURBANCE_ACTIVITY_FLOOR: float = 0.25
+# Tuned so ordinary village farmland sits ~0.2–0.5, not extreme/urban.
+DISTURBANCE_URBAN_LEVEL: float = 0.72
+DISTURBANCE_PATH_LEVEL: float = 0.30
+# Ecology/farming multiplier at full disturbance (0.30 → 30% effectiveness).
+DISTURBANCE_ACTIVITY_FLOOR: float = 0.30
 # Chebyshev radius for neighbourhood-averaged disturbance (read + spread falloff).
 DISTURBANCE_RADIUS: int = 2
 

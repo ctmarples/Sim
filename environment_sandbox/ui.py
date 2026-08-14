@@ -481,9 +481,11 @@ class UI:
         self,
         villager: Villager,
         assign_workplace_mode: bool,
+        season: Season | None = None,
     ) -> list[tuple[str, str, str, bool]]:
-        while len(villager.priorities) < 3:
-            villager.priorities.append(WorkPriority.NONE)
+        prios = villager.active_priorities(season)
+        while len(prios) < 3:
+            prios.append(WorkPriority.NONE)
         glyphs = {
             WorkPriority.BUILD: "B",
             WorkPriority.TRANSPORT: "T",
@@ -492,7 +494,7 @@ class UI:
         }
         btns: list[tuple[str, str, str, bool]] = []
         for slot in range(3):
-            mode = villager.priorities[slot]
+            mode = prios[slot]
             tip = f"Priority {slot + 1}: {PRIORITY_LABELS[mode]} (click to cycle)"
             btns.append((glyphs[mode], f"prio:{villager.id}:{slot}", tip, False))
         btns.append(
@@ -546,6 +548,7 @@ class UI:
         assign_workplace_mode: bool,
         local_mouse: tuple[int, int] | None,
         job_colour: tuple[int, int, int] | None = None,
+        season: Season | None = None,
     ) -> int:
         from villager_roster import draw_portrait, draw_status_bar
 
@@ -565,7 +568,9 @@ class UI:
             )
         ]
         if selected:
-            trailing = self._inline_priority_buttons(villager, assign_workplace_mode) + trailing
+            trailing = self._inline_priority_buttons(
+                villager, assign_workplace_mode, season
+            ) + trailing
 
         btn_space = 0
         for glyph, _a, _t, _act in trailing:
@@ -868,6 +873,7 @@ class UI:
                 assign_workplace_mode=assign_workplace_mode,
                 local_mouse=local_mouse,
                 job_colour=villager_job_colour(v, buildings),
+                season=season,
             )
         y += 4
 

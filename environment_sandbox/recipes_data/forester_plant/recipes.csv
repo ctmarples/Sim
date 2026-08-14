@@ -1,3 +1,3 @@
-name,label,inputs,outputs,icon_key,extraction,farming,hunting,crafting,labour,transport,resource_group,resource_short,food_satiation,food_walk_speed,food_work_efficiency,food_hunger_rate,food_edible
-plant_softwood,Plant softwood,,,sapling_cone,,,,,,,,,,,,,
-plant_hardwood,Plant hardwood,,,sapling_round,,,,,,,,,,,,,
+name,label,inputs,outputs,steps,icon_key,extraction,farming,hunting,crafting,labour,transport,resource_group,resource_short,food_satiation,food_walk_speed,food_work_efficiency,food_hunger_rate,food_edible
+plant_softwood,Plant softwood,,,,sapling_cone,,,,,,,,,,,,,
+plant_hardwood,Plant hardwood,,,,sapling_round,,,,,,,,,,,,,

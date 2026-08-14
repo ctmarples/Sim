@@ -25,6 +25,7 @@ from field_yield import (
     Severity,
     build_field_factors,
     main_limitation,
+    stage_effect_pct,
 )
 from seasons import SEASON_LABELS, SEASON_ORDER, Season
 from settings import (
@@ -539,33 +540,34 @@ class FieldPlanDialog:
             ("SOIL", "soil"),
         )
 
-        # First pass: measure content height
+        def _expanded_h(fac: FieldFactorDisplay) -> int:
+            if self.expanded_factor != fac.key:
+                return 0
+            h = len(fac.detail_lines) * 13
+            if fac.overlay_key:
+                h += BTN_H + 2
+            return h + 2
+
         cy = 0
         cy += 20 if self._headline else 18
-        cy += 18
+        cy += 16
         if summary is None or summary.tile_count <= 0:
-            cy += 20
+            cy += 18
         else:
-            cy += 14 + self.font_title.get_height() + 2 + 16
-            if summary.min_expected != summary.max_expected:
-                cy += 14
-            cy += 16 + 16 + 16 + 20
+            cy += self.font_title.get_height() + 2 + 14 + 12 + 16
         for _t, sec in sections:
             rows = [f for f in self._factors if f.section == sec]
             if not rows:
                 continue
-            cy += 18
+            cy += 16
             for fac in rows:
-                cy += ROW_H + 4
-                if self.expanded_factor == fac.key:
-                    cy += len(fac.detail_lines) * 14
-                    if fac.overlay_key:
-                        cy += BTN_H + 4
-                    cy += 4
-            cy += 6
-        if summary is not None and summary.tile_count > 0 and self._env_status:
-            cy += 18 + 4 * 16 + 8
-        cy += BTN_H + 8
+                cy += ROW_H + 2 + _expanded_h(fac)
+            cy += 4
+        if summary is not None and summary.tile_count > 0:
+            cy += 16 + 4 * 14 + 6
+            if getattr(self, "_debug", False) and self._env_status:
+                cy += 4 + 14 + 12 + 12
+        cy += BTN_H + 6
         self._content_h = cy
         max_scroll = max(0, self._content_h - view.h)
         self._scroll = max(0, min(max_scroll, self._scroll))
@@ -585,7 +587,7 @@ class FieldPlanDialog:
             sy += 18
 
         _blit(self.font, "EXPECTED HARVEST", COLOUR_TEXT, 0, sy)
-        sy += 18
+        sy += 16
         if summary is None or summary.tile_count <= 0:
             _blit(
                 self.font_small,
@@ -594,68 +596,51 @@ class FieldPlanDialog:
                 0,
                 sy,
             )
-            sy += 20
+            sy += 18
         else:
             locked = summary.locked_total is not None
             total = summary.locked_total if locked else summary.expected_total
-            _blit(
-                self.font_tiny,
-                "Locked harvest" if locked else "Expected harvest",
-                COLOUR_TEXT_DIM,
-                0,
-                sy,
-            )
-            sy += 14
+            ratio = total / summary.max_total if summary.max_total > 0 else 0.0
+            ratio = max(0.0, min(1.0, ratio))
+            pct_label = f"{ratio * 100:.0f}%"
+            if locked:
+                pct_label = f"locked · {pct_label}"
             big = self.font_title.render(
                 f"{total} / {summary.max_total}", True, COLOUR_TEXT
             )
             surface.blit(big, (view.x, sy))
+            pct_s = self.font_small.render(pct_label, True, COLOUR_TEXT_DIM)
+            surface.blit(pct_s, (view.x + inner_w - pct_s.get_width(), sy + 2))
             sy += big.get_height() + 2
-            _blit(
-                self.font_small,
-                f"{summary.mean_expected:.1f} / {summary.base_per_tile:g} per tile",
-                COLOUR_TEXT,
-                0,
-                sy,
-            )
-            sy += 16
+            left = f"{summary.mean_expected:.1f} / {summary.base_per_tile:g} per tile"
+            _blit(self.font_small, left, COLOUR_TEXT, 0, sy)
             if summary.min_expected != summary.max_expected:
-                _blit(
-                    self.font_tiny,
-                    f"Range {summary.min_expected}–{summary.max_expected} per tile",
-                    COLOUR_TEXT_DIM,
-                    0,
-                    sy,
-                )
-                sy += 14
-            _blit(
-                self.font_tiny,
-                "Harvest varies by tile (disturbance, fertility, weeds).",
-                COLOUR_TEXT_DIM,
-                0,
-                sy,
-            )
-            sy += 16
-            ratio = total / summary.max_total if summary.max_total > 0 else 0.0
-            ratio = max(0.0, min(1.0, ratio))
-            bar = pygame.Rect(view.x, sy, inner_w, 10)
+                rng = f"range {summary.min_expected}–{summary.max_expected}"
+                rt = self.font_tiny.render(rng, True, COLOUR_TEXT_DIM)
+                surface.blit(rt, (view.x + inner_w - rt.get_width(), sy + 1))
+                if mouse_pos is not None:
+                    tip_rect = pygame.Rect(
+                        view.x + inner_w - rt.get_width() - 4,
+                        sy,
+                        rt.get_width() + 8,
+                        16,
+                    )
+                    if tip_rect.collidepoint(mouse_pos):
+                        hover_tip = (
+                            "Harvest varies by tile "
+                            "(local disturbance, fertility, weeds)."
+                        )
+            sy += 14
+            bar = pygame.Rect(view.x, sy, inner_w, 8)
             pygame.draw.rect(surface, (40, 42, 48), bar, border_radius=3)
-            fill = pygame.Rect(view.x, sy, max(2, int(inner_w * ratio)), 10)
+            fill = pygame.Rect(view.x, sy, max(2, int(inner_w * ratio)), 8)
             colour = (
                 (90, 170, 100)
                 if ratio >= 0.75
                 else ((200, 160, 60) if ratio >= 0.45 else (200, 80, 60))
             )
             pygame.draw.rect(surface, colour, fill, border_radius=3)
-            sy += 16
-            _blit(
-                self.font_tiny,
-                f"{ratio * 100:.0f}% of potential",
-                COLOUR_TEXT_DIM,
-                0,
-                sy,
-            )
-            sy += 16
+            sy += 12
             limit = main_limitation(self._factors)
             if limit:
                 _blit(
@@ -673,46 +658,56 @@ class FieldPlanDialog:
                     0,
                     sy,
                 )
-            sy += 20
+            sy += 16
 
         for title, sec in sections:
             rows = [f for f in self._factors if f.section == sec]
             if not rows:
                 continue
             _blit(self.font, title, COLOUR_TEXT, 0, sy)
-            sy += 18
+            sy += 16
             for fac in rows:
                 colour = SEVERITY_COLOUR[fac.severity]
-                fill_c = (
-                    colour[0] // 6 + 30,
-                    colour[1] // 6 + 30,
-                    colour[2] // 6 + 30,
-                )
+                expanded = self.expanded_factor == fac.key
                 rect = pygame.Rect(view.x, sy, inner_w, ROW_H)
-                pygame.draw.rect(surface, fill_c, rect, border_radius=3)
-                pygame.draw.rect(surface, colour, rect, 1, border_radius=3)
+                accent = pygame.Rect(view.x, sy + 2, 3, ROW_H - 4)
+                pygame.draw.rect(surface, colour, accent, border_radius=1)
+                if expanded:
+                    soft = (
+                        colour[0] // 8 + 28,
+                        colour[1] // 8 + 28,
+                        colour[2] // 8 + 28,
+                    )
+                    pygame.draw.rect(surface, soft, rect, border_radius=3)
                 try:
-                    blit_icon(surface, fac.icon, view.x + 12, sy + ROW_H // 2, 14)
+                    blit_icon(surface, fac.icon, view.x + 14, sy + ROW_H // 2, 13)
                 except Exception:
                     pass
                 surface.blit(
                     self.font_small.render(fac.label, True, COLOUR_TEXT),
-                    (view.x + 24, sy + (ROW_H - self.font_small.get_height()) // 2),
+                    (view.x + 26, sy + (ROW_H - self.font_small.get_height()) // 2),
                 )
+                if fac.key == "fertility":
+                    mid = f"{fac.state_text}  {fac.value_text}"
+                else:
+                    mid = fac.state_text
                 surface.blit(
-                    self.font_small.render(fac.state_text, True, COLOUR_TEXT_DIM),
-                    (view.x + 130, sy + (ROW_H - self.font_small.get_height()) // 2),
+                    self.font_small.render(mid, True, COLOUR_TEXT_DIM),
+                    (view.x + 128, sy + (ROW_H - self.font_small.get_height()) // 2),
                 )
-                right = fac.effect_text or fac.value_text
                 if fac.effect_text and fac.effect_text.startswith("+"):
                     right = f"▲ {fac.effect_text}"
                 elif fac.effect_text and fac.effect_text.startswith("-"):
                     right = f"▼ {fac.effect_text}"
+                elif fac.key in ("pest", "fertility") and not fac.effect_text:
+                    right = "—"
+                else:
+                    right = fac.effect_text or fac.value_text
                 rt = self.font_small.render(right, True, colour)
                 surface.blit(
                     rt,
                     (
-                        view.x + inner_w - rt.get_width() - 6,
+                        view.x + inner_w - rt.get_width() - 4,
                         sy + (ROW_H - rt.get_height()) // 2,
                     ),
                 )
@@ -720,36 +715,41 @@ class FieldPlanDialog:
                     self._buttons.append((f"factor_{fac.key}", rect))
                 if mouse_pos is not None and rect.collidepoint(mouse_pos):
                     bits = [fac.value_text]
+                    if fac.management:
+                        bits.append(fac.management)
                     if fac.effect_text:
                         bits.append(f"yield {fac.effect_text}")
                     hover_tip = " · ".join(bits)
-                sy += ROW_H + 4
-                if self.expanded_factor == fac.key:
+                sy += ROW_H + 2
+                if expanded:
+                    inset_x = view.x + 10
                     for line in fac.detail_lines:
                         surface.blit(
                             self.font_tiny.render(line, True, COLOUR_TEXT_DIM),
-                            (view.x + 8, sy),
+                            (inset_x, sy),
                         )
-                        sy += 14
+                        sy += 13
                     if fac.overlay_key:
-                        btn = pygame.Rect(view.x + 8, sy, min(180, inner_w - 8), BTN_H)
-                        hovered = mouse_pos is not None and btn.collidepoint(mouse_pos)
-                        self._draw_btn(
-                            surface, btn, "Show map layer", hovered
+                        btn = pygame.Rect(
+                            inset_x, sy, min(140, inner_w - 16), BTN_H - 2
                         )
+                        hovered = (
+                            mouse_pos is not None and btn.collidepoint(mouse_pos)
+                        )
+                        self._draw_btn(surface, btn, "Show layer", hovered)
                         if view.colliderect(btn):
                             self._buttons.append(
                                 (f"overlay_{fac.overlay_key}", btn)
                             )
-                        sy += BTN_H + 4
-                    sy += 4
-            sy += 6
+                        sy += BTN_H
+                    sy += 2
+            sy += 4
 
-        if summary is not None and summary.tile_count > 0 and self._env_status:
+        if summary is not None and summary.tile_count > 0:
             sy = self._draw_why_block(surface, view.x, sy, inner_w)
 
         map_label = "Hide yield map" if yield_map_active else "Show yield map"
-        map_rect = pygame.Rect(view.x, sy, min(160, inner_w), BTN_H)
+        map_rect = pygame.Rect(view.x, sy, min(150, inner_w), BTN_H)
         hovered = mouse_pos is not None and map_rect.collidepoint(mouse_pos)
         self._draw_btn(surface, map_rect, map_label, yield_map_active or hovered)
         if view.colliderect(map_rect):
@@ -785,22 +785,25 @@ class FieldPlanDialog:
             summary.mean_after_crop_condition if summary is not None else mean
         )
         surface.blit(
-            self.font.render(f"WHY {mean:.1f} / {base:g}?", True, COLOUR_TEXT),
+            self.font.render("YIELD BREAKDOWN", True, COLOUR_TEXT),
             (x, y),
         )
-        y += 18
-        lines = [
-            ("Base potential", base),
-            ("After landscape", after_land),
-            ("After crop condition", after_crop),
-            ("After soil", mean),
+        y += 16
+        stages = [
+            ("Base potential", None, base),
+            ("Landscape", stage_effect_pct(base, after_land), after_land),
+            ("Crop condition", stage_effect_pct(after_land, after_crop), after_crop),
+            ("Soil", stage_effect_pct(after_crop, mean), mean),
         ]
-        for label, val in lines:
-            surface.blit(
-                self.font_small.render(f"{label:<22} {val:5.1f}", True, COLOUR_TEXT_DIM),
-                (x, y),
-            )
-            y += 16
+        for label, delta, val in stages:
+            left = self.font_small.render(label, True, COLOUR_TEXT_DIM)
+            surface.blit(left, (x, y))
+            if delta:
+                mid = self.font_small.render(delta, True, COLOUR_TEXT_DIM)
+                surface.blit(mid, (x + 130, y))
+            right = self.font_small.render(f"{val:5.1f}", True, COLOUR_TEXT)
+            surface.blit(right, (x + inner_w - right.get_width(), y))
+            y += 14
         if getattr(self, "_debug", False) and self._env_status:
             y += 4
             surface.blit(
@@ -810,20 +813,22 @@ class FieldPlanDialog:
             y += 14
             st = self._env_status
             dbg = (
-                f"pest={float(st.get('pest_mult') or 0):.3f}  "
+                f"pest={float(st.get('pest_mult') or 0):.3f}(info)  "
                 f"health={float(st.get('health') or 0):.3f}  "
                 f"poll={float(st.get('poll_mult') or 0):.3f}"
             )
             surface.blit(self.font_tiny.render(dbg, True, COLOUR_TEXT_DIM), (x, y))
             y += 12
+            fert = float(st.get("fertility") or 0)
+            pot = float(st.get("fertility_potential") or fert or 1)
             dbg2 = (
                 f"ecology={float(st.get('ecology') or 0):.3f}  "
-                f"fert={float(st.get('fertility') or 0):.3f}  "
+                f"fert={fert:.3f}/{pot:.3f}  "
                 f"weed={float(st.get('weed_mult') or 0):.3f}"
             )
             surface.blit(self.font_tiny.render(dbg2, True, COLOUR_TEXT_DIM), (x, y))
             y += 14
-        y += 8
+        y += 6
         return y
 
     def _draw_rotation(
@@ -851,22 +856,48 @@ class FieldPlanDialog:
         )
         if self._env_status:
             fert = float(self._env_status.get("fertility") or 0.0)
+            pot = float(self._env_status.get("fertility_potential") or fert or 1.0)
             surface.blit(
                 self.font_small.render(
-                    f"Current fertility  {fert:.2f}", True, COLOUR_TEXT_DIM
-                ),
-                (x, y),
-            )
-            y += 18
-            surface.blit(
-                self.font_tiny.render(
-                    "Crop fertility effects: prepared for rotation data (not active yet).",
+                    f"Current fertility  {fert:.2f} / {pot:.2f}",
                     True,
                     COLOUR_TEXT_DIM,
                 ),
                 (x, y),
             )
             y += 16
+            crop = CROP_BY_KEY.get(self.crop_kind)
+            effect = getattr(crop, "fertility_effect", None) if crop else None
+            if effect is not None:
+                projected = max(0.0, min(1.0, fert + float(effect)))
+                surface.blit(
+                    self.font_small.render(
+                        f"Selected: {crop.label}  fertility {float(effect):+.2f}",
+                        True,
+                        COLOUR_TEXT,
+                    ),
+                    (x, y),
+                )
+                y += 14
+                surface.blit(
+                    self.font_small.render(
+                        f"Projected after crop  {projected:.2f}",
+                        True,
+                        COLOUR_TEXT_DIM,
+                    ),
+                    (x, y),
+                )
+                y += 16
+            else:
+                surface.blit(
+                    self.font_tiny.render(
+                        "Crop fertility effects: awaiting crop data (not active yet).",
+                        True,
+                        COLOUR_TEXT_DIM,
+                    ),
+                    (x, y),
+                )
+                y += 14
 
         # Season row
         sx = x

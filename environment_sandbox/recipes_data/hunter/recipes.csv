@@ -1,4 +1,4 @@
-name,label,inputs,outputs,icon_key,extraction,farming,hunting,crafting,labour,transport,resource_group,resource_short,food_satiation,food_walk_speed,food_work_efficiency,food_hunger_rate,food_edible
-deer,Deer,,meat:3;hide:1,deer,,,,,,,,,,,,,
-boar,Boar,,meat:5;fur:2,boar,,,,,,,,,,,,,
-rabbit,Rabbit,,meat:3;fur:1,rabbit,,,,,,,,,,,,,
+name,label,inputs,outputs,steps,icon_key,extraction,farming,hunting,crafting,labour,transport,resource_group,resource_short,food_satiation,food_walk_speed,food_work_efficiency,food_hunger_rate,food_edible
+deer,Deer,,meat:3;hide:1,,deer,,,,,,,,,,,,,
+boar,Boar,,meat:5;fur:2,,boar,,,,,,,,,,,,,
+rabbit,Rabbit,,meat:3;fur:1,,rabbit,,,,,,,,,,,,,

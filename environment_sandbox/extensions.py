@@ -89,6 +89,8 @@ def refresh_parent_extension_links(buildings: dict[int, Building]) -> None:
         if parent is None:
             continue
         parent.linked_extensions = frozenset(parent.linked_extensions | {b.kind})
+        parent._recipe_state_ready = False
+        parent._invalidate_recipe_policy()
 
 
 def apply_extension_storage_boosts(buildings: dict[int, Building]) -> None:

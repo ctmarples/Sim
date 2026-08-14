@@ -532,6 +532,7 @@ class BuildingInspectDialog:
             category_label,
             recipe_output_fits,
             recipe_ready,
+            recipe_ready_with_extra,
             recipes_by_category,
         )
 
@@ -704,9 +705,11 @@ class BuildingInspectDialog:
                     tip_key = KITCHEN_FUEL_KEY
             fill = building.recipe_progress_fraction(recipe.name) if enabled else 0.0
             if player_craft:
+                player_inv = getattr(self, "_draw_player_inventory", None)
+                inputs_ok = recipe_ready_with_extra(building, recipe, player_inv)
                 can_craft = (
                     enabled
-                    and recipe_ready(building, recipe)
+                    and inputs_ok
                     and recipe_output_fits(
                         building,
                         recipe,
@@ -925,6 +928,7 @@ class BuildingInspectDialog:
         if building.id != self.building_id:
             return
 
+        self._draw_player_inventory = player_inventory
         has_storage = self._has_storage(building)
         dual = self.show_player and has_storage
         storage_keys = building.depositable_keys()

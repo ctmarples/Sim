@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -53,6 +54,7 @@ MARKET_PRICES: dict[str, int] = {
 MARKET_SELLABLE_KEYS: tuple[str, ...] = tuple(MARKET_PRICES.keys())
 
 
+@lru_cache(maxsize=8)
 def market_supply_resource_keys(group: str | None = None) -> tuple[str, ...]:
     """All catalogue resources in food/wares/agriculture (excludes coins)."""
     from resources import GROUP_ORDER, RESOURCES

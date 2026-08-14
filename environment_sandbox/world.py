@@ -278,6 +278,7 @@ class Cell:
     terrain_shade: float = 0.55  # 0..1 seasonal wash strength for this subcluster
     fertility: float = 0.8  # 0–1 soil fertility (harvests deplete)
     weeds: float = 0.0  # 0–1 weed cover on farm crops
+    weed_appearances: int = 0  # weed waves started this season
 
     def habitat_category(self) -> str:
         if self.feature == FeatureType.TREE:
@@ -352,6 +353,8 @@ class World:
         self._berry_spread_timer = BERRY_SPREAD_INTERVAL
         self._herb_timer = HERB_TICK_INTERVAL
         self._forage_rng = random.Random(seed + 123)
+        self._growth_cells: list[tuple[int, int]] | None = None
+        self._growth_index_age = 0
         self.terrain_revision = 0
         self.terrain_dirty: set[tuple[int, int]] = set()
         # Valley hydrology / heightfield (filled during generate).
@@ -608,6 +611,8 @@ class World:
     # ------------------------------------------------------------------
     def generate(self) -> None:
         rng = random.Random(self.seed)
+        self._growth_cells = None
+        self._growth_index_age = 0
         self.cells = [
             [Cell(terrain=TerrainType.SOIL) for _ in range(self.cols)]
             for _ in range(self.rows)
@@ -1641,27 +1646,98 @@ class World:
         path.reverse()
         return path
 
+    def note_growth_cell(self, x: int, y: int) -> None:
+        """Track a newly planted crop/sapling so tick_bulk need not rescan the map."""
+        cells = getattr(self, "_growth_cells", None)
+        if cells is not None:
+            cells.append((x, y))
+
+    def _rebuild_growth_index(self) -> None:
+        cells: list[tuple[int, int]] = []
+        for y in range(self.rows):
+            row = self.cells[y]
+            for x in range(self.cols):
+                cell = row[x]
+                feat = cell.feature
+                if feat == FeatureType.CROP_HERB:
+                    cells.append((x, y))
+                elif feat == FeatureType.SAPLING:
+                    cells.append((x, y))
+                elif feat == FeatureType.BERRY_BUSH and cell.growth_ticks > 0:
+                    cells.append((x, y))
+        self._growth_cells = cells
+        self._growth_index_age = 0
+
     # ------------------------------------------------------------------
     # Simulation ticks (growth, optional disturbance decay)
     # ------------------------------------------------------------------
-    def tick(self, decay_per_tick: float = 0.0, day: float = 0.0) -> None:
+    def tick(self, decay_per_tick: float = 0.0, day: float = 0.0) -> bool:
         """Advance growth and gradual seasonal ecology for the calendar day."""
-        self.tick_bulk(1, decay_per_tick=decay_per_tick, day=day)
+        return self.tick_bulk(1, decay_per_tick=decay_per_tick, day=day)
 
-    def tick_bulk(self, ticks: int, decay_per_tick: float = 0.0, day: float = 0.0) -> None:
-        """Apply `ticks` ecology steps at once (for headless fast-forward)."""
+    def _tick_terrain_floors(
+        self,
+        ticks: int,
+        decay_per_tick: float,
+        urban_level: float,
+        path_level: float,
+    ) -> None:
+        """Urban/path floors and disturbance decay (full-map, infrequent)."""
+        cells = self.cells
+        for y in range(self.rows):
+            row = cells[y]
+            for x in range(self.cols):
+                cell = row[x]
+                terrain = cell.terrain
+                if terrain == TerrainType.URBAN:
+                    cell.disturbance = urban_level
+                elif terrain == TerrainType.PATH:
+                    if cell.disturbance < path_level:
+                        cell.disturbance = path_level
+                elif decay_per_tick > 0 and cell.disturbance > 0:
+                    cell.disturbance = max(0.0, cell.disturbance - decay_per_tick * ticks)
+
+    def tick_bulk(self, ticks: int, decay_per_tick: float = 0.0, day: float = 0.0) -> bool:
+        """Apply `ticks` ecology steps at once (for headless fast-forward).
+
+        Returns True when a farm crop first becomes ready or weeds cross the
+        hoe threshold — callers bump idle-park generation from that.
+        """
         from balance_config import active_balance
+        from seasons import season_for_day
+        from soil import grow_weeds_on_cell
 
         if ticks <= 0:
-            return
+            return False
         grow = trees_grow_factor(day)
         halt = growth_halted(day)
         grow_step = max(1, int(round(grow))) if grow > 0.05 else 0
+        weed_thresh = active_balance().get_float("WEED_ACTION_THRESHOLD")
+        urban_level = active_balance().get_float("DISTURBANCE_URBAN_LEVEL")
+        path_level = active_balance().get_float("DISTURBANCE_PATH_LEVEL")
+        season = season_for_day(int(day))
+        woke = False
 
-        for y in range(self.rows):
-            for x in range(self.cols):
-                cell = self.cells[y][x]
-                if grow_step > 0 and cell.feature == FeatureType.SAPLING:
+        age = getattr(self, "_growth_index_age", 0)
+        growth_cells = getattr(self, "_growth_cells", None)
+        # Decay/floors need a full scan; crops/saplings use a sparse index.
+        full_pass = growth_cells is None or age + ticks >= 48 or ticks >= 8
+        if full_pass:
+            floor_ticks = ticks if growth_cells is None else age + ticks
+            self._tick_terrain_floors(
+                floor_ticks, decay_per_tick, urban_level, path_level
+            )
+            self._rebuild_growth_index()
+            growth_cells = self._growth_cells
+        else:
+            self._growth_index_age = age + ticks
+
+        still_growing: list[tuple[int, int]] = []
+        for x, y in growth_cells or ():
+            cell = self.cells[y][x]
+            feat = cell.feature
+            if feat == FeatureType.SAPLING:
+                if grow_step > 0:
                     cell.growth_ticks -= grow_step * ticks
                     if cell.growth_ticks <= 0:
                         tree = resolve_tree(cell.tree_species)
@@ -1669,37 +1745,36 @@ class World:
                         cell.tree_species = tree.key
                         cell.growth_ticks = 0
                         cell.deposit = tree.yield_amount
-                elif grow_step > 0 and cell.feature == FeatureType.BERRY_BUSH and cell.growth_ticks > 0:
+                    else:
+                        still_growing.append((x, y))
+                else:
+                    still_growing.append((x, y))
+            elif feat == FeatureType.BERRY_BUSH and cell.growth_ticks > 0:
+                if grow_step > 0:
                     cell.growth_ticks -= grow_step * ticks
-                    if cell.growth_ticks <= 0 and cell.deposit <= 0:
-                        if berry_fruiting(day, x, y):
+                    if cell.growth_ticks <= 0:
+                        if cell.deposit <= 0 and berry_fruiting(day, x, y):
                             cell.deposit = BERRY_BUSH_YIELD
                         cell.growth_ticks = 0
-                elif cell.feature == FeatureType.CROP_HERB and cell.growth_ticks > 0:
-                    # Farm crops follow the calendar (growth_days), not ecology
-                    # grow/freeze envelopes — otherwise they mature outside harvest.
-                    grow_mult = disturbance_activity_multiplier(
-                        effective_disturbance_at(self, x, y)
-                    )
+                    if cell.growth_ticks > 0:
+                        still_growing.append((x, y))
+                else:
+                    still_growing.append((x, y))
+            elif feat == FeatureType.CROP_HERB:
+                if cell.growth_ticks > 0:
+                    grow_mult = disturbance_activity_multiplier(cell.disturbance)
+                    prev_gt = cell.growth_ticks
                     cell.growth_ticks = max(
                         0, cell.growth_ticks - max(0, int(round(ticks * grow_mult)))
                     )
-                if cell.feature == FeatureType.CROP_HERB:
-                    from soil import grow_weeds_on_cell
-
-                    grow_weeds_on_cell(cell, ticks)
-                if cell.terrain == TerrainType.URBAN:
-                    cell.disturbance = max(
-                        cell.disturbance,
-                        active_balance().get_float("DISTURBANCE_URBAN_LEVEL"),
-                    )
-                elif cell.terrain == TerrainType.PATH:
-                    cell.disturbance = max(
-                        cell.disturbance,
-                        active_balance().get_float("DISTURBANCE_PATH_LEVEL"),
-                    )
-                elif decay_per_tick > 0 and cell.disturbance > 0:
-                    cell.disturbance = max(0.0, cell.disturbance - decay_per_tick * ticks)
+                    if prev_gt > 0 and cell.growth_ticks <= 0:
+                        woke = True
+                prev_weeds = float(getattr(cell, "weeds", 0.0) or 0.0)
+                grow_weeds_on_cell(cell, ticks, season=season)
+                if prev_weeds < weed_thresh <= float(getattr(cell, "weeds", 0.0) or 0.0):
+                    woke = True
+                still_growing.append((x, y))
+        self._growth_cells = still_growing
 
         # Seasonal spawn/despawn timers: fire the same number of times as real ticks.
         def _drain_timer(attr: str, interval: int, callback) -> None:
@@ -1723,7 +1798,7 @@ class World:
             _drain_timer("_mushroom_timer", MUSHROOM_TICK_INTERVAL, self._tick_mushrooms_seasonal)
             _drain_timer("_herb_timer", HERB_TICK_INTERVAL, self._tick_herbs_seasonal)
             _drain_timer("_berry_spread_timer", BERRY_SPREAD_INTERVAL, self._tick_berry_fruit)
-            return
+            return woke
 
         spread = trees_spread_factor(day)
         if spread > 0.05:
@@ -1740,6 +1815,7 @@ class World:
         _drain_timer("_mushroom_timer", MUSHROOM_TICK_INTERVAL, self._tick_mushrooms_seasonal)
         _drain_timer("_berry_spread_timer", BERRY_SPREAD_INTERVAL, self._tick_berry_fruit)
         _drain_timer("_herb_timer", HERB_TICK_INTERVAL, self._tick_herbs_seasonal)
+        return woke
 
     def _tick_herbs_seasonal(self, day: float) -> None:
         """Wild crop patches on meadow / grass / soil by crop preference."""
@@ -2011,6 +2087,7 @@ class World:
         cell.tree_species = tree.key
         cell.growth_ticks = growth_ticks_for(tree)
         cell.deposit = 0
+        self.note_growth_cell(x, y)
         return True
 
     def plant_berry_bush(self, x: int, y: int) -> bool:
@@ -2118,6 +2195,7 @@ class World:
         cell.growth_ticks = max(1, growth_ticks)
         cell.deposit = 0
         cell.weeds = 0.0
+        self.note_growth_cell(x, y)
         return True
 
     def sow_herb_crop(self, x: int, y: int) -> bool:

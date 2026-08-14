@@ -18,6 +18,7 @@ from settings import (
     FERTILITY_WATER,
     WEED_GROWTH_RATE,
     WEED_HARVEST_PENALTY,
+    WEED_MAX_APPEARANCES_PER_SEASON,
 )
 
 if TYPE_CHECKING:
@@ -106,17 +107,47 @@ def weed_yield_multiplier(weeds: float) -> float:
     return clamp01(1.0 - clamp01(weeds) * pen)
 
 
-def grow_weeds_on_cell(cell: Cell, ticks: int) -> None:
-    """Higher fertility → weeds fill in faster on a planted crop square."""
-    from seasons import TICKS_PER_DAY
+def grow_weeds_on_cell(cell: Cell, ticks: int, *, season=None) -> None:
+    """Higher fertility → weeds fill in faster on a planted crop square.
+
+    Winter: no new growth (existing cover stays until hoed).
+    Each square may start a weed wave at most WEED_MAX_APPEARANCES_PER_SEASON
+    times per season; after hoeing, weeds do not return until the next season.
+    """
+    from seasons import Season, TICKS_PER_DAY
     from world import FeatureType
 
     if ticks <= 0 or cell.feature != FeatureType.CROP_HERB:
         return
+    if season == Season.WINTER:
+        return
+    max_app = max(
+        0, int(_bal("WEED_MAX_APPEARANCES_PER_SEASON", WEED_MAX_APPEARANCES_PER_SEASON))
+    )
+    if max_app <= 0:
+        return
+    appearances = int(getattr(cell, "weed_appearances", 0) or 0)
+    weeds = clamp01(float(getattr(cell, "weeds", 0.0)))
+    if weeds <= 1e-6:
+        if appearances >= max_app:
+            return
+        cell.weed_appearances = appearances + 1
+    elif appearances <= 0:
+        # Legacy / mid-wave cover: count as this season's appearance.
+        cell.weed_appearances = 1
     rate = max(0.0, _bal("WEED_GROWTH_RATE", WEED_GROWTH_RATE))
     fert = clamp01(getattr(cell, "fertility", 0.0))
     day_frac = float(ticks) / float(max(1, TICKS_PER_DAY))
-    cell.weeds = clamp01(float(getattr(cell, "weeds", 0.0)) + fert * rate * day_frac)
+    cell.weeds = clamp01(weeds + fert * rate * day_frac)
+
+
+def reset_seasonal_weed_appearances(world: World) -> None:
+    """Clear per-square appearance counters at season change (cover stays)."""
+    for y in range(world.rows):
+        for x in range(world.cols):
+            cell = world.get_cell(x, y)
+            if cell is not None:
+                cell.weed_appearances = 0
 
 
 def cell_slope(world: World, x: int, y: int) -> float:

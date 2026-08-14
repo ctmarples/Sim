@@ -232,6 +232,9 @@ def _cell_to_dict(cell: Cell) -> dict[str, Any]:
     weeds = float(getattr(cell, "weeds", 0.0))
     if weeds > 0.001:
         data["weeds"] = weeds
+    appearances = int(getattr(cell, "weed_appearances", 0) or 0)
+    if appearances > 0:
+        data["weed_appearances"] = appearances
     return data
 
 
@@ -264,12 +267,26 @@ def _cell_from_save(c: dict[str, Any]) -> Cell:
     if c.get("terrain_shade") is not None:
         cell.terrain_shade = float(c["terrain_shade"])
     from soil import clamp01, fertility_base_for
+    from settings import FERTILITY_SOIL_LEGACY
+    from world import TerrainType as _TT
 
     if c.get("fertility") is not None:
         cell.fertility = clamp01(float(c["fertility"]))
+        # Model A: healthy cultivated soil is 1.0. Shift legacy absolute values
+        # that were authored against the old 0.8 soil baseline.
+        if cell.terrain == _TT.SOIL:
+            new_base = fertility_base_for(_TT.SOIL)
+            legacy = float(FERTILITY_SOIL_LEGACY)
+            if new_base > legacy + 1e-6:
+                cell.fertility = clamp01(cell.fertility + (new_base - legacy))
     else:
         cell.fertility = fertility_base_for(cell.terrain)
     cell.weeds = clamp01(float(c.get("weeds", 0.0)))
+    cell.weed_appearances = max(0, int(c.get("weed_appearances", 0) or 0))
+    # Existing weed cover counts as this season's appearance so clearing
+    # does not immediately restart another wave under the default cap of 1.
+    if cell.weeds > 0.0 and cell.weed_appearances <= 0:
+        cell.weed_appearances = 1
     return cell
 
 

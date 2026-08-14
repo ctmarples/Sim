@@ -989,7 +989,7 @@ class WildlifeManager:
             self._prev_season = season
         elif season != self._prev_season:
             self.on_season_change(world, season)
-        self._form_mating_pairs()
+        self._form_mating_pairs(reindex=False)
         self._move_animals(
             world,
             day,
@@ -1010,9 +1010,10 @@ class WildlifeManager:
             self._migrate()
             self._tick_colonies(world)
 
-    def _form_mating_pairs(self) -> None:
+    def _form_mating_pairs(self, *, reindex: bool = True) -> None:
         """Pair unpaired males and females that share a patch."""
-        self._index_animals()
+        if reindex:
+            self._index_animals()
         for animal in self.animals:
             if animal.mate_id is not None:
                 self._mate_of(animal)
@@ -2035,6 +2036,8 @@ class WildlifeManager:
 
     def _sync_colony_members(self, colony: Colony, hab: OpenHabitat | None) -> None:
         want = colony.target_members()
+        if len(colony.members) == want:
+            return
         roam = set(hab.forage_tiles) if hab is not None else set()
         roam.add((colony.x, colony.y))
         # Prefer tiles near the nest within member radius.
@@ -2059,6 +2062,14 @@ class WildlifeManager:
         for colony in self.colonies:
             hab = self._colony_habitat(colony)
             self._sync_colony_members(colony, hab)
+            ready: list[ColonyMember] = []
+            for member in colony.members:
+                if member.move_cooldown > 0:
+                    member.move_cooldown -= 1
+                else:
+                    ready.append(member)
+            if not ready:
+                continue
             roam = set(hab.forage_tiles) if hab is not None else {(colony.x, colony.y)}
             roam = {
                 p
@@ -2074,10 +2085,7 @@ class WildlifeManager:
                 if colony.kind == AnimalKind.RABBIT
                 else ANIMAL_MOVE_INTERVAL
             )
-            for member in colony.members:
-                if member.move_cooldown > 0:
-                    member.move_cooldown -= 1
-                    continue
+            for member in ready:
                 options = [
                     p
                     for p in roam

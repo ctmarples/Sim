@@ -335,6 +335,7 @@ def apply_building_storage(building: Building) -> None:
     building.output_capacity = spec.output_capacity
     building.fuel_capacity = spec.fuel_capacity
     building.seed_capacity = spec.seed_capacity
+    building._invalidate_recipe_policy()
 
 
 def default_item_mins(kind: BuildingKind) -> dict[str, int]:
@@ -1350,7 +1351,7 @@ class Building:
     item_caps: dict[str, int] = field(default_factory=dict)
     # Minimum stock haulers must leave for recipes / splitting.
     item_mins: dict[str, int] = field(default_factory=dict)
-    # recipe name → enabled; progress steps toward PROCESSOR_RECIPE_STEPS.
+    # recipe name → enabled; progress steps toward recipe.work_steps().
     recipe_enabled: dict[str, bool] = field(default_factory=dict)
     recipe_progress: dict[str, int] = field(default_factory=dict)
     # recipe name → priority 1 (highest) … 3 (lowest). Default 2.
@@ -1382,6 +1383,10 @@ class Building:
     # Extension annexes: parent link (on the extension) and attached kinds (on parent).
     parent_building_id: int | None = None
     linked_extensions: frozenset[BuildingKind] = field(default_factory=frozenset)
+    # Recipe/cap policy memo (not saved). Avoids rescanning recipes on every stock check.
+    _input_policy: dict = field(default_factory=dict, repr=False, compare=False)
+    _supply_memo: dict = field(default_factory=dict, repr=False, compare=False)
+    _recipe_state_ready: bool = field(default=False, repr=False, compare=False)
 
     @property
     def saplings(self) -> int:
@@ -1787,6 +1792,8 @@ class Building:
         return self.is_recipe_enabled(key)
 
     def ensure_recipe_state(self) -> None:
+        if self._recipe_state_ready:
+            return
         # Preserve existing toggles; newly added recipe names default on so they
         # show up and can craft (disable manually if unwanted).
         for recipe in (
@@ -1803,6 +1810,11 @@ class Building:
                     recipe.category, RECIPE_PRIORITY_DEFAULT
                 )
             self.recipe_priority.setdefault(recipe.name, default_prio)
+        self._recipe_state_ready = True
+
+    def _invalidate_recipe_policy(self) -> None:
+        self._input_policy.clear()
+        self._supply_memo.clear()
 
     def is_recipe_enabled(self, name: str) -> bool:
         self.ensure_recipe_state()
@@ -1819,6 +1831,7 @@ class Building:
             return RECIPE_PRIORITY_DEFAULT
         p = max(RECIPE_PRIORITY_MIN, min(RECIPE_PRIORITY_MAX, int(priority)))
         self.recipe_priority[name] = p
+        self._invalidate_recipe_policy()
         return p
 
     def cycle_recipe_priority(self, name: str) -> int:
@@ -1836,6 +1849,7 @@ class Building:
         self.recipe_enabled[name] = not self.recipe_enabled[name]
         if not self.recipe_enabled[name]:
             self.recipe_progress[name] = 0
+        self._invalidate_recipe_policy()
         return self.recipe_enabled[name]
 
     def set_recipe_enabled(self, name: str, enabled: bool) -> None:
@@ -1845,6 +1859,7 @@ class Building:
         self.recipe_enabled[name] = bool(enabled)
         if not enabled:
             self.recipe_progress[name] = 0
+        self._invalidate_recipe_policy()
 
     def _recipes_by_priority(self, recipes: tuple[Recipe, ...]) -> tuple[Recipe, ...]:
         """Stable sort: priority 1 first, then 2, then 3."""
@@ -1865,6 +1880,15 @@ class Building:
     def recipe_progress_fraction(self, name: str) -> float:
         self.ensure_recipe_state()
         steps = max(1, int(PROCESSOR_RECIPE_STEPS))
+        for recipe in (
+            *self.known_recipes(),
+            *self.addon_craft_recipes(),
+            *self.split_recipes(),
+            *self.plant_recipes(),
+        ):
+            if recipe.name == name:
+                steps = recipe.work_steps()
+                break
         return max(0.0, min(1.0, self.recipe_progress.get(name, 0) / steps))
 
     def active_supply_keys(self) -> tuple[str, ...]:
@@ -1882,6 +1906,10 @@ class Building:
         """Missing inputs for the highest-priority target recipe(s) only."""
         from recipes import missing_inputs
 
+        memo = self._supply_memo
+        fp = self._supply_stock_fp()
+        if memo.get("fp") == fp and "gap" in memo:
+            return dict(memo["gap"])
         demand: dict[str, int] = {}
         for recipe in self._supply_target_recipes():
             for key, need in missing_inputs(self, recipe).items():
@@ -1891,7 +1919,11 @@ class Building:
                 want = min(int(need), room)
                 if want > 0:
                     demand[key] = max(demand.get(key, 0), want)
-        return demand
+        if memo.get("fp") != fp:
+            memo.clear()
+            memo["fp"] = fp
+        memo["gap"] = demand
+        return dict(demand)
 
     def supply_demand(self) -> dict[str, int]:
         """Units of each input still needed for enabled recipes, capped by room.
@@ -1919,6 +1951,11 @@ class Building:
                 if need > 0:
                     demand[key] = need
             return demand
+
+        memo = self._supply_memo
+        fp = self._supply_stock_fp()
+        if memo.get("fp") == fp and "demand" in memo:
+            return dict(memo["demand"])
 
         demand = self.recipe_gap_demand()
         # Top up processor / splitter inputs (and craft inputs like twine) to reserve.
@@ -1989,7 +2026,11 @@ class Building:
                     want = min(target - have, room)
                     if want > 0:
                         demand[key] = max(demand.get(key, 0), want)
-        return demand
+        if memo.get("fp") != fp:
+            memo.clear()
+            memo["fp"] = fp
+        memo["demand"] = demand
+        return dict(demand)
 
     def fuel_space_left(self) -> int:
         if self.fuel_capacity <= 0:
@@ -2006,20 +2047,73 @@ class Building:
 
     def input_keep_amount(self, key: str) -> int:
         """How many of ``key`` to retain for enabled recipes (2 crafts of buffer)."""
-        keep = 0
+        return int(self._ensure_input_policy()["keep"].get(key, 0))
+
+    def _ensure_input_policy(self) -> dict:
+        """Memoize keep/hold/active keys until recipes, caps, or mins change."""
+        memo = self._input_policy
+        if "keep" in memo and "hold" in memo and "active" in memo:
+            return memo
+        self.ensure_recipe_state()
+        keep: dict[str, int] = {}
+        active: set[str] = set()
+
+        def _add_recipe(recipe: Recipe) -> None:
+            for key, n in recipe.inputs.items():
+                nn = int(n)
+                if nn <= 0:
+                    continue
+                active.add(key)
+                keep[key] = max(keep.get(key, 0), nn * 2)
+
         for recipe in self.enabled_recipes():
-            n = int(recipe.inputs.get(key, 0))
-            if n > 0:
-                keep = max(keep, n * 2)
+            _add_recipe(recipe)
         for recipe in self.enabled_split_recipes():
-            n = int(recipe.inputs.get(key, 0))
-            if n > 0:
-                keep = max(keep, n * 2)
+            _add_recipe(recipe)
         for recipe in self.addon_craft_recipes():
-            n = int(recipe.inputs.get(key, 0))
-            if n > 0:
-                keep = max(keep, n * 2)
-        return keep
+            _add_recipe(recipe)
+
+        hold: dict[str, int] = {}
+        if self.is_processor() and self.input_capacity > 0:
+            in_keys = [k for k in self.processor_input_keys() if k in active]
+            n = max(1, len(in_keys))
+            fair_base = max(1, self.input_capacity // n)
+            for key in self.processor_input_keys():
+                kkeep = keep.get(key, 0)
+                fair = max(kkeep, fair_base) if key in active else self.input_capacity
+                amount = max(int(self.item_mins.get(key, 0)), kkeep, fair)
+                cap = self.item_caps.get(key)
+                if cap is not None:
+                    amount = min(amount, int(cap))
+                hold[key] = amount
+        memo.clear()
+        memo["keep"] = keep
+        memo["active"] = frozenset(active)
+        memo["hold"] = hold
+        return memo
+
+    def _active_processor_input_keys(self) -> tuple[str, ...]:
+        """Input keys still used by an enabled processor recipe."""
+        if not self.is_processor():
+            return ()
+        active = self._ensure_input_policy()["active"]
+        return tuple(k for k in self.processor_input_keys() if k in active)
+
+    def _fair_input_share(self, key: str) -> int:
+        """Uncapped per-item share of the input tray so one ingredient cannot fill it."""
+        if not self.is_processor() or self.input_capacity <= 0:
+            return 0
+        hold = self._ensure_input_policy()["hold"]
+        if key in hold:
+            return int(hold[key])
+        return self.input_capacity
+
+    def input_hold_amount(self, key: str) -> int:
+        """How many of ``key`` to keep on a processor tray (reserve, fair share, cap)."""
+        hold = self._ensure_input_policy()["hold"].get(key)
+        if hold is not None:
+            return int(hold)
+        return self.reserve_amount(key)
 
     def plant_keep_amount(self, key: str) -> int:
         """Seeds to keep on the farm for planting (haulers may take the rest)."""
@@ -2036,7 +2130,7 @@ class Building:
         )
 
     def excess_input_amounts(self) -> dict[str, int]:
-        """Input stock beyond reserve (mins + recipe buffer) — safe for haulers to clear."""
+        """Input stock beyond hold (fair share / reserve) — safe for haulers to clear."""
         excess: dict[str, int] = {}
         keys: tuple[str, ...] = ()
         if self.is_processor():
@@ -2045,7 +2139,11 @@ class Building:
             keys = self.active_supply_keys()
         for key in keys:
             have = int(getattr(self, key, 0))
-            keep = self.reserve_amount(key)
+            keep = (
+                self.input_hold_amount(key)
+                if self.is_processor()
+                else self.reserve_amount(key)
+            )
             if have > keep:
                 excess[key] = have - keep
         return excess
@@ -2064,21 +2162,23 @@ class Building:
                 return max(0, have - keep)
             return have
         # Extension craft inputs (hide for leather, sheaves for barn threshing).
-        if key in self.active_supply_keys() and self.addon_craft_recipes():
+        if self.addon_craft_recipes() and key in self._ensure_input_policy()["active"]:
             return max(0, have - self.reserve_amount(key))
         if self.is_processor():
             outputs = self.processor_output_keys()
             inputs = self.processor_input_keys()
+            active = self._ensure_input_policy()["active"]
             # Dual-role stock (craft twine): keep as an ingredient while any
             # enabled recipe still consumes it — only clear true excess.
-            if key in outputs and key in inputs and key in self.active_supply_keys():
-                return int(self.excess_input_amounts().get(key, 0))
-            # Pure outputs and unused inputs honour item_mins / recipe reserve.
+            if key in outputs and key in inputs and key in active:
+                return max(0, have - self.input_hold_amount(key))
             if key in outputs:
                 return max(0, have - self.reserve_amount(key))
-            if key in self.unused_input_keys():
+            if key in inputs and key not in active:
                 return max(0, have - self.reserve_amount(key))
-            return int(self.excess_input_amounts().get(key, 0))
+            if key in inputs:
+                return max(0, have - self.input_hold_amount(key))
+            return 0
         if key in self.haul_keys():
             return max(0, have - self.reserve_amount(key))
         return 0
@@ -2193,6 +2293,13 @@ class Building:
         cap = self.item_caps.get(key)
         if cap is not None:
             room = min(room, max(0, int(cap) - have))
+        elif (
+            self.is_processor()
+            and self.input_capacity > 0
+            and key in self.processor_input_keys()
+        ):
+            # Uncapped: stop one ingredient monopolising the shared input tray.
+            room = min(room, max(0, self.input_hold_amount(key) - have))
         return max(0, room)
 
     def item_cap(self, key: str) -> int | None:
@@ -2225,8 +2332,10 @@ class Building:
             return
         if cap is None or int(cap) <= 0:
             self.item_caps.pop(key, None)
+            self._invalidate_recipe_policy()
             return
         self.item_caps[key] = min(int(cap), self.max_item_cap(key))
+        self._invalidate_recipe_policy()
 
     def adjust_item_cap(self, key: str, delta: int) -> int | None:
         """Nudge cap by ``delta``. From unlimited, ``+`` starts at 1. Returns new cap or None."""
@@ -2254,8 +2363,10 @@ class Building:
             return
         if minimum is None or int(minimum) <= 0:
             self.item_mins.pop(key, None)
+            self._invalidate_recipe_policy()
             return
         self.item_mins[key] = min(int(minimum), self.max_item_cap(key))
+        self._invalidate_recipe_policy()
 
     def adjust_item_min(self, key: str, delta: int) -> int | None:
         if key not in self.depositable_keys():
@@ -2387,8 +2498,35 @@ class Building:
             return False
         return not recipe_ready(self, recipe)
 
+    def _supply_stock_fp(self) -> tuple:
+        if self.is_processor():
+            keys = self.processor_input_keys()
+        elif self.kind in (BuildingKind.FARM, BuildingKind.FORESTER):
+            keys = self.plant_keys()
+        else:
+            keys = ()
+        return (
+            tuple(int(getattr(self, k, 0)) for k in keys),
+            int(self.fuel_wood),
+            int(self.input_capacity),
+            tuple(self.recipe_enabled.items()),
+            tuple(self.recipe_priority.items()),
+        )
+
     def _supply_target_recipes(self) -> list[Recipe]:
         """Recipes whose missing inputs haulers should fetch (by priority tier)."""
+        memo = self._supply_memo
+        fp = self._supply_stock_fp()
+        if memo.get("fp") == fp and "targets" in memo:
+            return memo["targets"]
+        targets = self._compute_supply_target_recipes()
+        if memo.get("fp") != fp:
+            memo.clear()
+            memo["fp"] = fp
+        memo["targets"] = targets
+        return targets
+
+    def _compute_supply_target_recipes(self) -> list[Recipe]:
         from recipes import missing_inputs
 
         recipes = [r for r in self.enabled_recipes() if r.inputs]
@@ -2461,6 +2599,24 @@ class Building:
         if not candidates:
             return None
 
+        # Don't grill through a full meat tray while a higher-priority stew is
+        # only missing vegetables that have no room to arrive.
+        if (
+            self.is_processor()
+            and self.input_capacity > 0
+            and self.input_space_left() <= 0
+        ):
+            blocked = self._supply_target_recipes()
+            if blocked:
+                need_prio = self.get_recipe_priority(blocked[0].name)
+                candidates = [
+                    r
+                    for r in candidates
+                    if self.get_recipe_priority(r.name) <= need_prio
+                ]
+                if not candidates:
+                    return None
+
         rank = self._recipe_craft_rank
         avoid = avoid_names or ()
         free = [r for r in candidates if r.name not in avoid]
@@ -2531,9 +2687,10 @@ class Building:
 
         Multiple recipes may be in progress at once so co-workers can cook /
         craft different orders in parallel without canceling each other.
+        Duration comes from the recipe CSV ``steps`` column (via ``work_steps``).
         """
         self.ensure_recipe_state()
-        steps = max(1, int(PROCESSOR_RECIPE_STEPS))
+        steps = recipe.work_steps()
         _ = split  # progress is keyed by recipe name for craft and split alike
         self.recipe_progress[recipe.name] = int(self.recipe_progress.get(recipe.name, 0)) + 1
         if self.recipe_progress[recipe.name] >= steps:
@@ -2712,13 +2869,13 @@ class Building:
                     keys.append(key)
             return tuple(keys)
         if self.is_processor():
-            # Produce first, then inputs no enabled recipe uses. Do NOT haul excess
-            # stock of active ingredients — that fights supply stockpiling.
+            # Produce first, then unused / extra active ingredients so one
+            # stocked item cannot block missing cook/mill inputs.
             keys: list[str] = []
             seen: set[str] = set()
             for key in (
                 *self.processor_output_keys(),
-                *self.unused_input_keys(),
+                *self.processor_input_keys(),
             ):
                 if key not in seen and self.haulable_amount(key) > 0:
                     seen.add(key)
@@ -2813,16 +2970,21 @@ class Building:
         return False
 
     def withdraw_plantables_to(
-        self, inventory: Inventory, *, max_items: int = 3
+        self,
+        inventory: Inventory,
+        *,
+        max_items: int = 3,
+        keys: tuple[str, ...] | None = None,
     ) -> int:
         """Pull a few planting items into inventory (seeds use the seed pool)."""
+        wanted = keys if keys is not None else self.plant_keys()
         taken = 0
         while taken < max_items:
             progressed = False
-            for key in self.plant_keys():
+            for key in wanted:
                 if taken >= max_items:
                     break
-                if getattr(self, key) <= 0 or not inventory.can_add(1, key=key):
+                if getattr(self, key, 0) <= 0 or not inventory.can_add(1, key=key):
                     continue
                 # Leave one cargo slot free when withdrawing saplings.
                 if (
@@ -3296,7 +3458,19 @@ class Villager:
 
     def active_priorities(self, season: object | None = None) -> list[WorkPriority]:
         self.ensure_priorities()
-        prios = list(self.priorities)
+        if self.seasonal_priorities and season is not None:
+            key = getattr(season, "name", str(season))
+            row = self.season_priorities.get(key)
+            if row is None:
+                self.ensure_season_priorities()
+                row = self.season_priorities.get(key, self.priorities)
+            prios = list(row)
+            while len(prios) < 3:
+                prios.append(WorkPriority.NONE)
+        else:
+            prios = list(self.priorities)
+        # Construction is unassigned general labour. Assigned workplace workers
+        # and home haulers keep their jobs even if Build is on the inspect list.
         if self.building_id is not None or self.assigned_to_home:
             prios = [p for p in prios if p != WorkPriority.BUILD]
         return prios

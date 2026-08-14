@@ -1,12 +1,20 @@
 """Shared field yield breakdown, factor display, and qualitative labels.
 
 UI and harvest must use the same multipliers so inspect never drifts from pickup.
+
+Pest control does **not** multiply harvest directly: biodiversity → pest pressure →
+crop-health cap → sticky crop health → yield. Landscape yield uses pollination and
+disturbance (ecology) only.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from world import World
 
 
 class Severity(Enum):
@@ -21,7 +29,7 @@ class YieldBreakdown:
     """Per-tile harvest factors and intermediate staircase values."""
 
     base: float
-    pest_control: float
+    pest_control: float  # recorded for debug; not applied to the product
     crop_health: float
     pollination: float
     ecology: float  # disturbance activity multiplier (internal name)
@@ -45,7 +53,11 @@ def calculate_tile_yield_breakdown(
     weed_penalty: float,
     weeds: float = 0.0,
 ) -> YieldBreakdown:
-    """Single source of truth for farm tile harvest (same product as pickup)."""
+    """Single source of truth for farm tile harvest (same product as pickup).
+
+    Product: base × pollination × ecology × crop_health × weed_penalty × fertility.
+    ``pest_control`` is retained for diagnostics only (feeds health over time).
+    """
     b = max(0.0, float(base))
     pest = float(pest_control)
     health = float(crop_health)
@@ -53,7 +65,7 @@ def calculate_tile_yield_breakdown(
     eco = float(ecology)
     fert = float(fertility)
     weed = float(weed_penalty)
-    after_landscape = b * pest * poll * eco
+    after_landscape = b * poll * eco
     after_crop = after_landscape * health * weed
     final = after_crop * fert
     rounded = max(1, int(round(final)))
@@ -102,6 +114,8 @@ class FieldFactorDisplay:
     overlay_key: str | None
     detail_lines: list[str]
     effect_mult: float = 1.0  # for main-limitation ranking (1.0 = neutral)
+    management: str = ""  # Habitat | Location | Persistent | …
+    hint: str = ""
 
 
 def effect_pct_text(mult: float) -> str | None:
@@ -114,6 +128,14 @@ def effect_pct_text(mult: float) -> str | None:
     return f"{delta:.0f}%"
 
 
+def stage_effect_pct(prev: float, nxt: float) -> str:
+    """Percent change from one staircase stage to the next."""
+    p = float(prev)
+    if abs(p) < 1e-9:
+        return "—"
+    return effect_pct_text(float(nxt) / p) or "±0%"
+
+
 def severity_for_mult(mult: float, *, higher_is_better: bool = True) -> Severity:
     m = float(mult)
     if higher_is_better:
@@ -124,7 +146,6 @@ def severity_for_mult(mult: float, *, higher_is_better: bool = True) -> Severity
         if m >= 0.70:
             return Severity.WARNING
         return Severity.CRITICAL
-    # lower mult is better (unused for yield factors; kept for completeness)
     if m <= 0.92:
         return Severity.POSITIVE
     if m <= 1.08:
@@ -145,7 +166,6 @@ def severity_for_ratio(ratio: float, *, higher_is_better: bool = True) -> Severi
         if t >= 0.25:
             return Severity.WARNING
         return Severity.CRITICAL
-    # lower is better (disturbance, weeds, erosion)
     if t <= 0.20:
         return Severity.POSITIVE
     if t <= 0.45:
@@ -177,15 +197,30 @@ def label_disturbance(d: float) -> str:
     return "Severe"
 
 
-def label_fertility(f: float) -> str:
-    t = max(0.0, min(1.0, float(f)))
+def label_fertility_relative(rel: float) -> str:
+    """Condition vs local soil potential (1.0 = at potential)."""
+    t = max(0.0, min(1.0, float(rel)))
+    if t >= 0.98:
+        return "Optimal"
     if t >= 0.80:
-        return "Excellent"
-    if t >= 0.60:
         return "Good"
-    if t >= 0.40:
+    if t >= 0.60:
         return "Fair"
-    if t >= 0.20:
+    if t >= 0.40:
+        return "Poor"
+    return "Critical"
+
+
+def label_fertility(f: float) -> str:
+    """Absolute fertility band (legacy / debug). Prefer label_fertility_relative."""
+    t = max(0.0, min(1.0, float(f)))
+    if t >= 0.98:
+        return "Excellent"
+    if t >= 0.80:
+        return "Good"
+    if t >= 0.60:
+        return "Fair"
+    if t >= 0.40:
         return "Poor"
     return "Critical"
 
@@ -261,10 +296,54 @@ def build_field_factors(status: dict) -> list[FieldFactorDisplay]:
     ecology = float(status.get("ecology") or 1.0)
     dist = float(status.get("disturbance") or 0.0)
     fertility = float(status.get("fertility") or 0.0)
+    fert_pot = float(status.get("fertility_potential") or fertility or 1.0)
+    fert_rel = (fertility / fert_pot) if fert_pot > 1e-6 else 1.0
+    fert_rel = max(0.0, min(1.0, fert_rel))
     weeds = float(status.get("weeds") or 0.0)
     weed_mult = float(status.get("weed_mult") or 1.0)
     weed_threshold = float(status.get("weed_threshold") or 0.2)
     erosion = float(status.get("erosion") or 0.0)
+
+    poll_hint = (
+        "Few bee colonies reach this field. Flowering habitat or nearby hives help."
+        if poll < 0.50
+        else "Coverage is solid; maintain nearby floral habitat and colonies."
+        if poll < 0.80
+        else "Strong bee coverage from nearby colonies."
+    )
+    pest_hint = (
+        "Nearby species richness is low. Habitat diversity improves pest suppression."
+        if pest < 0.95
+        else "Biological pest suppression is adequate."
+        if pest < 1.08
+        else "High richness is protecting crop health over time."
+    )
+    dist_hint = (
+        "Strong nearby activity. Settlement, paths or extraction may be contributing."
+        if dist >= 0.60
+        else "Moderate activity nearby. Location and traffic routes matter."
+        if dist >= 0.35
+        else "Relatively quiet site for farming."
+    )
+    health_hint = (
+        "Health has fallen under pest pressure and recovers only slowly."
+        if health < 0.90
+        else "Crop health is holding near its environmental cap."
+    )
+    fert_hint = (
+        "Soil is at local potential for this terrain."
+        if fert_rel >= 0.98
+        else "Repeated cropping has depleted this soil. Restorative crops or fallow help."
+        if fert_rel < 0.85
+        else "Slightly below local potential."
+    )
+    weed_hint = (
+        "Weed cover is cutting yield. Farmers with hoes can clear it."
+        if weeds >= weed_threshold
+        else "Weeds are under control."
+        if weeds < 0.10
+        else "Watch weed cover; hoe before it climbs."
+    )
 
     rows: list[FieldFactorDisplay] = [
         FieldFactorDisplay(
@@ -278,11 +357,11 @@ def build_field_factors(status: dict) -> list[FieldFactorDisplay]:
             severity=severity_for_mult(poll_mult),
             overlay_key="POLLINATION",
             effect_mult=poll_mult,
+            management="Habitat",
+            hint=poll_hint,
             detail_lines=[
-                f"Bee coverage {poll * 100:.0f}%",
-                f"Yield multiplier {poll_mult:.2f}×",
-                f"Yield effect {effect_pct_text(poll_mult) or '±0%'}",
-                "Based on nearby established bee colonies.",
+                f"Coverage {poll * 100:.0f}% · yield {poll_mult:.2f}×",
+                poll_hint,
             ],
         ),
         FieldFactorDisplay(
@@ -292,18 +371,16 @@ def build_field_factors(status: dict) -> list[FieldFactorDisplay]:
             section="landscape",
             state_text=label_pest(pest),
             value_text=f"bio {bio:.1f}",
-            effect_text=effect_pct_text(pest),
+            effect_text=None,  # not a direct yield multiplier
             severity=severity_for_mult(pest),
             overlay_key="BIODIVERSITY",
-            effect_mult=pest,
+            effect_mult=1.0,
+            management="Habitat",
+            hint=pest_hint,
             detail_lines=[
-                f"Species richness {bio:.1f}",
-                f"Biological multiplier {pest_bio:.2f}×",
-                f"Field treatment boost {boost:+.2f}",
-                f"Yield pest (bio + boost) {pest:.2f}×",
-                f"Yield effect {effect_pct_text(pest) or '±0%'}",
-                "Health cap uses biological pest only (not treatment boost).",
-                f"Crop-health cap now {health_cap * 100:.0f}%.",
+                f"Richness {bio:.1f} · bio {pest_bio:.2f}× · boost {boost:+.2f}",
+                f"Sets crop-health cap ({health_cap * 100:.0f}%); not a direct yield ×",
+                pest_hint,
             ],
         ),
         FieldFactorDisplay(
@@ -317,12 +394,12 @@ def build_field_factors(status: dict) -> list[FieldFactorDisplay]:
             severity=severity_for_mult(ecology),
             overlay_key="DISTURBANCE",
             effect_mult=ecology,
+            management="Location",
+            hint=dist_hint,
             detail_lines=[
-                f"Field mean disturbance {dist * 100:.0f}%",
-                f"Yield multiplier {ecology:.2f}×",
-                f"Yield effect {effect_pct_text(ecology) or '±0%'}",
-                "Sources may include settlement, path traffic, and extraction.",
-                "Updates continuously (not only on seasonal samples).",
+                f"Mean {dist * 100:.0f}% · multiplier {ecology:.2f}×",
+                "Settlement, paths, extraction",
+                dist_hint,
             ],
         ),
         FieldFactorDisplay(
@@ -336,12 +413,11 @@ def build_field_factors(status: dict) -> list[FieldFactorDisplay]:
             severity=severity_for_mult(health),
             overlay_key=None,
             effect_mult=health,
+            management="Persistent",
+            hint=health_hint,
             detail_lines=[
-                f"Crop health {health * 100:.0f}%",
-                f"Cap from biological pest {health_cap * 100:.0f}%",
-                f"Yield effect {effect_pct_text(health) or '±0%'}",
-                "Health only falls toward the pest-control cap; it does not recover alone.",
-                "Shared by the whole field (not per tile).",
+                f"{health * 100:.0f}% (cap {health_cap * 100:.0f}% from pest pressure)",
+                health_hint,
             ],
         ),
         FieldFactorDisplay(
@@ -349,17 +425,21 @@ def build_field_factors(status: dict) -> list[FieldFactorDisplay]:
             label="Fertility",
             icon="mineral_powder",
             section="condition",
-            state_text=label_fertility(fertility),
-            value_text=f"{fertility * 100:.0f}%",
-            effect_text=effect_pct_text(fertility),
-            severity=severity_for_mult(fertility),
+            state_text=label_fertility_relative(fert_rel),
+            value_text=f"{fertility:.2f}/{fert_pot:.2f}",
+            # At local potential, do not present a yield penalty (avoids
+            # "Optimal −20%" when terrain max is below 1.0).
+            effect_text=(
+                None if fert_rel >= 0.98 else effect_pct_text(fertility)
+            ),
+            severity=severity_for_ratio(fert_rel, higher_is_better=True),
             overlay_key="FERTILITY",
-            effect_mult=fertility,
+            effect_mult=(1.0 if fert_rel >= 0.98 else float(fertility)),
+            management="Rotation",
+            hint=fert_hint,
             detail_lines=[
-                f"Current field mean {fertility:.2f}",
-                f"Yield effect {effect_pct_text(fertility) or '±0%'}",
-                "Terrain sets the starting base; harvests deplete the square.",
-                "Varies by tile — harvest uses each cell's fertility.",
+                f"Current {fertility:.2f} · potential {fert_pot:.2f} · {fert_rel * 100:.0f}%",
+                fert_hint,
             ],
         ),
         FieldFactorDisplay(
@@ -368,17 +448,16 @@ def build_field_factors(status: dict) -> list[FieldFactorDisplay]:
             icon="crop_weeds",
             section="condition",
             state_text=label_weeds(weeds),
-            value_text=f"{weeds * 100:.0f}% cover",
+            value_text=f"{weeds * 100:.0f}%",
             effect_text=effect_pct_text(weed_mult),
             severity=severity_for_mult(weed_mult),
             overlay_key=None,
             effect_mult=weed_mult,
+            management="Field work",
+            hint=weed_hint,
             detail_lines=[
-                f"Mean cover {weeds * 100:.0f}%",
-                f"Yield multiplier {weed_mult:.2f}×",
-                f"Yield effect {effect_pct_text(weed_mult) or '±0%'}",
-                f"Farmers hoe at {weed_threshold * 100:.0f}%+ cover (not a harvest).",
-                "Higher fertility grows weeds faster.",
+                f"Cover {weeds * 100:.0f}% · yield {weed_mult:.2f}×",
+                weed_hint,
             ],
         ),
         FieldFactorDisplay(
@@ -392,10 +471,11 @@ def build_field_factors(status: dict) -> list[FieldFactorDisplay]:
             severity=severity_for_ratio(erosion, higher_is_better=False),
             overlay_key="EROSION",
             effect_mult=1.0,
+            management="Soil",
+            hint="Slope-based potential. Does not modify harvest yet.",
             detail_lines=[
-                f"Field mean {erosion * 100:.0f}% ({label_erosion(erosion)})",
-                "Slope-based potential from the height map.",
-                "Currently does not directly modify harvest.",
+                f"{erosion * 100:.0f}% ({label_erosion(erosion)}) · not in harvest",
+                "High erosion may raise fertility loss when soil is disturbed later.",
             ],
         ),
     ]
@@ -455,3 +535,72 @@ def summarize_tile_yields(
         mean_after_landscape=float(mean_after_landscape),
         mean_after_crop_condition=float(mean_after_crop_condition),
     )
+
+
+def audit_disturbance_stats(world: World) -> dict[str, dict[str, float | int]]:
+    """Development helper: disturbance percentiles for farmable / context cells."""
+    from world import TerrainType, effective_disturbance_at
+
+    paths: set[tuple[int, int]] = set()
+    urbans: set[tuple[int, int]] = set()
+    for y in range(world.rows):
+        for x in range(world.cols):
+            cell = world.get_cell(x, y)
+            if cell is None:
+                continue
+            if cell.terrain == TerrainType.PATH:
+                paths.add((x, y))
+            elif cell.terrain == TerrainType.URBAN:
+                urbans.add((x, y))
+
+    def near(x: int, y: int, sites: set[tuple[int, int]], radius: int = 2) -> bool:
+        for sx, sy in sites:
+            if max(abs(sx - x), abs(sy - y)) <= radius:
+                return True
+        return False
+
+    buckets: dict[str, list[float]] = {
+        "soil_remote": [],
+        "soil_near_path": [],
+        "soil_near_urban": [],
+        "path": [],
+        "urban": [],
+    }
+    for y in range(world.rows):
+        for x in range(world.cols):
+            cell = world.get_cell(x, y)
+            if cell is None:
+                continue
+            d = effective_disturbance_at(world, x, y)
+            if cell.terrain == TerrainType.SOIL:
+                if near(x, y, urbans):
+                    buckets["soil_near_urban"].append(d)
+                elif near(x, y, paths):
+                    buckets["soil_near_path"].append(d)
+                else:
+                    buckets["soil_remote"].append(d)
+            elif cell.terrain == TerrainType.PATH:
+                buckets["path"].append(d)
+            elif cell.terrain == TerrainType.URBAN:
+                buckets["urban"].append(d)
+
+    def _pct(xs: list[float], p: float) -> float:
+        xs = sorted(xs)
+        i = int(round((len(xs) - 1) * p))
+        return float(xs[i])
+
+    out: dict[str, dict[str, float | int]] = {}
+    for name, xs in buckets.items():
+        if not xs:
+            out[name] = {"n": 0}
+            continue
+        out[name] = {
+            "n": len(xs),
+            "min": float(min(xs)),
+            "p25": _pct(xs, 0.25),
+            "median": _pct(xs, 0.5),
+            "p75": _pct(xs, 0.75),
+            "max": float(max(xs)),
+            "mean": float(sum(xs) / len(xs)),
+        }
+    return out

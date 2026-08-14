@@ -57,6 +57,7 @@ from settings import (
     WEED_ACTION_THRESHOLD,
     WEED_GROWTH_RATE,
     WEED_HARVEST_PENALTY,
+    WEED_MAX_APPEARANCES_PER_SEASON,
 )
 
 ParamKind = Literal["float", "int"]
@@ -394,6 +395,17 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
                 1.0,
                 0.05,
                 "Farmers with a hoe pull weeds at this cover. Does not count as a harvest.",
+            ),
+            BalanceParam(
+                "WEED_MAX_APPEARANCES_PER_SEASON",
+                "Weed appearances / season",
+                "int",
+                WEED_MAX_APPEARANCES_PER_SEASON,
+                0,
+                8,
+                1,
+                "Max times weeds may start growing on a square each season. "
+                "Cleared weeds do not return until the next season. Winter: no new growth.",
             ),
             BalanceParam(
                 "WEED_HARVEST_PENALTY",

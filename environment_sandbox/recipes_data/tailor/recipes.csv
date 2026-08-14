@@ -1,7 +1,7 @@
-name,label,inputs,outputs,icon_key,extraction,farming,hunting,crafting,labour,transport,resource_group,resource_short,clothing_slot,walk_speed,capacity_bonus,heat_protection,cold_protection
-linen_thread,Linen thread,flax:2,linen_thread:1,linen_thread,,,,,,,wares,l.th,,,,,
-linen_fabric,Linen fabric,linen_thread:4,linen_fabric:1,linen_fabric,,,,,,,wares,l.fab,,,,,
-light_shirt,Light shirt,linen_fabric:1,light_shirt:1,light_shirt,,,,,,,wares,shirt,shirt,,,1.5,1.5
-sun_hat,Sun hat,linen_thread:1;straw:2,sun_hat:1,sun_hat,,,,,,,wares,s.hat,hat,,,2.0,1.0
-winter_hat,Winter hat,fur:1;linen_fabric:1,winter_hat:1,winter_hat,,,,,,,wares,w.hat,hat,,,0.5,2.0
-winter_coat,Winter coat,fur:2;linen_fabric:2,winter_coat:1,winter_coat,,,,,,,wares,coat,shirt,,,0.5,3.0
+name,label,inputs,outputs,steps,icon_key,extraction,farming,hunting,crafting,labour,transport,resource_group,resource_short,clothing_slot,walk_speed,capacity_bonus,heat_protection,cold_protection
+linen_thread,Linen thread,flax:2,linen_thread:1,,linen_thread,,,,,,,wares,l.th,,,,,
+linen_fabric,Linen fabric,linen_thread:4,linen_fabric:1,,linen_fabric,,,,,,,wares,l.fab,,,,,
+light_shirt,Light shirt,linen_fabric:1,light_shirt:1,,light_shirt,,,,,,,wares,shirt,shirt,,,1.5,1.5
+sun_hat,Sun hat,linen_thread:1;straw:2,sun_hat:1,,sun_hat,,,,,,,wares,s.hat,hat,,,2.0,1.0
+winter_hat,Winter hat,fur:1;linen_fabric:1,winter_hat:1,,winter_hat,,,,,,,wares,w.hat,hat,,,0.5,2.0
+winter_coat,Winter coat,fur:2;linen_fabric:2,winter_coat:1,,winter_coat,,,,,,,wares,coat,shirt,,,0.5,3.0
