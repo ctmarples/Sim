@@ -503,6 +503,7 @@ PROCESSED_KEYS: tuple[str, ...] = tuple(
             *ALCHEMIST_OUTPUT_KEYS,
             *TAILOR_OUTPUT_KEYS,
             *COBBLER_OUTPUT_KEYS,
+            "spoilage",
         )
     )
 )
@@ -646,18 +647,33 @@ def can_craft(
 
 
 def apply_recipe(storage: object, recipe: Recipe) -> None:
+    from food_spoilage import on_food_removed
+
     for key, n in recipe.inputs.items():
         setattr(storage, key, int(getattr(storage, key, 0)) - n)
+        on_food_removed(storage, str(key))
     apply_recipe_outputs(storage, recipe)
 
 
 def apply_recipe_outputs(storage: object, recipe: Recipe) -> None:
+    from food_spoilage import on_food_merged
+
     for key, n in recipe.outputs.items():
+        key_s = str(key)
+        amount = int(n)
         add_item = getattr(storage, "add_item", None)
         if callable(add_item):
-            add_item(str(key), int(n))
-        else:
-            setattr(storage, key, int(getattr(storage, key, 0)) + int(n))
+            add_item(key_s, amount)
+            continue
+        before = int(getattr(storage, key_s, 0) or 0)
+        setattr(storage, key_s, before + amount)
+        on_food_merged(
+            storage,
+            key_s,
+            amount_before=before,
+            amount_added=amount,
+            src_quality=1.0,
+        )
 
 
 def recipe_outputs_fit(storage: object, recipe: Recipe) -> bool:

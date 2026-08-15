@@ -416,6 +416,17 @@ DISTURBANCE_URBAN_LEVEL: float = 0.78
 DISTURBANCE_PATH_LEVEL: float = 0.40
 # Ecology/farming multiplier at full disturbance (lower = fields near town hurt more).
 DISTURBANCE_ACTIVITY_FLOOR: float = 0.20
+# Wildlife (File → Balance → Wildlife). Breed/grow chances × disturbance ecology.
+WILDLIFE_BREED_CHANCE: float = 0.55
+WILDLIFE_COLONY_GROW_CHANCE: float = 0.20
+WILDLIFE_COLONY_SPLIT_CHANCE: float = 0.12
+# >1 = disturbance suppresses wildlife harder; 0 = ignore disturbance for wildlife.
+WILDLIFE_DISTURBANCE_SENSITIVITY: float = 1.0
+# Forage tiles required per colony level (level 1 → this many, level 4 → 4×).
+WILDLIFE_BEE_FORAGE_PER_LEVEL: int = 10
+WILDLIFE_RABBIT_FORAGE_PER_LEVEL: int = 10
+# Calendar days for a food stack's quality to fall from fresh (1) to spoil (0).
+FOOD_SPOILAGE_DAYS: float = 10.0
 # Chebyshev radius for neighbourhood-averaged disturbance (read + spread falloff).
 DISTURBANCE_RADIUS: int = 3
 

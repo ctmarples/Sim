@@ -278,6 +278,9 @@ class PlayerInventoryDialog:
         fonts = (self.font, self.font_small, self.font_tiny)
         inv = player.inventory
         amounts = amounts_from_obj(inv)
+        from food_spoilage import qualities_for_display
+
+        qualities = qualities_for_display(inv)
         keys = present_keys(amounts)
         # Estimate height from cargo rows + tools.
         from inventory_ui import grid_height
@@ -418,6 +421,7 @@ class PlayerInventoryDialog:
             fonts=fonts,
             interactive=True,
             selected_key=self.selected_key,
+            qualities=qualities,
         )
         self._inv_hits = hits
         self._cargo_rect = pygame.Rect(x, y, inner_w, h)

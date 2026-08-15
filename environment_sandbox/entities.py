@@ -589,6 +589,7 @@ class Inventory:
     equipped_clothing: dict[str, str] = field(default_factory=dict)
     capacity: int = INVENTORY_CAPACITY
     seed_capacity: int = SEED_CARRY_CAPACITY
+    food_quality: dict[str, float] = field(default_factory=dict)
 
     @staticmethod
     def clothing_slot_for(key: str) -> str | None:
@@ -719,16 +720,23 @@ class Inventory:
                 return self.cargo_total + cargo_units_after_add(key, have, amount) <= cap
         return self.cargo_total + amount <= cap
 
-    def add_item(self, key: str, n: int = 1) -> bool:
+    def add_item(self, key: str, n: int = 1, *, quality: float = 1.0) -> bool:
         if not hasattr(self, key) or not self.can_add(n, key=key):
             return False
-        setattr(self, key, getattr(self, key) + n)
+        before = int(getattr(self, key, 0) or 0)
+        setattr(self, key, before + n)
+        from food_spoilage import on_food_merged
+
+        on_food_merged(self, key, amount_before=before, amount_added=n, src_quality=quality)
         return True
 
     def consume_item(self, key: str, n: int = 1) -> bool:
         if getattr(self, key, 0) < n:
             return False
         setattr(self, key, getattr(self, key) - n)
+        from food_spoilage import on_food_removed
+
+        on_food_removed(self, key)
         return True
 
     def add_logs(self, n: int = 1) -> bool:
@@ -979,6 +987,7 @@ class Inventory:
         self.equipped_clothing.clear()
         for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS:
             setattr(self, key, 0)
+        self.food_quality.clear()
 
 
 @dataclass
@@ -1040,19 +1049,30 @@ class HomeStorage:
     hoe: int = 0
     knife: int = 0
     bow: int = 0
+    food_quality: dict[str, float] = field(default_factory=dict)
 
-    @property
     def saplings(self) -> int:
         return sum(getattr(self, key, 0) for key in SAPLING_ITEM_KEYS)
 
     def deposit_dict(self, items: dict[str, int]) -> None:
+        from food_spoilage import on_food_merged
+
         for key, value in items.items():
             if key == "saplings":
                 # Legacy generic saplings → oak.
                 self.oak_saplings += int(value)
                 continue
             if hasattr(self, key):
-                setattr(self, key, getattr(self, key) + value)
+                before = int(getattr(self, key, 0) or 0)
+                amount = int(value)
+                setattr(self, key, before + amount)
+                on_food_merged(
+                    self,
+                    str(key),
+                    amount_before=before,
+                    amount_added=amount,
+                    src_quality=1.0,
+                )
 
     def deposit(self, wood: int = 0, rock: int = 0, meat: int = 0, saplings: int = 0, **extra) -> None:
         self.logs += wood
@@ -1082,6 +1102,7 @@ class HomeStorage:
             setattr(self, key, 0)
         for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS:
             setattr(self, key, 0)
+        self.food_quality.clear()
 
     def withdraw_keys_to(self, inventory: Inventory, keys: tuple[str, ...]) -> int:
         taken = 0
@@ -1133,8 +1154,16 @@ class HomeStorage:
             return False
         if getattr(self, key, 0) <= 0 or not inventory.can_add(1, key=key):
             return False
+        from food_spoilage import food_quality, on_food_merged, on_food_removed
+
+        src_q = food_quality(self, key)
+        before = int(getattr(inventory, key, 0) or 0)
         setattr(self, key, getattr(self, key) - 1)
-        setattr(inventory, key, getattr(inventory, key) + 1)
+        on_food_removed(self, key)
+        setattr(inventory, key, before + 1)
+        on_food_merged(
+            inventory, key, amount_before=before, amount_added=1, src_quality=src_q
+        )
         return True
 
     def deposit_key_from(self, inventory: Inventory, key: str) -> int:
@@ -1144,8 +1173,16 @@ class HomeStorage:
         n = int(getattr(inventory, key, 0))
         if n <= 0:
             return 0
+        from food_spoilage import food_quality, on_food_merged, on_food_removed
+
+        src_q = food_quality(inventory, key)
+        before = int(getattr(self, key, 0) or 0)
         setattr(inventory, key, 0)
-        setattr(self, key, getattr(self, key) + n)
+        on_food_removed(inventory, key)
+        setattr(self, key, before + n)
+        on_food_merged(
+            self, key, amount_before=before, amount_added=n, src_quality=src_q
+        )
         return n
 
     def deposit_one_from(self, inventory: Inventory, key: str) -> bool:
@@ -1154,8 +1191,16 @@ class HomeStorage:
             return False
         if getattr(inventory, key, 0) <= 0:
             return False
+        from food_spoilage import food_quality, on_food_merged, on_food_removed
+
+        src_q = food_quality(inventory, key)
+        before = int(getattr(self, key, 0) or 0)
         setattr(inventory, key, getattr(inventory, key) - 1)
-        setattr(self, key, getattr(self, key) + 1)
+        on_food_removed(inventory, key)
+        setattr(self, key, before + 1)
+        on_food_merged(
+            self, key, amount_before=before, amount_added=1, src_quality=src_q
+        )
         return True
 
 
@@ -1432,6 +1477,7 @@ class Building:
     item_caps: dict[str, int] = field(default_factory=dict)
     # Minimum stock haulers must leave for recipes / splitting.
     item_mins: dict[str, int] = field(default_factory=dict)
+    food_quality: dict[str, float] = field(default_factory=dict)
     # recipe name → enabled; progress steps toward recipe.work_steps().
     recipe_enabled: dict[str, bool] = field(default_factory=dict)
     recipe_progress: dict[str, int] = field(default_factory=dict)
@@ -2887,8 +2933,16 @@ class Building:
             return False
         if getattr(inventory, key, 0) <= 0:
             return False
+        from food_spoilage import food_quality, on_food_merged, on_food_removed
+
+        src_q = food_quality(inventory, key)
+        before = int(getattr(self, key, 0) or 0)
         setattr(inventory, key, getattr(inventory, key) - 1)
-        setattr(self, key, getattr(self, key) + 1)
+        on_food_removed(inventory, key)
+        setattr(self, key, before + 1)
+        on_food_merged(
+            self, key, amount_before=before, amount_added=1, src_quality=src_q
+        )
         return True
 
     def depositable_keys(self) -> tuple[str, ...]:
@@ -3053,13 +3107,23 @@ class Building:
         take = min(have, room)
         if take <= 0:
             return
-        setattr(self, key, getattr(self, key) + take)
+        from food_spoilage import food_quality, on_food_merged, on_food_removed
+
+        src_q = food_quality(inventory, key)
+        before = int(getattr(self, key, 0) or 0)
+        setattr(self, key, before + take)
         setattr(inventory, key, have - take)
+        on_food_removed(inventory, key)
+        on_food_merged(
+            self, key, amount_before=before, amount_added=take, src_quality=src_q
+        )
 
     def withdraw_to_inventory(
         self, inventory: Inventory, keys: tuple[str, ...] | None = None
     ) -> None:
         use_keys = keys if keys is not None else self.haul_keys()
+        from food_spoilage import food_quality, on_food_merged, on_food_removed
+
         for key in use_keys:
             # Always honour haulable_amount — passing keys= must not strip
             # reserved dual-role stock (e.g. craft-bench twine used as input).
@@ -3070,15 +3134,33 @@ class Building:
                 and int(getattr(self, key, 0)) > 0
                 and inventory.can_add(1, key=key)
             ):
+                src_q = food_quality(self, key)
+                before = int(getattr(inventory, key, 0) or 0)
                 setattr(self, key, getattr(self, key) - 1)
-                setattr(inventory, key, getattr(inventory, key) + 1)
+                on_food_removed(self, key)
+                setattr(inventory, key, before + 1)
+                on_food_merged(
+                    inventory,
+                    key,
+                    amount_before=before,
+                    amount_added=1,
+                    src_quality=src_q,
+                )
                 taken += 1
 
     def give_item_to(self, inventory: Inventory, key: str) -> bool:
         if getattr(self, key) <= 0 or not inventory.can_add(1, key=key):
             return False
+        from food_spoilage import food_quality, on_food_merged, on_food_removed
+
+        src_q = food_quality(self, key)
+        before = int(getattr(inventory, key, 0) or 0)
         setattr(self, key, getattr(self, key) - 1)
-        setattr(inventory, key, getattr(inventory, key) + 1)
+        on_food_removed(self, key)
+        setattr(inventory, key, before + 1)
+        on_food_merged(
+            inventory, key, amount_before=before, amount_added=1, src_quality=src_q
+        )
         return True
 
     def give_sapling_to(self, inventory: Inventory) -> bool:

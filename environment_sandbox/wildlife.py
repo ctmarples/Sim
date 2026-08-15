@@ -1,19 +1,23 @@
 """Wildlife: deer, boars, and bee/rabbit colonies.
 
-Forest patches = connected tree/sapling tiles. Habitats are rebuilt on the same
-season start/mid sample window as biodiversity (≤8 updates per year).
+Forest habitats = connected forest-floor tiles (litter under mature trees).
+Habitats are rebuilt on the same season start/mid sample window as biodiversity
+(≤8 updates per year).
 
 Deer / Boar
 -----------
 Individual animals with mating pairs, seasonal roaming, and migration.
-Deer breed on forest edge; boars in forest interior.
+Deer breed on forest-floor edge tiles bordering grass/meadow; boars use the
+whole forest-floor patch (cold/warm roam still expands by the usual adjacency).
 
 Bees / Rabbits
 --------------
 Colonies (not individuals). Each has a nest tile and level 1–4 controlling how
 many visible members wander nearby. Colonies grow when forage food is available;
-a level-3 colony may found a new level-1 colony on an empty nest site. If a kind
-has zero colonies at spring (new year), one small colony is seeded.
+a level-3 colony may found a new level-1 colony on an empty nest site. Bees and
+rabbits need forage tiles ≥ (balance N) × colony level (else level is clamped or
+the colony is removed). If a kind has zero colonies at spring (new year), one
+small colony is seeded.
 """
 
 from __future__ import annotations
@@ -33,19 +37,16 @@ from seasons import (
 )
 from entities import arm_cell_step_visual, note_cell_step
 from resource_balance import (
-    ANIMAL_BREED_CHANCE,
     ANIMAL_MIGRATION_CHANCE,
     ANIMAL_TREES_PER_CAP,
     BOAR_CELLS_PER_CAP,
     BOAR_CROP_EAT_CHANCE,
-    COLONY_GROW_CHANCE,
     COLONY_HARVEST_COOLDOWN,
     COLONY_LEVEL_MAX,
     COLONY_MEMBER_RADIUS,
     COLONY_MEMBERS_BY_LEVEL,
     COLONY_RABBIT_CROP_EAT_CHANCE,
     COLONY_SEED_GROUNDS,
-    COLONY_SPLIT_CHANCE,
     COLONY_SPLIT_LEVEL,
     DEER_CROP_EAT_CHANCE,
     FISH_WATER_PER_CAP,
@@ -69,7 +70,7 @@ from settings import (
     RANDOM_SEED,
     VILLAGER_MOVE_INTERVAL,
 )
-from world import FeatureType, TerrainType, World, disturbance_activity_multiplier, effective_disturbance_at
+from world import FeatureType, TerrainType, World, wildlife_ecology_multiplier, effective_disturbance_at
 
 
 class AnimalKind(Enum):
@@ -81,6 +82,34 @@ class AnimalKind(Enum):
 
 FOREST_KINDS: tuple[AnimalKind, ...] = (AnimalKind.DEER, AnimalKind.BOAR)
 COLONY_KINDS: tuple[AnimalKind, ...] = (AnimalKind.BEE, AnimalKind.RABBIT)
+
+
+def colony_forage_per_level(kind: AnimalKind) -> int:
+    """Balance: forage tiles required per colony level for bees / rabbits."""
+    from balance_config import active_balance
+
+    if kind == AnimalKind.BEE:
+        key = "WILDLIFE_BEE_FORAGE_PER_LEVEL"
+    elif kind == AnimalKind.RABBIT:
+        key = "WILDLIFE_RABBIT_FORAGE_PER_LEVEL"
+    else:
+        return 1
+    return max(1, active_balance().get_int(key))
+
+
+def colony_max_level_for_forage(kind: AnimalKind, forage_count: int) -> int:
+    """Highest colony level supported by ``forage_count`` tiles (0 = none)."""
+    if kind not in COLONY_KINDS:
+        return COLONY_LEVEL_MAX
+    per = colony_forage_per_level(kind)
+    if int(forage_count) < per:
+        return 0
+    return min(COLONY_LEVEL_MAX, int(forage_count) // per)
+
+
+# Back-compat alias used by older call sites / scripts.
+def bee_max_level_for_forage(forage_count: int) -> int:
+    return colony_max_level_for_forage(AnimalKind.BEE, forage_count)
 
 
 class AnimalSex(Enum):
@@ -340,11 +369,18 @@ class WildlifeManager:
         ]
 
     def _colony_sites(self, kind: AnimalKind) -> list[OpenHabitat]:
-        return [
+        sites = [
             h
             for h in self.open_habitats
             if self._allows_colony(kind, h) and h.nest_tiles
         ]
+        if kind in COLONY_KINDS:
+            sites = [
+                h
+                for h in sites
+                if colony_max_level_for_forage(kind, len(h.forage_tiles)) >= 1
+            ]
+        return sites
 
     @staticmethod
     def _allows_colony(kind: AnimalKind, hab: OpenHabitat) -> bool:
@@ -353,6 +389,33 @@ class WildlifeManager:
         if kind == AnimalKind.RABBIT:
             return hab.allow_rabbit
         return False
+
+    def _colony_forage_count(self, colony: Colony) -> int:
+        hab = self._colony_habitat(colony)
+        if hab is None:
+            return 0
+        return len(hab.forage_tiles)
+
+    def _enforce_colony_forage_caps(self) -> None:
+        """Clamp bee/rabbit levels to forage÷N; remove colonies below N forage tiles."""
+        kept: list[Colony] = []
+        for colony in self.colonies:
+            if colony.kind not in COLONY_KINDS:
+                kept.append(colony)
+                continue
+            hab = self._colony_habitat(colony)
+            max_lv = colony_max_level_for_forage(
+                colony.kind,
+                len(hab.forage_tiles) if hab is not None else 0,
+            )
+            if max_lv < 1:
+                continue
+            if colony.level > max_lv:
+                colony.level = max_lv
+                colony.clamp_level()
+                self._sync_colony_members(colony, hab)
+            kept.append(colony)
+        self.colonies = kept
 
     def _colony_on_habitat(self, kind: AnimalKind, habitat_id: int) -> Colony | None:
         for colony in self.colonies:
@@ -420,7 +483,7 @@ class WildlifeManager:
         ]
         forest_animals = [a for a in self.animals if a.kind in FOREST_KINDS]
 
-        patches = world.forest_patches()
+        patches = world.forest_floor_patches()
         habitats: list[ForestHabitat] = []
         for i, forest in enumerate(patches):
             deer_breeding = self._deer_breeding_tiles(world, forest)
@@ -493,6 +556,7 @@ class WildlifeManager:
             hid += 1
         self.open_habitats = habitats
         self._remap_colonies_after_refresh(old_nests, old_colony_ids)
+        self._enforce_colony_forage_caps()
 
     @staticmethod
     def _is_forage_tile(world: World, x: int, y: int) -> bool:
@@ -539,7 +603,7 @@ class WildlifeManager:
     def _deer_breeding_tiles(
         world: World, forest: list[tuple[int, int]]
     ) -> list[tuple[int, int]]:
-        """Forest tiles that border open grass/meadow (no tree/sapling on that neighbour)."""
+        """Forest-floor tiles that border open grass/meadow (no tree/sapling there)."""
         open_land = (TerrainType.GRASS, TerrainType.MEADOW)
         breeding: list[tuple[int, int]] = []
         for fx, fy in forest:
@@ -1915,11 +1979,14 @@ class WildlifeManager:
                 continue
             cell = world.get_cell(animal.x, animal.y)
             ecology = (
-                disturbance_activity_multiplier(effective_disturbance_at(world, animal.x, animal.y))
+                wildlife_ecology_multiplier(effective_disturbance_at(world, animal.x, animal.y))
                 if cell is not None
                 else 1.0
             )
-            if self.rng.random() >= ANIMAL_BREED_CHANCE * ecology:
+            from balance_config import active_balance
+
+            breed_chance = active_balance().get_float("WILDLIFE_BREED_CHANCE")
+            if self.rng.random() >= breed_chance * ecology:
                 continue
             self._try_spawn_in_patch(animal.kind, hab, occupied)
 
@@ -1997,6 +2064,11 @@ class WildlifeManager:
             return None
         if self._colony_on_habitat(kind, hab.id) is not None:
             return None
+        if kind in COLONY_KINDS:
+            max_lv = colony_max_level_for_forage(kind, len(hab.forage_tiles))
+            if max_lv < 1:
+                return None
+            level = min(int(level), max_lv)
         occupied = {(c.x, c.y) for c in self.colonies}
         nest = [p for p in hab.nest_tiles if p not in occupied] or list(hab.nest_tiles)
         nx, ny = self.rng.choice(nest)
@@ -2179,6 +2251,8 @@ class WildlifeManager:
                 colony.x, colony.y = self.rng.choice(hab.nest_tiles)
             self._sync_colony_members(colony, hab)
 
+        self._enforce_colony_forage_caps()
+
         # Rabbit colonies may nibble nearby wild crops.
         for colony in self.colonies:
             if colony.kind != AnimalKind.RABBIT:
@@ -2190,18 +2264,28 @@ class WildlifeManager:
                 self._eat_wild_crop(world, *self.rng.choice(crops))
 
         # Level growth, then fission from level-3 colonies with food.
+        from balance_config import active_balance
+
+        grow_chance = active_balance().get_float("WILDLIFE_COLONY_GROW_CHANCE")
+        split_chance = active_balance().get_float("WILDLIFE_COLONY_SPLIT_CHANCE")
         for colony in list(self.colonies):
             if not self._colony_has_food(world, colony):
                 continue
             nest = world.get_cell(colony.x, colony.y)
             ecology = (
-                disturbance_activity_multiplier(
+                wildlife_ecology_multiplier(
                     effective_disturbance_at(world, colony.x, colony.y)
                 )
                 if nest is not None
                 else 1.0
             )
-            if colony.level < COLONY_LEVEL_MAX and self.rng.random() < COLONY_GROW_CHANCE * ecology:
+            if colony.kind in COLONY_KINDS:
+                max_lv = colony_max_level_for_forage(
+                    colony.kind, self._colony_forage_count(colony)
+                )
+                if colony.level >= max_lv:
+                    continue
+            if colony.level < COLONY_LEVEL_MAX and self.rng.random() < grow_chance * ecology:
                 colony.level += 1
                 colony.clamp_level()
                 self._sync_colony_members(colony, self._colony_habitat(colony))
@@ -2213,13 +2297,13 @@ class WildlifeManager:
                 continue
             nest = world.get_cell(colony.x, colony.y)
             ecology = (
-                disturbance_activity_multiplier(
+                wildlife_ecology_multiplier(
                     effective_disturbance_at(world, colony.x, colony.y)
                 )
                 if nest is not None
                 else 1.0
             )
-            if self.rng.random() >= COLONY_SPLIT_CHANCE * ecology:
+            if self.rng.random() >= split_chance * ecology:
                 continue
             sites = self._empty_colony_sites(colony.kind)
             if not sites:

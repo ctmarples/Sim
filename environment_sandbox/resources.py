@@ -78,6 +78,7 @@ RESOURCES: list[ResourceDef] = [
     ResourceDef("insect_repellant", "Insect repellant", "wares", "rep"),
     ResourceDef("mineral_powder", "Mineral powder", "wares", "min"),
     ResourceDef("spices", "Spices", "wares", "spc"),
+    ResourceDef("spoilage", "Spoilage", "wares", "spoil"),
     ResourceDef("rock", "Rock", "wares", "rock"),
     ResourceDef("reeds", "Reeds", "wares", "reed"),
     ResourceDef("straw", "Straw", "wares", "strw"),

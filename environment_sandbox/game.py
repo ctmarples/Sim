@@ -351,6 +351,7 @@ from world import (
     TERRAIN_EDIT_LABELS,
     TerrainType,
     World,
+    cell_has_path,
     hardscape_paintable,
     is_bare_rock,
     is_water_terrain,
@@ -454,6 +455,9 @@ class Game:
         self.balance_dialog = BalanceDialog()
         self.balance = BalanceState()
         set_active_balance(self.balance)
+        from save_load import saves_dir
+
+        self.balance.enable_autosave(saves_dir() / "balance_prefs.json")
         self.resource_history = ResourceHistory()
         self.height_sample_enabled = HEIGHT_SAMPLE_ENABLED_DEFAULT
         self.height_sample: HeightSample | None = None
@@ -633,10 +637,10 @@ class Game:
             self.player.inventory.add_item("berries", min(4, STARTING_FOOD))
 
     def _most_recent_save_path(self):
-        """Newest ``*.json`` in the saves folder, or None."""
-        from save_load import saves_dir
+        """Newest world ``*.json`` in the saves folder, or None."""
+        from save_load import iter_save_paths
 
-        files = [p for p in saves_dir().glob("*.json") if p.is_file()]
+        files = iter_save_paths()
         if not files:
             return None
         return max(files, key=lambda p: p.stat().st_mtime)
@@ -709,6 +713,7 @@ class Game:
                 cell = self.world.cells[y][x]
                 if cell.terrain == TerrainType.PATH:
                     cell.terrain = TerrainType.GRASS
+                    cell.path_worn = False
                 if (x, y) in home_cells:
                     continue
                 if cell.feature in clear_features:
@@ -2541,13 +2546,9 @@ class Game:
         hab = self.wildlife.habitat(patch_id, kind)
         if hab is None:
             return None
-        from resource_balance import (
-            ANIMAL_BREED_CHANCE,
-            COLONY_GROW_CHANCE,
-            COLONY_LEVEL_MAX,
-        )
+        from balance_config import active_balance
         from wildlife import COLONY_KINDS, OpenHabitat
-        from world import disturbance_activity_multiplier, effective_disturbance_at
+        from world import wildlife_ecology_multiplier, effective_disturbance_at
 
         label = {
             AnimalKind.DEER: "Deer breeding ground",
@@ -2568,7 +2569,7 @@ class Game:
         ]
         avg_dist = sum(dist_values) / len(dist_values)
         max_dist = max(dist_values)
-        ecology = disturbance_activity_multiplier(avg_dist)
+        ecology = wildlife_ecology_multiplier(avg_dist)
 
         bio = self.env_maps.farm_biodiversity(sample_cells)
         floral = self.env_maps.farm_floral(sample_cells)
@@ -2584,8 +2585,11 @@ class Game:
         else:
             benefits.append(("Forest patch", f"{len(hab.forest_tiles)} cells"))
 
+        bal = active_balance()
         cap = self.wildlife._cap_for(kind, hab)
         if kind in COLONY_KINDS:
+            from resource_balance import COLONY_LEVEL_MAX
+
             colony = self.wildlife._colony_on_habitat(kind, patch_id)
             if colony is None:
                 population = "Empty nest"
@@ -2596,7 +2600,7 @@ class Game:
                     f"{colony.target_members()} visible"
                 )
                 pop_factor = colony.level / float(COLONY_LEVEL_MAX)
-            base_breed = COLONY_GROW_CHANCE
+            base_breed = bal.get_float("WILDLIFE_COLONY_GROW_CHANCE")
             subtitle = f"Nest #{patch_id} · open habitat"
         else:
             _present, migrating, total, pairs = self.wildlife.patch_occupancy(
@@ -2608,7 +2612,7 @@ class Game:
             else:
                 population = f"{total}/{cap} · {pair_txt}"
             pop_factor = min(1.0, total / cap) if cap > 0 else 0.0
-            base_breed = ANIMAL_BREED_CHANCE
+            base_breed = bal.get_float("WILDLIFE_BREED_CHANCE")
             subtitle = f"Ground #{patch_id} · forest patch"
 
         benefit_factor = 0.55 + 0.45 * min(1.0, bio)
@@ -3738,6 +3742,20 @@ class Game:
                 c = (80, 200, 255) if corner == TerrainType.SOIL else (50, 50, 50)
                 pygame.draw.circle(self.screen, c, (dx, dy), 2)
 
+    def _tick_food_spoilage(self, steps: int = 1) -> None:
+        from food_spoilage import tick_storage_spoilage
+
+        if steps <= 0:
+            return
+        day_frac = float(steps) / max(1, self.ticks_per_day)
+        days = self.balance.get_float("FOOD_SPOILAGE_DAYS")
+        tick_storage_spoilage(self.home_storage, day_frac, days)
+        tick_storage_spoilage(self.player.inventory, day_frac, days)
+        for villager in self.villagers:
+            tick_storage_spoilage(villager.inventory, day_frac, days)
+        for building in self.buildings.values():
+            tick_storage_spoilage(building, day_frac, days)
+
     def _advance_day(self) -> None:
         prev = self.season
         self.calendar_day = (self.calendar_day + 1) % YEAR_DAYS
@@ -3758,13 +3776,32 @@ class Game:
             self._top_up_hire_candidates()
             self._refresh_market_demands()
             self._set_status(f"{format_date(self.calendar_day)} begins.")
-        # Environmental layers: sample at season start (day 0) and midpoint.
+            self._apply_path_fertility_drain()
+        # Environmental layers (habitats, forest floor, paths, urban): ≤8×/year.
         if is_env_sample_day(self.calendar_day):
             self._sample_environment()
             self._sync_habitat_selection()
-        else:
-            # Paint worn paths every in-game day; decay stays on the 8×/year env sample.
-            self._update_path_terrain(decay_traffic=False)
+
+    def _apply_path_fertility_drain(self) -> None:
+        """Each season a path remains, drain fertility on soft land (floor 0.3)."""
+        from soil import clamp01
+
+        drain = 0.05
+        floor = 0.3
+        soft = (
+            TerrainType.SOIL,
+            TerrainType.GRASS,
+            TerrainType.MEADOW,
+            TerrainType.RIPARIAN,
+        )
+        for y in range(self.world.rows):
+            for x in range(self.world.cols):
+                cell = self.world.cells[y][x]
+                if not cell.path_worn:
+                    continue
+                if cell.terrain not in soft:
+                    continue
+                cell.fertility = clamp01(max(floor, float(cell.fertility) - drain))
 
     def _sample_environment(self) -> None:
         """8×/year: refresh habitats/forest floor and stable env production grids."""
@@ -3862,7 +3899,7 @@ class Game:
             cell.disturbance = max(
                 self.balance.get_float("DISTURBANCE_URBAN_LEVEL"), wear_d
             )
-        elif cell.terrain == TerrainType.PATH:
+        elif cell_has_path(cell):
             cell.disturbance = max(
                 self.balance.get_float("DISTURBANCE_PATH_LEVEL"), wear_d
             )
@@ -4028,11 +4065,21 @@ class Game:
 
         for x, y in field_cells:
             cell = self.world.cells[y][x]
-            if cell.terrain in (TerrainType.URBAN, TerrainType.PATH):
+            if cell.terrain == TerrainType.URBAN:
                 cell.terrain = TerrainType.SOIL
                 self.world.mark_terrain_dirty(x, y)
                 changed = True
+            if cell.terrain == TerrainType.PATH:
+                cell.terrain = TerrainType.SOIL
+                cell.path_worn = False
+                self.world.mark_terrain_dirty(x, y)
+                changed = True
+            elif cell.path_worn:
+                cell.path_worn = False
+                self.world.mark_terrain_dirty(x, y)
+                changed = True
 
+        path_visual = False
         for y in range(self.world.rows):
             for x in range(self.world.cols):
                 if (x, y) in field_cells:
@@ -4040,19 +4087,22 @@ class Game:
                 cell = self.world.cells[y][x]
                 if cell.terrain == TerrainType.URBAN and (x, y) not in urban_cells:
                     wear = float(self._path_traffic.get((x, y), 0.0))
-                    cell.terrain = (
-                        TerrainType.PATH
-                        if wear >= self.balance.get_float("PATH_TRAFFIC_THRESHOLD")
-                        else self._revert_hardscape_terrain(x, y)
-                    )
+                    cell.terrain = self._revert_hardscape_terrain(x, y)
+                    worn = wear >= self.balance.get_float("PATH_TRAFFIC_THRESHOLD")
+                    if cell.path_worn != worn:
+                        path_visual = True
+                    cell.path_worn = worn
                     self.world.mark_terrain_dirty(x, y)
                     changed = True
 
         if changed:
             self.world.terrain_revision += 1
+            self._note_path_visual_change()
+        elif path_visual:
+            self._note_path_visual_change()
 
     def _update_path_terrain(self, *, decay_traffic: bool = False) -> None:
-        """Paint PATH from villager wear; sticky until wear drops below KEEP."""
+        """Toggle path overlay from villager wear; underlying terrain stays put."""
         urban_cells = self._compute_urban_layout()
         field_cells = self._field_plot_cells()
 
@@ -4067,9 +4117,10 @@ class Game:
 
         threshold = self.balance.get_float("PATH_TRAFFIC_THRESHOLD")
         keep = self.balance.get_float("PATH_TRAFFIC_KEEP")
+        visual_changed = False
         # Local dirty only — bumping terrain_revision here forced a full-map
         # terrain stitch + height rebake every in-game day.
-        for (x, y), wear in self._path_traffic.items():
+        for (x, y), wear in list(self._path_traffic.items()):
             if (x, y) in urban_cells or (x, y) in field_cells:
                 continue
             cell = self.world.get_cell(x, y)
@@ -4077,20 +4128,39 @@ class Game:
                 continue
             if cell.terrain == TerrainType.URBAN:
                 continue
-            if wear >= threshold and cell.terrain != TerrainType.PATH:
-                self._set_hardscape_terrain(x, y, TerrainType.PATH)
+            # Migrate legacy PATH terrain into overlay on the restored base.
+            if cell.terrain == TerrainType.PATH:
+                cell.terrain = self._revert_hardscape_terrain(x, y)
+                cell.path_worn = True
+                self.world.mark_terrain_dirty(x, y)
+                visual_changed = True
+            if wear >= threshold and not cell.path_worn:
+                cell.path_worn = True
+                self.world.mark_terrain_dirty(x, y)
+                visual_changed = True
 
         for y in range(self.world.rows):
             for x in range(self.world.cols):
                 if (x, y) in field_cells or (x, y) in urban_cells:
                     continue
                 cell = self.world.cells[y][x]
-                if cell.terrain != TerrainType.PATH:
+                if cell.terrain == TerrainType.PATH:
+                    cell.terrain = self._revert_hardscape_terrain(x, y)
+                    wear = float(self._path_traffic.get((x, y), 0.0))
+                    cell.path_worn = wear >= keep
+                    self.world.mark_terrain_dirty(x, y)
+                    visual_changed = True
+                    continue
+                if not cell.path_worn:
                     continue
                 wear = float(self._path_traffic.get((x, y), 0.0))
                 if wear < keep:
-                    cell.terrain = self._revert_hardscape_terrain(x, y)
+                    cell.path_worn = False
                     self.world.mark_terrain_dirty(x, y)
+                    visual_changed = True
+
+        if visual_changed:
+            self._note_path_visual_change()
 
     def _path_traffic_overlay_grid(self) -> list[list[float]]:
         cap = max(1.0, self.balance.get_float("PATH_TRAFFIC_OVERLAY_MAX"))
@@ -15736,6 +15806,7 @@ class Game:
                 self._eco_pending = 0
         self._update_villagers()
         self._tick_player(1)
+        self._tick_food_spoilage()
         self._tick_arrow_shots()
         self._wildlife_pending = getattr(self, "_wildlife_pending", 0) + 1
         if self._wildlife_pending >= 4:
@@ -15817,6 +15888,7 @@ class Game:
                             * skip,
                         )
                 self._tick_player(skip)
+                self._tick_food_spoilage(skip)
                 eco_left = skip
                 while eco_left > 0:
                     step = min(eco_left, self.day_tick)
@@ -15852,6 +15924,7 @@ class Game:
                 flush_eco(day)
             self._update_villagers()
             self._tick_player(1)
+            self._tick_food_spoilage(1)
             self._tick_arrow_shots()
             if wildlife_pending >= 4:
                 self._tick_wildlife(day)
@@ -16462,17 +16535,27 @@ class Game:
     def _visual_terrain_at(
         self, x: int, y: int, farm_cells: set[tuple[int, int]]
     ) -> TerrainType:
-        """Terrain used for tiling; farm plots render as soil."""
+        """Terrain used for tiling; farm plots render as soil.
+
+        Worn paths keep their underlying ``cell.terrain`` for simulation, but
+        tile as PATH so the sandy trail texture shows (including under height warp).
+        """
         if not (0 <= x < self.world.cols and 0 <= y < self.world.rows):
             # Out of bounds matches nearest edge cell so borders stay solid.
             cx = min(max(0, x), self.world.cols - 1)
             cy = min(max(0, y), self.world.rows - 1)
             if (cx, cy) in farm_cells:
                 return TerrainType.SOIL
-            return self.world.cells[cy][cx].terrain
+            cell = self.world.cells[cy][cx]
+            if cell.path_worn and cell.terrain != TerrainType.URBAN:
+                return TerrainType.PATH
+            return cell.terrain
         if (x, y) in farm_cells:
             return TerrainType.SOIL
-        return self.world.cells[y][x].terrain
+        cell = self.world.cells[y][x]
+        if cell.path_worn and cell.terrain != TerrainType.URBAN:
+            return TerrainType.PATH
+        return cell.terrain
 
     def _paint_terrain_cell(
         self,
@@ -16495,6 +16578,13 @@ class Game:
             grass_mask=self._terrain_grass_mask,
             soil_mask=self._terrain_soil_mask,
         )
+
+    def _note_path_visual_change(self) -> None:
+        """Path overlay changed — refresh baked height warp and world layer."""
+        self._path_visual_gen = int(getattr(self, "_path_visual_gen", 0)) + 1
+        self._invalidate_height_sample_cache()
+        self._world_layer = None
+        self._world_layer_key = None
 
     def _sync_farm_terrain_dirty(
         self, farm_cells: set[tuple[int, int]]
@@ -16565,10 +16655,10 @@ class Game:
                 self._paint_terrain_cell(x, y, farm_cells)
             # Only drop ice/fleck caches when non-hardscape terrain changed.
             # Path dirties every day — wiping flecks forced a full remask hitch.
-            hardscape = (TerrainType.PATH, TerrainType.URBAN)
             if any(
                 self.world.in_bounds(x, y)
-                and self.world.cells[y][x].terrain not in hardscape
+                and self.world.cells[y][x].terrain != TerrainType.URBAN
+                and not self.world.cells[y][x].path_worn
                 for x, y in cells
             ):
                 self._ice_overlay = None
@@ -17005,6 +17095,30 @@ class Game:
         self._season_type_masks[key] = surf
         return surf
 
+    def _path_worn_mask(self) -> pygame.Surface:
+        """Half-res coverage for path overlays (not PATH terrain)."""
+        key = ("path_worn", self.world.terrain_revision, self._fleck_size())
+        # path_worn toggles without bumping terrain_revision — include a wear stamp.
+        wear_n = len(self._path_traffic)
+        key = ("path_worn", wear_n, self._fleck_size())
+        cached = self._season_type_masks.get(key)
+        if cached is not None:
+            return cached
+        size = self._fleck_size()
+        surf = pygame.Surface(size, pygame.SRCALPHA)
+        surf.fill((0, 0, 0, 0))
+        scale = self._SEASON_FLECK_SCALE
+        cs = max(1, CELL_SIZE // scale)
+        for y in range(self.world.rows):
+            for x in range(self.world.cols):
+                if self.world.cells[y][x].path_worn:
+                    surf.fill(
+                        (255, 255, 255, 255),
+                        pygame.Rect(x * cs, y * cs, cs, cs),
+                    )
+        self._season_type_masks[key] = surf
+        return surf
+
     def _mask_for(
         self,
         tag: str,
@@ -17028,7 +17142,7 @@ class Game:
         if tag == "rock":
             return self._types_mask(frozenset({TerrainType.ROCK}))
         if tag == "path":
-            return self._types_mask(frozenset({TerrainType.PATH}))
+            return self._path_worn_mask()
         if tag == "riparian":
             return self._types_mask(frozenset({TerrainType.RIPARIAN}))
         if tag == "urban":
@@ -17401,6 +17515,7 @@ class Game:
             round(self.camera.y, 3),
             self.camera.view_cell_px(),
             self.world.terrain_revision,
+            int(getattr(self, "_path_visual_gen", 0)),
             int(self.calendar_day),
             self.day_tick // 16,
             getattr(self, "_work_gen", 0),

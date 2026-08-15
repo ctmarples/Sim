@@ -1,4 +1,4 @@
-"""Expandable in-game popup for tuning balance parameters."""
+"""Expandable in-game popup for tuning balance parameters (tabbed by category)."""
 
 from __future__ import annotations
 
@@ -22,13 +22,13 @@ from settings import (
 TITLE_BAR_H = 28
 PAD = 10
 ROW_H = 26
-CAT_HEADER_H = 24
+TAB_H = 24
 BTN_W = 22
 HINT_H = 58
 PRESET_BTN_H = 20
 PRESET_GAP = 4
-# Space under title for subtitle + Reset all + two preset rows.
-HEADER_BODY_H = 78
+# Space under title for subtitle + Reset all + preset rows + tab strip.
+HEADER_BODY_H = 108
 
 
 def _wrap_hint(text: str, font: pygame.font.Font, max_w: int) -> list[str]:
@@ -49,7 +49,7 @@ def _wrap_hint(text: str, font: pygame.font.Font, max_w: int) -> list[str]:
 
 
 class BalanceDialog:
-    """Movable balance editor with collapsible categories."""
+    """Movable balance editor with one tab per category."""
 
     def __init__(self) -> None:
         self.font = pygame.font.SysFont("menlo", 12)
@@ -58,17 +58,16 @@ class BalanceDialog:
         self._open = False
         self._panel_x = 48
         self._panel_y = MAP_OFFSET_Y + 36
-        self._panel_w = 460
+        self._panel_w = 520
         self._panel_h = 560
         self._moving = False
         self._move_offset = (0, 0)
         self._scroll = 0
-        self._collapsed: dict[str, bool] = {}
+        self._tab_id: str = BALANCE_CATEGORIES[0].id if BALANCE_CATEGORIES else "time"
         self._close_rect = pygame.Rect(0, 0, 0, 0)
         self._title_rect = pygame.Rect(0, 0, 0, 0)
         self._reset_all_rect = pygame.Rect(0, 0, 0, 0)
         self._hit_regions: list[tuple[pygame.Rect, str, str | None]] = []
-        # (rect, action, param_key)  action: dec|inc|toggle_cat|reset_cat|preset
         self._active_preset: str = "default"
         self.pending_status: str | None = None
 
@@ -103,14 +102,19 @@ class BalanceDialog:
             MAP_OFFSET_Y, min(self._panel_y, WINDOW_HEIGHT - self._panel_h - 4)
         )
 
-    def _content_height(self) -> int:
-        h = PAD
+    def _active_category(self):
         for cat in BALANCE_CATEGORIES:
-            h += CAT_HEADER_H
-            if not self._collapsed.get(cat.id, False):
-                h += len(cat.params) * ROW_H
-                if cat.id == "time":
-                    h += ROW_H
+            if cat.id == self._tab_id:
+                return cat
+        return BALANCE_CATEGORIES[0] if BALANCE_CATEGORIES else None
+
+    def _content_height(self) -> int:
+        cat = self._active_category()
+        if cat is None:
+            return PAD
+        h = PAD + len(cat.params) * ROW_H
+        if cat.id == "time":
+            h += ROW_H
         return h + PAD + 8
 
     def _view_rect(self) -> pygame.Rect:
@@ -174,8 +178,9 @@ class BalanceDialog:
             elif action == "inc" and key:
                 balance.adjust(key, 1)
                 self._active_preset = ""
-            elif action == "toggle_cat" and key:
-                self._collapsed[key] = not self._collapsed.get(key, False)
+            elif action == "tab" and key:
+                self._tab_id = key
+                self._scroll = 0
                 self._clamp_scroll()
             elif action == "reset_cat" and key:
                 balance.reset_category(key)
@@ -221,7 +226,6 @@ class BalanceDialog:
         )
 
     def _layout_presets(self, panel: pygame.Rect) -> list[tuple[pygame.Rect, str, str]]:
-        """Return (rect, preset_id, hint) for preset chips in the header."""
         x = panel.x + PAD
         y = panel.y + TITLE_BAR_H + 22
         max_x = panel.right - PAD
@@ -236,6 +240,30 @@ class BalanceDialog:
             rect = pygame.Rect(x, y, tw, PRESET_BTN_H)
             out.append((rect, preset.id, preset.hint))
             x += tw + PRESET_GAP
+        return out
+
+    def _layout_tabs(self, panel: pygame.Rect) -> list[tuple[pygame.Rect, str]]:
+        x = panel.x + PAD
+        y = panel.y + TITLE_BAR_H + HEADER_BODY_H - TAB_H - 6
+        max_x = panel.right - PAD
+        out: list[tuple[pygame.Rect, str]] = []
+        for cat in BALANCE_CATEGORIES:
+            # Short tab labels from title first word / known shorts.
+            label = {
+                "time": "Time",
+                "buffs": "Buffs",
+                "farm": "Farm",
+                "paths_urban": "Paths",
+                "disturbance": "Stress",
+                "overlays": "Overlay",
+                "wildlife": "Wildlife",
+                "food": "Food",
+            }.get(cat.id, cat.title.split()[0])
+            tw = self.font_small.size(label)[0] + 16
+            if x + tw > max_x and out:
+                break
+            out.append((pygame.Rect(x, y, tw, TAB_H), cat.id))
+            x += tw + 4
         return out
 
     def draw(
@@ -263,7 +291,7 @@ class BalanceDialog:
         )
 
         hint = self.font_small.render(
-            "Presets apply path / farm-stress packs. Hover for detail.",
+            "Autosaves. Tabs by category. Hover for detail.",
             True,
             COLOUR_TEXT_DIM,
         )
@@ -292,35 +320,45 @@ class BalanceDialog:
             )
             self._hit_regions.append((rect, "preset", preset_id))
 
+        for rect, tab_id in self._layout_tabs(panel):
+            active = self._tab_id == tab_id
+            hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+            label = {
+                "time": "Time",
+                "buffs": "Buffs",
+                "farm": "Farm",
+                "paths_urban": "Paths",
+                "disturbance": "Stress",
+                "overlays": "Overlay",
+                "wildlife": "Wildlife",
+                "food": "Food",
+            }.get(tab_id, tab_id)
+            self._draw_button(surface, rect, label, active=active, hovered=hovered)
+            self._hit_regions.append((rect, "tab", tab_id))
+
+        cat = self._active_category()
         view = self._view_rect()
         content_h = self._content_height()
         self._clamp_scroll()
+
+        # Category header + reset
+        if cat is not None:
+            hdr = self.font.render(cat.title, True, COLOUR_TEXT)
+            surface.blit(hdr, (view.x + 2, view.y - 22))
+            reset_r = pygame.Rect(view.right - 52, view.y - 24, 48, 18)
+            self._draw_button(
+                surface,
+                reset_r,
+                "Reset",
+                hovered=mouse_pos is not None and reset_r.collidepoint(mouse_pos),
+            )
+            self._hit_regions.append((reset_r, "reset_cat", cat.id))
 
         clip = surface.get_clip()
         surface.set_clip(view)
         y = view.y - self._scroll
 
-        for cat in BALANCE_CATEGORIES:
-            collapsed = self._collapsed.get(cat.id, False)
-            header = pygame.Rect(view.x, y, view.w, CAT_HEADER_H)
-            arrow = "▸" if collapsed else "▾"
-            header_text = self.font.render(f"{arrow} {cat.title}", True, COLOUR_TEXT)
-            surface.blit(header_text, (header.x + 2, header.y + 4))
-            reset_r = pygame.Rect(header.right - 52, header.y + 3, 48, 18)
-            if header.colliderect(view):
-                self._draw_button(
-                    surface,
-                    reset_r,
-                    "Reset",
-                    hovered=mouse_pos is not None and reset_r.collidepoint(mouse_pos or (0, 0)),
-                )
-            self._hit_regions.append((header, "toggle_cat", cat.id))
-            self._hit_regions.append((reset_r, "reset_cat", cat.id))
-            y += CAT_HEADER_H
-
-            if collapsed:
-                continue
-
+        if cat is not None:
             for param in cat.params:
                 row = pygame.Rect(view.x, y, view.w, ROW_H - 2)
                 minus_r = pygame.Rect(row.x + row.w - 58, row.y + 2, BTN_W, ROW_H - 6)
@@ -381,8 +419,12 @@ class BalanceDialog:
             track = pygame.Rect(panel.right - 10, view.y, 4, view.h)
             pygame.draw.rect(surface, (55, 58, 68), track)
             thumb_h = max(24, int(view.h * view.h / content_h))
-            thumb_y = view.y + int((view.h - thumb_h) * (self._scroll / max(1, content_h - view.h)))
-            pygame.draw.rect(surface, (140, 144, 160), pygame.Rect(track.x, thumb_y, 4, thumb_h))
+            thumb_y = view.y + int(
+                (view.h - thumb_h) * (self._scroll / max(1, content_h - view.h))
+            )
+            pygame.draw.rect(
+                surface, (140, 144, 160), pygame.Rect(track.x, thumb_y, 4, thumb_h)
+            )
 
         hint_text = hovered_hint or "Hover a row or preset for the effect."
         hint_y = view.bottom + 6

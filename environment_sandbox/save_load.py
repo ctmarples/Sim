@@ -121,13 +121,36 @@ def saves_dir() -> Path:
     return path
 
 
+# Sidecar JSON in saves/ that must never be treated as world saves.
+_NON_SAVE_JSON_NAMES = frozenset(
+    {
+        "balance_prefs.json",
+    }
+)
+
+
+def is_world_save_path(path: Path | str) -> bool:
+    """True for ``*.json`` world saves (excludes prefs / other sidecars)."""
+    p = Path(path)
+    if not p.is_file() or p.suffix.lower() != ".json":
+        return False
+    if p.name in _NON_SAVE_JSON_NAMES:
+        return False
+    return True
+
+
+def iter_save_paths() -> list[Path]:
+    return sorted(p for p in saves_dir().glob("*.json") if is_world_save_path(p))
+
+
 def list_save_files() -> list[str]:
-    files = sorted(p.name for p in saves_dir().glob("*.json") if p.is_file())
-    return files
+    return [p.name for p in iter_save_paths()]
 
 
-def _inv_to_dict(inv: Inventory) -> dict[str, int]:
-    data = {key: int(getattr(inv, key, 0)) for key in _STORAGE_KEYS}
+def _inv_to_dict(inv: Inventory) -> dict[str, Any]:
+    from food_spoilage import serialize_food_quality
+
+    data: dict[str, Any] = {key: int(getattr(inv, key, 0)) for key in _STORAGE_KEYS}
     data["capacity"] = inv.capacity
     if inv.equipped_tools:
         data["equipped_tools"] = list(inv.equipped_tools)
@@ -135,6 +158,9 @@ def _inv_to_dict(inv: Inventory) -> dict[str, int]:
         data["equipped_clothing"] = {
             str(slot): str(item) for slot, item in inv.equipped_clothing.items()
         }
+    fq = serialize_food_quality(inv)
+    if fq:
+        data["food_quality"] = fq
     return data
 
 
@@ -169,11 +195,22 @@ def _inv_from_dict(data: dict[str, Any]) -> Inventory:
             if slot_s in CLOTHING_SLOTS and CLOTHING_ITEM_SLOT.get(item_s) == slot_s:
                 worn[slot_s] = item_s
         inv.equipped_clothing = worn
+    from food_spoilage import apply_food_quality
+
+    fq = data.get("food_quality")
+    if isinstance(fq, dict):
+        apply_food_quality(inv, fq)
     return inv
 
 
-def _storage_to_dict(obj: Any) -> dict[str, int]:
-    return {key: int(getattr(obj, key, 0)) for key in _STORAGE_KEYS}
+def _storage_to_dict(obj: Any) -> dict[str, Any]:
+    from food_spoilage import serialize_food_quality
+
+    data: dict[str, Any] = {key: int(getattr(obj, key, 0)) for key in _STORAGE_KEYS}
+    fq = serialize_food_quality(obj)
+    if fq:
+        data["food_quality"] = fq
+    return data
 
 
 def _apply_storage(obj: Any, data: dict[str, Any]) -> None:
@@ -189,6 +226,11 @@ def _apply_storage(obj: Any, data: dict[str, Any]) -> None:
     )
     if hasattr(obj, "oak_saplings"):
         setattr(obj, "oak_saplings", getattr(obj, "oak_saplings") + int(data.get("saplings", 0)))
+    from food_spoilage import apply_food_quality
+
+    fq = data.get("food_quality")
+    if isinstance(fq, dict):
+        apply_food_quality(obj, fq)
 
 
 def _feature_from_save(name: str) -> FeatureType:
@@ -235,12 +277,20 @@ def _cell_to_dict(cell: Cell) -> dict[str, Any]:
     appearances = int(getattr(cell, "weed_appearances", 0) or 0)
     if appearances > 0:
         data["weed_appearances"] = appearances
+    if getattr(cell, "path_worn", False):
+        data["path_worn"] = True
     return data
 
 
 def _cell_from_save(c: dict[str, Any]) -> Cell:
+    terrain = TerrainType[c["terrain"]]
+    path_worn = bool(c.get("path_worn", False))
+    # Legacy saves stored worn trails as PATH terrain — restore a soft base.
+    if terrain == TerrainType.PATH:
+        terrain = TerrainType.GRASS
+        path_worn = True
     cell = Cell(
-        terrain=TerrainType[c["terrain"]],
+        terrain=terrain,
         feature=_feature_from_save(c["feature"]),
         disturbance=float(c.get("disturbance", 0.0)),
         growth_ticks=int(c.get("growth_ticks", 0)),
@@ -249,6 +299,7 @@ def _cell_from_save(c: dict[str, Any]) -> Cell:
         hide_deposit=int(c.get("hide_deposit", 0)),
         fur_deposit=int(c.get("fur_deposit", 0)),
         fish_deposit=int(c.get("fish_deposit", 0)),
+        path_worn=path_worn,
     )
     crop_kind = c.get("crop_kind")
     if crop_kind is not None:
@@ -630,6 +681,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
         "hire_candidates": [c.to_dict() for c in getattr(game, "hire_candidates", [])],
         "next_community_id": int(getattr(game, "next_community_id", 1)),
         "next_hire_id": int(getattr(game, "next_hire_id", 1)),
+        "balance": game.balance.to_dict() if getattr(game, "balance", None) is not None else {},
     }
     if hasattr(game, "env_maps"):
         payload["env_maps"] = game.env_maps.to_save_dict()
@@ -1483,6 +1535,9 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             max((c.id for c in game.hire_candidates), default=0) + 1,
         )
     )
+    bal = data.get("balance")
+    if isinstance(bal, dict) and getattr(game, "balance", None) is not None:
+        game.balance.load_dict(bal)
     place = data.get("place_kind")
     game.place_kind = BuildingKind[place] if place else None
     game.sim_speed = int(data.get("sim_speed", 1))

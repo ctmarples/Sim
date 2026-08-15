@@ -43,6 +43,7 @@ def draw_resource_cell(
     dimmed: bool = False,
     active: bool = False,
     count_label: str | None = None,
+    quality: float | None = None,
 ) -> None:
     """Draw one inventory-style resource icon cell (optional count / dim)."""
     from icons import blit_icon
@@ -59,6 +60,23 @@ def draw_resource_cell(
         border = COLOUR_TOOLBAR_BORDER
     pygame.draw.rect(surface, bg, cell, border_radius=4)
     pygame.draw.rect(surface, border, cell, 1, border_radius=4)
+
+    # Food quality: full bar at top; depletes right→left (empty grows from the right).
+    if quality is not None and count is not None and count > 0:
+        q = max(0.0, min(1.0, float(quality)))
+        meter = pygame.Rect(cell.x + 3, cell.y + 3, cell.w - 6, 4)
+        pygame.draw.rect(surface, (28, 30, 36), meter, border_radius=1)
+        fill_w = max(0, int(round(meter.w * q)))
+        if fill_w > 0:
+            fill = pygame.Rect(meter.x, meter.y, fill_w, meter.h)
+            # Green → amber → red as quality falls.
+            if q > 0.55:
+                colour = (90, 170, 90)
+            elif q > 0.25:
+                colour = (200, 160, 60)
+            else:
+                colour = (190, 70, 60)
+            pygame.draw.rect(surface, colour, fill, border_radius=1)
 
     icon_size = cell.w - 14
     try:
@@ -138,6 +156,7 @@ def draw_inv_grid(
     item_caps: dict[str, int] | None = None,
     scroll_y: int = 0,
     max_body_h: int | None = None,
+    qualities: dict[str, float] | None = None,
 ) -> tuple[
     int,
     list[tuple[pygame.Rect, str, str]],
@@ -214,6 +233,22 @@ def draw_inv_grid(
             border = COLOUR_TOOLBAR_BORDER
         pygame.draw.rect(surface, bg, cell, border_radius=4)
         pygame.draw.rect(surface, border, cell, 1, border_radius=4)
+
+        count = int(amounts.get(key, 0))
+        if qualities is not None and key in qualities and count > 0:
+            q = max(0.0, min(1.0, float(qualities[key])))
+            meter = pygame.Rect(cell.x + 3, cell.y + 3, cell.w - 6, 4)
+            pygame.draw.rect(surface, (28, 30, 36), meter, border_radius=1)
+            fill_w = max(0, int(round(meter.w * q)))
+            if fill_w > 0:
+                fill = pygame.Rect(meter.x, meter.y, fill_w, meter.h)
+                if q > 0.55:
+                    colour = (90, 170, 90)
+                elif q > 0.25:
+                    colour = (200, 160, 60)
+                else:
+                    colour = (190, 70, 60)
+                pygame.draw.rect(surface, colour, fill, border_radius=1)
 
         icon_size = GRID_CELL - 14
         try:

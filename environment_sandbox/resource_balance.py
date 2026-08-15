@@ -434,6 +434,9 @@ MINERAL_POWDER_PEST_BOOST: float = 0.04
 FIELD_PEST_BOOST_MAX: float = 0.30
 # Initial colonies seeded per kind on new maps.
 COLONY_SEED_GROUNDS: int = 3
+# Legacy defaults; live values come from balance WILDLIFE_*_FORAGE_PER_LEVEL.
+BEE_FORAGE_TILES_PER_LEVEL: int = 10
+RABBIT_FORAGE_TILES_PER_LEVEL: int = 10
 # Per growth tick: level-up when food is available (levels 1–3 → next).
 COLONY_GROW_CHANCE: float = 0.20
 # Per growth tick: a level-3 colony with food may found a new level-1 colony.

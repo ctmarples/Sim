@@ -60,13 +60,14 @@ def clamp01(value: float) -> float:
 
 
 def overlay_fertility(cell: Cell) -> float:
-    """Fertility shown on the overlay: hardscape / water / rock read as 0."""
-    from world import HARDSCAPE, TerrainType, is_water_terrain
+    """Fertility shown on the overlay: urban / water / rock read as 0."""
+    from world import TerrainType, is_water_terrain
 
     if is_water_terrain(cell.terrain) or cell.terrain == TerrainType.ROCK:
         return 0.0
-    if cell.terrain in HARDSCAPE:
+    if cell.terrain == TerrainType.URBAN:
         return 0.0
+    # Paths are overlays — show the underlying soil fertility.
     return clamp01(getattr(cell, "fertility", 0.0))
 
 

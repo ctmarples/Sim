@@ -952,6 +952,15 @@ class BuildingInspectDialog:
             player_amounts = amounts_from_obj(player_inventory)
         player_amounts = player_amounts or {}
 
+        from food_spoilage import qualities_for_display
+
+        storage_qualities = qualities_for_display(building) if has_storage else {}
+        player_qualities = (
+            qualities_for_display(player_inventory)
+            if player_inventory is not None
+            else {}
+        )
+
         player_sub = "—"
         if player_inventory is not None:
             player_sub = (
@@ -1839,6 +1848,7 @@ class BuildingInspectDialog:
                 item_caps=building.item_caps,
                 scroll_y=self._scroll.get("storage", 0),
                 max_body_h=MAX_STORAGE_BODY_H,
+                qualities=storage_qualities,
             )
             right_h, right_hits, right_tips, right_hov, right_ch, right_vh = draw_inv_grid(
                 surface,
@@ -1855,6 +1865,7 @@ class BuildingInspectDialog:
                 hover_inv=self._hover_inv,
                 scroll_y=self._scroll.get("player", 0),
                 max_body_h=MAX_STORAGE_BODY_H,
+                qualities=player_qualities,
             )
             # Register body viewports (below title+subtitle ≈ 34px).
             header = 34
@@ -1917,6 +1928,7 @@ class BuildingInspectDialog:
                 item_caps=building.item_caps,
                 scroll_y=self._scroll.get("storage", 0),
                 max_body_h=MAX_STORAGE_BODY_H,
+                qualities=storage_qualities,
             )
             header = 34
             body = pygame.Rect(x, y + header, inner_w, vh)

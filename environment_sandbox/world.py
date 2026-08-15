@@ -81,7 +81,7 @@ from settings import (
 
 class TerrainType(Enum):
     SOIL = auto()
-    FOREST_FLOOR = auto()  # darker soil on tiles that currently hold a tree/sapling
+    FOREST_FLOOR = auto()  # darker litter under mature trees (not saplings alone)
     GRASS = auto()
     MEADOW = auto()  # open meadow — slightly greener than grass
     RIPARIAN = auto()  # shoreline strip beside water
@@ -279,6 +279,8 @@ class Cell:
     fertility: float = 0.8  # 0–1 soil fertility (harvests deplete)
     weeds: float = 0.0  # 0–1 weed cover on farm crops
     weed_appearances: int = 0  # weed waves started this season
+    # Worn trail overlay — does not replace underlying terrain.
+    path_worn: bool = False
 
     def habitat_category(self) -> str:
         if self.feature == FeatureType.TREE:
@@ -288,6 +290,11 @@ class Cell:
         if self.feature != FeatureType.NONE:
             return self.feature.name.lower()
         return self.terrain.name.lower()
+
+
+def cell_has_path(cell: Cell) -> bool:
+    """True when a worn path overlay (or legacy PATH terrain) is present."""
+    return bool(getattr(cell, "path_worn", False)) or cell.terrain == TerrainType.PATH
 
 
 def is_bare_rock(cell: Cell) -> bool:
@@ -311,6 +318,17 @@ def disturbance_activity_multiplier(disturbance: float) -> float:
     d = max(0.0, min(1.0, float(disturbance)))
     floor = active_balance().get_float("DISTURBANCE_ACTIVITY_FLOOR")
     return 1.0 - d * (1.0 - floor)
+
+
+def wildlife_ecology_multiplier(disturbance: float) -> float:
+    """Breed/grow/spread effectiveness under disturbance (balance-sensitive)."""
+    from balance_config import active_balance
+
+    base = disturbance_activity_multiplier(disturbance)
+    sens = active_balance().get_float("WILDLIFE_DISTURBANCE_SENSITIVITY")
+    if sens <= 0.0:
+        return 1.0
+    return max(0.0, min(1.0, 1.0 - (1.0 - base) * sens))
 
 
 def effective_disturbance_at(world: "World", x: int, y: int) -> float:
@@ -539,14 +557,16 @@ class World:
                     cell.tree_species = None
                     cell.icon_variant = None
                     changed = True
-                if cell.terrain != TerrainType.FOREST_FLOOR:
-                    cell.terrain = TerrainType.FOREST_FLOOR
-                    from soil import apply_terrain_fertility
+                if cell.feature == FeatureType.TREE:
+                    if cell.terrain != TerrainType.FOREST_FLOOR:
+                        cell.terrain = TerrainType.FOREST_FLOOR
+                        from soil import apply_terrain_fertility
 
-                    apply_terrain_fertility(cell, reset=True)
-                    self.mark_terrain_dirty(x, y)
-                    changed = True
-                if cell.feature in (FeatureType.TREE, FeatureType.SAPLING):
+                        apply_terrain_fertility(cell, reset=True)
+                        self.mark_terrain_dirty(x, y)
+                        changed = True
+                    continue
+                if cell.feature == FeatureType.SAPLING:
                     continue
                 chance = 0.9 if dist <= 0 else 0.75 if dist <= 1 else 0.55 if dist <= 2 else 0.35
                 if radius > 0 and dist == radius:
@@ -560,9 +580,16 @@ class World:
                 cell.deposit = tree.yield_amount
                 cell.growth_ticks = 0
                 cell.icon_variant = None
+                if cell.terrain != TerrainType.FOREST_FLOOR:
+                    cell.terrain = TerrainType.FOREST_FLOOR
+                    from soil import apply_terrain_fertility
+
+                    apply_terrain_fertility(cell, reset=True)
+                    self.mark_terrain_dirty(x, y)
                 changed = True
         if changed:
             self.terrain_revision += 1
+            self.update_forest_floor()
         return changed
 
     def _smooth_height_region(
@@ -944,22 +971,30 @@ class World:
                     next_id += 1
 
     def update_forest_floor(self) -> None:
-        """Mark only tree/sapling tiles as forest floor; clear bare litter.
+        """Forest floor forms under mature trees only; saplings never create it.
 
+        Mature trees convert soil / grass / meadow under them to forest floor.
+        Bare forest floor (no tree and no sapling) reverts to soil.
+        Saplings may sit on existing forest floor without forming new litter.
         Runs on the same ≤8/year cadence as biodiversity / habitat refresh.
-        Forest floor never spreads onto empty soil between trees.
         """
+        form_from = (
+            TerrainType.SOIL,
+            TerrainType.GRASS,
+            TerrainType.MEADOW,
+        )
         changed = False
         for y in range(self.rows):
             for x in range(self.cols):
                 cell = self.cells[y][x]
-                has_tree = cell.feature in (FeatureType.TREE, FeatureType.SAPLING)
-                if has_tree and cell.terrain == TerrainType.SOIL:
+                if cell.terrain == TerrainType.URBAN:
+                    continue
+                if cell.feature == FeatureType.TREE and cell.terrain in form_from:
                     cell.terrain = TerrainType.FOREST_FLOOR
                     self.mark_terrain_dirty(x, y)
                     changed = True
                 elif (
-                    not has_tree
+                    cell.feature not in (FeatureType.TREE, FeatureType.SAPLING)
                     and cell.terrain == TerrainType.FOREST_FLOOR
                 ):
                     cell.terrain = TerrainType.SOIL
@@ -967,6 +1002,19 @@ class World:
                     changed = True
         if changed:
             self.terrain_revision += 1
+
+    def forest_floor_cells(self) -> list[tuple[int, int]]:
+        """Tiles whose terrain is forest floor (deer/boar habitat core)."""
+        return [
+            (x, y)
+            for y in range(self.rows)
+            for x in range(self.cols)
+            if self.cells[y][x].terrain == TerrainType.FOREST_FLOOR
+        ]
+
+    def forest_floor_patches(self) -> list[list[tuple[int, int]]]:
+        """Connected forest-floor patches (8-connected)."""
+        return self._connected_patches(set(self.forest_floor_cells()))
 
     def _valley_axis_v(self, u: float) -> float:
         """Normalised valley centerline v for normalised u (SW lake → NE head)."""
@@ -1696,7 +1744,7 @@ class World:
                 terrain = cell.terrain
                 if terrain == TerrainType.URBAN:
                     cell.disturbance = urban_level
-                elif terrain == TerrainType.PATH:
+                elif cell_has_path(cell):
                     if cell.disturbance < path_level:
                         cell.disturbance = path_level
                 elif decay_per_tick > 0 and cell.disturbance > 0:
@@ -2529,7 +2577,7 @@ class World:
                 wear_d = min(dmax, float(wear_map.get((x, y), 0.0)) / cap)
                 if cell.terrain == TerrainType.URBAN:
                     cell.disturbance = max(urban, wear_d)
-                elif cell.terrain == TerrainType.PATH:
+                elif cell_has_path(cell):
                     cell.disturbance = max(path, wear_d)
                 elif wear_d > 0:
                     cell.disturbance = max(cell.disturbance, wear_d)
@@ -2554,7 +2602,7 @@ class World:
         if cell.terrain == TerrainType.URBAN:
             cell.disturbance = max(cell.disturbance, bal.get_float("DISTURBANCE_URBAN_LEVEL"))
             return
-        if cell.terrain == TerrainType.PATH:
+        if cell_has_path(cell):
             cell.disturbance = max(cell.disturbance, bal.get_float("DISTURBANCE_PATH_LEVEL"))
             return
         cell.disturbance = min(dmax, cell.disturbance + boost)
@@ -2569,7 +2617,7 @@ class World:
                 ncell.disturbance = max(
                     ncell.disturbance, bal.get_float("DISTURBANCE_URBAN_LEVEL")
                 )
-            elif ncell.terrain == TerrainType.PATH:
+            elif cell_has_path(ncell):
                 ncell.disturbance = max(
                     ncell.disturbance, bal.get_float("DISTURBANCE_PATH_LEVEL")
                 )

@@ -6,6 +6,7 @@ Add new entries to ``BALANCE_CATEGORIES`` to extend the balance popup.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from settings import (
@@ -19,6 +20,7 @@ from settings import (
     DISTURBANCE_PATH_LEVEL,
     DISTURBANCE_RADIUS,
     DISTURBANCE_URBAN_LEVEL,
+    FOOD_SPOILAGE_DAYS,
     INDICATOR_RADIUS,
     PATH_TRAFFIC_DECAY,
     PATH_TRAFFIC_KEEP,
@@ -58,6 +60,12 @@ from settings import (
     WEED_GROWTH_RATE,
     WEED_HARVEST_PENALTY,
     WEED_MAX_APPEARANCES_PER_SEASON,
+    WILDLIFE_BREED_CHANCE,
+    WILDLIFE_COLONY_GROW_CHANCE,
+    WILDLIFE_COLONY_SPLIT_CHANCE,
+    WILDLIFE_DISTURBANCE_SENSITIVITY,
+    WILDLIFE_BEE_FORAGE_PER_LEVEL,
+    WILDLIFE_RABBIT_FORAGE_PER_LEVEL,
 )
 
 ParamKind = Literal["float", "int"]
@@ -652,6 +660,95 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
             ),
         ),
     ),
+    BalanceCategory(
+        "wildlife",
+        "Wildlife",
+        (
+            BalanceParam(
+                "WILDLIFE_BREED_CHANCE",
+                "Deer / boar breed chance",
+                "float",
+                WILDLIFE_BREED_CHANCE,
+                0.05,
+                1.0,
+                0.05,
+                "Base chance a mating pair breeds each wildlife tick, "
+                "then scaled down by local disturbance.",
+            ),
+            BalanceParam(
+                "WILDLIFE_COLONY_GROW_CHANCE",
+                "Colony level-up chance",
+                "float",
+                WILDLIFE_COLONY_GROW_CHANCE,
+                0.02,
+                1.0,
+                0.02,
+                "Base chance a bee/rabbit colony gains a level when fed, "
+                "scaled by disturbance at the nest.",
+            ),
+            BalanceParam(
+                "WILDLIFE_COLONY_SPLIT_CHANCE",
+                "Colony split chance",
+                "float",
+                WILDLIFE_COLONY_SPLIT_CHANCE,
+                0.0,
+                1.0,
+                0.02,
+                "Chance a max-level colony founds a new nest when space exists.",
+            ),
+            BalanceParam(
+                "WILDLIFE_DISTURBANCE_SENSITIVITY",
+                "Disturbance hurts wildlife",
+                "float",
+                WILDLIFE_DISTURBANCE_SENSITIVITY,
+                0.0,
+                3.0,
+                0.1,
+                "How hard land stress suppresses breed/grow. 1 = normal floor curve; "
+                "higher = wildlife fades faster near paths and buildings; 0 = ignore.",
+            ),
+            BalanceParam(
+                "WILDLIFE_BEE_FORAGE_PER_LEVEL",
+                "Bee forage tiles / level",
+                "int",
+                float(WILDLIFE_BEE_FORAGE_PER_LEVEL),
+                1,
+                40,
+                1,
+                "A bee nest needs this many forage tiles per colony level "
+                "(level 1 → N, level 4 → 4N). Below N tiles the hive is removed.",
+            ),
+            BalanceParam(
+                "WILDLIFE_RABBIT_FORAGE_PER_LEVEL",
+                "Rabbit forage tiles / level",
+                "int",
+                float(WILDLIFE_RABBIT_FORAGE_PER_LEVEL),
+                1,
+                40,
+                1,
+                "A warren needs this many forage tiles per colony level "
+                "(level 1 → N, level 4 → 4N). Below N tiles the warren is removed.",
+            ),
+        ),
+    ),
+    BalanceCategory(
+        "food",
+        "Food & spoilage",
+        (
+            BalanceParam(
+                "FOOD_SPOILAGE_DAYS",
+                "Days until food spoils",
+                "float",
+                FOOD_SPOILAGE_DAYS,
+                1.0,
+                60.0,
+                1.0,
+                "Calendar days for a food stack's quality bar to fall from fresh to empty. "
+                "At empty, one unit becomes spoilage ware at that storage.",
+                "d",
+            ),
+        ),
+    ),
 )
 
 _PARAM_BY_KEY: dict[str, BalanceParam] = {
@@ -757,10 +854,69 @@ class BalanceState:
 
     def __init__(self) -> None:
         self._values: dict[str, float] = {}
+        self._autosave_path: Path | None = None
         self.reset()
+
+    def enable_autosave(self, path: Path | str) -> None:
+        """Write prefs whenever values change (and load existing prefs if present)."""
+        self._autosave_path = Path(path)
+        if self._autosave_path.is_file():
+            self.load_dict(self._read_prefs_file())
+
+    def _read_prefs_file(self) -> dict[str, float]:
+        import json
+
+        if self._autosave_path is None or not self._autosave_path.is_file():
+            return {}
+        try:
+            raw = json.loads(self._autosave_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if isinstance(raw, dict) and isinstance(raw.get("values"), dict):
+            raw = raw["values"]
+        if not isinstance(raw, dict):
+            return {}
+        out: dict[str, float] = {}
+        for key, value in raw.items():
+            try:
+                out[str(key)] = float(value)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def _autosave(self) -> None:
+        if self._autosave_path is None:
+            return
+        import json
+
+        try:
+            self._autosave_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"values": self.to_dict()}
+            self._autosave_path.write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+
+    def to_dict(self) -> dict[str, float]:
+        return {k: float(v) for k, v in self._values.items()}
+
+    def load_dict(self, data: dict[str, float] | None) -> None:
+        """Apply saved values onto defaults (unknown keys ignored)."""
+        self._values = {p.key: float(p.default) for p in _PARAM_BY_KEY.values()}
+        if data:
+            for key, value in data.items():
+                if key in _PARAM_BY_KEY:
+                    try:
+                        self.set(key, float(value), autosave=False)
+                    except (TypeError, ValueError):
+                        continue
+        self._autosave()
 
     def reset(self) -> None:
         self._values = {p.key: float(p.default) for p in _PARAM_BY_KEY.values()}
+        self._autosave()
 
     def reset_category(self, category_id: str) -> None:
         for cat in BALANCE_CATEGORIES:
@@ -768,6 +924,7 @@ class BalanceState:
                 continue
             for p in cat.params:
                 self._values[p.key] = float(p.default)
+            self._autosave()
             return
 
     def apply_preset(self, preset_id: str) -> str:
@@ -776,10 +933,12 @@ class BalanceState:
         if preset is None:
             self.reset()
             return "Default"
-        self.reset()
+        # Avoid double autosave from reset + sets.
+        self._values = {p.key: float(p.default) for p in _PARAM_BY_KEY.values()}
         for key, value in preset.values.items():
             if key in _PARAM_BY_KEY:
-                self.set(key, value)
+                self.set(key, value, autosave=False)
+        self._autosave()
         return preset.label
 
     def param(self, key: str) -> BalanceParam:
@@ -794,12 +953,14 @@ class BalanceState:
     def get_float(self, key: str) -> float:
         return self.get(key)
 
-    def set(self, key: str, value: float) -> None:
+    def set(self, key: str, value: float, *, autosave: bool = True) -> None:
         spec = self.param(key)
         clamped = max(spec.minimum, min(spec.maximum, float(value)))
         if spec.kind == "int":
             clamped = float(int(round(clamped)))
         self._values[key] = clamped
+        if autosave:
+            self._autosave()
 
     def adjust(self, key: str, delta: float) -> None:
         spec = self.param(key)

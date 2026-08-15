@@ -440,6 +440,14 @@ class VillagerInspectDialog:
         player_amounts = (
             amounts_from_obj(player_inventory) if player_inventory is not None else {}
         )
+        from food_spoilage import qualities_for_display
+
+        villager_qualities = qualities_for_display(villager.inventory)
+        player_qualities = (
+            qualities_for_display(player_inventory)
+            if player_inventory is not None
+            else {}
+        )
         v_sub = (
             f"{villager.inventory.cargo_total}/{villager.inventory.effective_capacity}"
             f"  seeds {villager.inventory.seed_total}/{villager.inventory.seed_capacity}"
@@ -1040,6 +1048,7 @@ class VillagerInspectDialog:
                 fonts=self._fonts(),
                 interactive=True,
                 hover_inv=self._hover_inv,
+                qualities=villager_qualities,
             )
             right_h, right_hits, right_tips, right_hov, *_ = draw_inv_grid(
                 surface,
@@ -1054,6 +1063,7 @@ class VillagerInspectDialog:
                 fonts=self._fonts(),
                 interactive=True,
                 hover_inv=self._hover_inv,
+                qualities=player_qualities,
             )
             self._inv_hits.extend(left_hits)
             self._inv_hits.extend(right_hits)
@@ -1086,6 +1096,7 @@ class VillagerInspectDialog:
                 fonts=self._fonts(),
                 interactive=False,
                 hover_inv=self._hover_inv,
+                qualities=villager_qualities,
             )
             self._inv_tip_hits.extend(tips)
             if hov:

@@ -548,7 +548,7 @@ def audit_disturbance_stats(world: World) -> dict[str, dict[str, float | int]]:
             cell = world.get_cell(x, y)
             if cell is None:
                 continue
-            if cell.terrain == TerrainType.PATH:
+            if cell.terrain == TerrainType.PATH or getattr(cell, "path_worn", False):
                 paths.add((x, y))
             elif cell.terrain == TerrainType.URBAN:
                 urbans.add((x, y))
@@ -579,7 +579,7 @@ def audit_disturbance_stats(world: World) -> dict[str, dict[str, float | int]]:
                     buckets["soil_near_path"].append(d)
                 else:
                     buckets["soil_remote"].append(d)
-            elif cell.terrain == TerrainType.PATH:
+            elif cell.terrain == TerrainType.PATH or getattr(cell, "path_worn", False):
                 buckets["path"].append(d)
             elif cell.terrain == TerrainType.URBAN:
                 buckets["urban"].append(d)
