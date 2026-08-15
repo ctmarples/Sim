@@ -122,6 +122,12 @@ from environment import (
     is_env_sample_day,
     pollination_yield_multiplier,
 )
+from farm_pipeline import (
+    FarmJob,
+    FarmJobKind,
+    barn_sheaf_keep_amount,
+    barn_sheaf_keys,
+)
 from settings import (
     BUILDING_STORAGE_CAPACITY,
     BUILDING_FOOTPRINT,
@@ -5146,6 +5152,24 @@ class Game:
                     return f"Harvesting {crop} for {label}"
                 return f"Tending {crop} at {label}"
             return f"Farming at {label}"
+        if building.kind == BuildingKind.FARM:
+            job = getattr(villager, "farm_job_kind", None)
+            if job == "THRESH":
+                return f"Threshing at {label}"
+            if job == "SEED_FETCH":
+                return f"Fetching seeds for {label}"
+            if job == "SHEAF_FETCH":
+                return f"Fetching sheaves for {label}"
+            if job == "EXPORT":
+                return f"Exporting from {label}"
+            if job == "WEED":
+                return f"Weeding at {label}"
+            if job == "PLOUGH":
+                return f"Ploughing at {label}"
+            if job == "SOW":
+                return f"Sowing at {label}"
+            if job == "HARVEST":
+                return f"Harvesting for {label}"
         return None
 
     def _villager_equip_tool(self) -> None:
@@ -9271,6 +9295,16 @@ class Game:
         if building.kind == BuildingKind.FARM:
             for key, want in self._farm_plan_seed_demand(building).items():
                 demand[key] = max(demand.get(key, 0), want)
+            barn = self._linked_barn(building)
+            if barn is not None:
+                self._migrate_sheaves_to_barn(building)
+                for key in barn_sheaf_keys():
+                    target = max(barn_sheaf_keep_amount(key), 2)
+                    have = int(getattr(barn, key, 0))
+                    room = barn.space_for_key(key)
+                    want = min(max(0, target - have), room)
+                    if want > 0:
+                        demand[key] = max(demand.get(key, 0), want)
         if cache is not None:
             cache[building.id] = demand
         return demand
@@ -9509,55 +9543,418 @@ class Game:
             return False
         return self._tool_fetchable(villager, tool)
 
+    def _linked_barn(self, farm: Building) -> Building | None:
+        """Completed barn annex for this farm, if any."""
+        if farm.kind != BuildingKind.FARM:
+            return None
+        from extensions import linked_extensions
+
+        for b in linked_extensions(farm, self.buildings):
+            if b.kind == BuildingKind.BARN:
+                return b
+        return None
+
+    def _migrate_sheaves_to_barn(self, farm: Building) -> None:
+        """Move leftover farm sheaves into the barn (one-time drain)."""
+        barn = self._linked_barn(farm)
+        if barn is None:
+            return
+        for key in barn_sheaf_keys():
+            while int(getattr(farm, key, 0)) > 0 and barn.space_for_key(key) > 0:
+                if not barn.can_add(1, key=key):
+                    break
+                setattr(farm, key, int(getattr(farm, key, 0)) - 1)
+                barn.add_item(key, 1)
+
+    def _barn_sheaf_have(
+        self,
+        farm: Building,
+        key: str,
+        extra: object | None = None,
+    ) -> int:
+        """Sheaves available for thresh: barn + leftover farm + optional pack."""
+        barn = self._linked_barn(farm)
+        total = int(getattr(barn, key, 0)) if barn is not None else 0
+        total += int(getattr(farm, key, 0))
+        if extra is not None:
+            total += int(getattr(extra, key, 0))
+        return total
+
+    def _deposit_sheaves_to_barn(
+        self, farm: Building, inventory: Inventory
+    ) -> int:
+        """Put sheaf produce into the barn; other goods still go to the farm."""
+        barn = self._linked_barn(farm)
+        moved = 0
+        if barn is not None:
+            self._migrate_sheaves_to_barn(farm)
+            for key in barn_sheaf_keys():
+                moved += barn.deposit_key_from(inventory, key)
+        farm.deposit_from_inventory(inventory)
+        return moved
+
+    def _consume_barn_thresh_inputs(
+        self, farm: Building, recipe, inventory: Inventory
+    ) -> None:
+        """Pull sheaf inputs from pack, then barn, then farm leftovers."""
+        barn = self._linked_barn(farm)
+        for key, need in recipe.inputs.items():
+            left = int(need)
+            take_inv = min(left, int(getattr(inventory, key, 0)))
+            if take_inv:
+                setattr(inventory, key, int(getattr(inventory, key, 0)) - take_inv)
+                left -= take_inv
+            if barn is not None and left > 0:
+                take_b = min(left, int(getattr(barn, key, 0)))
+                if take_b:
+                    setattr(barn, key, int(getattr(barn, key, 0)) - take_b)
+                    left -= take_b
+            if left > 0:
+                take_f = min(left, int(getattr(farm, key, 0)))
+                if take_f:
+                    setattr(farm, key, int(getattr(farm, key, 0)) - take_f)
+                    left -= take_f
+            if left > 0:
+                raise RuntimeError(f"barn thresh missing {key} x{left}")
+
+    def _apply_barn_thresh_recipe(
+        self, farm: Building, recipe, inventory: Inventory
+    ) -> None:
+        """Thresh: consume sheaves from barn, grain/straw land on the farm."""
+        self._consume_barn_thresh_inputs(farm, recipe, inventory)
+        from recipes import apply_recipe_outputs
+
+        apply_recipe_outputs(farm, recipe)
+        for key, n in recipe.inputs.items():
+            self.record_consumed(key, n)
+        for key, n in recipe.outputs.items():
+            self.record_produced(key, n)
+
+    def _barn_thresh_recipe_ready(
+        self, farm: Building, villager: Villager, recipe
+    ) -> bool:
+        from society import recipe_skill_gate
+        from recipes import recipe_output_fits
+
+        if not farm.is_recipe_enabled(recipe.name):
+            return False
+        if not recipe_skill_gate(recipe, worker=villager):
+            return False
+        stock = self._village_stock_amounts()
+        if not farm._recipe_output_fits(recipe, stock_amounts=stock):
+            return False
+        for key, need in recipe.inputs.items():
+            if self._barn_sheaf_have(farm, key, villager.inventory) < int(need):
+                return False
+        return True
+
     def _farm_barn_needs_sheaf_delivery(self, building: Building) -> bool:
-        """True when barn recipes need sheaves that are only at the storehouse."""
+        """True when the barn sheaf buffer is below keep and storehouse has sheaves."""
         if building.kind != BuildingKind.FARM or not building.addon_craft_recipes():
             return False
-        from recipes import missing_inputs
-
-        stock = self._village_stock_amounts()
-        for recipe in building.enabled_recipes():
-            if not recipe.inputs or not building.is_recipe_enabled(recipe.name):
+        barn = self._linked_barn(building)
+        if barn is None:
+            return False
+        self._migrate_sheaves_to_barn(building)
+        for key in barn_sheaf_keys():
+            target = max(barn_sheaf_keep_amount(key), 2)
+            have = int(getattr(barn, key, 0))
+            if have >= target:
                 continue
-            if not building._recipe_output_fits(recipe, stock_amounts=stock):
+            if barn.space_for_key(key) <= 0:
                 continue
-            gap = missing_inputs(building, recipe)
-            if not gap:
-                continue
-            for key, need in gap.items():
-                on_site = int(getattr(building, key, 0))
-                if on_site >= int(need):
-                    continue
-                if int(getattr(self.home_storage, key, 0)) > 0:
-                    return True
+            if int(getattr(self.home_storage, key, 0)) > 0:
+                return True
         return False
 
     def _farm_barn_craft_available(
         self, villager: Villager, building: Building
     ) -> bool:
-        """True when a linked barn has a craft the worker can run or walk to deposit for."""
+        """True when barn sheaves can be threshed into farm grain."""
         if building.kind != BuildingKind.FARM or not building.addon_craft_recipes():
             return False
-        stock = self._village_stock_amounts()
-        if self._craftable_recipe(building, worker=villager, stock_amounts=stock) is not None:
-            return True
-        from society import recipe_skill_gate
-
-        for recipe in building.enabled_recipes():
-            if not recipe.inputs:
-                continue
-            if not recipe_skill_gate(recipe, worker=villager):
-                continue
-            if not building._recipe_output_fits(recipe, stock_amounts=stock):
-                continue
-            if all(
-                int(getattr(building, key, 0))
-                + int(getattr(villager.inventory, key, 0))
-                >= int(need)
-                for key, need in recipe.inputs.items()
-            ):
+        self._migrate_sheaves_to_barn(building)
+        for recipe in building.addon_craft_recipes():
+            if self._barn_thresh_recipe_ready(building, villager, recipe):
                 return True
         return False
+
+    def _workplace_can_accept_cargo(
+        self, building: Building, inventory: Inventory
+    ) -> bool:
+        """Like Building.can_accept_from, but routes farm sheaves into the barn."""
+        if building.kind == BuildingKind.FARM:
+            barn = self._linked_barn(building)
+            if barn is not None:
+                for key in barn_sheaf_keys():
+                    if (
+                        int(getattr(inventory, key, 0)) > 0
+                        and barn.space_for_key(key) > 0
+                    ):
+                        return True
+        return building.can_accept_from(inventory)
+
+    def _sink_space_for_key(self, sink: Building, key: str) -> int:
+        """Room at a supply sink (barn buffer for farm sheaves)."""
+        if sink.kind == BuildingKind.FARM and key in barn_sheaf_keys():
+            barn = self._linked_barn(sink)
+            if barn is not None:
+                return barn.space_for_key(key)
+        return sink.space_for_key(key)
+
+    def _deposit_workplace_cargo(
+        self, building: Building, inventory: Inventory
+    ) -> None:
+        """Deposit into a workplace; farm sheaves go to the linked barn."""
+        if building.kind == BuildingKind.FARM and self._linked_barn(building) is not None:
+            self._deposit_sheaves_to_barn(building, inventory)
+            return
+        building.deposit_from_inventory(inventory)
+
+    def _farm_export_grain_keys(self) -> tuple[str, ...]:
+        """Mill inputs that also act as cereal seeds — surplus leaves the farm."""
+        return ("wheat_grain", "rye_grain")
+
+    def _farm_pack_has_export_cargo(
+        self, inventory: Inventory, villager: Villager | None = None
+    ) -> bool:
+        """True when grain/straw should leave for mill/storehouse (not farm unload)."""
+        job = getattr(villager, "farm_job_kind", None) if villager is not None else None
+        if job in (
+            FarmJobKind.SEED_FETCH.name,
+            FarmJobKind.SOW.name,
+            FarmJobKind.SHEAF_FETCH.name,
+        ):
+            return False
+        has_grain = any(
+            int(getattr(inventory, k, 0)) > 0 for k in self._farm_export_grain_keys()
+        )
+        has_straw = int(getattr(inventory, "straw", 0)) > 0
+        if not has_grain and not has_straw:
+            return False
+        # Active export trip — finish it even with a partial pack.
+        if job == FarmJobKind.EXPORT.name:
+            return True
+        # Full packs with grain/straw must not dump back onto the farm.
+        return inventory.is_full or not inventory.can_add(1)
+
+    def _farm_pack_needs_barn_or_farm_unload(
+        self, villager: Villager, building: Building
+    ) -> bool:
+        """Harvest unload: sheaves → barn, field produce → farm (not grain export)."""
+        inv = villager.inventory
+        if inv.is_empty:
+            return False
+        barn = self._linked_barn(building)
+        if barn is not None:
+            for key in barn_sheaf_keys():
+                if int(getattr(inv, key, 0)) > 0 and barn.space_for_key(key) > 0:
+                    return True
+        # Non-cereal produce (cabbage, flax, …) belongs on the farm tray.
+        sheaves = set(barn_sheaf_keys())
+        grain = set(self._farm_export_grain_keys())
+        for key in building.gather_deposit_keys():
+            if key in sheaves or key in grain or key == "straw":
+                continue
+            if int(getattr(inv, key, 0)) > 0 and building.space_for_key(key) > 0:
+                return True
+        return False
+
+    def _farm_export_destination(
+        self, villager: Villager, building: Building
+    ) -> tuple[tuple[int, int], Building | None]:
+        """Prefer mill when carrying grain it needs; else storehouse."""
+        home = self.world.home_pos
+        inv = villager.inventory
+        best: Building | None = None
+        best_key: tuple | None = None
+        for mill in self.buildings.values():
+            if mill.kind != BuildingKind.MILL:
+                continue
+            useful = False
+            for key in self._farm_export_grain_keys():
+                if int(getattr(inv, key, 0)) <= 0:
+                    continue
+                if mill.space_for_key(key) > 0:
+                    useful = True
+                    break
+            if not useful:
+                continue
+            mx, my = mill.center_cell()
+            dist = abs(mx - villager.x) + abs(my - villager.y)
+            key = (dist, mill.id)
+            if best_key is None or key < best_key:
+                best_key = key
+                best = mill
+        origin = (villager.x, villager.y)
+        if best is not None:
+            bx, by = best.center_cell()
+            walk = self._walk_goal_for_target(
+                bx, by, prefer_adjacent=True, from_pos=origin
+            )
+            return (walk or (bx, by)), best
+        walk = self._walk_goal_for_target(
+            home[0], home[1], prefer_adjacent=True, from_pos=origin
+        )
+        return (walk or home), None
+
+    def _farm_at_export_drop(
+        self,
+        villager: Villager,
+        dest: tuple[int, int],
+        sink: Building | None,
+    ) -> bool:
+        if (villager.x, villager.y) == dest:
+            return True
+        # Mill / home centres are often blocked — adjacent tile is enough to drop.
+        if sink is not None:
+            sx, sy = sink.center_cell()
+            return max(abs(villager.x - sx), abs(villager.y - sy)) <= 1
+        hx, hy = self.world.home_pos
+        return max(abs(villager.x - hx), abs(villager.y - hy)) <= 1
+
+    def _farm_finish_export_trip(
+        self, villager: Villager, building: Building
+    ) -> bool:
+        """Walk export cargo to mill or storehouse; never dump it back on the farm."""
+        if villager.inventory.is_empty:
+            return False
+        dest, sink = self._farm_export_destination(villager, building)
+        home = self.world.home_pos
+        villager.haul_building_id = sink.id if sink is not None else None
+        villager.state = VillagerState.DELIVERING
+        villager.target = dest
+        villager.farm_job_kind = FarmJobKind.EXPORT.name
+        if not self._farm_at_export_drop(villager, dest, sink):
+            self._step_villager_toward(villager, dest)
+            return True
+        if villager.work_cooldown > 0:
+            return True
+        if sink is not None:
+            sink.deposit_supply_from(villager.inventory)
+            # Leftover non-mill cargo → storehouse next.
+            if not villager.inventory.is_empty:
+                villager.haul_building_id = None
+                walk_home = self._walk_goal_for_target(
+                    home[0],
+                    home[1],
+                    prefer_adjacent=True,
+                    from_pos=(villager.x, villager.y),
+                )
+                villager.target = walk_home or home
+                villager.work_cooldown = self._villager_work_interval(villager)
+                return True
+        else:
+            self._deposit_home(villager.inventory, status=False)
+            self._restock_workplace_gear_at_home(villager)
+        villager.work_cooldown = self._villager_work_interval(villager)
+        if villager.inventory.is_empty:
+            villager.farm_job_kind = None
+            villager.state = VillagerState.IDLE
+            villager.target = None
+            villager.haul_building_id = None
+        return True
+
+    def _farm_thresh_site(self, building: Building) -> tuple[int, int]:
+        barn = self._linked_barn(building)
+        if barn is not None:
+            return barn.center_cell()
+        return building.center_cell()
+
+    def _execute_farm_sheaf_fetch(
+        self, villager: Villager, building: Building
+    ) -> None:
+        """Idle farmer: storehouse → barn sheaf buffer (no haul claim)."""
+        barn = self._linked_barn(building)
+        if barn is None:
+            villager.farm_job_kind = None
+            return
+        sheaf_keys = barn_sheaf_keys()
+        carrying = any(
+            int(getattr(villager.inventory, k, 0)) > 0 for k in sheaf_keys
+        )
+        villager.state = VillagerState.WORKING
+
+        if carrying:
+            dest = barn.center_cell()
+            villager.target = dest
+            if (villager.x, villager.y) != dest:
+                if villager.move_cooldown > 0:
+                    return
+                self._step_villager_toward(villager, dest)
+                return
+            if villager.work_cooldown > 0:
+                return
+            self._deposit_sheaves_to_barn(building, villager.inventory)
+            villager.work_cooldown = self._villager_work_interval(villager)
+            still = any(
+                int(getattr(villager.inventory, k, 0)) > 0 for k in sheaf_keys
+            )
+            if not still and not self._farm_barn_needs_sheaf_delivery(building):
+                villager.farm_job_kind = None
+                villager.target = None
+            return
+
+        if not self._farm_barn_needs_sheaf_delivery(building):
+            villager.farm_job_kind = None
+            return
+
+        if not any(villager.inventory.can_add(1, key=k) for k in sheaf_keys):
+            # Pack blocked — dump compatible cargo at farm/barn first.
+            if self._workplace_can_accept_cargo(building, villager.inventory):
+                dest = building.center_cell()
+                villager.target = dest
+                if (villager.x, villager.y) != dest:
+                    if villager.move_cooldown > 0:
+                        return
+                    self._step_villager_toward(villager, dest)
+                    return
+                if villager.work_cooldown > 0:
+                    return
+                self._deposit_workplace_cargo(building, villager.inventory)
+                villager.work_cooldown = self._villager_work_interval(villager)
+                return
+            villager.farm_job_kind = None
+            return
+
+        home = self.world.home_pos
+        villager.target = home
+        if (villager.x, villager.y) != home:
+            if villager.move_cooldown > 0:
+                return
+            self._step_villager_toward(villager, home)
+            return
+        if villager.work_cooldown > 0:
+            return
+        taken = 0
+        for key in sheaf_keys:
+            target = max(barn_sheaf_keep_amount(key), 2)
+            have_b = int(getattr(barn, key, 0))
+            have_i = int(getattr(villager.inventory, key, 0))
+            want = max(0, target - have_b - have_i)
+            room = barn.space_for_key(key) - have_i
+            while (
+                want > 0
+                and room > 0
+                and taken < 6
+                and int(getattr(self.home_storage, key, 0)) > 0
+                and villager.inventory.can_add(1, key=key)
+            ):
+                setattr(
+                    self.home_storage, key, int(getattr(self.home_storage, key, 0)) - 1
+                )
+                setattr(
+                    villager.inventory,
+                    key,
+                    int(getattr(villager.inventory, key, 0)) + 1,
+                )
+                taken += 1
+                want -= 1
+                room -= 1
+        villager.work_cooldown = self._villager_work_interval(villager)
+        if taken <= 0:
+            villager.farm_job_kind = None
+        return
 
     def _workplace_primary_available(
         self, villager: Villager, building: Building
@@ -9596,53 +9993,11 @@ class Game:
         if self._gather_cargo_needs_delivery(villager, building):
             return False
 
-        # Farm: harvest / local sow before storehouse seeds; sticky plough must not
-        # block ingredient trips when soil is ready to plant.
+        # Farm: pipeline job board — any claimable job counts as primary.
         if building.kind == BuildingKind.FARM:
-            # Pause field work while the store cannot take produce, or while a
-            # clear drain is in progress (avoids refill fights mid-clear).
             if building.space_left <= 0 and building.haulable_total() > 0:
-                return False
-            if (
-                self._farm_or_processor_needs_clear(building)
-                and self._farm_clear_in_progress(building)
-                and self._find_farm_harvest(villager, building) is None
-            ):
-                return False
-            # Sticky field work is cheap; prefer it before full-plan scans.
-            sticky_ok = (
-                villager.target is not None
-                and villager.state == VillagerState.WORKING
-                and not self._is_station_or_home_cell(villager.target)
-                and self._farm_target_still_valid(villager, building, villager.target)
-            )
-            if self._workplace_needs_home_supply(building) and self._farm_has_unsown_soil(
-                villager, building
-            ):
-                # Local sow still beats a storehouse trip. The haul-claim holder
-                # must be free to fetch seeds — do not keep them on weed/plough.
-                # Coworkers without the claim should still weed / plough / harvest.
-                if self._find_farm_sow_work(villager, building) is not None:
-                    return True
-                owns_haul = self._owns_haul_claim(villager, building.id)
-                if (
-                    self._find_farm_harvest(villager, building, in_season_only=True)
-                    is not None
-                ):
-                    return True
-                if owns_haul:
-                    # Claim holder: skip weed/plough so they peel off for seeds.
-                    return False
-                # Non-claim workers fall through to sticky / weed / plough below.
-            if sticky_ok:
-                return True
-            if self._find_farm_sow_work(villager, building) is not None:
-                return True
-            if self._find_farm_harvest(villager, building, in_season_only=True) is not None:
-                return True
-            if self._find_farm_weed_work(villager, building) is not None:
-                return True
-            return self._find_farm_plough_work(villager, building) is not None
+                return True  # EXPORT work
+            return self._farm_board_has_work(villager, building)
 
         # Hunt / fish / forage stickies first — cheap ids, and they must not pay
         # `_work_target_valid` on a prey/shore cell that is not a gather tile.
@@ -9892,6 +10247,8 @@ class Game:
         """Assigned worker hauls recipe outputs to the storehouse when output is full."""
         home = self.world.home_pos
         if not villager.inventory.is_empty:
+            if building.kind == BuildingKind.FARM:
+                return self._farm_finish_export_trip(villager, building)
             # Carrying cleared meals / wares → storehouse (not back into the station).
             villager.haul_building_id = None
             villager.state = VillagerState.DELIVERING
@@ -10018,7 +10375,7 @@ class Game:
                 and self._farm_or_processor_needs_clear(building)
             ):
                 return bid
-            if self._farm_barn_has_work(villager, building):
+            if self._farm_board_has_work(villager, building):
                 return bid
 
         # Re-scan primary only (step 5/7): if any slot can produce now, prefer it
@@ -10070,10 +10427,17 @@ class Game:
     def _assigned_transport_destination(
         self, villager: Villager, building: Building
     ) -> tuple[int, int]:
-        """Assigned workers always drop cargo at their workplace storage.
-
-        Village haulers move goods between workplaces and the storehouse.
-        """
+        """Assigned workers drop cargo at workplace storage (barn for sheaves)."""
+        if building.kind == BuildingKind.FARM:
+            barn = self._linked_barn(building)
+            if barn is not None and any(
+                int(getattr(villager.inventory, k, 0)) > 0 for k in barn_sheaf_keys()
+            ):
+                bx, by = barn.center_cell()
+                walk = self._walk_goal_for_target(
+                    bx, by, prefer_adjacent=True, from_pos=(villager.x, villager.y)
+                )
+                return walk or (bx, by)
         return building.center_cell()
 
     def _withdraw_workplace_recipe_output(
@@ -10122,9 +10486,23 @@ class Game:
             # Farm harvest → farm store when it has room; otherwise storehouse.
             # While the farm cannot take this cargo, only divert full packs home —
             # partial packs must keep harvesting instead of bouncing to the store.
+            # Export grain/straw never unloads at the farm (bounce loop).
+            if (
+                building.kind == BuildingKind.FARM
+                and (
+                    getattr(villager, "farm_job_kind", None) == FarmJobKind.EXPORT.name
+                    or self._farm_pack_has_export_cargo(villager.inventory, villager)
+                )
+            ):
+                return self._farm_finish_export_trip(villager, building)
+
             farm_harvest = (
                 building.kind == BuildingKind.FARM
-                and building.has_gather_cargo(villager.inventory)
+                and (
+                    self._farm_pack_needs_barn_or_farm_unload(villager, building)
+                    or building.has_gather_cargo(villager.inventory)
+                )
+                and not self._farm_pack_has_export_cargo(villager.inventory, villager)
             )
             gather_cargo = building.has_gather_cargo(villager.inventory)
             # Fisher/hunter/forager: once walking to the storehouse with gather
@@ -10146,8 +10524,8 @@ class Game:
                     return True
                 self._step_villager_toward(villager, home)
                 return True
-            farm_can_take = farm_harvest and building.can_accept_from(
-                villager.inventory
+            farm_can_take = farm_harvest and self._workplace_can_accept_cargo(
+                building, villager.inventory
             )
             pack_full = (
                 villager.inventory.is_full or not villager.inventory.can_add(1)
@@ -10174,7 +10552,7 @@ class Game:
                     return True
                 self._step_villager_toward(villager, home)
                 return True
-            if farm_harvest or building.can_accept_from(villager.inventory):
+            if farm_harvest or self._workplace_can_accept_cargo(building, villager.inventory):
                 villager.haul_building_id = None
                 dest = self._assigned_transport_destination(villager, building)
                 villager.state = VillagerState.DELIVERING
@@ -10184,13 +10562,13 @@ class Game:
                         if building.is_processor():
                             building.deposit_supply_from(villager.inventory)
                         else:
-                            building.deposit_from_inventory(villager.inventory)
+                            self._deposit_workplace_cargo(building, villager.inventory)
                         villager.work_cooldown = self._villager_work_interval(villager)
                         if villager.inventory.is_empty:
                             villager.state = VillagerState.IDLE
                             villager.target = None
                             return True
-                        if building.can_accept_from(villager.inventory):
+                        if self._workplace_can_accept_cargo(building, villager.inventory):
                             # More workplace-compatible cargo — keep depositing next tick.
                             return True
                         # Leftover cargo this workplace will not take (e.g. fish on a
@@ -10306,7 +10684,10 @@ class Game:
         self, villager: Villager, building: Building
     ) -> None:
         """One work tick: drop off inputs / plant stock, then fill remaining space with produce."""
-        if building.is_processor() or building.is_splitter() or building.is_market() or building.kind in (
+        if building.kind == BuildingKind.FARM and self._linked_barn(building) is not None:
+            self._deposit_sheaves_to_barn(building, villager.inventory)
+            building.deposit_supply_from(villager.inventory)
+        elif building.is_processor() or building.is_splitter() or building.is_market() or building.kind in (
             BuildingKind.FARM,
             BuildingKind.FORESTER,
         ):
@@ -10363,7 +10744,7 @@ class Game:
             and self._farm_or_processor_needs_clear(building)
         ):
             return True
-        if self._farm_barn_has_work(villager, building):
+        if self._farm_board_has_work(villager, building):
             return True
         if self._workplace_accepts_carry(villager, building):
             return True
@@ -11293,37 +11674,22 @@ class Game:
     def _farm_barn_has_work(
         self, villager: Villager, building: Building
     ) -> bool:
-        """True when linked barn threshing or sheaf delivery should run."""
+        """True when barn thresh or sheaf buffer top-up should run."""
         if building.kind != BuildingKind.FARM:
-            return False
-        waiting_on_grain = self._farm_sow_waiting_on_barn_grain(villager, building)
-        # Only defer barn for sow / in-season harvest. Weeds and plough must not
-        # deadlock threshing when seed hauls suppress field primary work.
-        if not waiting_on_grain and self._farm_has_urgent_field_work(
-            villager, building
-        ):
             return False
         if self._farm_barn_craft_available(villager, building):
             return True
         return self._farm_barn_needs_sheaf_delivery(building)
 
-    def _farm_has_urgent_field_work(
+    def _farm_has_pending_field_work(
         self, villager: Villager, building: Building
     ) -> bool:
-        """Sow or in-season harvest that should outrank barn threshing."""
+        """True when sow/harvest/weed/plough tiles exist (used by clear latch)."""
         if not self._fields_near_farm(building):
             return False
         if self._find_farm_harvest(villager, building, in_season_only=True) is not None:
             return True
-        return self._find_farm_sow_work(villager, building) is not None
-
-    def _farm_has_pending_field_work(
-        self, villager: Villager, building: Building
-    ) -> bool:
-        """True when in-season harvest, sow, plough, or weeds should run before barn threshing."""
-        if not self._fields_near_farm(building):
-            return False
-        if self._farm_has_urgent_field_work(villager, building):
+        if self._find_farm_sow_work(villager, building) is not None:
             return True
         if self._find_farm_weed_work(villager, building) is not None:
             return True
@@ -11361,7 +11727,6 @@ class Game:
         own_craft = villager.craft_recipe_name if villager is not None else None
         for recipe in building.addon_craft_recipes():
             if int(building.recipe_progress.get(recipe.name, 0)) > 0:
-                # Let the worker already on this recipe keep advancing it.
                 if recipe.name != own_craft:
                     names.add(recipe.name)
         bx, by = building.center_cell()
@@ -11377,210 +11742,326 @@ class Game:
                 names.add(name)
         return frozenset(names)
 
-    def _farm_is_barn_peeler(
-        self, villager: Villager, building: Building
-    ) -> bool:
-        """Lowest-id assigned farm worker may thresh while coworkers do field work."""
-        if building.kind != BuildingKind.FARM:
-            return False
-        if not (
-            self._farm_barn_craft_available(villager, building)
-            or self._farm_barn_needs_sheaf_delivery(building)
-        ):
-            return False
-        peer_ids = [
-            other.id
-            for other in self.villagers
-            if building.id in self._villager_workplace_ids(other)
-        ]
-        return bool(peer_ids) and min(peer_ids) == villager.id
+    # ------------------------------------------------------------------
+    # Farm pipeline job board
+    # ------------------------------------------------------------------
+    def _farm_parse_job_kind(self, villager: Villager) -> FarmJobKind | None:
+        raw = getattr(villager, "farm_job_kind", None)
+        if not raw:
+            return None
+        try:
+            return FarmJobKind[str(raw)]
+        except KeyError:
+            villager.farm_job_kind = None
+            return None
 
-    def _try_farm_barn_work(self, villager: Villager, building: Building) -> bool:
-        """Thresh at the barn, or fetch sheaves, when field work is not blocking grain."""
-        waiting_on_grain = self._farm_sow_waiting_on_barn_grain(villager, building)
-        if not waiting_on_grain and self._farm_has_urgent_field_work(
-            villager, building
-        ):
-            return False
-        if self._try_addon_craft(villager, building):
-            return True
-        if (
-            self._farm_barn_needs_sheaf_delivery(building)
-            and self._maybe_assigned_transport(villager, building)
-        ):
-            return True
+    def _farm_clear_job(self, villager: Villager) -> None:
+        villager.farm_job_kind = None
+        villager.craft_recipe_name = None
+        if villager.state == VillagerState.WORKING:
+            villager.target = None
+            self._clear_villager_path(villager)
+
+    def _farm_thresh_slot_taken(
+        self, building: Building, villager_id: int
+    ) -> bool:
+        site = self._farm_thresh_site(building)
+        for other in self.villagers:
+            if other.id == villager_id:
+                continue
+            if building.id not in self._villager_workplace_ids(other):
+                continue
+            if getattr(other, "farm_job_kind", None) == FarmJobKind.THRESH.name:
+                return True
+            if other.craft_recipe_name and other.state == VillagerState.WORKING:
+                if other.target == site or (other.x, other.y) == site:
+                    return True
         return False
 
-    def _update_farmer(self, villager: Villager, building: Building) -> None:
-        """Plough, sow, and harvest according to each field plan's seasonal calendar."""
-        # Finish in-progress storehouse / farm-clear trips before field stickies
-        # overwrite the delivery target (farm centre is not a valid field tile).
-        if villager.state in (VillagerState.HAULING, VillagerState.DELIVERING):
-            if self._update_assigned_transport(villager, building):
-                return
+    def _farm_can_take_logistics(
+        self, villager: Villager, building: Building
+    ) -> bool:
+        """Assigned farmer may fetch/export if haul claim is free or owned."""
+        if self._owns_haul_claim(villager, building.id):
+            return True
+        claimers = [
+            v
+            for v in self.villagers
+            if v.haul_building_id == building.id
+            and v.state in (VillagerState.HAULING, VillagerState.DELIVERING)
+        ]
+        return not claimers
+
+    def _farm_board_has_work(
+        self, villager: Villager, building: Building
+    ) -> bool:
+        return self._assign_farm_job(villager, building, preview=True) is not None
+
+    def _farm_job_still_valid(
+        self, villager: Villager, building: Building, kind: FarmJobKind
+    ) -> bool:
+        if kind == FarmJobKind.DELIVER:
+            return self._gather_cargo_needs_delivery(
+                villager, building
+            ) or building.has_gather_cargo(villager.inventory)
+        if kind == FarmJobKind.THRESH:
+            return self._farm_barn_craft_available(villager, building)
+        if kind == FarmJobKind.SEED_FETCH:
+            return self._farm_has_unsown_soil(
+                villager, building
+            ) and self._workplace_needs_home_supply(building)
+        if kind == FarmJobKind.SHEAF_FETCH:
+            carrying = any(
+                int(getattr(villager.inventory, k, 0)) > 0 for k in barn_sheaf_keys()
+            )
+            return carrying or self._farm_barn_needs_sheaf_delivery(building)
+        if kind == FarmJobKind.EXPORT:
+            # Finish the outbound trip before looking for more clear work.
+            if not villager.inventory.is_empty:
+                return True
+            return building.haulable_total() > 0 and (
+                self._farm_or_processor_needs_clear(building)
+                or building.space_left <= 0
+                or any(
+                    building.haulable_amount(k) > 0
+                    for k in ("wheat_grain", "rye_grain", "wheat", "rye", "straw")
+                )
+            )
+        if kind in (
+            FarmJobKind.SOW,
+            FarmJobKind.HARVEST,
+            FarmJobKind.WEED,
+            FarmJobKind.PLOUGH,
+        ):
+            cell = villager.target
+            if cell is None:
+                return False
+            return self._farm_target_still_valid(villager, building, cell)
+        return False
+
+    def _assign_farm_job(
+        self,
+        villager: Villager,
+        building: Building,
+        *,
+        preview: bool = False,
+    ) -> FarmJob | None:
+        """Pick the highest-priority open job for this farmer (pipeline order)."""
+        bid = building.id
+
+        # Full harvest pack: unload sheaves to barn / produce to farm.
+        # Grain/straw packs are EXPORT (mill / storehouse) — never bounce at farm.
+        if not villager.inventory.is_empty:
             if (
-                villager.inventory.is_empty
-                and building.haulable_total() > 0
-                and not self._general_hauler_serving(building.id)
-                and self._clear_backed_up_outputs_to_home(villager, building)
+                getattr(villager, "farm_job_kind", None) == FarmJobKind.EXPORT.name
+                or self._farm_pack_has_export_cargo(villager.inventory, villager)
             ):
-                return
+                return FarmJob(FarmJobKind.EXPORT, bid)
+            if self._gather_cargo_needs_delivery(
+                villager, building
+            ) or self._farm_pack_needs_barn_or_farm_unload(villager, building):
+                return FarmJob(FarmJobKind.DELIVER, bid)
 
-        # Hard delivery when the pack blocks more field work.
-        if self._gather_cargo_needs_delivery(villager, building):
-            self._force_assigned_delivery(villager, building)
-            return
+        if self._fields_near_farm(building):
+            sow = self._find_farm_sow_work(villager, building)
+            if sow is not None:
+                if not preview and not self._ensure_work_tool(villager, "hoe"):
+                    sow = None
+                if sow is not None:
+                    return FarmJob(FarmJobKind.SOW, bid, cell=sow)
 
-        # Carrying harvest while the farm cannot take it → storehouse.
-        # Do not divert partial packs just because a clear is wanted — keep
-        # harvesting until the pack is full, then deposit at the farm.
+            harvest = self._find_farm_harvest(
+                villager, building, in_season_only=True
+            )
+            if harvest is not None:
+                if not preview and not self._ensure_work_tool(villager, "hoe"):
+                    harvest = None
+                if harvest is not None:
+                    return FarmJob(FarmJobKind.HARVEST, bid, cell=harvest)
+
+            hoe_ok = preview or self._ensure_work_tool(villager, "hoe")
+            if hoe_ok:
+                weed = self._find_farm_weed_work(villager, building)
+                if weed is not None:
+                    return FarmJob(FarmJobKind.WEED, bid, cell=weed)
+                plough = self._find_farm_plough_work(villager, building)
+                if plough is not None:
+                    return FarmJob(FarmJobKind.PLOUGH, bid, cell=plough)
+                leftover = self._find_farm_harvest(villager, building)
+                if leftover is not None:
+                    return FarmJob(FarmJobKind.HARVEST, bid, cell=leftover)
+
+        if self._farm_barn_craft_available(villager, building):
+            if preview or not self._farm_thresh_slot_taken(building, villager.id):
+                return FarmJob(FarmJobKind.THRESH, bid)
+
+        # Idle farmers top up the barn — no haul-claim required.
+        if self._farm_barn_needs_sheaf_delivery(building):
+            carrying = any(
+                int(getattr(villager.inventory, k, 0)) > 0 for k in barn_sheaf_keys()
+            )
+            fetchers = sum(
+                1
+                for o in self.villagers
+                if o.id != villager.id
+                and getattr(o, "farm_job_kind", None) == FarmJobKind.SHEAF_FETCH.name
+                and building.id in self._villager_workplace_ids(o)
+            )
+            if preview or carrying or fetchers < 2:
+                return FarmJob(FarmJobKind.SHEAF_FETCH, bid)
+
         if (
-            building.has_gather_cargo(villager.inventory)
-            and building.space_left <= 0
-            and self._clear_backed_up_outputs_to_home(villager, building)
+            self._farm_has_unsown_soil(villager, building)
+            and self._find_farm_sow_work(villager, building) is None
+            and self._workplace_needs_home_supply(building)
+            and self._farm_can_take_logistics(villager, building)
         ):
-            return
+            demand = self._building_supply_demand(building)
+            seed_demand = {k: v for k, v in demand.items() if k in SEED_KEYS}
+            if seed_demand:
+                return FarmJob(FarmJobKind.SEED_FETCH, bid)
 
-        # One empty-handed claim-holder peels off to clear stock; coworkers harvest.
         if (
-            villager.inventory.is_empty
-            and self._farm_or_processor_needs_clear(building)
+            building.haulable_total() > 0
+            and self._farm_can_take_logistics(villager, building)
             and not self._general_hauler_serving(building.id)
-            and self._owns_haul_claim(villager, building.id)
-            and self._clear_backed_up_outputs_to_home(villager, building)
         ):
+            if (
+                self._farm_or_processor_needs_clear(building)
+                or building.space_left <= 0
+                or any(
+                    building.haulable_amount(k) > 0
+                    for k in ("wheat_grain", "rye_grain")
+                )
+            ):
+                return FarmJob(FarmJobKind.EXPORT, bid)
+
+        return None
+
+    def _execute_farm_job(
+        self, villager: Villager, building: Building, kind: FarmJobKind
+    ) -> None:
+        if kind == FarmJobKind.DELIVER:
+            if self._farm_pack_has_export_cargo(villager.inventory, villager):
+                villager.farm_job_kind = FarmJobKind.EXPORT.name
+                self._farm_finish_export_trip(villager, building)
+                return
+            self._force_assigned_delivery(villager, building)
+            if villager.inventory.is_empty:
+                villager.farm_job_kind = None
+            elif self._farm_pack_has_export_cargo(villager.inventory, villager):
+                villager.farm_job_kind = FarmJobKind.EXPORT.name
+            return
+
+        if kind == FarmJobKind.THRESH:
+            if self._try_addon_craft(villager, building):
+                return
+            villager.farm_job_kind = None
+            return
+
+        if kind == FarmJobKind.SEED_FETCH:
+            if self._update_plant_stock_withdraw(villager, building):
+                return
+            if self._maybe_assigned_transport(villager, building):
+                return
+            villager.farm_job_kind = None
+            return
+
+        if kind == FarmJobKind.SHEAF_FETCH:
+            self._execute_farm_sheaf_fetch(villager, building)
+            return
+
+        if kind == FarmJobKind.EXPORT:
+            if not villager.inventory.is_empty:
+                self._farm_finish_export_trip(villager, building)
+                return
+            if self._clear_backed_up_outputs_to_home(villager, building):
+                villager.farm_job_kind = FarmJobKind.EXPORT.name
+                return
+            villager.farm_job_kind = None
             return
 
         if not self._ensure_work_tool(villager, "hoe"):
             self._maybe_assigned_transport(villager, building)
             return
-
-        # Primary field work before storehouse seed trips.
-        if self._workplace_primary_available(villager, building):
-            pass
-        elif self._maybe_assigned_transport(villager, building):
-            return
-        elif (
-            building.kind == BuildingKind.FARM
-            and self._farm_or_processor_needs_clear(building)
-            and not self._farm_has_pending_field_work(villager, building)
-        ):
-            if self._try_farm_barn_work(villager, building):
-                return
-            self._set_workplace_idle(villager)
-            return
-
-        if not self._fields_near_farm(building):
-            if self._try_farm_barn_work(villager, building):
-                return
-            if (
-                building.haulable_total() > 0
-                and not self._general_hauler_serving(building.id)
-                and self._clear_backed_up_outputs_to_home(villager, building)
-            ):
-                return
-            villager.state = VillagerState.IDLE
-            villager.target = None
-            return
-
-        # Keep sticky *field* targets only — never treat delivery/haul goals as tiles.
-        # Drop weed-only sticky targets when ripe harvest is waiting (avoid weeding forever).
-        if villager.target is not None and villager.state == VillagerState.WORKING:
-            claimed = self._claimed_work_cells(villager.id)
-            tx, ty = villager.target
-            tcell = self.world.get_cell(tx, ty)
-            weed_only = (
-                tcell is not None
-                and tcell.feature == FeatureType.CROP_HERB
-                and not self.world.crop_herb_ready(tx, ty)
-                and float(getattr(tcell, "weeds", 0.0))
-                >= self.balance.get_float("WEED_ACTION_THRESHOLD")
-            )
-            if weed_only and self._find_farm_harvest(
-                villager, building, in_season_only=True
-            ) is not None:
-                villager.target = None
-                self._clear_villager_path(villager)
-            elif (
-                villager.target in claimed
-                or not self._farm_target_still_valid(villager, building, villager.target)
-            ):
-                villager.target = None
-                self._clear_villager_path(villager)
-
-        if villager.target is None or villager.state != VillagerState.WORKING:
-            villager.target = None
-            sow_first = self._find_farm_sow_work(villager, building)
-            harvest_in_season = (
-                None
-                if sow_first is not None
-                else self._find_farm_harvest(villager, building, in_season_only=True)
-            )
-            # Peel off for barn thresh when sow needs grain, this worker holds the
-            # haul claim, or they are the designated barn peeler (lowest id) so
-            # coworkers can weed/plough in parallel instead of all stacking on sheaves.
-            owns_haul = self._owns_haul_claim(villager, building.id)
-            if sow_first is None and (harvest_in_season is None or owns_haul):
-                if (
-                    self._farm_sow_waiting_on_barn_grain(villager, building)
-                    or owns_haul
-                    or self._farm_is_barn_peeler(villager, building)
-                ):
-                    if self._try_farm_barn_work(villager, building):
-                        return
-                    if self._update_plant_stock_withdraw(villager, building):
-                        return
-            weed_first = (
-                None
-                if sow_first is not None or harvest_in_season is not None
-                else self._find_farm_weed_work(villager, building)
-            )
-            leftover_harvest = (
-                None
-                if sow_first is not None or harvest_in_season is not None
-                else self._find_farm_harvest(villager, building)
-            )
-            target = (
-                sow_first
-                or harvest_in_season
-                or weed_first
-                or self._find_farm_plough_work(villager, building)
-                or leftover_harvest
-            )
-            if target is None:
-                if self._try_farm_barn_work(villager, building):
-                    return
-                if self._maybe_assigned_transport(villager, building):
-                    return
-                if self._workplace_accepts_carry(villager, building):
-                    self._force_assigned_delivery(villager, building)
-                    return
-                # No field work: move farm produce to the storehouse.
-                if (
-                    building.haulable_total() > 0
-                    and not self._general_hauler_serving(building.id)
-                    and self._owns_haul_claim(villager, building.id)
-                    and self._clear_backed_up_outputs_to_home(villager, building)
-                ):
-                    return
-                self._set_workplace_idle(villager)
-                return
-            villager.target = target
-            self._register_field_claim(villager, target)
-
         target = villager.target
+        if target is None or not self._farm_target_still_valid(
+            villager, building, target
+        ):
+            villager.farm_job_kind = None
+            villager.target = None
+            return
+        claimed = self._claimed_work_cells(villager.id)
+        if target in claimed:
+            villager.farm_job_kind = None
+            villager.target = None
+            return
+        self._register_field_claim(villager, target)
         villager.state = VillagerState.WORKING
-
         if (villager.x, villager.y) == target:
             if villager.work_cooldown == 0:
                 self._villager_perform_farm(villager, building, target)
                 villager.work_cooldown = self._villager_work_interval(villager)
                 villager.target = None
+                villager.farm_job_kind = None
                 self._clear_villager_path(villager)
-                if self._gather_cargo_needs_delivery(villager, building):
+                if self._farm_pack_has_export_cargo(villager.inventory, villager) and (
+                    self._gather_cargo_needs_delivery(villager, building)
+                    or not villager.inventory.can_add(1)
+                ):
+                    villager.farm_job_kind = FarmJobKind.EXPORT.name
+                    self._farm_finish_export_trip(villager, building)
+                elif self._gather_cargo_needs_delivery(villager, building):
+                    villager.farm_job_kind = FarmJobKind.DELIVER.name
                     self._force_assigned_delivery(villager, building)
         else:
             self._step_or_clear_field_target(villager, target)
+
+    def _update_farmer(self, villager: Villager, building: Building) -> None:
+        """Farm pipeline: claim one job, run it to completion."""
+        job_name = getattr(villager, "farm_job_kind", None)
+
+        # Mid-trip export must reach mill/storehouse — never re-deposit on the farm.
+        if (
+            not villager.inventory.is_empty
+            and (
+                job_name == FarmJobKind.EXPORT.name
+                or self._farm_pack_has_export_cargo(villager.inventory, villager)
+            )
+        ):
+            self._farm_finish_export_trip(villager, building)
+            return
+
+        if villager.state in (VillagerState.HAULING, VillagerState.DELIVERING):
+            if job_name == FarmJobKind.DELIVER.name or self._farm_pack_needs_barn_or_farm_unload(
+                villager, building
+            ):
+                if self._update_assigned_transport(villager, building):
+                    return
+            elif self._update_assigned_transport(villager, building):
+                return
+            villager.farm_job_kind = None
+
+        kind = self._farm_parse_job_kind(villager)
+        if kind is not None and not self._farm_job_still_valid(
+            villager, building, kind
+        ):
+            self._farm_clear_job(villager)
+            kind = None
+
+        if kind is None:
+            job = self._assign_farm_job(villager, building)
+            if job is None:
+                self._set_workplace_idle(villager)
+                return
+            villager.farm_job_kind = job.kind.name
+            kind = job.kind
+            if job.cell is not None:
+                villager.target = job.cell
+                self._register_field_claim(villager, job.cell)
+                villager.state = VillagerState.WORKING
+
+        self._execute_farm_job(villager, building, kind)
 
     def _update_processor(self, villager: Villager, building: Building) -> None:
         """Mill / Kitchen / Craft bench: stay on-site and craft from building stock."""
@@ -11666,6 +12147,14 @@ class Game:
         recipes = building.addon_craft_recipes()
         if not recipes:
             return False
+
+        barn = (
+            self._linked_barn(building)
+            if building.kind == BuildingKind.FARM
+            else None
+        )
+        if barn is not None:
+            return self._try_barn_thresh(villager, building, barn, recipes)
 
         bx, by = building.center_cell()
         at_site = (villager.x, villager.y) == (bx, by)
@@ -11769,6 +12258,70 @@ class Game:
         if building.advance_recipe_progress(recipe):
             self._apply_recipe_tracked(building, recipe)
             self._gain_job_skill(villager, building.kind.name)
+        villager.work_cooldown = self._villager_work_interval(villager)
+        return True
+
+    def _try_barn_thresh(
+        self, villager: Villager, farm: Building, barn: Building, recipes
+    ) -> bool:
+        """Thresh at the barn: consume barn sheaves, grain/straw land on the farm."""
+        site = barn.center_cell()
+        at_site = (villager.x, villager.y) == site
+        if at_site:
+            self._deposit_sheaves_to_barn(farm, villager.inventory)
+
+        claimed = self._coworker_addon_craft_claims(farm, villager.id)
+        prefer = villager.craft_recipe_name
+        if prefer in claimed:
+            prefer = None
+        ordered = list(recipes)
+        if prefer:
+            ordered.sort(key=lambda r: 0 if r.name == prefer else 1)
+
+        ready = None
+        for candidate in ordered:
+            if candidate.name in claimed:
+                continue
+            if self._barn_thresh_recipe_ready(farm, villager, candidate):
+                ready = candidate
+                break
+
+        if ready is None:
+            resume = villager.craft_recipe_name
+            if resume and int(farm.recipe_progress.get(resume, 0)) > 0:
+                # Finish an in-progress craft if inputs are still available.
+                cand = next((r for r in recipes if r.name == resume), None)
+                if cand is not None and self._barn_thresh_recipe_ready(
+                    farm, villager, cand
+                ):
+                    ready = cand
+            if ready is None:
+                villager.craft_recipe_name = None
+                if not at_site and self._farm_barn_craft_available(villager, farm):
+                    villager.target = site
+                    villager.state = VillagerState.WORKING
+                    if villager.move_cooldown > 0:
+                        return True
+                    self._step_villager_toward(villager, site)
+                    return True
+                return False
+
+        villager.target = site
+        villager.state = VillagerState.WORKING
+        if not at_site:
+            if villager.move_cooldown > 0:
+                return True
+            self._step_villager_toward(villager, site)
+            return True
+
+        self._deposit_sheaves_to_barn(farm, villager.inventory)
+        villager.craft_recipe_name = ready.name
+        if villager.work_cooldown > 0:
+            return True
+        self._spend_work_energy(villager)
+        if farm.advance_recipe_progress(ready):
+            self._apply_barn_thresh_recipe(farm, ready, villager.inventory)
+            self._gain_job_skill(villager, farm.kind.name)
         villager.work_cooldown = self._villager_work_interval(villager)
         return True
 
@@ -12001,14 +12554,24 @@ class Game:
         harvest = [pos for pos in tiles if pos not in claimed]
         return self._closest_of((villager.x, villager.y), harvest)
 
+    def _farm_weed_hoe_threshold(self) -> float:
+        """Cover at which farmers hoe.
+
+        Saves may still have the old 0.2 default; clamp so workers clear the UI
+        "watch weed cover" band (~0.10+) instead of idling/threshing beside it.
+        """
+        configured = float(self.balance.get_float("WEED_ACTION_THRESHOLD"))
+        return min(max(0.05, configured), 0.1)
+
     def _find_farm_weed_work(
         self, villager: Villager, building: Building
     ) -> tuple[int, int] | None:
         """Closest crop tile whose weeds need the hoe (not a harvest)."""
-        threshold = self.balance.get_float("WEED_ACTION_THRESHOLD")
+        threshold = self._farm_weed_hoe_threshold()
         claimed = self._claimed_work_cells(villager.id)
         cache = getattr(self, "_tick_farm_weed", None)
-        tiles = None if cache is None else cache.get(building.id)
+        cache_key = (building.id, round(threshold, 3))
+        tiles = None if cache is None else cache.get(cache_key)
         if tiles is None:
             tiles = []
             for field_b in self._fields_near_farm(building):
@@ -12021,7 +12584,7 @@ class Game:
                     if float(getattr(cell, "weeds", 0.0)) >= threshold:
                         tiles.append((x, y))
             if cache is not None:
-                cache[building.id] = tiles
+                cache[cache_key] = tiles
         weedy = [pos for pos in tiles if pos not in claimed]
         return self._closest_of((villager.x, villager.y), weedy)
 
@@ -12036,9 +12599,7 @@ class Game:
         if cell is None:
             return False
         if cell.feature == FeatureType.CROP_HERB:
-            if float(getattr(cell, "weeds", 0.0)) >= self.balance.get_float(
-                "WEED_ACTION_THRESHOLD"
-            ):
+            if float(getattr(cell, "weeds", 0.0)) >= self._farm_weed_hoe_threshold():
                 return True
             if self.world.crop_herb_ready(x, y):
                 return villager.inventory.can_add(1)
@@ -12323,7 +12884,7 @@ class Game:
             "fertility_potential": fertility_potential,
             "weeds": weeds,
             "weed_mult": weed_mult,
-            "weed_threshold": self.balance.get_float("WEED_ACTION_THRESHOLD"),
+            "weed_threshold": self._farm_weed_hoe_threshold(),
             "weed_penalty": self.balance.get_float("WEED_HARVEST_PENALTY"),
             "erosion": erosion,
             "base_yield": base,
@@ -12536,8 +13097,7 @@ class Game:
 
         if (
             cell.feature == FeatureType.CROP_HERB
-            and float(getattr(cell, "weeds", 0.0))
-            >= self.balance.get_float("WEED_ACTION_THRESHOLD")
+            and float(getattr(cell, "weeds", 0.0)) >= self._farm_weed_hoe_threshold()
         ):
             if self.world.clear_weeds(x, y):
                 self.world.apply_disturbance(x, y)
@@ -13385,7 +13945,7 @@ class Game:
             if (
                 villager.state == VillagerState.HAULING
                 and current is not None
-                and current.can_accept_from(villager.inventory)
+                and self._workplace_can_accept_cargo(current, villager.inventory)
             ):
                 demand = self._building_supply_demand(current)
                 keep_claim = any(
@@ -13454,7 +14014,7 @@ class Game:
                 # Deliver ingredients the processor / forester splitter still needs.
                 if (
                     not villager.inventory.is_empty
-                    and claimed.can_accept_from(villager.inventory)
+                    and self._workplace_can_accept_cargo(claimed, villager.inventory)
                 ):
                     dest = claimed.center_cell()
                     villager.target = dest
@@ -13625,7 +14185,7 @@ class Game:
                 return
             already = amounts.get(key, 0)
             have = _have(key, already)
-            room = sink.space_for_key(key) - already
+            room = self._sink_space_for_key(sink, key) - already
             if Inventory.is_seed_key(key):
                 pack_room = seed_left
             else:

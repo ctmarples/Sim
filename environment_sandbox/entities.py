@@ -2094,7 +2094,14 @@ class Building:
                 if want > 0:
                     demand[key] = max(demand.get(key, 0), want)
             if self.addon_craft_recipes():
+                from farm_pipeline import barn_sheaf_keys
+
+                barn_linked = BuildingKind.BARN in self.linked_extensions
+                sheaf_set = set(barn_sheaf_keys()) if barn_linked else set()
                 for key in self.active_supply_keys():
+                    # Barn owns the sheaf buffer; farm demand is injected by Game.
+                    if key in sheaf_set:
+                        continue
                     target = self.reserve_amount(key)
                     if target <= 0:
                         continue
@@ -2107,6 +2114,11 @@ class Building:
                     want = min(target - have, room)
                     if want > 0:
                         demand[key] = max(demand.get(key, 0), want)
+            if BuildingKind.BARN in self.linked_extensions:
+                from farm_pipeline import barn_sheaf_keys
+
+                for key in barn_sheaf_keys():
+                    demand.pop(key, None)
         if memo.get("fp") != fp:
             memo.clear()
             memo["fp"] = fp
@@ -2203,7 +2215,21 @@ class Building:
         return max(3, int(self.item_mins.get(key, 0)))
 
     def reserve_amount(self, key: str) -> int:
-        """Units haulers must not remove (min reserve + recipe buffer + plant stock)."""
+        """Units haulers must not remove (recipe buffer + plant stock; see farm note).
+
+        Farm barn inputs (sheaves): keep only the recipe buffer (``input_keep_amount``),
+        not ``item_mins``. High sheaf mins were trapping stock on the farm and creating
+        endless import demand while the mill starved for grain.
+        """
+        if (
+            self.kind == BuildingKind.FARM
+            and self.addon_craft_recipes()
+            and key in self._ensure_input_policy()["active"]
+        ):
+            # With a barn, sheaves live on the barn — do not reserve them on the farm.
+            if BuildingKind.BARN in self.linked_extensions:
+                return self.plant_keep_amount(key)
+            return max(self.input_keep_amount(key), self.plant_keep_amount(key))
         return max(
             int(self.item_mins.get(key, 0)),
             self.input_keep_amount(key),
@@ -2900,9 +2926,20 @@ class Building:
         if self.kind == BuildingKind.FORAGER:
             return ("wood", "rock", *_FORAGE_KEYS)
         if self.kind == BuildingKind.FARM:
-            return PRODUCE_KEYS + SEED_KEYS + ("straw",)
+            keys = PRODUCE_KEYS + SEED_KEYS + ("straw",)
+            # With a barn, wheat/rye sheaves live there until threshed.
+            if BuildingKind.BARN in self.linked_extensions:
+                from farm_pipeline import barn_sheaf_keys
+
+                sheaves = set(barn_sheaf_keys())
+                keys = tuple(k for k in keys if k not in sheaves)
+            return keys
+        if self.kind == BuildingKind.BARN:
+            # Sheaves wait here until threshed; grain/straw outputs land on the farm.
+            from farm_pipeline import barn_sheaf_keys
+
+            return barn_sheaf_keys()
         if self.kind in (
-            BuildingKind.BARN,
             BuildingKind.PANTRY,
             BuildingKind.DRYING_RACK,
             BuildingKind.FIELD,
@@ -3084,7 +3121,15 @@ class Building:
     def gather_deposit_keys(self) -> tuple[str, ...]:
         """Depositable resources excluding reserved plant stock."""
         plant = set(self.plant_keys())
-        return tuple(k for k in self.depositable_keys() if k not in plant)
+        keys = tuple(k for k in self.depositable_keys() if k not in plant)
+        # Wheat/rye sheaves deposit to the barn, not the farm tray — still gather cargo.
+        if self.kind == BuildingKind.FARM and BuildingKind.BARN in self.linked_extensions:
+            from farm_pipeline import barn_sheaf_keys
+
+            extra = tuple(k for k in barn_sheaf_keys() if k not in keys and k not in plant)
+            if extra:
+                keys = keys + extra
+        return keys
 
     def has_gather_cargo(self, inventory: Inventory) -> bool:
         return any(getattr(inventory, key, 0) > 0 for key in self.gather_deposit_keys())
@@ -3375,6 +3420,8 @@ class Villager:
     construction_id: int | None = None
     # Sticky processor craft order (kitchen / mill / craft bench).
     craft_recipe_name: str | None = None
+    # Farm pipeline job (FarmJobKind name); sticky until done or invalidated.
+    farm_job_kind: str | None = None
     priorities: list[WorkPriority] = field(
         default_factory=lambda: list(DEFAULT_PRIORITIES_UNASSIGNED)
     )
@@ -3455,6 +3502,7 @@ class Villager:
         self.forage_colony_id = None
         self.construction_id = None
         self.craft_recipe_name = None
+        self.farm_job_kind = None
         self.target = None
 
     def clear_assignment(self) -> None:

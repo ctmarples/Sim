@@ -108,12 +108,12 @@ class FieldWakeTests(unittest.TestCase):
         cell.feature = FeatureType.CROP_HERB
         cell.crop_kind = "wheat"
         cell.growth_ticks = 0
-        cell.weeds = 0.199
+        cell.weeds = 0.099
         cell.fertility = 1.0
         cell.weed_appearances = 1
         cell.disturbance = 0.0
         self.assertTrue(world.tick_bulk(TICKS_PER_DAY, day=20.0))
-        self.assertGreaterEqual(cell.weeds, 0.2)
+        self.assertGreaterEqual(cell.weeds, 0.1)
 
 
 if __name__ == "__main__":

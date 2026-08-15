@@ -77,7 +77,7 @@ FERTILITY_SOIL_LEGACY: float = 0.8
 # Weeds grow faster on fertile crop tiles (per day at fertility 1.0).
 WEED_GROWTH_RATE: float = 0.05
 WEED_HARVEST_PENALTY: float = 0.5  # yield lost at weeds = 1.0
-WEED_ACTION_THRESHOLD: float = 0.2  # farmer hoes when weeds reach this
+WEED_ACTION_THRESHOLD: float = 0.1  # farmers hoe once cover reaches this (UI "watch" band)
 # How many times weeds may begin growing on a square each season (0 = never).
 WEED_MAX_APPEARANCES_PER_SEASON: int = 1
 # Slope (height units per cell) mapped to 1.0 erosion potential.

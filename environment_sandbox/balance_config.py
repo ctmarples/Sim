@@ -411,7 +411,8 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
                 0.05,
                 1.0,
                 0.05,
-                "Hoe-equipped farmers clear weeds once cover reaches this. "
+                "Hoe-equipped farmers clear weeds once cover reaches this "
+                "(capped at 10% so they act in the UI watch band). "
                 "Lower = they spend more time weeding.",
             ),
             BalanceParam(
