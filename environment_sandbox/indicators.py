@@ -73,6 +73,22 @@ OVERLAY_LABELS: dict[OverlayMode, str] = {
 }
 
 
+def format_overlay_value(mode: OverlayMode, value: float) -> str:
+    """Human-readable readout for the overlay HUD under the cursor."""
+    if mode == OverlayMode.NONE:
+        return "—"
+    if mode == OverlayMode.BIODIVERSITY:
+        return f"{value:.1f} species"
+    if mode == OverlayMode.FIELD_YIELD:
+        if value <= 0.0:
+            return "—"
+        return f"{value * 100:.0f}% of base"
+    if mode == OverlayMode.FLORAL_RESOURCES:
+        return f"{value:.2f}"
+    # Most live overlays are 0–1 fractions mapped to the colour ramp.
+    return f"{value * 100:.0f}%"
+
+
 def lerp_colour(low: Colour, high: Colour, t: float) -> Colour:
     t = max(0.0, min(1.0, t))
     return (

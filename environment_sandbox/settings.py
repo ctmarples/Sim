@@ -412,12 +412,12 @@ DISTURBANCE_EXTRACTION_SPREAD: float = 0.14
 DISTURBANCE_MAX: float = 1.0
 # Permanent floors while terrain type is present (no decay on these tiles).
 # Tuned so ordinary village farmland sits ~0.2–0.5, not extreme/urban.
-DISTURBANCE_URBAN_LEVEL: float = 0.72
-DISTURBANCE_PATH_LEVEL: float = 0.30
-# Ecology/farming multiplier at full disturbance (0.30 → 30% effectiveness).
-DISTURBANCE_ACTIVITY_FLOOR: float = 0.30
+DISTURBANCE_URBAN_LEVEL: float = 0.78
+DISTURBANCE_PATH_LEVEL: float = 0.40
+# Ecology/farming multiplier at full disturbance (lower = fields near town hurt more).
+DISTURBANCE_ACTIVITY_FLOOR: float = 0.20
 # Chebyshev radius for neighbourhood-averaged disturbance (read + spread falloff).
-DISTURBANCE_RADIUS: int = 2
+DISTURBANCE_RADIUS: int = 3
 
 STATUS_MESSAGE_FRAMES: int = 150
 
@@ -525,10 +525,12 @@ COLOUR_PATH: Colour = (196, 178, 128)
 
 # Villager path-wear → PATH terrain (tracked every step; painted daily).
 PATH_TRAFFIC_STEP: float = 1.0  # added each villager cell-enter
-PATH_TRAFFIC_THRESHOLD: float = 4.0  # wear needed to first paint PATH
-PATH_TRAFFIC_DECAY: float = 0.78  # multiply traffic each env sample (8×/year)
-PATH_TRAFFIC_KEEP: float = 0.75  # PATH stays until wear falls below this
-PATH_TRAFFIC_OVERLAY_MAX: float = 12.0  # wear mapped to 1.0 disturbance
+# High threshold: only heavily used corridors paint PATH (side tracks stay grass).
+PATH_TRAFFIC_THRESHOLD: float = 16.0  # wear needed to first paint PATH
+PATH_TRAFFIC_DECAY: float = 0.70  # multiply traffic each env sample (8×/year)
+PATH_TRAFFIC_KEEP: float = 3.0  # PATH stays until wear falls below this
+# Wear still stresses land before it paints a path (disturbance = wear / this).
+PATH_TRAFFIC_OVERLAY_MAX: float = 10.0  # wear mapped to 1.0 disturbance
 URBAN_MIN_BUILDINGS: int = 3  # fewer → no urban core; only worn PATH under footprints
 
 COLOUR_TREE_CANOPY: Colour = (34, 120, 45)

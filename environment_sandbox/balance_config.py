@@ -139,460 +139,498 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
         (
             BalanceParam(
                 "BUFF_STRENGTH_SPEED",
-                "Speed",
+                "Food: walk-speed effect strength",
                 "int",
                 float(BUFF_STRENGTH_SPEED),
                 0,
                 5,
                 1,
-                "Scales the gap from 1.0. Recipe 0.8 at 3/5 becomes 0.7 at 4/5; 1.2 becomes 1.3. 0/5 turns them off.",
+                "How hard food speed buffs/debuffs hit. Scales the gap from ×1.0 "
+                "(e.g. recipe 0.8 at 3/5 → 0.7 at 4/5). 0/5 turns speed food effects off.",
                 "/5",
             ),
             BalanceParam(
                 "BUFF_STRENGTH_HUNGER",
-                "Hunger",
+                "Food: hunger-rate effect strength",
                 "int",
                 float(BUFF_STRENGTH_HUNGER),
                 0,
                 5,
                 1,
-                "Scales the gap from 1.0 on food hunger-rate. Shown to one decimal. 0/5 turns them off.",
+                "How hard food hunger-rate buffs/debuffs hit (gap from ×1.0). "
+                "0/5 turns hunger food effects off.",
                 "/5",
             ),
             BalanceParam(
                 "BUFF_STRENGTH_WORK",
-                "Work efficiency",
+                "Food: work-speed effect strength",
                 "int",
                 float(BUFF_STRENGTH_WORK),
                 0,
                 5,
                 1,
-                "Scales the gap from 1.0 on food work efficiency. Shown to one decimal. 0/5 turns them off.",
+                "How hard food work-efficiency buffs/debuffs hit (gap from ×1.0). "
+                "0/5 turns work food effects off.",
                 "/5",
             ),
         ),
     ),
     BalanceCategory(
         "farm",
-        "Farm & fields",
+        "Farm harvest",
         (
             BalanceParam(
                 "FARM_PRODUCE_YIELD",
-                "Base harvest per tile",
+                "Produce from a perfect tile",
                 "int",
                 float(FARM_PRODUCE_YIELD),
                 1,
                 24,
                 1,
-                "Produce units at ×1.0 pest, health, pollination, and ecology.",
+                "Units picked from one square when every multiplier is ×1. "
+                "Real harvest is this × bees × land-stress × crop health × weeds × fertility.",
             ),
             BalanceParam(
                 "PEST_CONTROL_RICHNESS_LOW",
-                "Bio richness (poor)",
+                "Wildlife count = “poor” fields",
                 "float",
                 PEST_CONTROL_RICHNESS_LOW,
                 0.0,
                 20.0,
                 0.5,
-                "Species count treated as poor pest control.",
+                "Nearby species richness at or below this is treated as poor pest control. "
+                "That slowly pulls crop health down (it does not cut the harvest number in one pick).",
             ),
             BalanceParam(
                 "PEST_CONTROL_RICHNESS_MID",
-                "Bio richness (ok)",
+                "Wildlife count = healthy fields",
                 "float",
                 PEST_CONTROL_RICHNESS_MID,
                 0.5,
                 20.0,
                 0.5,
-                "Species count for ×1.0 pest control and full health cap.",
+                "At this richness, pest control is “ok”: crop health can sit at 100%. "
+                "Below it, health is allowed to sink toward the health floor.",
             ),
             BalanceParam(
                 "PEST_CONTROL_RICHNESS_HIGH",
-                "Bio richness (rich)",
+                "Wildlife count = best fields",
                 "float",
                 PEST_CONTROL_RICHNESS_HIGH,
                 1.0,
                 30.0,
                 0.5,
-                "Species count that reaches the best pest-control multiplier.",
+                "Richness needed for the strongest pest-control rating. "
+                "Does not heal fields by itself — health only stops falling when habitat is good enough.",
             ),
             BalanceParam(
                 "PEST_CONTROL_MULT_LOW",
-                "Pest yield at poor bio",
+                "Pest rating when wildlife is poor",
                 "float",
                 PEST_CONTROL_MULT_LOW,
                 0.3,
                 1.5,
                 0.05,
-                "Harvest multiplier at low biodiversity. Also the health-cap floor.",
+                "Pest-control score at low biodiversity. Sets how sick the health target can get "
+                "(not a direct harvest multiply). Lower = fields get sicker over the year.",
             ),
             BalanceParam(
                 "PEST_CONTROL_MULT_MID",
-                "Pest yield at ok bio",
+                "Pest rating for full crop health",
                 "float",
                 PEST_CONTROL_MULT_MID,
                 0.5,
                 2.0,
                 0.05,
-                "Harvest multiplier at mid biodiversity. Health cap is 100% at or above this.",
+                "Pest-control score that allows 100% crop health. "
+                "Raise this if you want only rich habitat to keep fields healthy.",
             ),
             BalanceParam(
                 "PEST_CONTROL_MULT_HIGH",
-                "Pest yield at rich bio",
+                "Pest rating when wildlife is rich",
                 "float",
                 PEST_CONTROL_MULT_HIGH,
                 0.8,
                 2.5,
                 0.05,
-                "Harvest multiplier at high biodiversity.",
+                "Best pest-control score at high biodiversity. Mostly diagnostic; "
+                "harvest already uses crop health, not this number directly.",
             ),
             BalanceParam(
                 "CROP_HEALTH_MIN",
-                "Crop health floor",
+                "Sickest a field can get",
                 "float",
                 CROP_HEALTH_MIN,
                 0.2,
                 1.0,
                 0.05,
-                "Health never drops below this. Shown as a percent on the field.",
+                "Crop health never falls below this (shown as % on the field). "
+                "Harvest is multiplied by health, so 0.7 means at worst you keep 70% of the pick.",
             ),
             BalanceParam(
                 "CROP_HEALTH_MAX_DROP",
-                "Health drop per sample",
+                "How fast fields get sicker",
                 "float",
                 CROP_HEALTH_MAX_DROP,
                 0.0,
                 0.25,
                 0.01,
-                "Max health lost each env sample (8× per year) when pest control is poor. Health does not recover.",
+                "Max health lost each env sample (8× per year) when pest control is poor. "
+                "Health does not climb back up — only stops falling when habitat improves.",
             ),
             BalanceParam(
                 "POLLINATION_YIELD_LOW",
-                "Pollination yield (none)",
+                "Harvest with no bees",
                 "float",
                 POLLINATION_YIELD_LOW,
                 0.4,
                 1.5,
                 0.05,
-                "Harvest multiplier with no bee coverage.",
+                "Harvest multiplier on a field with zero bee coverage. "
+                "0.9 = 10% less produce than a “normal” tile before other factors.",
             ),
             BalanceParam(
                 "POLLINATION_YIELD_HIGH",
-                "Pollination yield (full)",
+                "Harvest with full bees",
                 "float",
                 POLLINATION_YIELD_HIGH,
                 0.8,
                 2.5,
                 0.05,
-                "Harvest multiplier at full bee coverage.",
+                "Harvest multiplier at full bee coverage. "
+                "1.2 = 20% more produce than a “normal” tile before other factors.",
             ),
             BalanceParam(
                 "INSECT_REPELLANT_PEST_BOOST",
-                "Repellant pest boost",
+                "Repellant: boost to pest control",
                 "float",
                 INSECT_REPELLANT_PEST_BOOST,
                 0.0,
                 0.5,
                 0.02,
-                "Added to pest-control yield when applied on a field. Does not raise the health cap.",
+                "Added to the field’s pest-control rating when repellant is applied. "
+                "Helps the health target a bit; does not instantly heal the field.",
             ),
             BalanceParam(
                 "FERTILITY_FOREST",
-                "Fertility: forest",
+                "Starting soil: forest floor",
                 "float",
                 FERTILITY_FOREST,
                 0.0,
                 1.0,
                 0.05,
-                "Starting fertility on forest floor.",
+                "Initial fertility (0–1) when land is forest floor. Harvest multiplies by this.",
             ),
             BalanceParam(
                 "FERTILITY_MEADOW",
-                "Fertility: meadow",
+                "Starting soil: meadow",
                 "float",
                 FERTILITY_MEADOW,
                 0.0,
                 1.0,
                 0.05,
-                "Starting fertility on meadow.",
+                "Initial fertility on meadow. Harvest multiplies by this.",
             ),
             BalanceParam(
                 "FERTILITY_GRASS",
-                "Fertility: grass",
+                "Starting soil: grass",
                 "float",
                 FERTILITY_GRASS,
                 0.0,
                 1.0,
                 0.05,
-                "Starting fertility on grass.",
+                "Initial fertility on grass. Harvest multiplies by this.",
             ),
             BalanceParam(
                 "FERTILITY_SOIL",
-                "Fertility: soil",
+                "Starting soil: ploughed field",
                 "float",
                 FERTILITY_SOIL,
                 0.0,
                 1.0,
                 0.05,
-                "Starting fertility on ploughed soil. Harvests cannot raise it back.",
+                "Fertility after ploughing to soil. Harvests only lower it — they never raise it.",
             ),
             BalanceParam(
                 "FERTILITY_RIPARIAN",
-                "Fertility: riparian",
+                "Starting soil: shoreline",
                 "float",
                 FERTILITY_RIPARIAN,
                 0.0,
                 1.0,
                 0.05,
-                "Starting fertility on shoreline.",
+                "Initial fertility on riparian / bank tiles.",
             ),
             BalanceParam(
                 "FERTILITY_ROCK",
-                "Fertility: rock",
+                "Starting soil: rock",
                 "float",
                 FERTILITY_ROCK,
                 0.0,
                 1.0,
                 0.05,
-                "Starting fertility on rock (usually 0).",
+                "Usually 0 — rock does not grow crops well.",
             ),
             BalanceParam(
                 "FERTILITY_WATER",
-                "Fertility: water",
+                "Starting soil: water",
                 "float",
                 FERTILITY_WATER,
                 0.0,
                 1.0,
                 0.05,
-                "Starting fertility on water / river (usually 0).",
+                "Usually 0 — water / river tiles.",
             ),
             BalanceParam(
                 "FERTILITY_HARVEST_DROP",
-                "Fertility lost per harvest",
+                "Soil lost each full harvest",
                 "float",
                 FERTILITY_HARVEST_DROP,
                 0.0,
                 0.5,
                 0.05,
-                "Subtracted from that square when a crop is fully harvested.",
+                "Fertility subtracted from that square when a crop is fully harvested. "
+                "Higher = fields wear out faster unless you leave them fallow.",
             ),
             BalanceParam(
                 "WEED_GROWTH_RATE",
-                "Weed growth per day",
+                "How fast weeds fill a square",
                 "float",
                 WEED_GROWTH_RATE,
                 0.0,
                 0.5,
                 0.01,
-                "At fertility 1.0, weeds fill this much each day. Higher fertility grows weeds faster.",
+                "At fertility 1.0, weeds gain this much cover each day. "
+                "Richer soil grows weeds faster.",
             ),
             BalanceParam(
                 "WEED_ACTION_THRESHOLD",
-                "Hoe weeds at",
+                "When farmers hoe weeds",
                 "float",
                 WEED_ACTION_THRESHOLD,
                 0.05,
                 1.0,
                 0.05,
-                "Farmers with a hoe pull weeds at this cover. Does not count as a harvest.",
+                "Hoe-equipped farmers clear weeds once cover reaches this. "
+                "Lower = they spend more time weeding.",
             ),
             BalanceParam(
                 "WEED_MAX_APPEARANCES_PER_SEASON",
-                "Weed appearances / season",
+                "Weed outbreaks per season",
                 "int",
                 WEED_MAX_APPEARANCES_PER_SEASON,
                 0,
                 8,
                 1,
-                "Max times weeds may start growing on a square each season. "
-                "Cleared weeds do not return until the next season. Winter: no new growth.",
+                "How many times weeds may start on a square each season. "
+                "After clearing, they stay gone until the next season. Winter: none.",
             ),
             BalanceParam(
                 "WEED_HARVEST_PENALTY",
-                "Weed harvest penalty",
+                "Harvest lost at full weeds",
                 "float",
                 WEED_HARVEST_PENALTY,
                 0.0,
                 1.0,
                 0.05,
-                "At full weeds, this fraction of harvest is lost on that square.",
+                "At 100% weed cover, this fraction of the harvest is thrown away. "
+                "0.5 = half the pick lost on a choked square.",
             ),
             BalanceParam(
                 "EROSION_SLOPE_SCALE",
-                "Erosion slope scale",
+                "Steepness that counts as max erosion",
                 "float",
                 EROSION_SLOPE_SCALE,
                 1.0,
                 40.0,
                 0.5,
-                "Height-map slope that maps to 100% erosion potential. Prebaked into the save.",
+                "Height-map slope mapped to 100% erosion potential. "
+                "Baked into the save — change mainly affects new land / rebakes.",
             ),
         ),
     ),
     BalanceCategory(
         "paths_urban",
-        "Paths & urban",
+        "Paths & village paving",
         (
             BalanceParam(
                 "PATH_TRAFFIC_STEP",
-                "Wear per villager step",
+                "Foot traffic added per step",
                 "float",
                 PATH_TRAFFIC_STEP,
                 0.25,
                 4.0,
                 0.25,
-                "Added each time a villager enters a cell.",
+                "Each time a villager walks onto a cell, wear goes up by this. "
+                "Higher = paths and village paving form faster (and stress fields sooner).",
             ),
             BalanceParam(
                 "PATH_TRAFFIC_THRESHOLD",
-                "Wear to paint path",
+                "Wear needed to turn grass into path",
                 "float",
                 PATH_TRAFFIC_THRESHOLD,
                 1.0,
-                24.0,
+                40.0,
                 0.5,
-                "Stored in settings.py; lower = paths appear sooner.",
+                "When wear reaches this, the tile becomes PATH. "
+                "High (default) = only busy corridors; low = muddy tracks everywhere.",
             ),
             BalanceParam(
                 "PATH_TRAFFIC_KEEP",
-                "Wear to keep path",
+                "Wear needed to keep a path",
                 "float",
                 PATH_TRAFFIC_KEEP,
                 0.0,
-                8.0,
+                16.0,
                 0.25,
-                "Path terrain persists until wear drops below this.",
+                "Path stays until wear falls below this. Higher = abandoned tracks linger longer.",
             ),
             BalanceParam(
                 "PATH_TRAFFIC_DECAY",
-                "Wear decay (env sample)",
+                "How fast foot traffic fades",
                 "float",
                 PATH_TRAFFIC_DECAY,
                 0.3,
                 1.0,
                 0.02,
-                "Multiplied 8× per year on env sample days.",
+                "Wear is multiplied by this 8× per year. "
+                "0.78 keeps most wear; closer to 0.3 clears tracks quickly.",
             ),
             BalanceParam(
                 "PATH_TRAFFIC_OVERLAY_MAX",
-                "Traffic disturbance cap",
+                "Wear shown as full disturbance",
                 "float",
                 PATH_TRAFFIC_OVERLAY_MAX,
                 4.0,
                 40.0,
                 1.0,
-                "Wear mapped to 100% on the disturbance overlay (mixed with urban).",
+                "Foot-traffic wear that maps to 100% on the disturbance overlay. "
+                "Does not change path painting by itself.",
             ),
             BalanceParam(
                 "URBAN_MIN_BUILDINGS",
-                "Buildings for urban core",
+                "Buildings before a village “core” forms",
                 "int",
                 float(URBAN_MIN_BUILDINGS),
                 1,
                 12,
                 1,
-                "Fewer clusters stay grass/path from traffic only.",
+                "Fewer buildings than this: only footpaths. "
+                "At or above: a paved URBAN core can appear and permanently stress nearby land.",
             ),
         ),
     ),
     BalanceCategory(
         "disturbance",
-        "Disturbance",
+        "Land stress (hurts farm yield)",
         (
             BalanceParam(
                 "DISTURBANCE_RADIUS",
-                "Disturbance radius (cells)",
+                "How far stress spreads to neighbours",
                 "int",
                 float(DISTURBANCE_RADIUS),
                 0,
                 5,
                 1,
-                "Neighbourhood average for effects and wider spread.",
+                "Farm ecology uses the average stress in this many cells around the tile. "
+                "Larger = a busy path or village poisons a wider ring of fields.",
             ),
             BalanceParam(
                 "DISTURBANCE_URBAN_LEVEL",
-                "Urban floor",
+                "Permanent stress on village paving",
                 "float",
                 DISTURBANCE_URBAN_LEVEL,
                 0.0,
                 1.0,
                 0.05,
-                "Constant disturbance on URBAN tiles (no decay).",
+                "Always-on land stress on URBAN tiles (does not decay). "
+                "Higher = town centres permanently cut harvest on nearby fields. "
+                "This is the “urban floor” — a minimum stress, not a yield bonus.",
             ),
             BalanceParam(
                 "DISTURBANCE_PATH_LEVEL",
-                "Path floor",
+                "Permanent stress on worn paths",
                 "float",
                 DISTURBANCE_PATH_LEVEL,
                 0.0,
                 1.0,
                 0.05,
-                "Constant disturbance on PATH tiles while worn.",
+                "Always-on stress on PATH tiles while they stay worn. "
+                "Higher = busy routes keep hurting adjacent crops.",
             ),
             BalanceParam(
                 "DISTURBANCE_EXTRACTION_BOOST",
-                "Extraction boost",
+                "Stress from harvest / hunt / fish / plough",
                 "float",
                 DISTURBANCE_EXTRACTION_BOOST,
                 0.0,
                 1.0,
                 0.05,
-                "Harvest/hunt/fish/plough — lasts longer than light foot traffic.",
+                "Added when someone extracts from the land. Lasts longer than a footstep. "
+                "Higher = working a field stresses it more.",
             ),
             BalanceParam(
                 "DISTURBANCE_EXTRACTION_SPREAD",
-                "Extraction neighbour spread",
+                "Extraction stress to neighbours",
                 "float",
                 DISTURBANCE_EXTRACTION_SPREAD,
                 0.0,
                 0.5,
                 0.01,
+                "Fraction of an extraction hit that spills onto neighbouring cells.",
             ),
             BalanceParam(
                 "DISTURBANCE_ACTIVITY_FLOOR",
-                "Ecology floor at max D",
+                "Harvest left when land is fully stressed",
                 "float",
                 DISTURBANCE_ACTIVITY_FLOOR,
                 0.0,
                 1.0,
                 0.05,
-                "Farm/breed/spread multiplier at disturbance 1.0.",
+                "At maximum land stress, farm (and similar) activity still gets this fraction. "
+                "0.3 ≈ only 30% ecology mult left on trashed land; raise toward 1.0 for gentler towns.",
             ),
             BalanceParam(
                 "DISTURBANCE_DECAY_PER_TICK",
-                "Decay per tick",
+                "How fast stress fades each tick",
                 "float",
                 DISTURBANCE_DECAY_PER_TICK,
                 0.0,
                 0.02,
                 0.0005,
+                "Subtracted from cell stress every sim tick (except urban’s permanent floor). "
+                "Higher = fields recover faster after traffic.",
             ),
             BalanceParam(
                 "DISTURBANCE_INTERACTION_BOOST",
-                "Light interaction boost",
+                "Stress from light interactions",
                 "float",
                 DISTURBANCE_INTERACTION_BOOST,
                 0.0,
                 1.0,
                 0.05,
+                "Small stress bump from light use (not full harvest). "
+                "Usually much weaker than extraction.",
             ),
             BalanceParam(
                 "DISTURBANCE_NEIGHBOUR_SPREAD",
-                "Neighbour spread",
+                "Light stress to neighbours",
                 "float",
                 DISTURBANCE_NEIGHBOUR_SPREAD,
                 0.0,
                 0.5,
                 0.01,
+                "Fraction of light-interaction stress that spills to neighbouring cells.",
             ),
             BalanceParam(
                 "DISTURBANCE_MAX",
-                "Maximum",
+                "Maximum land stress",
                 "float",
                 DISTURBANCE_MAX,
                 0.1,
                 2.0,
                 0.1,
+                "Cap on stored disturbance. Higher allows nastier hotspots before clamping.",
             ),
         ),
     ),
@@ -602,13 +640,14 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
         (
             BalanceParam(
                 "INDICATOR_RADIUS",
-                "Indicator radius (cells)",
+                "Overlay neighbourhood size",
                 "int",
                 float(INDICATOR_RADIUS),
                 1,
                 8,
                 1,
-                "Neighbourhood radius for habitat/biodiversity overlays.",
+                "How many cells around a tile count for habitat / biodiversity overlays. "
+                "Display only — does not change harvest math by itself.",
             ),
         ),
     ),
@@ -617,6 +656,99 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
 _PARAM_BY_KEY: dict[str, BalanceParam] = {
     p.key: p for cat in BALANCE_CATEGORIES for p in cat.params
 }
+
+
+@dataclass(frozen=True)
+class BalancePreset:
+    """Named outcome pack: reset to defaults, then apply these overrides."""
+
+    id: str
+    label: str
+    hint: str
+    values: dict[str, float]
+
+
+# Outcome packs for quick A/B in the balance dialog (paths / farm stress / habitat).
+BALANCE_PRESETS: tuple[BalancePreset, ...] = (
+    BalancePreset(
+        "default",
+        "Default",
+        "Main-route paths only; fields feel town/path stress (current settings defaults).",
+        {},
+    ),
+    BalancePreset(
+        "main_routes",
+        "Main routes",
+        "Even rarer path paint — only the heaviest corridors. Wear still stresses land.",
+        {
+            "PATH_TRAFFIC_THRESHOLD": 24.0,
+            "PATH_TRAFFIC_DECAY": 0.65,
+            "PATH_TRAFFIC_KEEP": 4.0,
+            "PATH_TRAFFIC_OVERLAY_MAX": 9.0,
+        },
+    ),
+    BalancePreset(
+        "harsh_fields",
+        "Harsh fields",
+        "Paths stay sparse; farm harvest takes a harder hit from nearby disturbance.",
+        {
+            "PATH_TRAFFIC_THRESHOLD": 16.0,
+            "PATH_TRAFFIC_DECAY": 0.70,
+            "DISTURBANCE_ACTIVITY_FLOOR": 0.10,
+            "DISTURBANCE_RADIUS": 4.0,
+            "DISTURBANCE_URBAN_LEVEL": 0.88,
+            "DISTURBANCE_PATH_LEVEL": 0.50,
+            "DISTURBANCE_EXTRACTION_BOOST": 0.70,
+            "PATH_TRAFFIC_OVERLAY_MAX": 8.0,
+        },
+    ),
+    BalancePreset(
+        "chill_farms",
+        "Chill farms",
+        "Sparse paths, but disturbance barely cuts farm yield — abundance test.",
+        {
+            "PATH_TRAFFIC_THRESHOLD": 16.0,
+            "DISTURBANCE_ACTIVITY_FLOOR": 0.70,
+            "DISTURBANCE_RADIUS": 1.0,
+            "DISTURBANCE_URBAN_LEVEL": 0.55,
+            "DISTURBANCE_PATH_LEVEL": 0.20,
+            "CROP_HEALTH_MIN": 0.85,
+            "CROP_HEALTH_MAX_DROP": 0.02,
+        },
+    ),
+    BalancePreset(
+        "muddy_map",
+        "Muddy map",
+        "Old sensitive paths — tracks form easily (aesthetic stress test / contrast).",
+        {
+            "PATH_TRAFFIC_THRESHOLD": 4.0,
+            "PATH_TRAFFIC_DECAY": 0.78,
+            "PATH_TRAFFIC_KEEP": 0.75,
+            "PATH_TRAFFIC_OVERLAY_MAX": 12.0,
+            "DISTURBANCE_ACTIVITY_FLOOR": 0.30,
+            "DISTURBANCE_RADIUS": 2.0,
+            "DISTURBANCE_URBAN_LEVEL": 0.72,
+            "DISTURBANCE_PATH_LEVEL": 0.30,
+        },
+    ),
+    BalancePreset(
+        "habitat",
+        "Habitat",
+        "Sparse paths; bees and wildlife matter more for harvest and crop health.",
+        {
+            "PATH_TRAFFIC_THRESHOLD": 18.0,
+            "DISTURBANCE_ACTIVITY_FLOOR": 0.25,
+            "DISTURBANCE_RADIUS": 3.0,
+            "POLLINATION_YIELD_LOW": 0.55,
+            "POLLINATION_YIELD_HIGH": 1.35,
+            "PEST_CONTROL_RICHNESS_MID": 6.0,
+            "CROP_HEALTH_MAX_DROP": 0.08,
+            "CROP_HEALTH_MIN": 0.55,
+        },
+    ),
+)
+
+_PRESET_BY_ID: dict[str, BalancePreset] = {p.id: p for p in BALANCE_PRESETS}
 
 
 class BalanceState:
@@ -636,6 +768,18 @@ class BalanceState:
             for p in cat.params:
                 self._values[p.key] = float(p.default)
             return
+
+    def apply_preset(self, preset_id: str) -> str:
+        """Reset to defaults, apply preset overrides. Returns the preset label."""
+        preset = _PRESET_BY_ID.get(preset_id)
+        if preset is None:
+            self.reset()
+            return "Default"
+        self.reset()
+        for key, value in preset.values.items():
+            if key in _PARAM_BY_KEY:
+                self.set(key, value)
+        return preset.label
 
     def param(self, key: str) -> BalanceParam:
         return _PARAM_BY_KEY[key]

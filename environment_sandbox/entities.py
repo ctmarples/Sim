@@ -360,6 +360,7 @@ class WorkPriority(Enum):
     BUILD = auto()
     TRANSPORT = auto()
     WORKPLACE = auto()
+    LABOURER = auto()  # Storehouse slot: Build + Transport
     NONE = auto()
 
 
@@ -367,6 +368,7 @@ PRIORITY_LABELS: dict[WorkPriority, str] = {
     WorkPriority.BUILD: "Build",
     WorkPriority.TRANSPORT: "Transport",
     WorkPriority.WORKPLACE: "Workplace",
+    WorkPriority.LABOURER: "Labourer",
     WorkPriority.NONE: "—",
 }
 
@@ -374,6 +376,7 @@ PRIORITY_CYCLE: tuple[WorkPriority, ...] = (
     WorkPriority.BUILD,
     WorkPriority.TRANSPORT,
     WorkPriority.WORKPLACE,
+    WorkPriority.LABOURER,
     WorkPriority.NONE,
 )
 
@@ -381,8 +384,86 @@ PRIORITY_ICONS: dict[WorkPriority, str] = {
     WorkPriority.BUILD: "construction_site",
     WorkPriority.TRANSPORT: "storehouse",
     WorkPriority.WORKPLACE: "forager",
+    WorkPriority.LABOURER: "storehouse",
     WorkPriority.NONE: "",
 }
+
+
+@dataclass
+class WorkplaceSlot:
+    """One P1–P3 Workplace entry.
+
+    Empty (NONE) skips the rank. WORKPLACE runs that building. LABOURER
+    (storehouse) expands to Build then Transport for unassigned workers, or
+    Transport then Build for home haulers.
+    """
+
+    kind: WorkPriority = WorkPriority.NONE
+    building_id: int | None = None
+
+    def normalized(self) -> "WorkplaceSlot":
+        if self.kind == WorkPriority.NONE:
+            return WorkplaceSlot()
+        if self.kind == WorkPriority.LABOURER:
+            return WorkplaceSlot(kind=WorkPriority.LABOURER, building_id=self.building_id)
+        if self.kind == WorkPriority.WORKPLACE:
+            return WorkplaceSlot(
+                kind=WorkPriority.WORKPLACE, building_id=self.building_id
+            )
+        # Legacy BUILD/TRANSPORT → labourer
+        if self.kind in (WorkPriority.BUILD, WorkPriority.TRANSPORT):
+            return WorkplaceSlot(
+                kind=WorkPriority.LABOURER, building_id=self.building_id
+            )
+        return WorkplaceSlot()
+
+    def to_save(self) -> dict:
+        slot = self.normalized()
+        return {"kind": slot.kind.name, "building_id": slot.building_id}
+
+    @staticmethod
+    def from_save(data: object) -> "WorkplaceSlot":
+        if isinstance(data, dict):
+            raw_kind = str(data.get("kind", "NONE"))
+            kind = (
+                WorkPriority[raw_kind]
+                if raw_kind in WorkPriority.__members__
+                else WorkPriority.NONE
+            )
+            bid = data.get("building_id")
+            return WorkplaceSlot(
+                kind=kind,
+                building_id=int(bid) if bid is not None else None,
+            ).normalized()
+        return WorkplaceSlot()
+
+    @staticmethod
+    def from_building(
+        building_id: int | None, *, is_storehouse: bool
+    ) -> "WorkplaceSlot":
+        if building_id is None:
+            return WorkplaceSlot()
+        if is_storehouse:
+            return WorkplaceSlot(kind=WorkPriority.LABOURER, building_id=building_id)
+        return WorkplaceSlot(kind=WorkPriority.WORKPLACE, building_id=building_id)
+
+    @staticmethod
+    def from_legacy(
+        kind: WorkPriority, building_id: int | None = None
+    ) -> "WorkplaceSlot":
+        if kind == WorkPriority.WORKPLACE:
+            return WorkplaceSlot(kind=WorkPriority.WORKPLACE, building_id=building_id)
+        if kind in (
+            WorkPriority.BUILD,
+            WorkPriority.TRANSPORT,
+            WorkPriority.LABOURER,
+        ):
+            return WorkplaceSlot(kind=WorkPriority.LABOURER, building_id=building_id)
+        return WorkplaceSlot()
+
+
+def empty_workplace_plan() -> list[WorkplaceSlot]:
+    return [WorkplaceSlot(), WorkplaceSlot(), WorkplaceSlot()]
 
 
 class RationMode(Enum):
@@ -3301,6 +3382,10 @@ class Villager:
     season_priorities: dict[str, list[WorkPriority]] = field(default_factory=dict)
     workplace_slots: list[int | None] = field(default_factory=lambda: [None, None, None])
     season_workplace_slots: dict[str, list[int | None]] = field(default_factory=dict)
+    # Unified P1–P3 Workplace plan (job kind + optional building). Legacy fields above
+    # stay mirrored for older code paths and save compatibility.
+    workplace_plan: list[WorkplaceSlot] = field(default_factory=empty_workplace_plan)
+    season_workplace_plan: dict[str, list[WorkplaceSlot]] = field(default_factory=dict)
     satiation: float = 0.75
     ration_mode: RationMode = RationMode.NORMAL
     seeking_food: bool = False
@@ -3378,63 +3463,180 @@ class Villager:
         self.clear_work_stickies()
         self.state = VillagerState.IDLE
         self.workplace_slots = [None, None, None]
+        self.workplace_plan = empty_workplace_plan()
+        self._sync_legacy_from_plan()
+
+    def ensure_workplace_plan(self) -> list[WorkplaceSlot]:
+        """Return the year-round Workplace plan, migrating legacy fields if needed."""
+        if not self.workplace_plan or all(
+            s.kind == WorkPriority.NONE and s.building_id is None
+            for s in self.workplace_plan
+        ):
+            if any(p != WorkPriority.NONE for p in self.priorities) or any(
+                self.workplace_slots
+            ):
+                self.workplace_plan = self._plan_from_legacy(
+                    self.priorities, self.workplace_slots
+                )
+        while len(self.workplace_plan) < 3:
+            self.workplace_plan.append(WorkplaceSlot())
+        self.workplace_plan = [s.normalized() for s in self.workplace_plan[:3]]
+        self._sync_legacy_from_plan()
+        return self.workplace_plan
+
+    def ensure_season_workplace_plan(
+        self, *, copy_from: list[WorkplaceSlot] | None = None
+    ) -> None:
+        from seasons import SEASON_ORDER
+
+        template = list(
+            copy_from if copy_from is not None else self.ensure_workplace_plan()
+        )
+        while len(template) < 3:
+            template.append(WorkplaceSlot())
+        template = [s.normalized() for s in template[:3]]
+        for season in SEASON_ORDER:
+            key = season.name
+            if key not in self.season_workplace_plan:
+                legacy_prios = self.season_priorities.get(key)
+                legacy_slots = self.season_workplace_slots.get(key)
+                if legacy_prios is not None or legacy_slots is not None:
+                    self.season_workplace_plan[key] = self._plan_from_legacy(
+                        legacy_prios or [s.kind for s in template],
+                        legacy_slots or [s.building_id for s in template],
+                    )
+                else:
+                    self.season_workplace_plan[key] = [
+                        WorkplaceSlot(kind=s.kind, building_id=s.building_id)
+                        for s in template
+                    ]
+            else:
+                row = self.season_workplace_plan[key]
+                while len(row) < 3:
+                    row.append(WorkplaceSlot())
+                self.season_workplace_plan[key] = [s.normalized() for s in row[:3]]
+        self._sync_legacy_from_plan()
+
+    @staticmethod
+    def _plan_from_legacy(
+        priorities: list[WorkPriority] | None,
+        slots: list[int | None] | None,
+    ) -> list[WorkplaceSlot]:
+        prios = list(priorities or [])
+        buildings = list(slots or [])
+        while len(prios) < 3:
+            prios.append(WorkPriority.NONE)
+        while len(buildings) < 3:
+            buildings.append(None)
+        plan: list[WorkplaceSlot] = []
+        used_buildings: set[int] = set()
+        labourer_merged = False
+        for i in range(3):
+            kind = prios[i]
+            bid = buildings[i]
+            if kind == WorkPriority.WORKPLACE:
+                if bid is None:
+                    for other in buildings:
+                        if other is not None and other not in used_buildings:
+                            bid = other
+                            break
+                if bid is not None:
+                    used_buildings.add(bid)
+                plan.append(
+                    WorkplaceSlot(kind=WorkPriority.WORKPLACE, building_id=bid)
+                )
+                labourer_merged = False
+            elif kind in (
+                WorkPriority.BUILD,
+                WorkPriority.TRANSPORT,
+                WorkPriority.LABOURER,
+            ):
+                # Collapse adjacent Build/Transport ranks into one Labourer slot.
+                if labourer_merged and kind in (
+                    WorkPriority.BUILD,
+                    WorkPriority.TRANSPORT,
+                ):
+                    plan.append(WorkplaceSlot())
+                    continue
+                plan.append(
+                    WorkplaceSlot(kind=WorkPriority.LABOURER, building_id=None)
+                )
+                labourer_merged = True
+            else:
+                plan.append(WorkplaceSlot())
+                labourer_merged = False
+        return [s.normalized() for s in plan]
+
+    def _sync_legacy_from_plan(self) -> None:
+        """Keep priorities / workplace_slots mirrors aligned with the unified plan."""
+        plan = list(self.workplace_plan)
+        while len(plan) < 3:
+            plan.append(WorkplaceSlot())
+        self.priorities = [s.kind for s in plan[:3]]
+        self.workplace_slots = [
+            s.building_id if s.kind == WorkPriority.WORKPLACE else None
+            for s in plan[:3]
+        ]
+        if self.seasonal_priorities and self.season_workplace_plan:
+            from seasons import SEASON_ORDER
+
+            for season in SEASON_ORDER:
+                key = season.name
+                row = list(self.season_workplace_plan.get(key, empty_workplace_plan()))
+                while len(row) < 3:
+                    row.append(WorkplaceSlot())
+                self.season_priorities[key] = [s.kind for s in row[:3]]
+                self.season_workplace_slots[key] = [
+                    s.building_id if s.kind == WorkPriority.WORKPLACE else None
+                    for s in row[:3]
+                ]
+
+    def active_workplace_plan(
+        self, season: object | None = None
+    ) -> list[WorkplaceSlot]:
+        self.ensure_workplace_plan()
+        if self.seasonal_priorities and season is not None:
+            key = getattr(season, "name", str(season))
+            self.ensure_season_workplace_plan()
+            row = list(self.season_workplace_plan.get(key, empty_workplace_plan()))
+            while len(row) < 3:
+                row.append(WorkplaceSlot())
+            return [s.normalized() for s in row[:3]]
+        return [s.normalized() for s in self.workplace_plan[:3]]
 
     def ensure_priorities(self) -> list[WorkPriority]:
-        while len(self.priorities) < 3:
-            self.priorities.append(WorkPriority.NONE)
+        self.ensure_workplace_plan()
         return self.priorities
 
     def ensure_season_priorities(
         self, *, copy_from: list[WorkPriority] | None = None
     ) -> None:
-        from seasons import SEASON_ORDER
-
-        template = list(copy_from if copy_from is not None else self.ensure_priorities())
-        while len(template) < 3:
-            template.append(WorkPriority.NONE)
-        for season in SEASON_ORDER:
-            key = season.name
-            if key not in self.season_priorities:
-                self.season_priorities[key] = list(template)
-            else:
-                while len(self.season_priorities[key]) < 3:
-                    self.season_priorities[key].append(WorkPriority.NONE)
+        if copy_from is not None:
+            template = self._plan_from_legacy(copy_from, self.workplace_slots)
+            self.ensure_season_workplace_plan(copy_from=template)
+        else:
+            self.ensure_season_workplace_plan()
 
     def ensure_workplace_slots(self) -> list[int | None]:
-        while len(self.workplace_slots) < 3:
-            self.workplace_slots.append(None)
+        self.ensure_workplace_plan()
         return self.workplace_slots
 
     def ensure_season_workplace_slots(
         self, *, copy_from: list[int | None] | None = None
     ) -> None:
-        from seasons import SEASON_ORDER
-
-        template = list(
-            copy_from if copy_from is not None else self.ensure_workplace_slots()
-        )
-        while len(template) < 3:
-            template.append(None)
-        for season in SEASON_ORDER:
-            key = season.name
-            if key not in self.season_workplace_slots:
-                self.season_workplace_slots[key] = list(template)
-            else:
-                while len(self.season_workplace_slots[key]) < 3:
-                    self.season_workplace_slots[key].append(None)
+        if copy_from is not None:
+            template = self._plan_from_legacy(self.priorities, copy_from)
+            self.ensure_season_workplace_plan(copy_from=template)
+        else:
+            self.ensure_season_workplace_plan()
 
     def active_workplace_slot_ids(self, season: object | None = None) -> list[int | None]:
-        self.ensure_workplace_slots()
-        if self.seasonal_priorities and season is not None:
-            key = getattr(season, "name", str(season))
-            self.ensure_season_workplace_slots()
-            row = list(self.season_workplace_slots.get(key, [None, None, None]))
-            while len(row) < 3:
-                row.append(None)
-            if any(bid is not None for bid in row):
-                return row
-        if any(bid is not None for bid in self.workplace_slots):
-            return list(self.workplace_slots)
+        plan = self.active_workplace_plan(season)
+        ids = [
+            s.building_id if s.kind == WorkPriority.WORKPLACE else None for s in plan
+        ]
+        if any(bid is not None for bid in ids):
+            return ids
         if self.building_id is not None:
             return [self.building_id, None, None]
         return [None, None, None]
@@ -3443,32 +3645,38 @@ class Villager:
         """Legacy migrate / restore only — never overwrite assigned P1 with active work.
 
         ``building_id`` is the AI's *current* workplace (may be P2/P3).
-        ``workplace_slots[0]`` is the player's P1 assignment and must stay put.
+        ``workplace_plan[0]`` is the player's P1 assignment and must stay put.
         """
-        self.ensure_workplace_slots()
-        has_slots = any(bid is not None for bid in self.workplace_slots)
+        plan = self.ensure_workplace_plan()
+        has_slots = any(
+            s.kind == WorkPriority.WORKPLACE and s.building_id is not None for s in plan
+        )
         if has_slots:
-            # Prefer assigned P1 when idle / unassigned; do not clobber slots from
-            # a transient building_id (e.g. working P2).
-            if self.building_id is None and self.workplace_slots[0] is not None:
-                self.building_id = self.workplace_slots[0]
+            if self.building_id is None and plan[0].kind == WorkPriority.WORKPLACE:
+                if plan[0].building_id is not None:
+                    self.building_id = plan[0].building_id
             return
         if self.building_id is not None:
-            self.workplace_slots[0] = self.building_id
+            plan[0] = WorkplaceSlot(
+                kind=WorkPriority.WORKPLACE, building_id=self.building_id
+            )
+            self.workplace_plan = plan
+            self._sync_legacy_from_plan()
+
+    def _expand_slot_priorities(self, slot: WorkplaceSlot) -> list[WorkPriority]:
+        slot = slot.normalized()
+        if slot.kind == WorkPriority.WORKPLACE:
+            return [WorkPriority.WORKPLACE]
+        if slot.kind == WorkPriority.LABOURER:
+            if self.assigned_to_home:
+                return [WorkPriority.TRANSPORT, WorkPriority.BUILD]
+            return [WorkPriority.BUILD, WorkPriority.TRANSPORT]
+        return []
 
     def active_priorities(self, season: object | None = None) -> list[WorkPriority]:
-        self.ensure_priorities()
-        if self.seasonal_priorities and season is not None:
-            key = getattr(season, "name", str(season))
-            row = self.season_priorities.get(key)
-            if row is None:
-                self.ensure_season_priorities()
-                row = self.season_priorities.get(key, self.priorities)
-            prios = list(row)
-            while len(prios) < 3:
-                prios.append(WorkPriority.NONE)
-        else:
-            prios = list(self.priorities)
+        prios: list[WorkPriority] = []
+        for slot in self.active_workplace_plan(season):
+            prios.extend(self._expand_slot_priorities(slot))
         # Construction is unassigned general labour. Assigned workplace workers
         # and home haulers keep their jobs even if Build is on the inspect list.
         if self.building_id is not None or self.assigned_to_home:
@@ -3477,33 +3685,77 @@ class Villager:
 
     def set_default_priorities(self) -> None:
         if self.assigned_to_home:
-            base = list(DEFAULT_PRIORITIES_HOME)
+            self.workplace_plan = [
+                WorkplaceSlot(WorkPriority.LABOURER),
+                WorkplaceSlot(),
+                WorkplaceSlot(),
+            ]
         elif self.building_id is not None:
-            base = list(DEFAULT_PRIORITIES_WORKPLACE)
+            self.workplace_plan = [
+                WorkplaceSlot(WorkPriority.WORKPLACE, self.building_id),
+                WorkplaceSlot(WorkPriority.LABOURER),
+                WorkplaceSlot(),
+            ]
         else:
-            base = list(DEFAULT_PRIORITIES_UNASSIGNED)
-        self.priorities = base
+            self.workplace_plan = [
+                WorkplaceSlot(WorkPriority.LABOURER),
+                WorkplaceSlot(),
+                WorkplaceSlot(),
+            ]
+        self._sync_legacy_from_plan()
         if self.seasonal_priorities:
-            self.ensure_season_workplace_slots(copy_from=self.workplace_slots)
+            self.ensure_season_workplace_plan(copy_from=self.workplace_plan)
+
+    def set_workplace_slot(
+        self,
+        index: int,
+        *,
+        kind: WorkPriority | None = None,
+        building_id: int | None = None,
+        clear: bool = False,
+        season: object | None = None,
+        is_storehouse: bool = False,
+    ) -> WorkplaceSlot:
+        """Set one P-slot on the year-round or seasonal Workplace plan."""
+        if clear:
+            new_slot = WorkplaceSlot()
+        elif kind is not None or building_id is not None or is_storehouse:
+            if is_storehouse or kind == WorkPriority.LABOURER:
+                new_slot = WorkplaceSlot(
+                    kind=WorkPriority.LABOURER, building_id=building_id
+                )
+            elif kind == WorkPriority.NONE:
+                new_slot = WorkplaceSlot()
+            else:
+                new_slot = WorkplaceSlot(
+                    kind=WorkPriority.WORKPLACE,
+                    building_id=building_id,
+                )
+            new_slot = new_slot.normalized()
+        else:
+            new_slot = WorkplaceSlot()
+
+        if self.seasonal_priorities and season is not None:
+            key = getattr(season, "name", str(season))
+            self.ensure_season_workplace_plan()
+            row = self.season_workplace_plan.setdefault(key, empty_workplace_plan())
+            while len(row) < 3:
+                row.append(WorkplaceSlot())
+            row[index] = new_slot
+            self._sync_legacy_from_plan()
+            return row[index]
+        plan = self.ensure_workplace_plan()
+        plan[index] = new_slot
+        self.workplace_plan = plan
+        self._sync_legacy_from_plan()
+        return plan[index]
 
     def cycle_priority_slot(
         self, index: int, *, season: object | None = None
     ) -> WorkPriority:
-        if self.seasonal_priorities and season is not None:
-            key = getattr(season, "name", str(season))
-            self.ensure_season_priorities()
-            row = self.season_priorities.setdefault(key, list(self.priorities))
-            while len(row) < 3:
-                row.append(WorkPriority.NONE)
-            current = row[index]
-            idx = PRIORITY_CYCLE.index(current) if current in PRIORITY_CYCLE else 0
-            row[index] = PRIORITY_CYCLE[(idx + 1) % len(PRIORITY_CYCLE)]
-            return row[index]
-        self.ensure_priorities()
-        current = self.priorities[index]
-        idx = PRIORITY_CYCLE.index(current) if current in PRIORITY_CYCLE else 0
-        self.priorities[index] = PRIORITY_CYCLE[(idx + 1) % len(PRIORITY_CYCLE)]
-        return self.priorities[index]
+        """Deprecated: Workplace slots are building picks, not kind cycles."""
+        plan = self.active_workplace_plan(season)
+        return plan[index].kind if 0 <= index < len(plan) else WorkPriority.NONE
 
     def cycle_ration_mode(self) -> RationMode:
         idx = RATION_CYCLE.index(self.ration_mode) if self.ration_mode in RATION_CYCLE else 0

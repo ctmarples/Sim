@@ -12,7 +12,6 @@ from enum import Enum
 import pygame
 
 from entities import (
-    PRIORITY_LABELS,
     RATION_LABELS,
     Inventory,
     RationMode,
@@ -62,9 +61,9 @@ from status_effects_ui import (
 from villager_priority_ui import (
     SLOT_GAP,
     SLOT_SIZE,
-    draw_seasonal_priority_grid,
-    draw_seasonal_workplace_grid,
-    draw_workplace_slot_row,
+    draw_seasonal_workplace_plan_grid,
+    draw_workplace_plan_row,
+    plan_slot_tip,
 )
 from villager_roster import SORT_LABELS, RosterSort, draw_skill_icons, draw_status_bar
 
@@ -430,6 +429,7 @@ class VillagerInspectDialog:
         mouse_pos: tuple[int, int] | None = None,
         player_inventory: Inventory | None = None,
         requirement_rows: list[dict] | None = None,
+        activity_label: str | None = None,
     ) -> None:
         if not self.open or villager is None:
             return
@@ -468,7 +468,7 @@ class VillagerInspectDialog:
             self._panel_w = 380
 
         prio_extra = (
-            8 * (SLOT_SIZE + 4) + 22
+            8 * (SLOT_SIZE + 4)
             if villager.seasonal_priorities
             else (SLOT_SIZE + 8)
         )
@@ -484,12 +484,10 @@ class VillagerInspectDialog:
             + 8
             + ICON_BTN
             + 4  # home
-            + SLOT_SIZE
-            + 6
             + SECTION_GAP
-            + 18
+            + 18  # Workplace heading
             + ICON_BTN
-            + 8
+            + 8  # ration + seasonal toggle
             + prio_extra
             + SECTION_GAP
             + grid_h
@@ -845,13 +843,31 @@ class VillagerInspectDialog:
 
         y = panel_top + panel_h
 
-        state = (
-            "Seeking food"
-            if villager.seeking_food
-            else villager.state.name.replace("_", " ").title()
-        )
-        surface.blit(self.font_small.render(state, True, COLOUR_TEXT_DIM), (x, y))
-        y += 16
+        if activity_label:
+            state = activity_label
+        elif villager.seeking_food:
+            state = "Seeking food"
+        else:
+            state = villager.state.name.replace("_", " ").title()
+        # Wrap long activity lines into the panel width.
+        max_w = inner_w
+        words = state.split()
+        line = ""
+        for word in words:
+            trial = f"{line} {word}".strip()
+            if self.font_small.size(trial)[0] <= max_w or not line:
+                line = trial
+            else:
+                surface.blit(
+                    self.font_small.render(line, True, COLOUR_TEXT_DIM), (x, y)
+                )
+                y += 14
+                line = word
+        if line:
+            surface.blit(self.font_small.render(line, True, COLOUR_TEXT_DIM), (x, y))
+            y += 16
+        else:
+            y += 16
 
         # Energy / Satiation / Happiness — same order and labels as roster
         bar_y = y
@@ -889,37 +905,10 @@ class VillagerInspectDialog:
         if not villager.housed:
             home_tip = f"Needs housing level ≥{villager.housing_need} — click to assign"
         self._icon_tips.append((home_rect, home_tip))
-        y += ICON_BTN + 4
+        y += ICON_BTN + 4 + SECTION_GAP
 
-        display_season = current_season if villager.seasonal_priorities else None
-        status_slots = villager.active_workplace_slot_ids(display_season)
-        surface.blit(
-            self.font_small.render("Workplace:", True, COLOUR_TEXT_DIM),
-            (x, y + 6),
-        )
-        draw_workplace_slot_row(
-            surface,
-            x + 82,
-            y,
-            list(status_slots),
-            icon_for_building=building_icon_for,
-            font=self.font_small,
-            interactive=False,
-        )
-        slot_x = x + 82
-        for slot_i, bid in enumerate(list(status_slots)[:3]):
-            srect = pygame.Rect(slot_x, y, SLOT_SIZE, SLOT_SIZE)
-            icon = building_icon_for(bid)
-            if bid is None:
-                tip = "Empty workplace slot"
-            else:
-                tip = (icon or "workplace").replace("_", " ").title()
-            self._icon_tips.append((srect, tip))
-            slot_x += SLOT_SIZE + SLOT_GAP
-        y += SLOT_SIZE + 6 + SECTION_GAP
-
-        # --- Work options ---
-        surface.blit(self.font.render("Work", True, COLOUR_TEXT), (x, y))
+        # --- Workplace (P1–P3 building picks; S expands seasons) ---
+        surface.blit(self.font.render("Workplace", True, COLOUR_TEXT), (x, y))
         y += 18
 
         # Ration: meat icon buttons (½ / ×1 / ×2)
@@ -961,24 +950,20 @@ class VillagerInspectDialog:
         self._icon_tips.append(
             (
                 toggle_rect,
-                "Seasonal priorities on"
+                "Seasonal workplace on"
                 if villager.seasonal_priorities
-                else "Seasonal priorities off",
+                else "Seasonal workplace off — year-round P1–P3",
             )
         )
         y += ICON_BTN + 8
 
         if villager.seasonal_priorities:
-            surface.blit(
-                self.font_small.render("Seasonal", True, COLOUR_TEXT_DIM),
-                (x, y + 6),
-            )
-            villager.ensure_season_workplace_slots()
-            grid_hits, grid_h = draw_seasonal_workplace_grid(
+            villager.ensure_season_workplace_plan()
+            grid_hits, grid_h = draw_seasonal_workplace_plan_grid(
                 surface,
-                x + 58,
+                x,
                 y,
-                villager.season_workplace_slots,
+                villager.season_workplace_plan,
                 icon_for_building=building_icon_for,
                 font=self.font_small,
                 font_small=self.font_tiny,
@@ -987,7 +972,6 @@ class VillagerInspectDialog:
             )
             for action, rect in grid_hits:
                 self._buttons.append((action, rect))
-                # assign_workplace:slot:SEASON
                 parts = action.split(":")
                 tip = "Workplace slot (click to assign)"
                 if len(parts) >= 3:
@@ -995,87 +979,48 @@ class VillagerInspectDialog:
                         slot_i = int(parts[1])
                         season_name = parts[2]
                         row = list(
-                            villager.season_workplace_slots.get(
-                                season_name, [None, None, None]
+                            villager.season_workplace_plan.get(
+                                season_name, []
                             )
                         )
-                        bid = row[slot_i] if 0 <= slot_i < len(row) else None
-                        icon = building_icon_for(bid)
-                        if bid is None:
-                            tip = f"{season_name.title()} empty slot"
-                        else:
-                            tip = f"{season_name.title()}: {(icon or 'workplace').replace('_', ' ').title()}"
+                        slot = row[slot_i] if 0 <= slot_i < len(row) else None
+                        if slot is not None:
+                            tip = plan_slot_tip(
+                                slot,
+                                icon_for_building=building_icon_for,
+                                season_name=season_name,
+                                slot_index=slot_i,
+                            )
                     except ValueError:
                         pass
                 self._icon_tips.append((rect, tip))
             y += max(grid_h, SLOT_SIZE) + 8
-            surface.blit(
-                self.font_small.render("Jobs", True, COLOUR_TEXT_DIM),
-                (x, y + 6),
-            )
-            villager.ensure_season_priorities()
-            prio_hits, prio_h = draw_seasonal_priority_grid(
-                surface,
-                x + 58,
-                y,
-                villager.season_priorities,
-                font=self.font_small,
-                font_small=self.font_tiny,
-                current_season=current_season,
-                mouse_pos=mouse_pos,
-            )
-            for action, rect in prio_hits:
-                self._buttons.append((action, rect))
-                parts = action.split(":")
-                tip = "Job priority (click to cycle)"
-                if len(parts) >= 3:
-                    try:
-                        slot_i = int(parts[1])
-                        season_name = parts[2]
-                        row = list(
-                            villager.season_priorities.get(
-                                season_name, [None, None, None]
-                            )
-                        )
-                        mode = row[slot_i] if 0 <= slot_i < len(row) else None
-                        label = PRIORITY_LABELS.get(mode, "—") if mode else "—"
-                        tip = f"{season_name.title()} P{slot_i + 1}: {label}"
-                    except ValueError:
-                        pass
-                self._icon_tips.append((rect, tip))
-            y += max(prio_h, SLOT_SIZE) + 8
         else:
-            surface.blit(
-                self.font_small.render("Priority", True, COLOUR_TEXT_DIM),
-                (x, y + 6),
-            )
-            villager.ensure_workplace_slots()
-            row_hits, _ = draw_workplace_slot_row(
+            villager.ensure_workplace_plan()
+            row_hits, _ = draw_workplace_plan_row(
                 surface,
-                x + 58,
+                x,
                 y,
-                list(villager.workplace_slots),
+                list(villager.workplace_plan),
                 icon_for_building=building_icon_for,
                 font=self.font_small,
                 mouse_pos=mouse_pos,
             )
             for action, rect in row_hits:
                 self._buttons.append((action, rect))
-                bid = None
+                tip = "Workplace slot (click to assign)"
                 try:
                     slot_i = int(action.rsplit(":", 1)[-1])
-                    slots = list(villager.workplace_slots)
-                    if 0 <= slot_i < len(slots):
-                        bid = slots[slot_i]
+                    plan = list(villager.workplace_plan)
+                    if 0 <= slot_i < len(plan):
+                        tip = plan_slot_tip(
+                            plan[slot_i],
+                            icon_for_building=building_icon_for,
+                            slot_index=slot_i,
+                        )
                 except ValueError:
-                    bid = None
-                icon = building_icon_for(bid)
-                tip = (
-                    "Empty workplace slot"
-                    if bid is None
-                    else (icon or "workplace").replace("_", " ").title()
-                )
-                self._icon_tips.append((rect, tip + " (click to assign)"))
+                    pass
+                self._icon_tips.append((rect, tip))
             y += SLOT_SIZE + 8
 
         y += SECTION_GAP

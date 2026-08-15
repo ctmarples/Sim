@@ -442,6 +442,13 @@ def serialize_game(game: Game) -> dict[str, Any]:
                     k: list(row)
                     for k, row in getattr(v, "season_workplace_slots", {}).items()
                 },
+                "workplace_plan": [
+                    s.to_save() for s in getattr(v, "workplace_plan", []) or []
+                ],
+                "season_workplace_plan": {
+                    k: [s.to_save() for s in row]
+                    for k, row in getattr(v, "season_workplace_plan", {}).items()
+                },
                 "satiation": round(v.satiation, 4),
                 "ration_mode": v.ration_mode.name,
                 "seeking_food": v.seeking_food,
@@ -1233,8 +1240,33 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                 villager.season_workplace_slots[str(skey)] = [
                     int(b) if b is not None else None for b in ids[:3]
                 ]
-        if villager.seasonal_priorities:
-            villager.ensure_season_workplace_slots(copy_from=villager.workplace_slots)
+        raw_plan = vdata.get("workplace_plan")
+        if isinstance(raw_plan, list) and raw_plan:
+            from entities import WorkplaceSlot
+
+            villager.workplace_plan = [
+                WorkplaceSlot.from_save(item) for item in raw_plan[:3]
+            ]
+            while len(villager.workplace_plan) < 3:
+                villager.workplace_plan.append(WorkplaceSlot())
+            villager._sync_legacy_from_plan()
+        else:
+            # Migrate legacy priorities + workplace_slots into the unified plan.
+            villager.ensure_workplace_plan()
+        raw_season_plan = vdata.get("season_workplace_plan") or {}
+        if isinstance(raw_season_plan, dict) and raw_season_plan:
+            from entities import WorkplaceSlot
+
+            for skey, items in raw_season_plan.items():
+                if not isinstance(items, list):
+                    continue
+                row = [WorkplaceSlot.from_save(item) for item in items[:3]]
+                while len(row) < 3:
+                    row.append(WorkplaceSlot())
+                villager.season_workplace_plan[str(skey)] = row
+            villager._sync_legacy_from_plan()
+        elif villager.seasonal_priorities:
+            villager.ensure_season_workplace_plan(copy_from=villager.workplace_plan)
         villager.satiation = float(vdata.get("satiation", 0.75))
         villager.satiation = max(0.0, min(1.0, villager.satiation))
         raw_ration = vdata.get("ration_mode", "NORMAL")

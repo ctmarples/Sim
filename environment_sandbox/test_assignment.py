@@ -1,59 +1,78 @@
-"""Worker assignment: seasonal priorities, labourer-only build, field wake."""
+"""Worker assignment: seasonal workplace plan, labourer-only build, field wake."""
 
 from __future__ import annotations
 
 import unittest
 
 from entities import (
-    DEFAULT_PRIORITIES_HOME,
     Villager,
     WorkPriority,
+    WorkplaceSlot,
 )
 from seasons import Season, TICKS_PER_DAY
 from world import FeatureType, TerrainType, World
 
 
-class SeasonalPriorityTests(unittest.TestCase):
+class SeasonalWorkplaceTests(unittest.TestCase):
     def test_seasonal_row_is_what_ai_reads(self) -> None:
         villager = Villager(id=1, x=0, y=0)
         villager.seasonal_priorities = True
-        villager.priorities = [
-            WorkPriority.WORKPLACE,
-            WorkPriority.TRANSPORT,
-            WorkPriority.NONE,
+        villager.workplace_plan = [
+            WorkplaceSlot(WorkPriority.WORKPLACE, 3),
+            WorkplaceSlot(WorkPriority.LABOURER),
+            WorkplaceSlot(),
         ]
-        villager.cycle_priority_slot(0, season=Season.WINTER)
-        self.assertEqual(
-            villager.active_priorities(Season.WINTER)[0],
-            WorkPriority.NONE,
+        villager._sync_legacy_from_plan()
+        villager.ensure_season_workplace_plan(copy_from=villager.workplace_plan)
+        villager.set_workplace_slot(
+            0, clear=True, season=Season.WINTER
         )
-        self.assertEqual(
-            villager.active_priorities(Season.SUMMER)[0],
-            WorkPriority.WORKPLACE,
+        self.assertNotIn(
+            WorkPriority.WORKPLACE, villager.active_priorities(Season.WINTER)
+        )
+        self.assertIn(
+            WorkPriority.WORKPLACE, villager.active_priorities(Season.SUMMER)
         )
 
     def test_unassigned_labourer_keeps_build(self) -> None:
         villager = Villager(id=1, x=0, y=0)
+        villager.workplace_plan = [
+            WorkplaceSlot(WorkPriority.LABOURER),
+            WorkplaceSlot(),
+            WorkplaceSlot(),
+        ]
+        villager._sync_legacy_from_plan()
+        self.assertIn(WorkPriority.BUILD, villager.active_priorities())
+        self.assertIn(WorkPriority.TRANSPORT, villager.active_priorities())
+
+    def test_assigned_worker_cannot_build(self) -> None:
+        villager = Villager(id=1, x=0, y=0, building_id=3)
+        villager.workplace_plan = [
+            WorkplaceSlot(WorkPriority.WORKPLACE, 3),
+            WorkplaceSlot(WorkPriority.LABOURER),
+            WorkplaceSlot(),
+        ]
+        villager._sync_legacy_from_plan()
+        self.assertNotIn(WorkPriority.BUILD, villager.active_priorities())
+        self.assertIn(WorkPriority.TRANSPORT, villager.active_priorities())
+
+    def test_home_hauler_cannot_build(self) -> None:
+        villager = Villager(id=1, x=0, y=0, assigned_to_home=True)
+        villager.set_default_priorities()
+        self.assertNotIn(WorkPriority.BUILD, villager.active_priorities())
+        self.assertIn(WorkPriority.TRANSPORT, villager.active_priorities())
+
+    def test_legacy_build_transport_merges_to_labourer(self) -> None:
+        villager = Villager(id=1, x=0, y=0)
         villager.priorities = [
             WorkPriority.BUILD,
             WorkPriority.TRANSPORT,
             WorkPriority.NONE,
         ]
-        self.assertIn(WorkPriority.BUILD, villager.active_priorities())
-
-    def test_assigned_worker_cannot_build(self) -> None:
-        villager = Villager(id=1, x=0, y=0, building_id=3)
-        villager.priorities = [
-            WorkPriority.WORKPLACE,
-            WorkPriority.BUILD,
-            WorkPriority.TRANSPORT,
-        ]
-        self.assertNotIn(WorkPriority.BUILD, villager.active_priorities())
-
-    def test_home_hauler_cannot_build(self) -> None:
-        villager = Villager(id=1, x=0, y=0, assigned_to_home=True)
-        villager.priorities = list(DEFAULT_PRIORITIES_HOME)
-        self.assertNotIn(WorkPriority.BUILD, villager.active_priorities())
+        villager.workplace_slots = [None, None, None]
+        plan = villager.ensure_workplace_plan()
+        self.assertEqual(plan[0].kind, WorkPriority.LABOURER)
+        self.assertEqual(plan[1].kind, WorkPriority.NONE)
 
 
 class FieldWakeTests(unittest.TestCase):

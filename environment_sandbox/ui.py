@@ -20,6 +20,7 @@ from entities import (
     RationMode,
     Villager,
     WorkPriority,
+    WorkplaceSlot,
 )
 from indicators import OVERLAY_LABELS, OverlayMode
 from seasons import Season, adjust_colour, blend_colour, format_date
@@ -566,25 +567,26 @@ class UI:
         assign_workplace_mode: bool,
         season: Season | None = None,
     ) -> list[tuple[str, str, str, bool]]:
-        prios = villager.active_priorities(season)
-        while len(prios) < 3:
-            prios.append(WorkPriority.NONE)
+        plan = villager.active_workplace_plan(season)
+        while len(plan) < 3:
+            plan.append(WorkplaceSlot())
         glyphs = {
-            WorkPriority.BUILD: "B",
-            WorkPriority.TRANSPORT: "T",
+            WorkPriority.LABOURER: "L",
             WorkPriority.WORKPLACE: "W",
             WorkPriority.NONE: "·",
+            WorkPriority.BUILD: "L",
+            WorkPriority.TRANSPORT: "L",
         }
         btns: list[tuple[str, str, str, bool]] = []
         for slot in range(3):
-            mode = prios[slot]
-            tip = f"Priority {slot + 1}: {PRIORITY_LABELS[mode]} (click to cycle)"
-            btns.append((glyphs[mode], f"prio:{villager.id}:{slot}", tip, False))
+            mode = plan[slot].normalized().kind
+            tip = f"P{slot + 1}: {PRIORITY_LABELS.get(mode, '—')} (click to assign building)"
+            btns.append((glyphs.get(mode, "·"), f"prio:{villager.id}:{slot}", tip, False))
         btns.append(
             (
                 "→",
                 "assign_workplace",
-                "Assign to workplace — then pick building or home",
+                "Assign workplace — pick building (storehouse = labourer)",
                 assign_workplace_mode,
             )
         )
