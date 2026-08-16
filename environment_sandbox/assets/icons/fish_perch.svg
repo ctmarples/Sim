@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 40 40"
+   width="400"
+   height="400"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="fish_perch.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <defs
+     id="defs1" />
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     showgrid="false"
+     inkscape:zoom="1.1656272"
+     inkscape:cx="234.20867"
+     inkscape:cy="230.77704"
+     inkscape:window-width="1083"
+     inkscape:window-height="835"
+     inkscape:window-x="539"
+     inkscape:window-y="33"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="fish" />
+  <title
+     id="title1">fish</title>
+  <desc
+     id="desc1">Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <g
+     id="fish"
+     inkscape:groupmode="layer"
+     inkscape:label="fish">
+    <path
+       id="body"
+       class="body"
+       d="m 32.795134,19.773381 c -1.42847,-0.985644 -5.197739,-3.219344 -10.15382,-3.219344 -2.685071,0 -5.211252,3.515672 -6.855785,4.142727 -1.390933,0.530358 -2.679202,-0.605922 -2.117995,1.108399 0.327715,1.001074 0.987159,0.70059 2.991416,1.252796 1.548693,0.42669 3.82206,1.75816 5.982364,1.75816 2.52329,0 4.511982,-0.642708 6.142401,-1.205219 1.571944,-0.542337 4.762945,-3.318965 4.011419,-3.837519 z"
+       fill="#50a0c8"
+       stroke="none"
+       sodipodi:nodetypes="ssssssss"
+       style="fill:#b48e45;fill-opacity:1;stroke-width:0.821883" />
+    <path
+       id="body-2"
+       class="body"
+       d="m 31.449602,20.565071 c -1.231572,-0.786764 -4.481291,-2.569753 -8.754235,-2.569753 -2.314965,0 -4.492941,2.806288 -5.910795,3.306817 -1.199209,0.423344 -2.309905,-0.48366 -1.826054,0.884749 0.282543,0.79908 0.85109,0.559228 2.579084,1.000011 1.335224,0.340593 3.295234,1.403403 5.157765,1.403403 2.175485,0 3.890059,-0.513024 5.295744,-0.962034 1.35527,-0.432905 4.106428,-2.649271 3.458491,-3.063193 z"
+       fill="#50a0c8"
+       stroke="none"
+       sodipodi:nodetypes="ssssssss"
+       style="fill:#dfc87b;fill-opacity:1;stroke-width:0.681815" />
+    <path
+       id="tail"
+       class="body"
+       d="M 14.949502,21.756284 C 13.245467,19.91555 11.12402,17.445942 9.5652343,18.745327 c 2.7227637,4.317338 -1.525042,4.672318 0,6.021913 1.2519737,-0.646233 1.9375267,-0.126685 5.3842677,-3.010956 z"
+       fill="#50a0c8"
+       stroke="none"
+       sodipodi:nodetypes="cccc"
+       style="fill:#b48e45;fill-opacity:1;stroke-width:0.821883" />
+    <path
+       id="tail-8"
+       class="body"
+       d="m 12.860854,21.597767 c -1.493821,-1.464972 -1.334821,-3.369352 -2.701311,-2.335219 2.386877,3.436011 -1.3369086,3.718527 0,4.79262 1.097527,-0.514313 -0.3202316,-0.161915 2.701311,-2.457401 z"
+       fill="#50a0c8"
+       stroke="none"
+       sodipodi:nodetypes="cccc"
+       style="fill:#ce682b;fill-opacity:1;stroke-width:0.686498" />
+    <path
+       id="rect1"
+       style="fill:#b48e45;fill-opacity:1;stroke-width:0.103311"
+       d="m 27.462299,22.466751 -2.101264,-0.419662 -0.359879,0.304207 0.685074,0.975764 1.250753,-0.146882 z"
+       sodipodi:nodetypes="cccccc" />
+    <path
+       id="rect1-6"
+       style="fill:#ce682b;fill-opacity:1;stroke-width:0.103311"
+       d="m 18.641694,23.682862 -1.282222,-0.456799 -1.754465,0.211366 c -0.373861,0.592214 -0.407043,1.150807 0.220213,1.644224 l 3.486517,-1.168141 z"
+       sodipodi:nodetypes="cccccc" />
+    <path
+       id="rect1-6-6"
+       style="fill:#ce682b;fill-opacity:1;stroke-width:0.103311"
+       d="m 26.228205,24.29446 -0.441044,0.11882 -0.47056,0.04425 -1.285054,0.56726 c -0.203541,0.867225 0.428159,0.926046 0.962982,1.07863 z"
+       sodipodi:nodetypes="cccccc" />
+    <path
+       id="rect1-6-6-4"
+       style="fill:#ac704d;fill-opacity:1;stroke-width:0.103311"
+       d="m 24.873212,16.788255 -1.791356,-2.25793 c -1.332049,0.257362 -3.491647,1.310328 -4.300136,2.88521 l 1.968978,0.511554 1.782024,-0.406839 z"
+       sodipodi:nodetypes="cccccc" />
+  </g>
+  <metadata
+     id="metadata1">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:title>fish</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+</svg>

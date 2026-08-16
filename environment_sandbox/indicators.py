@@ -211,14 +211,16 @@ def biodiversity_snapshot(
     *,
     deer_positions: Iterable[tuple[int, int]],
     boar_positions: Iterable[tuple[int, int]],
-    fish_positions: Iterable[tuple[int, int]],
+    fish_positions: Iterable[tuple[int, int, str]],
     bee_positions: Iterable[tuple[int, int]] = (),
     rabbit_positions: Iterable[tuple[int, int]] = (),
+    wolf_positions: Iterable[tuple[int, int]] = (),
     radius: int | None = None,
 ) -> list[list[float]]:
     """Spatial richness: unique plant + animal species in each neighbourhood.
 
-    Colour scale: 0=red → 5=yellow → 10+=bright green.
+    ``fish_positions`` is ``(x, y, species_key)`` so carp/perch/pike/roach
+    each count separately. Colour scale: 0=red → 5=yellow → 10+=bright green.
     """
     radius = _indicator_radius() if radius is None else radius
     rows, cols = world.rows, world.cols
@@ -236,9 +238,20 @@ def biodiversity_snapshot(
 
     has_deer = _mark(deer_positions)
     has_boar = _mark(boar_positions)
-    has_fish = _mark(fish_positions)
     has_bee = _mark(bee_positions)
     has_rabbit = _mark(rabbit_positions)
+    has_wolf = _mark(wolf_positions)
+
+    # Sparse fish marks — avoid allocating a set per map cell.
+    fish_at: dict[tuple[int, int], set[str]] = {}
+    for entry in fish_positions:
+        if len(entry) < 2:
+            continue
+        ax, ay = int(entry[0]), int(entry[1])
+        if not (0 <= ax < cols and 0 <= ay < rows):
+            continue
+        kind = str(entry[2]).lower() if len(entry) >= 3 else "fish"
+        fish_at.setdefault((ax, ay), set()).add(f"animal:fish:{kind}")
 
     grid: list[list[float]] = [[0.0] * cols for _ in range(rows)]
     for y in range(rows):
@@ -246,16 +259,19 @@ def biodiversity_snapshot(
             species: set[str] = set()
             for ny, nx in world.neighbourhood(x, y, radius):
                 species |= plant[ny][nx]
+                fish_here = fish_at.get((nx, ny))
+                if fish_here:
+                    species |= fish_here
                 if has_deer[ny][nx]:
                     species.add("animal:deer")
                 if has_boar[ny][nx]:
                     species.add("animal:boar")
-                if has_fish[ny][nx]:
-                    species.add("animal:fish")
                 if has_bee[ny][nx]:
                     species.add("animal:bee")
                 if has_rabbit[ny][nx]:
                     species.add("animal:rabbit")
+                if has_wolf[ny][nx]:
+                    species.add("animal:wolf")
             grid[y][x] = float(len(species))
     return grid
 

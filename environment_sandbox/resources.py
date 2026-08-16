@@ -339,7 +339,9 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
 
         return ResourceIconStyle(ICON_BOAR_MALE, {"body": COLOUR_BOAR})
     if key == "fish":
-        return ResourceIconStyle(ICON_FISH, {"body": COLOUR_FISH})
+        from icons import ICON_FISH_ROACH
+
+        return ResourceIconStyle(ICON_FISH_ROACH, {"body": COLOUR_FISH})
     if key == "mushrooms":
         return ResourceIconStyle(
             ICON_MUSHROOM, {"cap": COLOUR_MUSHROOM, "stem": (210, 200, 180)}

@@ -612,9 +612,32 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "id": f.id,
             "x": f.x,
             "y": f.y,
+            "kind": f.kind.name,
             "move_cooldown": f.move_cooldown,
         }
         for f in game.fish.fish
+    ]
+    wolf_packs = [
+        {
+            "id": p.id,
+            "x": p.x,
+            "y": p.y,
+            "fed_days_remaining": p.fed_days_remaining,
+            "move_cooldown": p.move_cooldown,
+            "last_prey": p.last_prey,
+            "last_meal_day": p.last_meal_day,
+            "activity": p.activity,
+            "members": [
+                {
+                    "sex": m.sex.name,
+                    "x": m.x,
+                    "y": m.y,
+                    "move_cooldown": m.move_cooldown,
+                }
+                for m in p.members
+            ],
+        }
+        for p in game.wildlife.wolf_packs
     ]
     payload: dict[str, Any] = {
         "version": SAVE_VERSION,
@@ -663,8 +686,10 @@ def serialize_game(game: Game) -> dict[str, Any]:
         "wildlife": {
             "animals": animals,
             "colonies": colonies,
+            "wolf_packs": wolf_packs,
             "next_id": game.wildlife.next_id,
             "next_colony_id": game.wildlife.next_colony_id,
+            "next_wolf_pack_id": game.wildlife.next_wolf_pack_id,
             "growth_timer": game.wildlife.growth_timer,
         },
         "fish": {
@@ -1415,7 +1440,16 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         )
         game.construction_sites[site.id] = site
 
-    from wildlife import Animal, AnimalKind, AnimalSex, Colony, Fish
+    from wildlife import (
+        Animal,
+        AnimalKind,
+        AnimalSex,
+        Colony,
+        Fish,
+        FishKind,
+        WolfMember,
+        WolfPack,
+    )
 
     wild = data.get("wildlife", {})
     game.wildlife.animals = []
@@ -1494,12 +1528,83 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     # Colony seeding deferred until habitats refresh (_sample_environment).
     game.wildlife._colonies_need_seed = not bool(game.wildlife.colonies)
 
+    game.wildlife.wolf_packs = []
+    for p in wild.get("wolf_packs", []):
+        members: list[WolfMember] = []
+        for m in p.get("members", []):
+            try:
+                sex = AnimalSex[str(m.get("sex", "MALE"))]
+            except KeyError:
+                sex = AnimalSex.MALE
+            members.append(
+                WolfMember(
+                    sex=sex,
+                    x=int(m["x"]),
+                    y=int(m["y"]),
+                    move_cooldown=int(m.get("move_cooldown", 0)),
+                )
+            )
+        if not members:
+            continue
+        # Prefer countdown; migrate legacy absolute fed_until_day (year-wrap bug).
+        if "fed_days_remaining" in p:
+            remaining = float(p.get("fed_days_remaining", 0) or 0)
+        else:
+            from seasons import YEAR_DAYS
+            from settings import WOLF_FEED_BOAR_DAYS
+
+            fed_until = float(p.get("fed_until_day", 0) or 0)
+            day_now = float(game.calendar_day)
+            left = fed_until - day_now
+            if left < -0.5 * YEAR_DAYS:
+                left += float(YEAR_DAYS)
+            max_feed = float(WOLF_FEED_BOAR_DAYS)
+            # Impossible leftovers are year-wrap artifacts → hungry.
+            remaining = left if 0.0 < left <= max_feed + 0.05 else 0.0
+        remaining = min(
+            float(game.wildlife._wolf_feed_cap()),
+            max(0.0, remaining),
+        )
+        game.wildlife.wolf_packs.append(
+            WolfPack(
+                id=int(p["id"]),
+                x=int(p["x"]),
+                y=int(p["y"]),
+                members=members,
+                fed_days_remaining=remaining,
+                move_cooldown=int(p.get("move_cooldown", 0)),
+                last_prey=str(p.get("last_prey", "") or ""),
+                last_meal_day=float(p.get("last_meal_day", -1)),
+                activity=str(p.get("activity", "Roaming") or "Roaming"),
+            )
+        )
+    game.wildlife.next_wolf_pack_id = int(
+        wild.get(
+            "next_wolf_pack_id",
+            max((p.id for p in game.wildlife.wolf_packs), default=0) + 1,
+        )
+    )
+    # Legacy / empty: seed starting packs onto an already-settled map.
+    if not game.wildlife.wolf_packs:
+        game.wildlife._seed_wolf_packs(game.world)
+
     fish_data = data.get("fish", {})
+
+    def _load_fish_kind(raw: object) -> FishKind:
+        if isinstance(raw, str):
+            try:
+                return FishKind[raw]
+            except KeyError:
+                pass
+        # Legacy saves had no species — roll the live spawn mix.
+        return game.fish.pick_kind()
+
     game.fish.fish = [
         Fish(
             id=int(f["id"]),
             x=int(f["x"]),
             y=int(f["y"]),
+            kind=_load_fish_kind(f.get("kind")),
             move_cooldown=int(f.get("move_cooldown", 0)),
         )
         for f in fish_data.get("fish", [])

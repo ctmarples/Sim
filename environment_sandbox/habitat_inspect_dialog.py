@@ -40,6 +40,12 @@ class HabitatInspectView:
     breed_chance_pct: float
     health_pct: float
     benefits: list[tuple[str, str]]
+    # "habitat" (deer/boar/bee/rabbit) or "wolf"
+    panel_kind: str = "habitat"
+    activity: str = ""
+    last_meal: str = ""
+    food_status: str = ""
+    fed_until: str = ""
 
 
 class HabitatInspectDialog:

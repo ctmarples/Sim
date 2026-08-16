@@ -249,9 +249,10 @@ class EnvMaps:
         *,
         deer_positions: Iterable[tuple[int, int]],
         boar_positions: Iterable[tuple[int, int]],
-        fish_positions: Iterable[tuple[int, int]],
+        fish_positions: Iterable[tuple[int, int, str]],
         bee_positions: Iterable[tuple[int, int]] = (),
         rabbit_positions: Iterable[tuple[int, int]] = (),
+        wolf_positions: Iterable[tuple[int, int]] = (),
         bee_nests: Iterable[tuple[int, int, int]] = (),
     ) -> None:
         """Take cyclic snapshots and refresh stable production / overlay grids."""
@@ -265,6 +266,7 @@ class EnvMaps:
             fish_positions=fish_positions,
             bee_positions=bee_positions,
             rabbit_positions=rabbit_positions,
+            wolf_positions=wolf_positions,
         )
         self.biodiversity_samples.append(bio)
         _trim_samples(self.biodiversity_samples, ENV_SAMPLES_PER_YEAR)

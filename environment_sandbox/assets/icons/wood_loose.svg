@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 40 40"
+   width="400"
+   height="400"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="wood.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1">
+    <inkscape:path-effect
+       effect="powerstroke"
+       message=""
+       id="path-effect10"
+       is_visible="true"
+       lpeversion="1.3"
+       scale_width="1"
+       interpolator_type="CentripetalCatmullRom"
+       interpolator_beta="0.75"
+       start_linecap_type="round"
+       end_linecap_type="round"
+       offset_points="203.34441,0.17050488"
+       linejoin_type="spiro"
+       miter_limit="4"
+       not_jump="true"
+       sort_points="true" />
+    <inkscape:path-effect
+       effect="simplify"
+       id="path-effect9"
+       is_visible="true"
+       lpeversion="1.3"
+       threshold="0.012"
+       steps="1"
+       smooth_angles="0"
+       helper_size="0"
+       simplify_individual_paths="false"
+       simplify_just_coalesce="false"
+       step="1" />
+    <inkscape:path-effect
+       effect="powerstroke"
+       message=""
+       id="path-effect8"
+       is_visible="true"
+       lpeversion="1.3"
+       scale_width="1"
+       interpolator_type="CentripetalCatmullRom"
+       interpolator_beta="0.75"
+       start_linecap_type="round"
+       end_linecap_type="round"
+       offset_points="16.560773,0.18905298"
+       linejoin_type="spiro"
+       miter_limit="4"
+       not_jump="true"
+       sort_points="true" />
+    <inkscape:path-effect
+       effect="simplify"
+       id="path-effect7"
+       is_visible="true"
+       lpeversion="1.3"
+       threshold="0.012"
+       steps="1"
+       smooth_angles="0"
+       helper_size="0"
+       simplify_individual_paths="false"
+       simplify_just_coalesce="false"
+       step="1" />
+    <inkscape:path-effect
+       effect="powerstroke"
+       message=""
+       id="path-effect6"
+       is_visible="true"
+       lpeversion="1.3"
+       scale_width="1"
+       interpolator_type="CentripetalCatmullRom"
+       interpolator_beta="0.75"
+       start_linecap_type="round"
+       end_linecap_type="round"
+       offset_points="197.84263,0.34864593"
+       linejoin_type="spiro"
+       miter_limit="4"
+       not_jump="true"
+       sort_points="true" />
+    <inkscape:path-effect
+       effect="simplify"
+       id="path-effect5"
+       is_visible="true"
+       lpeversion="1.3"
+       threshold="0.012"
+       steps="1"
+       smooth_angles="0"
+       helper_size="0"
+       simplify_individual_paths="false"
+       simplify_just_coalesce="false"
+       step="1" />
+    <inkscape:path-effect
+       effect="powerstroke"
+       message=""
+       id="path-effect4"
+       is_visible="true"
+       lpeversion="1.3"
+       scale_width="1"
+       interpolator_type="CentripetalCatmullRom"
+       interpolator_beta="0.75"
+       start_linecap_type="round"
+       end_linecap_type="round"
+       offset_points="185.16114,0.84736035"
+       linejoin_type="spiro"
+       miter_limit="4"
+       not_jump="true"
+       sort_points="true" />
+    <inkscape:path-effect
+       effect="simplify"
+       id="path-effect3"
+       is_visible="true"
+       lpeversion="1.3"
+       threshold="0.012"
+       steps="1"
+       smooth_angles="0"
+       helper_size="0"
+       simplify_individual_paths="false"
+       simplify_just_coalesce="false"
+       step="1" />
+    <inkscape:path-effect
+       effect="powerstroke"
+       message=""
+       id="path-effect2"
+       is_visible="true"
+       lpeversion="1.3"
+       scale_width="1"
+       interpolator_type="CentripetalCatmullRom"
+       interpolator_beta="0.75"
+       start_linecap_type="round"
+       end_linecap_type="round"
+       offset_points="35.577276,0.33785658"
+       linejoin_type="spiro"
+       miter_limit="4"
+       not_jump="true"
+       sort_points="true" />
+    <inkscape:path-effect
+       effect="simplify"
+       id="path-effect1"
+       is_visible="true"
+       lpeversion="1.3"
+       threshold="0.012"
+       steps="1"
+       smooth_angles="0"
+       helper_size="0"
+       simplify_individual_paths="false"
+       simplify_just_coalesce="false"
+       step="1" />
+  </defs>
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     showgrid="false"
+     inkscape:zoom="1.1184532"
+     inkscape:cx="61.245299"
+     inkscape:cy="199.82955"
+     inkscape:window-width="1470"
+     inkscape:window-height="836"
+     inkscape:window-x="0"
+     inkscape:window-y="33"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="berry_bush" />
+  <title
+     id="title1">berry bush</title>
+  <desc
+     id="desc1">Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <path
+     id="path1-2-9"
+     style="fill:#1c0d08;fill-opacity:0.635294;stroke-width:0.152879"
+     inkscape:transform-center-x="-0.86902197"
+     inkscape:transform-center-y="-0.40387028"
+     d="m 26.133847,32.671444 3.14577,-2.901662 -2.721552,-4.090396 c 1.022668,-0.339967 2.697011,1.228485 2.697011,1.228485 L 29.590731,25.404586 25.6593,22.04132 23.49387,20.918899 c -2.573166,-2.719745 -10.34286,-8.386193 -10.34286,-8.386193 0,0 -1.234797,-0.685555 -1.366753,1.49024 0,0 3.343705,1.096813 4.663277,4.564486 2.58005,1.729197 8.558872,11.071696 9.686313,14.084012 z"
+     sodipodi:nodetypes="ccccccccccc" />
+  <path
+     id="path1-2"
+     style="fill:#d28269;fill-opacity:1;stroke-width:0.236106"
+     inkscape:transform-center-x="-1.4082273"
+     inkscape:transform-center-y="-0.59445652"
+     d="m 26.577022,32.425215 2.951817,-2.303951 -4.410203,-6.02065 c 1.657208,-0.500397 4.370436,1.808206 4.370436,1.808206 l 0.54392,-2.212684 -6.370781,-4.950388 -3.509022,-1.652091 c -4.169748,-4.00319 -7.053022,-6.684772 -7.053022,-6.684772 0,0 -1.464501,0.07086 -1.678332,3.27341 0,0 3.827886,-0.401814 5.966218,4.702249 4.180902,2.545204 7.361982,9.606847 9.188969,14.040671 z"
+     sodipodi:nodetypes="ccccccccccc" />
+  <path
+     id="path2-4"
+     style="fill:#f5e4de;stroke-width:0.126704"
+     d="m 26.134742,31.818647 c 0,0.882469 1.368527,1.053902 2.147364,1.053902 0.778836,0 1.185857,-2.347229 1.185857,-3.229697 0,-0.882468 -0.919824,-0.781928 -1.698661,-0.781928 -0.778836,0 -1.63456,2.075256 -1.63456,2.957723 z"
+     sodipodi:nodetypes="sssss" />
+  <path
+     id="path1-5"
+     style="fill:#1d0e09;fill-opacity:0.636574;stroke-width:0.277098"
+     inkscape:transform-center-x="2.1463936"
+     inkscape:transform-center-y="-0.53719245"
+     d="m 11.962977,30.277113 -2.5839881,-3.14426 5.3808091,-6.603007 c -2.525883,-0.452193 2.463471,-0.977839 2.463471,-0.977839 l 5.104769,-5.354141 c 6.355448,-3.617565 10.750076,-6.0408317 10.750076,-6.0408317 0,0 1.529864,0.6037718 1.855783,3.4978207 0,0 -2.542848,-0.175676 -5.802052,4.436717 -6.372453,2.300027 -14.384208,10.178825 -17.168868,14.185541 z"
+     sodipodi:nodetypes="ccccccccc" />
+  <g
+     id="berry_bush"
+     inkscape:groupmode="layer"
+     inkscape:label="berry_bush">
+    <path
+       id="path1"
+       style="fill:#d28269;fill-opacity:1;stroke-width:0.284653"
+       inkscape:transform-center-x="2.2488204"
+       inkscape:transform-center-y="-0.54106368"
+       d="m 11.5593,29.007731 -4.6535401,-2.63562 c 0,0 7.6318541,-3.08199 5.9408921,-5.740795 l 5.360151,-3.010254 3.045216,-2.927634 C 27.910751,11.049794 33.05155,6.9102895 33.05155,6.9102895 c 0,0 1.675402,1.1465102 2.016874,4.0614165 0,0 -4.077866,-0.715332 -7.492602,3.930299 -6.676548,2.3166 -13.098978,10.070135 -16.016522,14.105726 z"
+       sodipodi:nodetypes="ccccccccc" />
+    <path
+       id="path2"
+       style="fill:#f5e4de;stroke-width:0.166793"
+       d="m 12.281721,29.214144 c 0,0.882469 -2.3715327,1.053902 -3.7211857,1.053902 -1.3496524,0 -2.0549823,-2.347229 -2.0549823,-3.229697 0,-0.882468 1.5939712,-0.781928 2.9436233,-0.781928 1.3496527,0 2.8325447,2.075256 2.8325447,2.957723 z"
+       sodipodi:nodetypes="sssss" />
+  </g>
+</svg>

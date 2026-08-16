@@ -2,8 +2,8 @@
 
 Left pane = selected entity detail; right pane = list. Independent pane
 toggles keep at least one pane visible. Villager/building selection opens
-this window; resource and wildlife floating inspects stay separate
-(wildlife is also browsable here).
+this window; wildlife habitats inspect in the Wildlife detail pane
+(H habitat view also selects into this pane).
 """
 
 from __future__ import annotations
@@ -277,6 +277,15 @@ class ManagementWindow:
         # Nested inspect dialogs draw into detail pane when set by Game.
         self.embed_building_inspect = True
         self.embed_villager_inspect = True
+        # Wildlife list filters
+        self.wildlife_inhabited_only: bool = True
+        self.wildlife_species: set[str] = {
+            "DEER",
+            "BOAR",
+            "BEE",
+            "RABBIT",
+            "WOLF",
+        }
 
     def open_window(
         self,
@@ -284,18 +293,28 @@ class ManagementWindow:
         *,
         people_mode: str = "roster",
         assign_building_id: int | None = None,
+        reset_scroll: bool | None = None,
     ) -> None:
+        same_context = (
+            self.open
+            and self.tab == tab
+            and self.people_mode == people_mode
+            and self.assign_building_id == assign_building_id
+        )
         self.open = True
         self.tab = tab
         self.people_mode = people_mode
         self.assign_building_id = assign_building_id
         self._pending_action = None
-        self._scroll = 0
+        if reset_scroll is None:
+            reset_scroll = not same_context
+        if reset_scroll:
+            self._scroll = 0
         self._layout_panel()
 
     def open_people_list(self) -> None:
         """Open People tab with the villager roster list visible."""
-        self.open_window(MgmtTab.PEOPLE, people_mode="roster")
+        self.open_window(MgmtTab.PEOPLE, people_mode="roster", reset_scroll=True)
         self.show_list = True
         self._layout_panel()
 
@@ -326,7 +345,6 @@ class ManagementWindow:
         self.selected_construction_id = None
         self.selected_habitat = None
         self.show_player = show_player
-        self._scroll = 0
         if detail_only:
             self.show_detail = True
             self.show_list = False
@@ -341,7 +359,6 @@ class ManagementWindow:
         self.selected_villager_id = None
         self.selected_habitat = None
         self.show_player = show_player
-        self._scroll = 0
         if detail_only:
             self.show_detail = True
             self.show_list = False
@@ -354,7 +371,6 @@ class ManagementWindow:
         self.selected_villager_id = None
         self.selected_habitat = None
         self.show_player = False
-        self._scroll = 0
         if detail_only:
             self.show_detail = True
             self.show_list = False
@@ -366,7 +382,9 @@ class ManagementWindow:
         self.selected_building_id = None
         self.selected_construction_id = None
         self.selected_villager_id = None
-        self._scroll = 0
+        self.show_detail = True
+        self.show_list = True
+        self._layout_panel()
 
     def contains(self, pos: tuple[int, int]) -> bool:
         return self.open and self._panel.collidepoint(pos)
@@ -478,6 +496,24 @@ class ManagementWindow:
                     self.show_list = not self.show_list
                     self._layout_panel()
                     return True
+                if action == "wild_occ_inhabited":
+                    self.wildlife_inhabited_only = True
+                    self._scroll = 0
+                    return True
+                if action == "wild_occ_all":
+                    self.wildlife_inhabited_only = False
+                    self._scroll = 0
+                    return True
+                if action.startswith("wild_sp_"):
+                    name = action[len("wild_sp_") :]
+                    if name in self.wildlife_species:
+                        # Keep at least one species visible.
+                        if len(self.wildlife_species) > 1:
+                            self.wildlife_species.discard(name)
+                    else:
+                        self.wildlife_species.add(name)
+                    self._scroll = 0
+                    return True
                 self._pending_action = action
                 return True
         for rect, kind, item_id in self._list_hits:
@@ -580,7 +616,7 @@ class ManagementWindow:
         villagers: list[Villager],
         buildings: dict[int, Building],
         construction_sites: dict[int, ConstructionSite],
-        wildlife_rows: list[tuple[Any, int, str, str]],
+        wildlife_rows: list[tuple[Any, int, str, str, bool]],
         habitat_view: HabitatInspectView | None,
         mouse_pos: tuple[int, int] | None = None,
         hire_entries: list[RosterEntry] | None = None,
@@ -807,12 +843,58 @@ class ManagementWindow:
             self.font_small.render(view.subtitle, True, COLOUR_TEXT_DIM), (x, y)
         )
         y += 20
+
+        if view.panel_kind == "wolf":
+            for label, value in (
+                ("Pack", view.population),
+                ("Activity", view.activity or "—"),
+                ("Last meal", view.last_meal or "None yet"),
+                ("Food", view.food_status or "Hungry"),
+                ("Fed until", view.fed_until or "—"),
+            ):
+                surface.blit(
+                    self.font_small.render(f"{label}: {value}", True, COLOUR_TEXT),
+                    (x, y),
+                )
+                y += 18
+            y += 6
+            surface.blit(self.font_small.render("Status", True, COLOUR_TEXT), (x, y))
+            y += 18
+            for name, val in view.benefits:
+                surface.blit(
+                    self.font_small.render(f"{name}: {val}", True, COLOUR_TEXT_DIM),
+                    (x, y),
+                )
+                y += 16
+            y += 6
+            surface.blit(self.font_small.render("Vitality", True, COLOUR_TEXT), (x, y))
+            y += 18
+            health_colour = COLOUR_TEXT
+            if view.health_pct < 40:
+                health_colour = (220, 100, 90)
+            elif view.health_pct < 70:
+                health_colour = (220, 180, 80)
+            surface.blit(
+                self.font_small.render(
+                    f"Overall health: {view.health_pct:.0f}%", True, health_colour
+                ),
+                (x, y),
+            )
+            y += 18
+            surface.blit(
+                self.font_small.render(
+                    f"Breeding chance: {view.breed_chance_pct:.0f}% / tick",
+                    True,
+                    COLOUR_TEXT,
+                ),
+                (x, y),
+            )
+            return
+
         for label, value in (
             ("Population", view.population),
-            ("Breeding tiles", str(view.breeding_tiles)),
-            ("Roam tiles", str(view.roam_tiles)),
-            ("Health", f"{view.health_pct:.0f}%"),
-            ("Breed chance", f"{view.breed_chance_pct:.0f}%"),
+            ("Breeding area", f"{view.breeding_tiles} cells"),
+            ("Roaming / forage", f"{view.roam_tiles} cells"),
         ):
             surface.blit(
                 self.font_small.render(f"{label}: {value}", True, COLOUR_TEXT),
@@ -820,12 +902,50 @@ class ManagementWindow:
             )
             y += 18
         y += 6
+        surface.blit(self.font_small.render("Environment", True, COLOUR_TEXT), (x, y))
+        y += 18
         for name, val in view.benefits:
             surface.blit(
                 self.font_small.render(f"{name}: {val}", True, COLOUR_TEXT_DIM),
                 (x, y),
             )
             y += 16
+        y += 6
+        surface.blit(self.font_small.render("Disturbance", True, COLOUR_TEXT), (x, y))
+        y += 18
+        for label, value in (
+            ("Average (radius)", f"{view.avg_disturbance * 100:.0f}%"),
+            ("Peak", f"{view.max_disturbance * 100:.0f}%"),
+            ("Ecology modifier", f"×{view.ecology_mult:.2f}"),
+        ):
+            surface.blit(
+                self.font_small.render(f"{label}: {value}", True, COLOUR_TEXT),
+                (x, y),
+            )
+            y += 18
+        y += 6
+        surface.blit(self.font_small.render("Vitality", True, COLOUR_TEXT), (x, y))
+        y += 18
+        health_colour = COLOUR_TEXT
+        if view.health_pct < 40:
+            health_colour = (220, 100, 90)
+        elif view.health_pct < 70:
+            health_colour = (220, 180, 80)
+        surface.blit(
+            self.font_small.render(
+                f"Overall health: {view.health_pct:.0f}%", True, health_colour
+            ),
+            (x, y),
+        )
+        y += 18
+        surface.blit(
+            self.font_small.render(
+                f"Breeding chance: {view.breed_chance_pct:.0f}% / tick",
+                True,
+                COLOUR_TEXT,
+            ),
+            (x, y),
+        )
 
     def _job_for_villager(
         self, v: Villager, buildings: dict[int, Building]
@@ -1240,13 +1360,18 @@ class ManagementWindow:
     def _draw_wildlife_list(
         self,
         surface: pygame.Surface,
-        rows: list[tuple[Any, int, str, str]],
+        rows: list[tuple[Any, int, str, str, bool]],
         mouse_pos: tuple[int, int] | None,
     ) -> None:
-        del mouse_pos
         rect = self._list_rect
-        y = rect.y + 6 - self._scroll
-        view = pygame.Rect(rect.x + 2, rect.y + 2, rect.w - 4, rect.h - 4)
+        filter_h = 52
+        filter_rect = pygame.Rect(rect.x + 2, rect.y + 2, rect.w - 4, filter_h)
+        self._draw_wildlife_filters(surface, filter_rect, mouse_pos)
+
+        view = pygame.Rect(
+            rect.x + 2, rect.y + 2 + filter_h, rect.w - 4, rect.h - 4 - filter_h
+        )
+        y = view.y + 4 - self._scroll
         old = surface.get_clip()
         surface.set_clip(view)
         icon_for = {
@@ -1254,8 +1379,15 @@ class ManagementWindow:
             "BOAR": "boar_male",
             "BEE": "bee_hive",
             "RABBIT": "burrow",
+            "WOLF": "wolf_male",
         }
-        for kind, patch_id, title, subtitle in rows:
+        shown = 0
+        for kind, patch_id, title, subtitle, inhabited in rows:
+            name = kind.name if hasattr(kind, "name") else str(kind)
+            if name not in self.wildlife_species:
+                continue
+            if self.wildlife_inhabited_only and not inhabited:
+                continue
             row = pygame.Rect(view.x + 2, y, view.w - 8, LIST_ROW_H)
             selected = self.selected_habitat == (kind, patch_id)
             if selected:
@@ -1263,7 +1395,6 @@ class ManagementWindow:
                 pygame.draw.rect(
                     surface, COLOUR_SELECTED_ENTITY, row, 1, border_radius=3
                 )
-            name = kind.name if hasattr(kind, "name") else str(kind)
             blit_icon(
                 surface, icon_for.get(name, "deer_male"), row.x + 18, row.centery, 28
             )
@@ -1275,6 +1406,68 @@ class ManagementWindow:
                 self.font_tiny.render(subtitle, True, COLOUR_TEXT_DIM),
                 (row.x + 36, row.y + 20),
             )
-            self._list_hits.append((row, "habitat", f"{name}:{patch_id}"))
+            # Only hit-test rows currently visible in the clip.
+            if row.bottom >= view.y and row.top <= view.bottom:
+                self._list_hits.append((row, "habitat", f"{name}:{patch_id}"))
             y += LIST_ROW_H + 2
+            shown += 1
+        if shown == 0:
+            surface.blit(
+                self.font_small.render("No matching wildlife", True, COLOUR_TEXT_DIM),
+                (view.x + 8, view.y + 8),
+            )
         surface.set_clip(old)
+
+    def _draw_wildlife_filters(
+        self,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        mouse_pos: tuple[int, int] | None,
+    ) -> None:
+        pygame.draw.rect(surface, (32, 34, 40), rect, border_radius=4)
+        pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1, border_radius=4)
+        x = rect.x + 6
+        y = rect.y + 6
+        for label, action, active in (
+            ("Inhabited", "wild_occ_inhabited", self.wildlife_inhabited_only),
+            ("All", "wild_occ_all", not self.wildlife_inhabited_only),
+        ):
+            btn = pygame.Rect(x, y, 72, 18)
+            hovered = mouse_pos is not None and btn.collidepoint(mouse_pos)
+            self._draw_btn(surface, btn, label, active=active, hovered=hovered)
+            self._buttons.append((action, btn))
+            if hovered:
+                tip = (
+                    "Show grounds/nests with animals"
+                    if action == "wild_occ_inhabited"
+                    else "Show empty and occupied sites"
+                )
+                self._tooltip = (tip, (btn.centerx, btn.top))
+            x += 76
+
+        x = rect.x + 6
+        y = rect.y + 28
+        species = (
+            ("DEER", "deer_male", "Deer"),
+            ("BOAR", "boar_male", "Boar"),
+            ("BEE", "bee_hive", "Bees"),
+            ("RABBIT", "burrow", "Rabbits"),
+            ("WOLF", "wolf_male", "Wolves"),
+        )
+        for name, icon, tip in species:
+            btn = pygame.Rect(x, y, 26, 20)
+            active = name in self.wildlife_species
+            hovered = mouse_pos is not None and btn.collidepoint(mouse_pos)
+            bg = (
+                COLOUR_TOOLBAR_BTN_ACTIVE
+                if active
+                else (COLOUR_TOOLBAR_BTN_HOVER if hovered else COLOUR_TOOLBAR_BTN)
+            )
+            pygame.draw.rect(surface, bg, btn, border_radius=3)
+            pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, btn, 1, border_radius=3)
+            blit_icon(surface, icon, btn.centerx, btn.centery, 18)
+            self._buttons.append((f"wild_sp_{name}", btn))
+            if hovered:
+                state = "on" if active else "off"
+                self._tooltip = (f"{tip} filter ({state})", (btn.centerx, btn.top))
+            x += 30

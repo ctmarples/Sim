@@ -7957,15 +7957,21 @@ class Game:
         if not self.player.inventory.has_equipped_tool("fishing_rod"):
             self._set_status("Equip a fishing rod (Q) to fish.")
             return
-        pos = self.fish.kill_fish(item.id)
-        if pos is None:
+        from wildlife import fish_yield_for
+
+        result = self.fish.kill_fish(item.id)
+        if result is None:
             self._set_status("Fish got away.")
             return
-        self.world.add_fish_deposit(pos[0], pos[1], FISH_YIELD)
-        self.world.apply_extraction_disturbance(pos[0], pos[1])
+        x, y, kind = result
+        yield_n = fish_yield_for(kind)
+        self.world.add_fish_deposit(x, y, yield_n)
+        self.world.apply_extraction_disturbance(x, y)
         self._refresh_indicators()
         self._finish_player_work()
-        self._set_status(f"Caught fish. {FISH_YIELD} fish left on shore.")
+        self._set_status(
+            f"Caught {kind.name.lower()}. {yield_n} fish left on shore."
+        )
 
     # ------------------------------------------------------------------
     # Villager AI
@@ -13712,10 +13718,15 @@ class Game:
 
         # At the post: catch any fish that swim within Chebyshev range 1.
         # Fish go straight into inventory (no shore drop → pick-up loop).
+        # Yield is per species (roach 1 … pike 4); only require space for a fish
+        # that actually fits — gating on max yield blocked catches in 1–3 free slots.
         if villager.work_cooldown != 0:
             return
-        if not villager.inventory.can_add(FISH_YIELD, key="fish"):
-            self._force_assigned_delivery(villager, building)
+        from wildlife import fish_yield_for
+
+        if not villager.inventory.can_add(1, key="fish"):
+            if int(getattr(villager.inventory, "fish", 0)) > 0:
+                self._force_assigned_delivery(villager, building)
             return
         taken = self._claimed_fish_ids(villager.id)
         catchable = [
@@ -13725,19 +13736,29 @@ class Game:
             and self.world.is_adjacent_chebyshev(
                 villager.x, villager.y, f.x, f.y, radius=1
             )
+            and villager.inventory.can_add(fish_yield_for(f.kind), key="fish")
         ]
         if not catchable:
+            if int(getattr(villager.inventory, "fish", 0)) > 0 and not villager.inventory.can_add(
+                FISH_YIELD, key="fish"
+            ):
+                self._force_assigned_delivery(villager, building)
+                return
             villager.work_cooldown = max(4, self._villager_move_interval(villager) // 4)
             return
         target = min(
             catchable,
             key=lambda f: abs(f.x - villager.x) + abs(f.y - villager.y),
         )
+        yield_n = fish_yield_for(target.kind)
         pos = self.fish.kill_fish(target.id)
         if pos is None:
             return
-        villager.inventory.add_fish(FISH_YIELD)
-        self.record_produced("fish", FISH_YIELD)
+        if not villager.inventory.add_fish(yield_n):
+            # Capacity raced away — leave the catch on shore rather than lose it.
+            self.world.add_fish_deposit(pos[0], pos[1], yield_n)
+        else:
+            self.record_produced("fish", yield_n)
         self.world.apply_extraction_disturbance(pos[0], pos[1])
         self._refresh_indicators()
         villager.work_cooldown = self._villager_work_interval(villager)

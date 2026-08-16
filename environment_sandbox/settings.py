@@ -397,11 +397,25 @@ INDICATOR_RADIUS: int = 2
 # Work actions (each spaced by villager work interval) to finish one mill/kitchen craft.
 PROCESSOR_RECIPE_STEPS: int = 3
 
-# Wildlife tick cadence (authored at 1 tick/frame; scaled for current playback).
-ANIMAL_MOVE_INTERVAL: int = pace_ticks(80)
+# Wildlife tick cadence (authored as wall-clock seconds at ×1 / 60 FPS).
+ANIMAL_MOVE_SECONDS_AT_X1: float = 80.0 / FPS  # deer/boar/bee roam
+ANIMAL_FLEE_SECONDS_AT_X1: float = WALK_SECONDS_AT_X1  # flee villagers / hunt panic
+FISH_MOVE_SECONDS_AT_X1: float = 80.0 / FPS
+RABBIT_MOVE_PAUSE_SECONDS_AT_X1: float = 120.0 / FPS  # hop then pause
+# Wolves: seek = roam × mult; close chase = flee × mult.
+WOLF_SEEK_SPEED_MULT: float = 1.5
+WOLF_CHASE_SPEED_MULT: float = 1.5
+# Soft direction weights when picking a neighbouring tile (0 = ignore).
+ANIMAL_WEIGHT_BIODIVERSITY: float = 1.0
+ANIMAL_WEIGHT_AWAY_DISTURBANCE: float = 1.0
+WOLF_WEIGHT_BIODIVERSITY: float = 1.0
+WOLF_WEIGHT_AWAY_DISTURBANCE: float = 0.5
+WOLF_WEIGHT_TOWARD_PREY: float = 2.0
+# Derived tick intervals (defaults; runtime uses File → Balance when available).
+ANIMAL_MOVE_INTERVAL: int = max(4, seconds_to_ticks(ANIMAL_MOVE_SECONDS_AT_X1))
 ANIMAL_GROWTH_INTERVAL: int = pace_ticks(480)
 
-FISH_MOVE_INTERVAL: int = pace_ticks(80)
+FISH_MOVE_INTERVAL: int = max(4, seconds_to_ticks(FISH_MOVE_SECONDS_AT_X1))
 FISH_GROWTH_INTERVAL: int = pace_ticks(480)
 
 DISTURBANCE_DECAY_PER_TICK: float = 0.002
@@ -425,6 +439,18 @@ WILDLIFE_DISTURBANCE_SENSITIVITY: float = 1.0
 # Forage tiles required per colony level (level 1 → this many, level 4 → 4×).
 WILDLIFE_BEE_FORAGE_PER_LEVEL: int = 10
 WILDLIFE_RABBIT_FORAGE_PER_LEVEL: int = 10
+# Wolves — packs roam the whole map; total individuals capped.
+WOLF_MAX_POPULATION: int = 20
+WOLF_SEED_PACKS: int = 2
+WOLF_BREED_CHANCE: float = 0.35
+WOLF_HUNT_BOAR_MIN: int = 4
+WOLF_HUNT_DEER_MIN: int = 3
+# Seed packs are a pair (2) — rabbits are their starter prey.
+WOLF_HUNT_RABBIT_MIN: int = 2
+# Feed days after a kill (= meat yield from hunter recipes).
+WOLF_FEED_BOAR_DAYS: float = 5.0
+WOLF_FEED_DEER_DAYS: float = 3.0
+WOLF_FEED_RABBIT_DAYS: float = 3.0
 # Calendar days for a food stack's quality to fall from fresh (1) to spoil (0).
 FOOD_SPOILAGE_DAYS: float = 10.0
 # Chebyshev radius for neighbourhood-averaged disturbance (read + spread falloff).
@@ -432,7 +458,7 @@ DISTURBANCE_RADIUS: int = 3
 
 STATUS_MESSAGE_FRAMES: int = 150
 
-# Visual-only height warp (toggle with H). Logic grid stays flat.
+# Visual-only height warp (map-edit restore; H is habitat view). Logic grid stays flat.
 HEIGHT_SAMPLE_ENABLED_DEFAULT: bool = True
 # Absolute height units matching valley hydrology.
 HEIGHT_LAKE: float = 0.0

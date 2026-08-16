@@ -388,7 +388,22 @@ HUNT_SCARE_STEPS: int = 4
 HUNT_APPROACH_RADIUS: int = 6
 # Flee pace fallback (= healthy unbuffed villager walk). Game passes scaled interval.
 HUNT_SCARE_MOVE_INTERVAL: int = pace_ticks(48)
-FISH_YIELD: int = 2
+# Fish species spawn weight carp:perch:pike:roach = 2:3:1:4;
+# catch cargo yield (fish units) = 3:2:4:1 respectively.
+FISH_SPAWN_WEIGHTS: dict[str, int] = {
+    "CARP": 2,
+    "PERCH": 3,
+    "PIKE": 1,
+    "ROACH": 4,
+}
+FISH_SPECIES_YIELD: dict[str, int] = {
+    "CARP": 3,
+    "PERCH": 2,
+    "PIKE": 4,
+    "ROACH": 1,
+}
+# Largest single-catch yield — used for "will the next catch fit?" cargo checks.
+FISH_YIELD: int = max(FISH_SPECIES_YIELD.values())
 
 # ---------------------------------------------------------------------------
 # Wildlife / fish ecology (population, habitats, seeding)

@@ -50,13 +50,14 @@ from resource_balance import (
     COLONY_SPLIT_LEVEL,
     DEER_CROP_EAT_CHANCE,
     FISH_WATER_PER_CAP,
+    FISH_SPAWN_WEIGHTS,
+    FISH_SPECIES_YIELD,
     HONEY_PER_BEE_LEVEL,
     HUNT_APPROACH_RADIUS,
     HUNT_SCARE_RADIUS,
     HUNT_SCARE_STEPS,
     MIN_BREEDING_CAPACITY,
     PATH_FIND_MAX_NODES,
-    RABBIT_MOVE_PAUSE,
     SMALL_GAME_FORAGE_RADIUS,
     WILDLIFE_RESEED_PAIR,
     WILDLIFE_SEED_COUNT,
@@ -64,13 +65,62 @@ from resource_balance import (
 )
 from settings import (
     ANIMAL_GROWTH_INTERVAL,
-    ANIMAL_MOVE_INTERVAL,
+    ANIMAL_MOVE_SECONDS_AT_X1,
+    ANIMAL_FLEE_SECONDS_AT_X1,
     FISH_GROWTH_INTERVAL,
-    FISH_MOVE_INTERVAL,
+    FISH_MOVE_SECONDS_AT_X1,
+    RABBIT_MOVE_PAUSE_SECONDS_AT_X1,
     RANDOM_SEED,
-    VILLAGER_MOVE_INTERVAL,
+    seconds_to_ticks,
 )
 from world import FeatureType, TerrainType, World, wildlife_ecology_multiplier, effective_disturbance_at
+
+
+def _bal_seconds_ticks(key: str, default_seconds: float) -> int:
+    """Convert a balance seconds-at-×1 knob to sim ticks."""
+    from balance_config import active_balance
+
+    try:
+        seconds = float(active_balance().get_float(key))
+    except Exception:
+        seconds = float(default_seconds)
+    return max(4, seconds_to_ticks(max(0.05, seconds)))
+
+
+def animal_roam_interval() -> int:
+    return _bal_seconds_ticks("ANIMAL_MOVE_SECONDS_AT_X1", ANIMAL_MOVE_SECONDS_AT_X1)
+
+
+def animal_flee_interval() -> int:
+    return _bal_seconds_ticks("ANIMAL_FLEE_SECONDS_AT_X1", ANIMAL_FLEE_SECONDS_AT_X1)
+
+
+def fish_move_interval() -> int:
+    return _bal_seconds_ticks("FISH_MOVE_SECONDS_AT_X1", FISH_MOVE_SECONDS_AT_X1)
+
+
+def rabbit_pause_interval() -> int:
+    return _bal_seconds_ticks(
+        "RABBIT_MOVE_PAUSE_SECONDS_AT_X1", RABBIT_MOVE_PAUSE_SECONDS_AT_X1
+    )
+
+
+def wolf_speed_mult(key: str, default: float) -> float:
+    from balance_config import active_balance
+
+    try:
+        return max(1.0, float(active_balance().get_float(key)))
+    except Exception:
+        return max(1.0, float(default))
+
+
+def _bal_weight(key: str, default: float) -> float:
+    from balance_config import active_balance
+
+    try:
+        return max(0.0, float(active_balance().get_float(key)))
+    except Exception:
+        return max(0.0, float(default))
 
 
 class AnimalKind(Enum):
@@ -78,6 +128,28 @@ class AnimalKind(Enum):
     BOAR = auto()
     BEE = auto()
     RABBIT = auto()
+    WOLF = auto()
+
+
+class FishKind(Enum):
+    CARP = auto()
+    PERCH = auto()
+    PIKE = auto()
+    ROACH = auto()
+
+
+def fish_yield_for(kind: FishKind) -> int:
+    """Cargo fish units dropped/collected for this species."""
+    return int(FISH_SPECIES_YIELD.get(kind.name, 1))
+
+
+def fish_icon_for(kind: FishKind) -> str:
+    return {
+        FishKind.CARP: "fish_carp",
+        FishKind.PERCH: "fish_perch",
+        FishKind.PIKE: "fish_pike",
+        FishKind.ROACH: "fish_roach",
+    }.get(kind, "fish_roach")
 
 
 FOREST_KINDS: tuple[AnimalKind, ...] = (AnimalKind.DEER, AnimalKind.BOAR)
@@ -182,6 +254,49 @@ class Colony:
 
 
 @dataclass
+class WolfMember:
+    """One wolf in a pack (drawn near the pack centre)."""
+
+    sex: AnimalSex
+    x: int
+    y: int
+    move_cooldown: int = 0
+
+
+@dataclass
+class WolfPack:
+    """Mobile wolf pack — habitat is the whole walkable map."""
+
+    id: int
+    x: int
+    y: int
+    members: list[WolfMember] = field(default_factory=list)
+    # Days of food left (counts down; capped at boar feed duration).
+    fed_days_remaining: float = 0.0
+    move_cooldown: int = 0
+    # Last successful kill (for inspect UI).
+    last_prey: str = ""
+    last_meal_day: float = -1.0
+    # Live activity label refreshed each tick (Fleeing / Hunting / …).
+    activity: str = "Roaming"
+
+    def size(self) -> int:
+        return len(self.members)
+
+    def has_pair(self) -> bool:
+        sexes = {m.sex for m in self.members}
+        return AnimalSex.MALE in sexes and AnimalSex.FEMALE in sexes
+
+    def is_fed(self, day: float = 0.0) -> bool:
+        del day
+        return float(self.fed_days_remaining) > 0.0
+
+    def food_days_left(self, day: float = 0.0) -> float:
+        del day
+        return max(0.0, float(self.fed_days_remaining))
+
+
+@dataclass
 class ForestHabitat:
     """Per-patch breeding / roaming areas for deer and boar."""
 
@@ -227,14 +342,16 @@ Habitat = ForestHabitat | OpenHabitat
 
 
 class WildlifeManager:
-    """Forest game (deer/boar) plus bee/rabbit colonies on open nest sites."""
+    """Forest game (deer/boar), bee/rabbit colonies, and wolf packs."""
 
     def __init__(self, seed: int = RANDOM_SEED) -> None:
         self.rng = random.Random(seed + 7)
         self.animals: list[Animal] = []
         self.colonies: list[Colony] = []
+        self.wolf_packs: list[WolfPack] = []
         self.next_id = 1
         self.next_colony_id = 1
+        self.next_wolf_pack_id = 1
         self.growth_timer = ANIMAL_GROWTH_INTERVAL
         self.habitats: list[ForestHabitat] = []
         self.open_habitats: list[OpenHabitat] = []
@@ -242,19 +359,23 @@ class WildlifeManager:
         self._colonies_need_seed = False
         self._prev_season: Season | None = None
         self._by_id: dict[int, Animal] = {}
+        self._wolf_food_day: float | None = None
 
     def reset(self) -> None:
         self.animals.clear()
         self.colonies.clear()
+        self.wolf_packs.clear()
         self._by_id.clear()
         self.next_id = 1
         self.next_colony_id = 1
+        self.next_wolf_pack_id = 1
         self.growth_timer = ANIMAL_GROWTH_INTERVAL
         self.habitats.clear()
         self.open_habitats.clear()
         self._seeded = False
         self._colonies_need_seed = False
         self._prev_season = None
+        self._wolf_food_day = None
         self.rng.seed(RANDOM_SEED + 7)
 
     def _index_animals(self) -> None:
@@ -265,6 +386,17 @@ class WildlifeManager:
 
     def boars(self) -> list[Animal]:
         return [a for a in self.animals if a.kind == AnimalKind.BOAR]
+
+    def wolf_count(self) -> int:
+        return sum(p.size() for p in self.wolf_packs)
+
+    def wolf_positions(self) -> list[tuple[int, int]]:
+        out: list[tuple[int, int]] = []
+        for pack in self.wolf_packs:
+            out.append((pack.x, pack.y))
+            for m in pack.members:
+                out.append((m.x, m.y))
+        return out
 
     def bee_colonies(self) -> list[Colony]:
         return [c for c in self.colonies if c.kind == AnimalKind.BEE]
@@ -864,8 +996,10 @@ class WildlifeManager:
             self.refresh_habitats(world)
         self.animals.clear()
         self.colonies.clear()
+        self.wolf_packs.clear()
         self.next_id = 1
         self.next_colony_id = 1
+        self.next_wolf_pack_id = 1
         occupied: set[tuple[int, int]] = set()
 
         for kind in FOREST_KINDS:
@@ -877,6 +1011,7 @@ class WildlifeManager:
             for hab in grounds[:WILDLIFE_SEED_GROUNDS]:
                 self._seed_patch(kind, hab, WILDLIFE_SEED_COUNT, occupied)
         self._seed_colonies(world)
+        self._seed_wolf_packs(world)
         self._seeded = True
 
     def _seed_colonies(self, world: World) -> None:
@@ -944,7 +1079,7 @@ class WildlifeManager:
                     kind=kind,
                     sex=sexes[placed],
                     patch_id=hab.id,
-                    move_cooldown=ANIMAL_MOVE_INTERVAL,
+                    move_cooldown=animal_roam_interval(),
                 )
             )
             self.next_id += 1
@@ -1055,6 +1190,7 @@ class WildlifeManager:
         *,
         hunter_threats: list[tuple[int, int]] | None = None,
         flee_interval: int | None = None,
+        biodiversity: list[list[float]] | None = None,
     ) -> None:
         if not self.habitats and not self.open_habitats:
             self.refresh_habitats(world)
@@ -1072,8 +1208,16 @@ class WildlifeManager:
             season,
             hunter_threats=hunter_threats,
             flee_interval=flee_interval,
+            biodiversity=biodiversity,
         )
-        self._move_colony_members(world, day)
+        self._move_colony_members(world, day, biodiversity=biodiversity)
+        self._tick_wolf_packs(
+            world,
+            day,
+            biodiversity=biodiversity,
+            villager_threats=hunter_threats,
+            flee_interval=flee_interval,
+        )
         if not animals_multiply(day):
             return
         self.growth_timer -= 1
@@ -1085,6 +1229,7 @@ class WildlifeManager:
             self._cull_excess()
             self._migrate()
             self._tick_colonies(world)
+            self._breed_wolves(world)
 
     def _form_mating_pairs(self, *, reindex: bool = True) -> None:
         """Pair unpaired males and females that share a patch."""
@@ -1149,6 +1294,89 @@ class WildlifeManager:
             if pick <= acc:
                 return pos
         return options[-1]
+
+    def _wolf_threat_positions(self) -> list[tuple[int, int]]:
+        threats: list[tuple[int, int]] = []
+        for pack in self.wolf_packs:
+            threats.append((pack.x, pack.y))
+            threats.extend((m.x, m.y) for m in pack.members)
+        return threats
+
+    def _bio_at(
+        self,
+        biodiversity: list[list[float]] | None,
+        x: int,
+        y: int,
+    ) -> float:
+        if not biodiversity:
+            return 0.0
+        rows = len(biodiversity)
+        cols = len(biodiversity[0]) if rows else 0
+        if 0 <= y < rows and 0 <= x < cols:
+            return float(biodiversity[y][x])
+        return 0.0
+
+    def _pick_weighted_step(
+        self,
+        world: World,
+        options: list[tuple[int, int]],
+        *,
+        biodiversity: list[list[float]] | None = None,
+        bio_weight: float = 0.0,
+        away_disturbance_weight: float = 0.0,
+        toward: tuple[int, int] | None = None,
+        toward_weight: float = 0.0,
+        away_center: tuple[float, float] | None = None,
+        away_center_weight: float = 0.0,
+    ) -> tuple[int, int]:
+        """Weighted neighbour pick for soft movement biases."""
+        if not options:
+            raise ValueError("options empty")
+        if len(options) == 1:
+            return options[0]
+        weights: list[float] = []
+        for x, y in options:
+            w = 1.0
+            if bio_weight > 0.0:
+                w += bio_weight * self._bio_at(biodiversity, x, y)
+            if away_disturbance_weight > 0.0:
+                dist = effective_disturbance_at(world, x, y)
+                w += away_disturbance_weight * (1.0 - float(dist))
+            if toward is not None and toward_weight > 0.0:
+                d = max(abs(x - toward[0]), abs(y - toward[1]))
+                w += toward_weight / (1.0 + float(d))
+            if away_center is not None and away_center_weight > 0.0:
+                d = max(abs(x - away_center[0]), abs(y - away_center[1]))
+                w += away_center_weight * (1.0 + d * d)
+            weights.append(max(0.01, w))
+        total = sum(weights)
+        pick = self.rng.random() * total
+        acc = 0.0
+        for pos, w in zip(options, weights):
+            acc += w
+            if pick <= acc:
+                return pos
+        return options[-1]
+
+    def _animal_roam_pick(
+        self,
+        world: World,
+        options: list[tuple[int, int]],
+        *,
+        biodiversity: list[list[float]] | None = None,
+        warm_center: tuple[float, float] | None = None,
+    ) -> tuple[int, int]:
+        return self._pick_weighted_step(
+            world,
+            options,
+            biodiversity=biodiversity,
+            bio_weight=_bal_weight("ANIMAL_WEIGHT_BIODIVERSITY", 1.0),
+            away_disturbance_weight=_bal_weight(
+                "ANIMAL_WEIGHT_AWAY_DISTURBANCE", 1.0
+            ),
+            away_center=warm_center,
+            away_center_weight=1.0 if warm_center is not None else 0.0,
+        )
 
     @staticmethod
     def _place_animal(
@@ -1661,8 +1889,10 @@ class WildlifeManager:
         roam: set[tuple[int, int]],
         occupied: set[tuple[int, int]],
         move_interval: int,
+        *,
+        biodiversity: list[list[float]] | None = None,
     ) -> None:
-        """Step a mating pair one tile, weighted away from breeding ground."""
+        """Step a mating pair one tile, biased by warm-season spread + balance weights."""
         center = self._breeding_center(a.kind, hab)
 
         def _adjacent_in_roam(x: int, y: int) -> list[tuple[int, int]]:
@@ -1683,7 +1913,9 @@ class WildlifeManager:
                 )
                 self._step_toward(world, a, nearest[0], nearest[1], occupied)
         else:
-            dest = self._weighted_away_choice(lead_opts, center)
+            dest = self._animal_roam_pick(
+                world, lead_opts, biodiversity=biodiversity, warm_center=center
+            )
             self._place_animal(a, dest[0], dest[1], occupied)
 
         # Mate stays adjacent: step toward leader first if separated.
@@ -1701,7 +1933,9 @@ class WildlifeManager:
             in_roam = [p for p in mate_opts if p in roam]
             pool = in_roam or mate_opts
             if pool:
-                mdest = self._weighted_away_choice(pool, center)
+                mdest = self._animal_roam_pick(
+                    world, pool, biodiversity=biodiversity, warm_center=center
+                )
                 self._place_animal(b, mdest[0], mdest[1], occupied)
 
         self._arm_move(a, move_interval)
@@ -1715,17 +1949,23 @@ class WildlifeManager:
         *,
         hunter_threats: list[tuple[int, int]] | None = None,
         flee_interval: int | None = None,
+        biodiversity: list[list[float]] | None = None,
     ) -> None:
         slow = 1 + int(2 * freeze_amount(day)) if animals_slow(day) else 1
-        move_interval = ANIMAL_MOVE_INTERVAL * slow
+        move_interval = animal_roam_interval() * slow
         flee_iv = max(
             4,
-            int(flee_interval if flee_interval is not None else VILLAGER_MOVE_INTERVAL),
+            int(
+                flee_interval
+                if flee_interval is not None
+                else animal_flee_interval()
+            ),
         )
         occupied = self._occupied()
         cold_season = season in (Season.AUTUMN, Season.WINTER)
         warm_season = season in (Season.SPRING, Season.SUMMER)
         moved: set[int] = set()
+        prey_threats = list(hunter_threats or []) + self._wolf_threat_positions()
 
         for animal in self.animals:
             if animal.id in moved:
@@ -1749,10 +1989,10 @@ class WildlifeManager:
                 moved.add(animal.id)
                 continue
 
-            # Flee a nearby hunter / player at healthy villager walk pace.
+            # Flee villagers / player / wolves.
             if animal.kind in FOREST_KINDS:
                 threat = self._nearest_hunter_threat(
-                    animal, hunter_threats, HUNT_APPROACH_RADIUS
+                    animal, prey_threats, HUNT_APPROACH_RADIUS
                 )
                 if threat is not None:
                     self._step_flee(world, animal, threat, occupied)
@@ -1850,7 +2090,14 @@ class WildlifeManager:
                 and mate.migrate_home_id is None
             ):
                 self._move_pair_away(
-                    world, animal, mate, hab, roam, occupied, move_interval
+                    world,
+                    animal,
+                    mate,
+                    hab,
+                    roam,
+                    occupied,
+                    move_interval,
+                    biodiversity=biodiversity,
                 )
                 moved.add(animal.id)
                 moved.add(mate.id)
@@ -1867,10 +2114,11 @@ class WildlifeManager:
                 center = (
                     self._breeding_center(animal.kind, hab) if warm_season else None
                 )
-                dest = (
-                    self._weighted_away_choice(neighbours, center)
-                    if warm_season
-                    else self.rng.choice(neighbours)
+                dest = self._animal_roam_pick(
+                    world,
+                    neighbours,
+                    biodiversity=biodiversity,
+                    warm_center=center,
                 )
                 occupied.discard((animal.x, animal.y))
                 note_cell_step(animal, dest[0], dest[1])
@@ -1929,7 +2177,7 @@ class WildlifeManager:
             kind=kind,
             sex=self._random_sex(),
             patch_id=hab.id,
-            move_cooldown=ANIMAL_MOVE_INTERVAL,
+            move_cooldown=animal_roam_interval(),
         )
         self.next_id += 1
         self.animals.append(newborn)
@@ -2134,15 +2382,23 @@ class WildlifeManager:
         while len(colony.members) < want:
             sx, sy = self.rng.choice(pool)
             colony.members.append(
-                ColonyMember(x=sx, y=sy, move_cooldown=ANIMAL_MOVE_INTERVAL)
+                ColonyMember(x=sx, y=sy, move_cooldown=animal_roam_interval())
             )
         if len(colony.members) > want:
             colony.members = colony.members[:want]
 
-    def _move_colony_members(self, world: World, day: float) -> None:
+    def _move_colony_members(
+        self,
+        world: World,
+        day: float,
+        *,
+        biodiversity: list[list[float]] | None = None,
+    ) -> None:
         del day
         occupied = {(a.x, a.y) for a in self.animals}
         occupied.update((c.x, c.y) for c in self.colonies)
+        wolf_threats = self._wolf_threat_positions()
+        flee_iv = animal_flee_interval()
         for colony in self.colonies:
             hab = self._colony_habitat(colony)
             self._sync_colony_members(colony, hab)
@@ -2165,9 +2421,9 @@ class WildlifeManager:
                 roam = {(colony.x, colony.y)}
             # Rabbits: hop one tile, then pause. Bees: shorter continuous roam.
             pause = (
-                RABBIT_MOVE_PAUSE
+                rabbit_pause_interval()
                 if colony.kind == AnimalKind.RABBIT
-                else ANIMAL_MOVE_INTERVAL
+                else animal_roam_interval()
             )
             for member in ready:
                 options = [
@@ -2185,11 +2441,34 @@ class WildlifeManager:
                     ]
                 if options:
                     occupied.discard((member.x, member.y))
-                    nx, ny = self.rng.choice(options)
+                    threat = None
+                    if colony.kind == AnimalKind.RABBIT and wolf_threats:
+                        best_d = HUNT_APPROACH_RADIUS + 1
+                        for tx, ty in wolf_threats:
+                            d = max(abs(member.x - tx), abs(member.y - ty))
+                            if d < best_d:
+                                best_d = d
+                                threat = (tx, ty)
+                        if best_d > HUNT_APPROACH_RADIUS:
+                            threat = None
+                    if threat is not None:
+                        tx, ty = threat
+                        nx, ny = max(
+                            options,
+                            key=lambda p: max(abs(p[0] - tx), abs(p[1] - ty)),
+                        )
+                        step_pause = flee_iv
+                    else:
+                        nx, ny = self._animal_roam_pick(
+                            world, options, biodiversity=biodiversity
+                        )
+                        step_pause = pause
                     note_cell_step(member, nx, ny)
                     occupied.add((nx, ny))
-                arm_cell_step_visual(member, pause)
-                member.move_cooldown = pause
+                else:
+                    step_pause = pause
+                arm_cell_step_visual(member, step_pause)
+                member.move_cooldown = step_pause
 
     def colony_at(self, x: int, y: int) -> Colony | None:
         for colony in self.colonies:
@@ -2317,12 +2596,555 @@ class WildlifeManager:
             )
             self._spawn_colony(colony.kind, sites[0], level=1)
 
+    # ------------------------------------------------------------------
+    # Wolf packs
+    # ------------------------------------------------------------------
+    def _wolf_max_pop(self) -> int:
+        from balance_config import active_balance
+
+        return max(0, active_balance().get_int("WOLF_MAX_POPULATION"))
+
+    def _wolf_room(self) -> int:
+        return max(0, self._wolf_max_pop() - self.wolf_count())
+
+    def _seed_wolf_packs(self, world: World) -> None:
+        from balance_config import active_balance
+
+        n_packs = max(0, active_balance().get_int("WOLF_SEED_PACKS"))
+        if n_packs <= 0:
+            return
+        for _ in range(n_packs):
+            if self._wolf_room() < 2:
+                break
+            cell = self._random_walkable_cell(world)
+            if cell is None:
+                break
+            self._spawn_wolf_pack(
+                world, cell[0], cell[1], sexes=(AnimalSex.MALE, AnimalSex.FEMALE)
+            )
+
+    def _random_walkable_cell(self, world: World) -> tuple[int, int] | None:
+        """Cheap random land sample — avoids full-map scans on seed."""
+        cols, rows = world.cols, world.rows
+        for _ in range(64):
+            x = self.rng.randrange(cols)
+            y = self.rng.randrange(rows)
+            if world.is_walkable(x, y):
+                return x, y
+        for y in range(0, rows, max(1, rows // 16)):
+            for x in range(0, cols, max(1, cols // 16)):
+                if world.is_walkable(x, y):
+                    return x, y
+        return None
+
+    def _spawn_wolf_pack(
+        self,
+        world: World,
+        x: int,
+        y: int,
+        *,
+        sexes: tuple[AnimalSex, ...],
+    ) -> WolfPack | None:
+        if not world.is_walkable(x, y):
+            return None
+        if self._wolf_room() < len(sexes):
+            return None
+        pack = WolfPack(id=self.next_wolf_pack_id, x=x, y=y, members=[])
+        self.next_wolf_pack_id += 1
+        for sex in sexes:
+            mx, my = self._place_wolf_near(world, pack, x, y)
+            pack.members.append(
+                WolfMember(sex=sex, x=mx, y=my, move_cooldown=animal_roam_interval())
+            )
+        pack.move_cooldown = animal_roam_interval()
+        self.wolf_packs.append(pack)
+        return pack
+
+    def _place_wolf_near(
+        self, world: World, pack: WolfPack, x: int, y: int
+    ) -> tuple[int, int]:
+        taken = {(pack.x, pack.y)} | {(m.x, m.y) for m in pack.members}
+        for ny, nx in world.neighbourhood(x, y, radius=1):
+            if (nx, ny) in taken:
+                continue
+            if world.is_walkable(nx, ny):
+                return nx, ny
+        return x, y
+
+    def _wolf_move_pack(
+        self, world: World, pack: WolfPack, nx: int, ny: int
+    ) -> None:
+        """Move pack centre and members together (same step style as deer pairs)."""
+        ox, oy = pack.x, pack.y
+        if (nx, ny) == (ox, oy):
+            return
+        dx, dy = nx - ox, ny - oy
+        note_cell_step(pack, nx, ny)
+        for member in pack.members:
+            mx, my = member.x + dx, member.y + dy
+            if world.is_walkable(mx, my):
+                note_cell_step(member, mx, my)
+            else:
+                px, py = self._place_wolf_near(world, pack, pack.x, pack.y)
+                note_cell_step(member, px, py)
+
+    def _wolf_member_step_toward(
+        self,
+        world: World,
+        member: WolfMember,
+        tx: int,
+        ty: int,
+        *,
+        biodiversity: list[list[float]] | None = None,
+        hunting: bool = False,
+    ) -> bool:
+        """One Chebyshev step for a single wolf toward ``(tx, ty)``."""
+        if (member.x, member.y) == (tx, ty):
+            return False
+        opts = [
+            (nx, ny)
+            for ny, nx in world.neighbourhood(member.x, member.y, radius=1)
+            if (nx, ny) != (member.x, member.y) and world.is_walkable(nx, ny)
+        ]
+        if not opts:
+            return False
+        cur = max(abs(member.x - tx), abs(member.y - ty))
+        better = [
+            p for p in opts if max(abs(p[0] - tx), abs(p[1] - ty)) < cur
+        ]
+        pool = better or opts
+        nx, ny = self._pick_weighted_step(
+            world,
+            pool,
+            biodiversity=biodiversity,
+            bio_weight=_bal_weight("WOLF_WEIGHT_BIODIVERSITY", 1.0),
+            away_disturbance_weight=_bal_weight(
+                "WOLF_WEIGHT_AWAY_DISTURBANCE", 0.5
+            ),
+            toward=(tx, ty) if hunting else None,
+            toward_weight=(
+                _bal_weight("WOLF_WEIGHT_TOWARD_PREY", 2.0) if hunting else 0.0
+            ),
+        )
+        note_cell_step(member, nx, ny)
+        return True
+
+    def _wolf_step_toward(
+        self,
+        world: World,
+        pack: WolfPack,
+        tx: int,
+        ty: int,
+        *,
+        biodiversity: list[list[float]] | None = None,
+        hunting: bool = False,
+    ) -> bool:
+        """One Chebyshev step toward ``(tx, ty)`` — same idea as animal ``_step_toward``."""
+        opts = [
+            (nx, ny)
+            for ny, nx in world.neighbourhood(pack.x, pack.y, radius=1)
+            if (nx, ny) != (pack.x, pack.y) and world.is_walkable(nx, ny)
+        ]
+        if not opts:
+            return False
+        cur = max(abs(pack.x - tx), abs(pack.y - ty))
+        better = [
+            p for p in opts if max(abs(p[0] - tx), abs(p[1] - ty)) < cur
+        ]
+        pool = better or opts
+        nx, ny = self._pick_weighted_step(
+            world,
+            pool,
+            biodiversity=biodiversity,
+            bio_weight=_bal_weight("WOLF_WEIGHT_BIODIVERSITY", 1.0),
+            away_disturbance_weight=_bal_weight(
+                "WOLF_WEIGHT_AWAY_DISTURBANCE", 0.5
+            ),
+            toward=(tx, ty) if hunting else None,
+            toward_weight=(
+                _bal_weight("WOLF_WEIGHT_TOWARD_PREY", 2.0) if hunting else 0.0
+            ),
+        )
+        self._wolf_move_pack(world, pack, nx, ny)
+        return True
+
+    def _wolf_hunt_approach(
+        self,
+        world: World,
+        pack: WolfPack,
+        px: int,
+        py: int,
+        *,
+        close: bool,
+        biodiversity: list[list[float]] | None = None,
+    ) -> None:
+        """Seek as a pack; when close, peel the nearest wolf onto the prey cell."""
+        if not close:
+            self._wolf_step_toward(
+                world, pack, px, py, biodiversity=biodiversity, hunting=True
+            )
+            return
+        hunter = min(
+            pack.members,
+            key=lambda m: max(abs(m.x - px), abs(m.y - py)),
+        )
+        self._wolf_member_step_toward(
+            world, hunter, px, py, biodiversity=biodiversity, hunting=True
+        )
+        note_cell_step(pack, hunter.x, hunter.y)
+        for member in pack.members:
+            if member is hunter:
+                continue
+            if max(abs(member.x - pack.x), abs(member.y - pack.y)) > 2:
+                self._wolf_member_step_toward(
+                    world,
+                    member,
+                    pack.x,
+                    pack.y,
+                    biodiversity=biodiversity,
+                    hunting=False,
+                )
+
+    def _wolf_step_flee(
+        self, world: World, pack: WolfPack, threat: tuple[int, int]
+    ) -> bool:
+        tx, ty = threat
+        opts = [
+            (nx, ny)
+            for ny, nx in world.neighbourhood(pack.x, pack.y, radius=1)
+            if (nx, ny) != (pack.x, pack.y) and world.is_walkable(nx, ny)
+        ]
+        if not opts:
+            return False
+        cur = max(abs(pack.x - tx), abs(pack.y - ty))
+        best = max(opts, key=lambda p: max(abs(p[0] - tx), abs(p[1] - ty)))
+        if max(abs(best[0] - tx), abs(best[1] - ty)) < cur:
+            best = self.rng.choice(opts)
+        self._wolf_move_pack(world, pack, best[0], best[1])
+        return True
+
+    def _tick_wolf_packs(
+        self,
+        world: World,
+        day: float,
+        *,
+        biodiversity: list[list[float]] | None = None,
+        villager_threats: list[tuple[int, int]] | None = None,
+        flee_interval: int | None = None,
+    ) -> None:
+        self._decay_wolf_food(day)
+        slow = 1 + int(2 * freeze_amount(day)) if animals_slow(day) else 1
+        roam_iv = max(4, animal_roam_interval() * slow)
+        flee_iv = max(
+            4,
+            int(
+                flee_interval
+                if flee_interval is not None
+                else animal_flee_interval()
+            ),
+        )
+        seek_mult = wolf_speed_mult("WOLF_SEEK_SPEED_MULT", 1.5)
+        chase_mult = wolf_speed_mult("WOLF_CHASE_SPEED_MULT", 1.5)
+        # Seek faster than deer/boar roam; close chase faster than flee pace.
+        seek_iv = max(4, int(round(roam_iv / seek_mult)))
+        chase_iv = max(4, int(round(flee_iv / chase_mult)))
+
+        for pack in list(self.wolf_packs):
+            if not pack.members:
+                self.wolf_packs.remove(pack)
+                continue
+            if pack.move_cooldown > 0:
+                pack.move_cooldown -= 1
+                for m in pack.members:
+                    if m.move_cooldown > 0:
+                        m.move_cooldown -= 1
+                continue
+
+            # Avoid villagers / player like deer and boar.
+            threat = self._nearest_pack_threat(
+                pack, villager_threats, HUNT_APPROACH_RADIUS
+            )
+            if threat is not None:
+                pack.activity = "Fleeing villagers"
+                self._wolf_step_flee(world, pack, threat)
+                self._arm_wolf_pack(pack, flee_iv)
+                continue
+
+            if pack.is_fed(day):
+                pack.activity = "Fed — seeking cover"
+                self._wolf_retreat_step(world, pack, biodiversity)
+                self._arm_wolf_pack(pack, roam_iv)
+                continue
+
+            hunted = self._wolf_try_hunt(world, pack, day)
+            if hunted:
+                pack.activity = "Feeding"
+                self._arm_wolf_pack(pack, roam_iv)
+                continue
+
+            prey = self._wolf_nearest_prey(pack)
+            if prey is None:
+                pack.activity = "Roaming"
+                opts = self._wolf_neighbour_opts(world, pack)
+                if opts:
+                    nx, ny = self._pick_weighted_step(
+                        world,
+                        opts,
+                        biodiversity=biodiversity,
+                        bio_weight=_bal_weight("WOLF_WEIGHT_BIODIVERSITY", 1.0),
+                        away_disturbance_weight=_bal_weight(
+                            "WOLF_WEIGHT_AWAY_DISTURBANCE", 0.5
+                        ),
+                    )
+                    self._wolf_move_pack(world, pack, nx, ny)
+                self._arm_wolf_pack(pack, roam_iv)
+                continue
+
+            px, py, dist = prey
+            close = dist <= HUNT_APPROACH_RADIUS
+            pack.activity = "Chasing prey" if close else "Hunting"
+            interval = chase_iv if close else seek_iv
+            self._wolf_hunt_approach(
+                world, pack, px, py, close=close, biodiversity=biodiversity
+            )
+            if self._wolf_try_hunt(world, pack, day):
+                pack.activity = "Feeding"
+                interval = roam_iv
+            self._arm_wolf_pack(pack, interval)
+
+    def _arm_wolf_pack(self, pack: WolfPack, interval: int) -> None:
+        pack.move_cooldown = interval
+        for m in pack.members:
+            arm_cell_step_visual(m, interval)
+            m.move_cooldown = interval
+
+    def _nearest_pack_threat(
+        self,
+        pack: WolfPack,
+        threats: list[tuple[int, int]] | None,
+        radius: int,
+    ) -> tuple[int, int] | None:
+        if not threats:
+            return None
+        best: tuple[int, int] | None = None
+        best_d = radius + 1
+        for tx, ty in threats:
+            d = max(abs(pack.x - tx), abs(pack.y - ty))
+            if d < best_d:
+                best_d = d
+                best = (tx, ty)
+        return best if best_d <= radius else None
+
+    def _wolf_can_hunt(self, pack: WolfPack, prey: str) -> bool:
+        from balance_config import active_balance
+
+        bal = active_balance()
+        need = {
+            "boar": bal.get_int("WOLF_HUNT_BOAR_MIN"),
+            "deer": bal.get_int("WOLF_HUNT_DEER_MIN"),
+            "rabbit": bal.get_int("WOLF_HUNT_RABBIT_MIN"),
+        }.get(prey, 99)
+        return pack.size() >= max(1, need)
+
+    def _wolf_feed_days(self, prey: str) -> float:
+        from balance_config import active_balance
+
+        bal = active_balance()
+        return {
+            "boar": bal.get_float("WOLF_FEED_BOAR_DAYS"),
+            "deer": bal.get_float("WOLF_FEED_DEER_DAYS"),
+            "rabbit": bal.get_float("WOLF_FEED_RABBIT_DAYS"),
+        }.get(prey, 1.0)
+
+    def _wolf_feed_cap(self) -> float:
+        """Largest single-meal feed duration (boar)."""
+        return max(0.0, self._wolf_feed_days("boar"))
+
+    def _apply_wolf_feed(self, pack: WolfPack, prey: str, day: float) -> None:
+        """Set pack food from a kill; never above boar-meal duration."""
+        feed = max(0.0, self._wolf_feed_days(prey))
+        cap = self._wolf_feed_cap()
+        pack.fed_days_remaining = min(cap, feed)
+        pack.last_prey = prey
+        pack.last_meal_day = float(day)
+
+    def _decay_wolf_food(self, day: float) -> None:
+        """Count down fed_days_remaining across calendar wraps."""
+        from seasons import YEAR_DAYS
+
+        if self._wolf_food_day is None:
+            self._wolf_food_day = float(day)
+            return
+        prev = float(self._wolf_food_day)
+        cur = float(day)
+        delta = cur - prev
+        if delta < -0.5 * YEAR_DAYS:
+            delta += float(YEAR_DAYS)
+        elif delta < 0.0:
+            delta = 0.0
+        self._wolf_food_day = cur
+        if delta <= 0.0:
+            return
+        cap = self._wolf_feed_cap()
+        for pack in self.wolf_packs:
+            if pack.fed_days_remaining <= 0.0:
+                continue
+            pack.fed_days_remaining = min(
+                cap, max(0.0, float(pack.fed_days_remaining) - delta)
+            )
+
+    def _wolf_member_on_prey(self, pack: WolfPack, x: int, y: int) -> bool:
+        return any(m.x == x and m.y == y for m in pack.members)
+
+    def _wolf_try_hunt(self, world: World, pack: WolfPack, day: float) -> bool:
+        """Kill prey only when a pack wolf stands on the same cell."""
+        del world
+        order: list[tuple[str, AnimalKind | None]] = []
+        if self._wolf_can_hunt(pack, "boar"):
+            order.append(("boar", AnimalKind.BOAR))
+        if self._wolf_can_hunt(pack, "deer"):
+            order.append(("deer", AnimalKind.DEER))
+        if self._wolf_can_hunt(pack, "rabbit"):
+            order.append(("rabbit", None))
+
+        for prey_name, kind in order:
+            if kind is not None:
+                for animal in self.animals:
+                    if animal.kind != kind:
+                        continue
+                    if not self._wolf_member_on_prey(pack, animal.x, animal.y):
+                        continue
+                    if self.kill_animal(animal.id) is None:
+                        continue
+                    self._apply_wolf_feed(pack, prey_name, day)
+                    return True
+            else:
+                for colony in self.colonies:
+                    if colony.kind != AnimalKind.RABBIT or not colony.can_harvest():
+                        continue
+                    cells = {(colony.x, colony.y)}
+                    cells.update((m.x, m.y) for m in colony.members)
+                    if not any(self._wolf_member_on_prey(pack, cx, cy) for cx, cy in cells):
+                        continue
+                    if self.harvest_colony(colony.id, kind=AnimalKind.RABBIT) is None:
+                        continue
+                    self._apply_wolf_feed(pack, "rabbit", day)
+                    return True
+        return False
+
+    def _wolf_nearest_prey(
+        self, pack: WolfPack
+    ) -> tuple[int, int, int] | None:
+        """Nearest huntable prey as ``(x, y, chebyshev_dist)`` from closest wolf."""
+        best: tuple[int, int, int] | None = None
+        can_boar = self._wolf_can_hunt(pack, "boar")
+        can_deer = self._wolf_can_hunt(pack, "deer")
+        can_rabbit = self._wolf_can_hunt(pack, "rabbit")
+        if not (can_boar or can_deer or can_rabbit):
+            return None
+
+        def _dist_to(x: int, y: int) -> int:
+            return min(max(abs(m.x - x), abs(m.y - y)) for m in pack.members)
+
+        def _consider(x: int, y: int) -> None:
+            nonlocal best
+            d = _dist_to(x, y)
+            if best is None or d < best[2]:
+                best = (x, y, d)
+
+        for animal in self.animals:
+            if animal.kind == AnimalKind.BOAR and not can_boar:
+                continue
+            if animal.kind == AnimalKind.DEER and not can_deer:
+                continue
+            if animal.kind not in (AnimalKind.BOAR, AnimalKind.DEER):
+                continue
+            _consider(animal.x, animal.y)
+        if can_rabbit:
+            for colony in self.colonies:
+                if colony.kind != AnimalKind.RABBIT or not colony.can_harvest():
+                    continue
+                # Chase nest or any visible rabbit — empty nests are not prey.
+                _consider(colony.x, colony.y)
+                for member in colony.members:
+                    _consider(member.x, member.y)
+        return best
+
+    def harvestable_rabbit_count(self) -> int:
+        return sum(
+            1
+            for c in self.colonies
+            if c.kind == AnimalKind.RABBIT and c.can_harvest()
+        )
+
+    def wolf_pack(self, pack_id: int) -> WolfPack | None:
+        for pack in self.wolf_packs:
+            if pack.id == pack_id:
+                return pack
+        return None
+
+    def _wolf_neighbour_opts(self, world: World, pack: WolfPack) -> list[tuple[int, int]]:
+        return [
+            (nx, ny)
+            for ny, nx in world.neighbourhood(pack.x, pack.y, radius=1)
+            if (nx, ny) != (pack.x, pack.y) and world.is_walkable(nx, ny)
+        ]
+
+    def _wolf_retreat_step(
+        self,
+        world: World,
+        pack: WolfPack,
+        biodiversity: list[list[float]] | None,
+    ) -> None:
+        opts = self._wolf_neighbour_opts(world, pack)
+        if not opts:
+            return
+        nx, ny = self._pick_weighted_step(
+            world,
+            opts,
+            biodiversity=biodiversity,
+            bio_weight=_bal_weight("WOLF_WEIGHT_BIODIVERSITY", 1.0),
+            away_disturbance_weight=_bal_weight(
+                "WOLF_WEIGHT_AWAY_DISTURBANCE", 0.5
+            ),
+        )
+        self._wolf_move_pack(world, pack, nx, ny)
+
+    def _breed_wolves(self, world: World) -> None:
+        from balance_config import active_balance
+
+        chance = active_balance().get_float("WOLF_BREED_CHANCE")
+        for pack in list(self.wolf_packs):
+            if self._wolf_room() <= 0:
+                return
+            if not pack.has_pair():
+                continue
+            if self.rng.random() >= chance:
+                continue
+            males = sum(1 for m in pack.members if m.sex == AnimalSex.MALE)
+            females = len(pack.members) - males
+            sex = AnimalSex.FEMALE if males > females else AnimalSex.MALE
+            if males == females:
+                sex = self._random_sex()
+            if pack.size() >= 4 and self._wolf_room() >= 2 and self.rng.random() < 0.35:
+                land = self._wolf_neighbour_opts(world, pack) or [(pack.x, pack.y)]
+                sx, sy = self.rng.choice(land)
+                self._spawn_wolf_pack(
+                    world, sx, sy, sexes=(AnimalSex.MALE, AnimalSex.FEMALE)
+                )
+                continue
+            mx, my = self._place_wolf_near(world, pack, pack.x, pack.y)
+            pack.members.append(
+                WolfMember(sex=sex, x=mx, y=my, move_cooldown=animal_roam_interval())
+            )
+
 
 @dataclass
 class Fish:
     id: int
     x: int
     y: int
+    kind: FishKind = FishKind.ROACH
     move_cooldown: int = 0
 
 
@@ -2358,10 +3180,18 @@ class FishManager:
     def fish_in_area(self, contains) -> list[Fish]:
         return [f for f in self.fish if contains(f.x, f.y)]
 
-    def kill_fish(self, fish_id: int) -> tuple[int, int] | None:
+    def pick_kind(self) -> FishKind:
+        """Weighted species roll (carp:perch:pike:roach = 2:3:1:4)."""
+        kinds = list(FishKind)
+        weights = [max(0, int(FISH_SPAWN_WEIGHTS.get(k.name, 1))) for k in kinds]
+        if sum(weights) <= 0:
+            return FishKind.ROACH
+        return self.rng.choices(kinds, weights=weights, k=1)[0]
+
+    def kill_fish(self, fish_id: int) -> tuple[int, int, FishKind] | None:
         for i, item in enumerate(self.fish):
             if item.id == fish_id:
-                pos = (item.x, item.y)
+                pos = (item.x, item.y, item.kind)
                 self.fish.pop(i)
                 return pos
         return None
@@ -2412,8 +3242,8 @@ class FishManager:
             elif (item.x, item.y) not in water:
                 nx, ny = self.rng.choice(list(water))
                 note_cell_step(item, nx, ny)
-            item.move_cooldown = FISH_MOVE_INTERVAL
-            arm_cell_step_visual(item, FISH_MOVE_INTERVAL)
+            item.move_cooldown = fish_move_interval()
+            arm_cell_step_visual(item, fish_move_interval())
 
     def _fish_per_patch(self, world: World) -> list[list[Fish]]:
         patches = world.water_patches()
@@ -2460,7 +3290,13 @@ class FishManager:
                 continue
             sx, sy = self.rng.choice(patch)
             self.fish.append(
-                Fish(id=self.next_id, x=sx, y=sy, move_cooldown=FISH_MOVE_INTERVAL)
+                Fish(
+                    id=self.next_id,
+                    x=sx,
+                    y=sy,
+                    kind=self.pick_kind(),
+                    move_cooldown=fish_move_interval(),
+                )
             )
             self.next_id += 1
             break

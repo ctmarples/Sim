@@ -1662,6 +1662,12 @@ ICON_RABBIT = "rabbit"
 ICON_BURROW = "burrow"
 ICON_HONEY = "honey"
 ICON_FISH = "fish"
+ICON_FISH_CARP = "fish_carp"
+ICON_FISH_PERCH = "fish_perch"
+ICON_FISH_PIKE = "fish_pike"
+ICON_FISH_ROACH = "fish_roach"
+ICON_WOLF_MALE = "wolf_male"
+ICON_WOLF_FEMALE = "wolf_female"
 ICON_VILLAGER = "villager"
 ICON_PLAYER = "player"
 ICON_MEAT_MARKER = "meat_marker"
@@ -1733,6 +1739,12 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_BURROW,
     ICON_HONEY,
     ICON_FISH,
+    ICON_FISH_CARP,
+    ICON_FISH_PERCH,
+    ICON_FISH_PIKE,
+    ICON_FISH_ROACH,
+    ICON_WOLF_MALE,
+    ICON_WOLF_FEMALE,
     ICON_VILLAGER,
     ICON_PLAYER,
     ICON_MEAT_MARKER,

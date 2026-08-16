@@ -738,7 +738,7 @@ class UI:
         selected_habitat_id: int | None,
     ) -> int:
         y = _blit_text(content, self.font_title, "Environment Sandbox", (x, y))
-        y = _blit_text(content, self.font_small, "WASD · Enter/E · Y map edit · H warp", (x, y), COLOUR_TEXT_DIM)
+        y = _blit_text(content, self.font_small, "WASD · Enter/E · Y map edit · H habitats", (x, y), COLOUR_TEXT_DIM)
         y = _blit_text(content, self.font_small, f"Speed x{sim_speed}" if sim_speed else "Paused", (x, y), COLOUR_TEXT_DIM)
         day_secs = ticks_to_seconds(ticks_per_day, playback_ticks)
         tiles = ticks_per_day / max(1, seconds_to_ticks(walk_seconds, playback_ticks)) if walk_seconds else 0
@@ -963,6 +963,7 @@ class UI:
         y = _blit_text(content, self.font_title, "World", (x, y))
         wild_line = (
             f"Deer {len(wildlife.deer())}  Boar {len(wildlife.boars())}  "
+            f"Wolf {wildlife.wolf_count()}  "
             f"Bee {len(wildlife.bee_colonies())}c/"
             f"{wildlife.colony_members_total(AnimalKind.BEE)}  "
             f"Rabbit {len(wildlife.rabbit_colonies())}c/"
