@@ -2515,7 +2515,7 @@ class Game:
         return False
 
     def _select_habitat(self, kind: AnimalKind, patch_id: int) -> None:
-        if kind == AnimalKind.WOLF:
+        if kind in (AnimalKind.WOLF, AnimalKind.FOX):
             pack = next(
                 (p for p in self.wildlife.wolf_packs if p.id == patch_id), None
             )
@@ -2531,6 +2531,32 @@ class Game:
             self.field_plan_dialog.close()
             self.camera.center_on(pack.x, pack.y, self.world.cols, self.world.rows)
             screen_xy = self.camera.world_to_screen(pack.x, pack.y)
+            self.habitat_inspect.open_for(kind, patch_id, screen_xy=screen_xy)
+            if self.management.open:
+                self.management.select_habitat(kind, patch_id)
+            return
+
+        if kind in (AnimalKind.OWL, AnimalKind.HAWK):
+            bird = next(
+                (
+                    a
+                    for a in self.wildlife.animals
+                    if a.id == patch_id and a.kind == kind
+                ),
+                None,
+            )
+            if bird is None:
+                return
+            self.selected_building_id = None
+            self.selected_villager_id = None
+            self.selected_habitat_kind = kind
+            self.selected_habitat_id = patch_id
+            self.building_inspect.close()
+            self.villager_inspect.close()
+            self.resource_inspect.close()
+            self.field_plan_dialog.close()
+            self.camera.center_on(bird.x, bird.y, self.world.cols, self.world.rows)
+            screen_xy = self.camera.world_to_screen(bird.x, bird.y)
             self.habitat_inspect.open_for(kind, patch_id, screen_xy=screen_xy)
             if self.management.open:
                 self.management.select_habitat(kind, patch_id)
@@ -2569,8 +2595,10 @@ class Game:
             return None
         kind = self.selected_habitat_kind
         patch_id = self.selected_habitat_id
-        if kind == AnimalKind.WOLF:
+        if kind in (AnimalKind.WOLF, AnimalKind.FOX):
             return self._wolf_inspect_view(patch_id)
+        if kind in (AnimalKind.OWL, AnimalKind.HAWK):
+            return self._bird_inspect_view(kind, patch_id)
         hab = self.wildlife.habitat(patch_id, kind)
         if hab is None:
             return None
@@ -2583,6 +2611,8 @@ class Game:
             AnimalKind.BOAR: "Boar breeding ground",
             AnimalKind.BEE: "Bee nest",
             AnimalKind.RABBIT: "Rabbit warren",
+            AnimalKind.FROG: "Frog pond",
+            AnimalKind.VOLE: "Vole burrow",
         }.get(kind, kind.name.title())
         breed = self.wildlife._breeding_for(kind, hab)
         roam = self.wildlife._cold_roaming_for(kind, hab)
@@ -2669,9 +2699,12 @@ class Game:
         from world import effective_disturbance_at, wildlife_ecology_multiplier
 
         day = float(self.calendar_day)
+        is_fox = pack.kind == AnimalKind.FOX
+        unit = "foxes" if is_fox else "wolves"
+        title_kind = "Fox" if is_fox else "Wolf"
         males = sum(1 for m in pack.members if m.sex.name == "MALE")
         females = pack.size() - males
-        population = f"{pack.size()} wolves · {males}♂ {females}♀"
+        population = f"{pack.size()} {unit} · {males}♂ {females}♀"
         left = pack.food_days_left(day)
         if left > 0.05:
             food_status = f"{left:.1f} days of food left"
@@ -2687,20 +2720,25 @@ class Game:
         else:
             last_meal = "None yet"
 
+        if is_fox:
+            prey_opts = ("rabbit", "frog", "vole")
+        else:
+            prey_opts = ("boar", "deer", "fox", "rabbit")
         can = [
             prey
-            for prey in ("boar", "deer", "rabbit")
+            for prey in prey_opts
             if self.wildlife._wolf_can_hunt(pack, prey)
         ]
-        inhabited_rabbits = any(
-            c.can_harvest()
-            for c in self.wildlife.colonies
-            if c.kind == AnimalKind.RABBIT
-        )
-        if "rabbit" in can and not inhabited_rabbits:
-            can = [
-                ("rabbit (none inhabited)" if p == "rabbit" else p) for p in can
-            ]
+        if "rabbit" in can:
+            inhabited_rabbits = any(
+                c.can_harvest()
+                for c in self.wildlife.colonies
+                if c.kind == AnimalKind.RABBIT
+            )
+            if not inhabited_rabbits:
+                can = [
+                    ("rabbit (none inhabited)" if p == "rabbit" else p) for p in can
+                ]
         hunt = ", ".join(can) if can else "too small to hunt"
 
         sample = [(pack.x, pack.y)] + [(m.x, m.y) for m in pack.members]
@@ -2712,9 +2750,12 @@ class Game:
         ecology = wildlife_ecology_multiplier(avg_dist)
         bio = self.env_maps.farm_biodiversity(sample)
         bal = active_balance()
-        base_breed = bal.get_float("WOLF_BREED_CHANCE")
-        pop_cap = max(1, bal.get_int("WOLF_MAX_POPULATION"))
-        pop_factor = min(1.0, self.wildlife.wolf_count() / float(pop_cap))
+        breed_key = "FOX_BREED_CHANCE" if is_fox else "WOLF_BREED_CHANCE"
+        cap_key = "FOX_MAX_POPULATION" if is_fox else "WOLF_MAX_POPULATION"
+        base_breed = bal.get_float(breed_key)
+        pop_cap = max(1, bal.get_int(cap_key))
+        landscape = self.wildlife.pack_count(pack.kind)
+        pop_factor = min(1.0, landscape / float(pop_cap))
         health = max(
             0.0,
             min(
@@ -2730,11 +2771,11 @@ class Game:
             ("Can hunt", hunt),
             ("Location", f"({pack.x}, {pack.y})"),
             ("Biodiversity", f"{bio * 100:.0f}%"),
-            ("Landscape wolves", f"{self.wildlife.wolf_count()}/{pop_cap}"),
+            (f"Landscape {unit}", f"{landscape}/{pop_cap}"),
             ("Disturbance", f"{avg_dist:.2f}"),
         ]
         return HabitatInspectView(
-            title=f"Wolf pack #{pack.id}",
+            title=f"{title_kind} pack #{pack.id}",
             subtitle=pack.activity or "Roaming",
             population=population,
             breeding_tiles=0,
@@ -2750,6 +2791,53 @@ class Game:
             last_meal=last_meal,
             food_status=food_status,
             fed_until=fed_until,
+        )
+
+    def _bird_inspect_view(
+        self, kind: AnimalKind, bird_id: int
+    ) -> HabitatInspectView | None:
+        bird = next(
+            (a for a in self.wildlife.animals if a.id == bird_id and a.kind == kind),
+            None,
+        )
+        if bird is None:
+            return None
+        from world import effective_disturbance_at, wildlife_ecology_multiplier
+
+        label = "Hawk" if kind == AnimalKind.HAWK else "Owl"
+        prey = self.wildlife._bird_prey_kinds(kind)
+        prey_txt = ", ".join(k.name.lower() for k in prey) if prey else "—"
+        nest = bird.retreat_target
+        nest_txt = f"({nest[0]}, {nest[1]})" if nest else "—"
+        dist = effective_disturbance_at(self.world, bird.x, bird.y)
+        ecology = wildlife_ecology_multiplier(dist)
+        bio = self.env_maps.farm_biodiversity([(bird.x, bird.y)])
+        activity = bird.activity or "Soaring"
+        benefits = [
+            ("Activity", activity),
+            ("Preys on", prey_txt),
+            ("Nest", nest_txt),
+            ("Location", f"({bird.x}, {bird.y})"),
+            ("Biodiversity", f"{bio * 100:.0f}%"),
+            ("Disturbance", f"{dist:.2f}"),
+        ]
+        return HabitatInspectView(
+            title=f"{label} #{bird.id}",
+            subtitle=activity,
+            population="1 solo bird",
+            breeding_tiles=0,
+            roam_tiles=0,
+            avg_disturbance=dist,
+            max_disturbance=dist,
+            ecology_mult=ecology,
+            breed_chance_pct=0.0,
+            health_pct=max(0.0, min(100.0, 100.0 * ecology)),
+            benefits=benefits,
+            panel_kind="bird",
+            activity=activity,
+            last_meal="—",
+            food_status="Hunts colonies on contact",
+            fed_until="—",
         )
 
     def _assign_unassigned_to_selected_building(self) -> None:
@@ -3244,22 +3332,35 @@ class Game:
             (AnimalKind.BOAR, "Boar ground"),
             (AnimalKind.BEE, "Bee nest"),
             (AnimalKind.RABBIT, "Rabbit warren"),
+            (AnimalKind.FROG, "Frog pond"),
+            (AnimalKind.VOLE, "Vole burrow"),
         ):
             for hab in self.wildlife.breeding_grounds(kind):
                 hid = int(hab.id)
-                if kind in (AnimalKind.BEE, AnimalKind.RABBIT):
+                if kind in (
+                    AnimalKind.BEE,
+                    AnimalKind.RABBIT,
+                    AnimalKind.FROG,
+                    AnimalKind.VOLE,
+                ):
                     colony = self.wildlife._colony_on_habitat(kind, hid)
                     inhabited = colony is not None and colony.level >= 1
+                    if colony is not None and inhabited:
+                        subtitle = f"Level {colony.level}"
+                    else:
+                        subtitle = "Empty"
                 else:
                     _present, _mig, total, _pairs = self.wildlife.patch_occupancy(
                         kind, hid
                     )
                     inhabited = total > 0
-                subtitle = "" if inhabited else "Empty"
+                    subtitle = "" if inhabited else "Empty"
                 rows.append(
                     (kind, hid, f"{label} #{hid}", subtitle, inhabited)
                 )
         for pack in self.wildlife.wolf_packs:
+            is_fox = pack.kind == AnimalKind.FOX
+            title = f"{'Fox' if is_fox else 'Wolf'} pack #{pack.id}"
             males = sum(1 for m in pack.members if m.sex.name == "MALE")
             females = pack.size() - males
             sex_bits = []
@@ -3272,11 +3373,25 @@ class Game:
                 subtitle = f"{subtitle} · {pack.activity}" if subtitle else pack.activity
             rows.append(
                 (
-                    AnimalKind.WOLF,
+                    pack.kind,
                     int(pack.id),
-                    f"Wolf pack #{pack.id}",
+                    title,
                     subtitle,
                     pack.size() > 0,
+                )
+            )
+        for bird in self.wildlife.animals:
+            if bird.kind not in (AnimalKind.OWL, AnimalKind.HAWK):
+                continue
+            label = "Hawk" if bird.kind == AnimalKind.HAWK else "Owl"
+            subtitle = bird.activity or "Soaring"
+            rows.append(
+                (
+                    bird.kind,
+                    int(bird.id),
+                    f"{label} #{bird.id}",
+                    subtitle,
+                    True,
                 )
             )
         return rows
@@ -4493,9 +4608,23 @@ class Game:
         if self.selected_habitat_id is None or self.selected_habitat_kind is None:
             return
         kind = self.selected_habitat_kind
-        if kind == AnimalKind.WOLF:
+        if kind in (AnimalKind.WOLF, AnimalKind.FOX):
             pack = self._wolf_pack_by_id(self.selected_habitat_id)
-            if pack is None or pack.size() <= 0:
+            if pack is None or pack.size() <= 0 or pack.kind != kind:
+                self.selected_habitat_kind = None
+                self.selected_habitat_id = None
+                self.habitat_inspect.close()
+            return
+        if kind in (AnimalKind.OWL, AnimalKind.HAWK):
+            bird = next(
+                (
+                    a
+                    for a in self.wildlife.animals
+                    if a.id == self.selected_habitat_id and a.kind == kind
+                ),
+                None,
+            )
+            if bird is None:
                 self.selected_habitat_kind = None
                 self.selected_habitat_id = None
                 self.habitat_inspect.close()
@@ -5603,7 +5732,14 @@ class Game:
             label = crop.label if crop else kind
             return (f"Wild {label}", 1, crop.produce_key if crop else kind, "")
         if cell.feature == FeatureType.REED:
-            return ("Reeds", 1, "reeds", "")
+            from wild_species import is_harvestable, resolve_species
+
+            species = resolve_species("REED", cell.crop_kind)
+            label = species.label if species is not None else "Reeds"
+            if not is_harvestable(species):
+                return (label, 0, "", "")
+            key = (species.resource_key if species is not None else "reeds") or "reeds"
+            return (label, 1, key, "")
         if cell.feature == FeatureType.CROP_HERB:
             kind = cell.crop_kind or "sage"
             crop = CROP_BY_KEY.get(kind)
@@ -7376,7 +7512,17 @@ class Game:
             return False
         # Check cargo room before clearing the tile (seeds use a separate bag).
         if cell.feature == FeatureType.REED:
-            produce_key, need = "reeds", REED_YIELD
+            from wild_species import resolve_species
+
+            species = resolve_species("REED", cell.crop_kind)
+            produce_key = (
+                species.resource_key if species is not None else "reeds"
+            ) or "reeds"
+            need = int(species.yield_amount) if species is not None else REED_YIELD
+            if need <= 0:
+                if status:
+                    self._set_status("Nothing to harvest here.")
+                return False
         elif cell.feature == FeatureType.HERB:
             crop = CROP_BY_KEY["sage"]
             produce_key, need = crop.produce_key, WILD_PRODUCE_YIELD
@@ -7399,6 +7545,23 @@ class Game:
             if status:
                 self._set_status("No wild plants here.")
             return False
+        from wild_species import WILD_BY_KEY
+
+        wild = WILD_BY_KEY.get(crop_key)
+        if wild is not None and wild.feature == "REED":
+            amount = max(0, int(wild.yield_amount))
+            if amount <= 0:
+                return True
+            inventory.add_item(wild.resource_key or "reeds", amount)
+            self.record_produced(wild.resource_key or "reeds", amount)
+            self.world.apply_extraction_disturbance(x, y)
+            self._refresh_indicators()
+            if status:
+                label = wild.label.lower()
+                self._set_status(
+                    f"Collected {amount} {label}{'' if amount == 1 else 's'}."
+                )
+            return True
         if crop_key == "reeds":
             inventory.add_item("reeds", REED_YIELD)
             self.record_produced("reeds", REED_YIELD)
@@ -15642,7 +15805,12 @@ class Game:
         if cell.feature == FeatureType.BERRY_BUSH and cell.deposit > 0:
             return "berries"
         if cell.feature == FeatureType.REED:
-            return "reeds"
+            from wild_species import is_harvestable, resolve_species
+
+            species = resolve_species("REED", cell.crop_kind)
+            if not is_harvestable(species):
+                return None
+            return (species.resource_key if species is not None else None) or "reeds"
         if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP):
             crop = CROP_BY_KEY.get(cell.crop_kind or "sage", CROP_BY_KEY["sage"])
             return crop.produce_key
@@ -15706,7 +15874,13 @@ class Game:
         if task_type == TaskType.FORAGE_BERRIES:
             return cell.feature == FeatureType.BERRY_BUSH and cell.deposit > 0
         if task_type == TaskType.FORAGE_HERBS:
-            return cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.REED)
+            if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP):
+                return True
+            if cell.feature == FeatureType.REED:
+                from wild_species import is_harvestable, resolve_species
+
+                return is_harvestable(resolve_species("REED", cell.crop_kind))
+            return False
         if task_type == TaskType.PLANT_BERRY_SEEDS:
             return (
                 can_plant_berry
@@ -15728,8 +15902,12 @@ class Game:
                 return True
             if cell.feature == FeatureType.BERRY_BUSH and cell.deposit > 0:
                 return True
-            if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.REED):
+            if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP):
                 return True
+            if cell.feature == FeatureType.REED:
+                from wild_species import is_harvestable, resolve_species
+
+                return is_harvestable(resolve_species("REED", cell.crop_kind))
             if cell.feature == FeatureType.TREE and cell.deposit > 0:
                 from trees import resolve_tree
 
@@ -15846,6 +16024,11 @@ class Game:
             and (TaskType.FORAGE_HERBS in tasks or TaskType.FULL_FORAGE in tasks)
             and self._building_allows_cell(building, cell)
         ):
+            if cell.feature == FeatureType.REED:
+                from wild_species import is_harvestable, resolve_species
+
+                if not is_harvestable(resolve_species("REED", cell.crop_kind)):
+                    return
             if self._collect_herb(x, y, inv, status=False):
                 did_work = True
         elif (
@@ -18352,18 +18535,14 @@ class Game:
 
     def _draw_animals(self) -> None:
         from wildlife import AnimalKind, AnimalSex
-        from icons import (
-            ICON_BEE,
-            ICON_BEE_HIVE,
-            ICON_BOAR_FEMALE,
-            ICON_BOAR_MALE,
-            ICON_BURROW,
-            ICON_DEER_FEMALE,
-            ICON_DEER_MALE,
-            ICON_RABBIT,
-            blit_icon,
+        from wildlife_species import (
+            animal_icon_for,
+            bird_icon_for,
+            body_colour_for,
+            member_icon_for,
+            nest_icon_for,
         )
-        from settings import COLOUR_BOAR, COLOUR_DEER
+        from icons import blit_icon
 
         size = self.camera.view_cell_px()
         # Draw cull only — wildlife.tick still moves every animal.
@@ -18378,27 +18557,15 @@ class Game:
             ax, ay = entity_draw_xy(animal)
             cx, cy = self._cell_center(ax, ay)
             cy += max(1, size // 20)
-            if animal.kind == AnimalKind.BOAR:
-                colour = COLOUR_BOAR
-                name = (
-                    ICON_BOAR_FEMALE
-                    if animal.sex == AnimalSex.FEMALE
-                    else ICON_BOAR_MALE
+            female = animal.sex == AnimalSex.FEMALE
+            name = animal_icon_for(animal.kind.name, female=female)
+            colour = body_colour_for(animal.kind.name, female=female)
+            if colour is not None:
+                blit_icon(
+                    self.screen, name, cx, cy, size, recolour={"body": colour}
                 )
             else:
-                colour = COLOUR_DEER
-                name = (
-                    ICON_DEER_FEMALE
-                    if animal.sex == AnimalSex.FEMALE
-                    else ICON_DEER_MALE
-                )
-            if animal.sex == AnimalSex.FEMALE:
-                colour = (
-                    min(255, colour[0] + 28),
-                    min(255, colour[1] + 18),
-                    min(255, colour[2] + 22),
-                )
-            blit_icon(self.screen, name, cx, cy, size, recolour={"body": colour})
+                blit_icon(self.screen, name, cx, cy, size)
 
         # Colony nests + members — use SVG colours (no body wash).
         member_size = max(8, size * 2 // 3)
@@ -18407,10 +18574,10 @@ class Game:
         for colony in self.wildlife.colonies:
             if not (cx0 <= colony.x <= cx1 and cy0 <= colony.y <= cy1):
                 continue
-            nest_name = (
-                ICON_BEE_HIVE if colony.kind == AnimalKind.BEE else ICON_BURROW
-            )
-            member_name = ICON_BEE if colony.kind == AnimalKind.BEE else ICON_RABBIT
+            nest_name = nest_icon_for(colony.kind.name)
+            member_name = member_icon_for(colony.kind.name)
+            if not nest_name or not member_name:
+                continue
             if vx0 <= colony.x <= vx1 and vy0 <= colony.y <= vy1:
                 nx, ny = entity_draw_xy(colony)
                 cx, cy = self._cell_center(nx, ny)
@@ -18423,22 +18590,33 @@ class Game:
                 cy += max(1, size // 20)
                 blit_icon(self.screen, member_name, cx, cy, member_size)
 
-        # Wolf packs — native SVG colours, same cull pattern as deer.
-        from icons import ICON_WOLF_FEMALE, ICON_WOLF_MALE
-
+        # Fox / wolf packs — native SVG colours, same cull pattern as deer.
         for pack in self.wildlife.wolf_packs:
+            pack_key = pack.kind.name
             for member in pack.members:
                 if not (vx0 <= member.x <= vx1 and vy0 <= member.y <= vy1):
                     continue
                 mx, my = entity_draw_xy(member)
                 cx, cy = self._cell_center(mx, my)
                 cy += max(1, size // 20)
-                name = (
-                    ICON_WOLF_FEMALE
-                    if member.sex == AnimalSex.FEMALE
-                    else ICON_WOLF_MALE
+                name = animal_icon_for(
+                    pack_key, female=member.sex == AnimalSex.FEMALE
                 )
                 blit_icon(self.screen, name, cx, cy, size)
+
+        # Hawks / owls — directional icons.
+        for animal in self.wildlife.animals:
+            if animal.kind not in (AnimalKind.OWL, AnimalKind.HAWK):
+                continue
+            if not (vx0 <= animal.x <= vx1 and vy0 <= animal.y <= vy1):
+                continue
+            ax, ay = entity_draw_xy(animal)
+            cx, cy = self._cell_center(ax, ay)
+            cy += max(1, size // 20)
+            name = bird_icon_for(
+                animal.kind.name, facing_right=animal.facing_right
+            )
+            blit_icon(self.screen, name, cx, cy, size)
 
     def _draw_fish(self) -> None:
         from icons import blit_icon
@@ -18792,9 +18970,9 @@ class Game:
             and self.selected_habitat_kind is not None
         ):
             kind = self.selected_habitat_kind
-            if kind == AnimalKind.WOLF:
+            if kind in (AnimalKind.WOLF, AnimalKind.FOX):
                 pack = self._wolf_pack_by_id(self.selected_habitat_id)
-                if pack is not None:
+                if pack is not None and pack.kind == kind:
                     tiles = {(m.x, m.y) for m in pack.members} | {(pack.x, pack.y)}
                     if tiles:
                         self._draw_cell_set_outline(
@@ -18802,6 +18980,21 @@ class Game:
                             colour=COLOUR_SELECTED_ENTITY,
                             width=2,
                         )
+            elif kind in (AnimalKind.OWL, AnimalKind.HAWK):
+                bird = next(
+                    (
+                        a
+                        for a in self.wildlife.animals
+                        if a.id == self.selected_habitat_id and a.kind == kind
+                    ),
+                    None,
+                )
+                if bird is not None:
+                    self._draw_cell_set_outline(
+                        {(bird.x, bird.y)},
+                        colour=COLOUR_SELECTED_ENTITY,
+                        width=2,
+                    )
             else:
                 hab = self.wildlife.habitat(self.selected_habitat_id, kind)
                 if hab is not None:

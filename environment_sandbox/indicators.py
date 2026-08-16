@@ -173,7 +173,8 @@ def species_on_cell(cell) -> set[str]:
     elif feature == FeatureType.MUSHROOM:
         found.add("plant:mushroom")
     elif feature == FeatureType.REED:
-        found.add("plant:reed")
+        kind = getattr(cell, "crop_kind", None) or "reed"
+        found.add(f"plant:{kind}")
     elif feature == FeatureType.WOOD_BUSH:
         found.add("plant:wood_bush")
     elif feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.CROP_HERB):

@@ -40,7 +40,7 @@ class HabitatInspectView:
     breed_chance_pct: float
     health_pct: float
     benefits: list[tuple[str, str]]
-    # "habitat" (deer/boar/bee/rabbit) or "wolf"
+    # "habitat" (deer/boar/bee/rabbit/frog/vole), "wolf"/"fox" packs, or "bird"
     panel_kind: str = "habitat"
     activity: str = ""
     last_meal: str = ""
@@ -207,6 +207,59 @@ class HabitatInspectDialog:
             (panel.x + PAD, y),
         )
         y += ROW_H + 4
+
+        if view.panel_kind in ("wolf", "bird"):
+            is_bird = view.panel_kind == "bird"
+            y = self._line(
+                surface, y, "Bird" if is_bird else "Pack", view.population
+            )
+            y = self._line(surface, y, "Activity", view.activity or "—")
+            if is_bird:
+                y = self._line(surface, y, "Diet", view.food_status or "—")
+            else:
+                y = self._line(surface, y, "Last meal", view.last_meal or "None yet")
+                y = self._line(surface, y, "Food", view.food_status or "Hungry")
+                y = self._line(surface, y, "Fed until", view.fed_until or "—")
+            y += SECTION_GAP
+
+            surface.blit(
+                self.font_small.render("Status", True, COLOUR_TEXT),
+                (panel.x + PAD, y),
+            )
+            y += ROW_H
+            for label, value in view.benefits:
+                y = self._line(surface, y, label, value, dim_value=True)
+            y += SECTION_GAP
+
+            health_colour = COLOUR_TEXT
+            if view.health_pct < 40:
+                health_colour = (220, 100, 90)
+            elif view.health_pct < 70:
+                health_colour = (220, 180, 80)
+            surface.blit(
+                self.font_small.render("Vitality", True, COLOUR_TEXT),
+                (panel.x + PAD, y),
+            )
+            y += ROW_H
+            y = self._line(surface, y, "Overall health", f"{view.health_pct:.0f}%")
+            health_val = self.font.render(
+                f"{view.health_pct:.0f}%", True, health_colour
+            )
+            surface.blit(
+                health_val,
+                (
+                    panel.x + self._panel_w - PAD - health_val.get_width(),
+                    y - ROW_H - 1,
+                ),
+            )
+            if not is_bird:
+                y = self._line(
+                    surface,
+                    y,
+                    "Breeding chance",
+                    f"{view.breed_chance_pct:.0f}% / tick",
+                )
+            return
 
         y = self._line(surface, y, "Population", view.population)
         y = self._line(surface, y, "Breeding area", f"{view.breeding_tiles} cells")

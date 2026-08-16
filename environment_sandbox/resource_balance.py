@@ -388,22 +388,17 @@ HUNT_SCARE_STEPS: int = 4
 HUNT_APPROACH_RADIUS: int = 6
 # Flee pace fallback (= healthy unbuffed villager walk). Game passes scaled interval.
 HUNT_SCARE_MOVE_INTERVAL: int = pace_ticks(48)
-# Fish species spawn weight carp:perch:pike:roach = 2:3:1:4;
-# catch cargo yield (fish units) = 3:2:4:1 respectively.
-FISH_SPAWN_WEIGHTS: dict[str, int] = {
-    "CARP": 2,
-    "PERCH": 3,
-    "PIKE": 1,
-    "ROACH": 4,
-}
-FISH_SPECIES_YIELD: dict[str, int] = {
-    "CARP": 3,
-    "PERCH": 2,
-    "PIKE": 4,
-    "ROACH": 1,
-}
+# Fish species spawn weight / catch yield — edit ``wildlife_species.py``.
+from wildlife_species import (  # noqa: E402
+    fish_spawn_weight_table as _fish_spawn_weight_table,
+    fish_yield_table as _fish_yield_table,
+    max_fish_yield as _max_fish_yield,
+)
+
+FISH_SPAWN_WEIGHTS: dict[str, int] = _fish_spawn_weight_table()
+FISH_SPECIES_YIELD: dict[str, int] = _fish_yield_table()
 # Largest single-catch yield — used for "will the next catch fit?" cargo checks.
-FISH_YIELD: int = max(FISH_SPECIES_YIELD.values())
+FISH_YIELD: int = _max_fish_yield()
 
 # ---------------------------------------------------------------------------
 # Wildlife / fish ecology (population, habitats, seeding)
@@ -471,24 +466,9 @@ HONEY_PER_BEE_LEVEL: int = 5
 RABBIT_MOVE_PAUSE: int = 120
 
 
-BERRY_BUSH_YIELD: int = 4
+# Berry regen / seed drop are player-facing knobs (not wild-spawn envelopes).
 BERRY_REGEN_TICKS: int = 2400
 BERRY_SEED_DROP_CHANCE: float = 0.05
-# Permanent starter bushes on new maps (fruit is seasonal; bushes stay year-round).
-BERRY_INITIAL_COUNT: int = 6
-
-MUSHROOM_YIELD: int = 4  # per mushroom tile foraged
-REED_YIELD: int = 3
-# Fraction of riparian shoreline cells that start with reeds on a new map.
-REED_INITIAL_FRACTION: float = 0.55
-# Natural spread: chance per herb-tick on empty riparian (spring–summer only).
-REED_SPAWN_RATE_PEAK: float = 0.09
-REED_SPAWN_ACTIVITY: float = 0.85
-WOOD_BUSH_YIELD: int = 1  # processed wood from bush tiles
-# Chance an empty neighbour of a tree gets fallen wood when forests are seeded.
-WOOD_BUSH_SEED_CHANCE: float = 0.1
-# Peak chance per mushroom-tick for fallen wood to appear next to a tree (autumn).
-WOOD_BUSH_SPAWN_RATE_PEAK: float = 0.01
 
 # Forager target pick: within each N-tile band, prefer recipe priority 1→3;
 # only look further out when nothing nearer is available.
@@ -511,8 +491,6 @@ FISH_POST_MIN_FISH: int = 2
 # Prefer a local school when one exists; otherwise walk farther for density.
 FISH_POST_LOCAL_RADIUS: int = 16
 
-WILD_PRODUCE_YIELD: int = 3  # wild crop / herb produce per harvest
-
 
 def farm_produce_yield() -> int:
     """Live File → Balance harvest units per farmed tile."""
@@ -532,8 +510,31 @@ FARM_HERB_SEED_DROP_CHANCE: tuple[int, ...] = (1, 2, 3)  # farm always rolls far
 # ---------------------------------------------------------------------------
 # Wild plant presence / spawn timing
 # ---------------------------------------------------------------------------
-# Wild crops / berry bushes may cover at most this fraction of each terrain type.
-WILD_PLANT_MAX_FRACTION: float = 0.20
+# Edit flora in ``wild_species.py``. Values below re-export the catalogue so
+# existing imports keep working.
+from wild_species import (  # noqa: E402
+    WILD_BY_KEY as _WILD_BY_KEY,
+    WILD_PLANT_MAX_FRACTION,
+    spawn_group_leader as _spawn_group_leader,
+)
+
+_berry = _WILD_BY_KEY["berry_bush"]
+_reed = _WILD_BY_KEY["reed"]
+_mushroom = _WILD_BY_KEY["mushroom"]
+_wood = _WILD_BY_KEY["wood_bush"]
+_herb = _spawn_group_leader("wild_crop")
+
+BERRY_BUSH_YIELD = int(_berry.yield_amount)
+BERRY_INITIAL_COUNT = int(_berry.initial_count)
+MUSHROOM_YIELD = int(_mushroom.yield_amount)
+REED_YIELD = int(_reed.yield_amount)
+REED_INITIAL_FRACTION = float(_reed.initial_fraction)
+REED_SPAWN_RATE_PEAK = float(_reed.spawn_peak)
+REED_SPAWN_ACTIVITY = float(_reed.spawn_activity)
+WOOD_BUSH_YIELD = int(_wood.yield_amount)
+WOOD_BUSH_SEED_CHANCE = float(_wood.seed_near_chance)
+WOOD_BUSH_SPAWN_RATE_PEAK = float(_wood.spawn_peak)
+WILD_PRODUCE_YIELD = int(_herb.yield_amount) if _herb is not None else 3
 
 NATURAL_SPROUT_MIN_PATCH: int = 4
 NATURAL_SPROUT_CHANCE: float = 1.0 / 8.0
@@ -542,21 +543,25 @@ NATURAL_SPROUT_INTERVAL: int = pace_ticks(180)
 BERRY_SPREAD_CHANCE: float = 0.01  # legacy; seasonal rates drive spawn now
 BERRY_SPREAD_INTERVAL: int = pace_ticks(600)
 
-MUSHROOM_SPAWN_CHANCE: float = 0.006  # legacy peak; see seasonal peaks below
-MUSHROOM_SPREAD_CHANCE: float = 0.01  # into neighbouring soil
+MUSHROOM_SPAWN_CHANCE: float = float(_mushroom.spawn_peak)  # legacy peak alias
+MUSHROOM_SPREAD_CHANCE: float = float(_mushroom.spread_chance)
 MUSHROOM_TICK_INTERVAL: int = pace_ticks(360)
 
-HERB_SPAWN_CHANCE: float = 0.03  # legacy peak; see seasonal peaks below
+HERB_SPAWN_CHANCE: float = float(_herb.spawn_peak) if _herb is not None else 0.03
 HERB_TICK_INTERVAL: int = pace_ticks(150)
 
 # Peak multipliers used by seasons.py spawn envelopes (chance per forage tick).
-HERB_SPAWN_RATE_PEAK: float = 0.045
-HERB_DESPAWN_FADE: float = 0.08
-HERB_DESPAWN_LEFTOVER: float = 0.15
-BERRY_SPAWN_RATE_PEAK: float = 0.0  # natural bush spawn off; fruit uses berry_fruiting()
-BERRY_DESPAWN_FADE: float = 0.07
+HERB_SPAWN_RATE_PEAK: float = float(_herb.spawn_peak) if _herb is not None else 0.045
+HERB_DESPAWN_FADE: float = (
+    float(_herb.despawn_fade_chance) if _herb is not None else 0.08
+)
+HERB_DESPAWN_LEFTOVER: float = (
+    float(_herb.despawn_leftover_chance) if _herb is not None else 0.15
+)
+BERRY_SPAWN_RATE_PEAK: float = float(_berry.spawn_peak)
+BERRY_DESPAWN_FADE: float = 0.07  # bushes no longer despawn; legacy only
 BERRY_DESPAWN_LEFTOVER: float = 0.18
-MUSHROOM_SPAWN_RATE_PEAK: float = 0.015
+MUSHROOM_SPAWN_RATE_PEAK: float = float(_mushroom.spawn_peak)
 
 # Farm crop growth fallback (~32 in-game days at TICKS_PER_DAY = FPS*4).
 FARM_CROP_GROWTH_TICKS: int = seconds_to_ticks(4.0 * 32)

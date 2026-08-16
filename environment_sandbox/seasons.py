@@ -6,16 +6,12 @@ import math
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from resource_balance import (
-    BERRY_DESPAWN_FADE,
-    BERRY_DESPAWN_LEFTOVER,
-    BERRY_SPAWN_RATE_PEAK,
-    HERB_DESPAWN_FADE,
-    HERB_DESPAWN_LEFTOVER,
-    HERB_SPAWN_RATE_PEAK,
-    MUSHROOM_SPAWN_RATE_PEAK,
-    REED_SPAWN_RATE_PEAK,
-    WOOD_BUSH_SPAWN_RATE_PEAK,
+from wild_species import (
+    WILD_BY_KEY,
+    species_despawn_rate,
+    species_fruiting,
+    species_spawn_rate,
+    spawn_group_leader,
 )
 from settings import FPS, TICKS_PER_DAY as TICKS_PER_DAY_DEFAULT
 
@@ -252,82 +248,64 @@ def _year_pos(day: float) -> float:
 
 # --- Presence / rate envelopes (day-of-year 0..YEAR_DAYS) -----------------
 # Spring 0-28, Summer 28-56, Autumn 56-84, Winter 84-112
+# Tunables live in ``wild_species.py``; these wrappers keep tile stagger.
 
 
 def herb_spawn_rate(day: float, x: int, y: int) -> float:
     """Chance per herb-tick for an empty grass tile to sprout a herb."""
-    d = local_day(day, x, y)
-    # Rise through early spring, peak mid-spring, taper late spring.
-    rise = _smoothstep(0.0, 8.0, d) * (1.0 - _smoothstep(18.0, 30.0, d))
-    return HERB_SPAWN_RATE_PEAK * rise
+    leader = spawn_group_leader("wild_crop")
+    if leader is None:
+        return 0.0
+    return species_spawn_rate(leader, local_day(day, x, y))
 
 
 def herb_despawn_rate(day: float, x: int, y: int) -> float:
     """Chance per herb-tick for an existing herb to wither."""
-    d = local_day(day, x, y)
-    # Begin late summer, finish mid-autumn.
-    fade = _smoothstep(48.0, 58.0, d) * (1.0 - _smoothstep(72.0, 82.0, d))
-    # Also clear any leftovers deep into autumn/winter.
-    leftover = _smoothstep(70.0, 78.0, d)
-    return min(1.0, HERB_DESPAWN_FADE * fade + HERB_DESPAWN_LEFTOVER * leftover)
+    leader = spawn_group_leader("wild_crop")
+    if leader is None:
+        return 0.0
+    return species_despawn_rate(leader, local_day(day, x, y))
 
 
 def reed_spawn_rate(day: float, x: int, y: int) -> float:
-    """Chance per herb-tick for an empty riparian tile to sprout reeds (spring–summer)."""
-    d = local_day(day, x, y)
-    # Spring through summer; taper at season boundaries.
-    active = _smoothstep(0.0, 6.0, d) * (1.0 - _smoothstep(52.0, 58.0, d))
-    return REED_SPAWN_RATE_PEAK * active
+    """Chance per herb-tick for an empty riparian tile to sprout reeds."""
+    return species_spawn_rate(WILD_BY_KEY["reed"], local_day(day, x, y))
 
 
 def reed_despawn_rate(day: float, x: int, y: int) -> float:
     """Reeds persist year-round once established."""
-    del day, x, y
-    return 0.0
+    return species_despawn_rate(WILD_BY_KEY["reed"], local_day(day, x, y))
 
 
 def berry_spawn_rate(day: float, x: int, y: int) -> float:
     """Legacy envelope (natural bush spawn is disabled)."""
-    d = local_day(day, x, y)
-    rise = _smoothstep(26.0, 36.0, d) * (1.0 - _smoothstep(48.0, 58.0, d))
-    return BERRY_SPAWN_RATE_PEAK * rise
+    return species_spawn_rate(WILD_BY_KEY["berry_bush"], local_day(day, x, y))
 
 
 def berry_fruiting(day: float, x: int = 0, y: int = 0) -> bool:
     """True while bushes carry pickable berries (late spring → early summer)."""
-    d = local_day(day, x, y)
-    rise = _smoothstep(26.0, 36.0, d) * (1.0 - _smoothstep(48.0, 58.0, d))
-    return rise > 0.05
+    return species_fruiting(WILD_BY_KEY["berry_bush"], local_day(day, x, y))
 
 
 def berry_despawn_rate(day: float, x: int, y: int) -> float:
-    d = local_day(day, x, y)
-    fade = _smoothstep(54.0, 64.0, d) * (1.0 - _smoothstep(78.0, 88.0, d))
-    leftover = _smoothstep(76.0, 84.0, d)
-    return min(1.0, BERRY_DESPAWN_FADE * fade + BERRY_DESPAWN_LEFTOVER * leftover)
+    # Bushes are permanent; legacy callers still get a no-op fade of 0.
+    del day, x, y
+    return 0.0
 
 
 def mushroom_spawn_rate(day: float, x: int, y: int) -> float:
     """Autumn only — stop before winter (day 84)."""
-    d = local_day(day, x, y)
-    rise = _smoothstep(56.0, 64.0, d) * (1.0 - _smoothstep(78.0, 84.0, d))
-    return MUSHROOM_SPAWN_RATE_PEAK * rise
+    return species_spawn_rate(WILD_BY_KEY["mushroom"], local_day(day, x, y))
 
 
 def wood_bush_spawn_rate(day: float, x: int, y: int) -> float:
     """Fallen wood near trees — peaks through autumn, gone by winter."""
-    d = local_day(day, x, y)
-    rise = _smoothstep(54.0, 62.0, d) * (1.0 - _smoothstep(78.0, 84.0, d))
-    return WOOD_BUSH_SPAWN_RATE_PEAK * rise
+    return species_spawn_rate(WILD_BY_KEY["wood_bush"], local_day(day, x, y))
 
 
 def mushroom_despawn_rate(day: float, x: int, y: int) -> float:
     """Clear as winter begins; no lingering mushrooms in winter."""
-    d = local_day(day, x, y)
-    if d >= float(DAYS_PER_SEASON * 3):  # winter start (day 84)
-        return 1.0
-    # Ramp hard in the last days of autumn so they vanish at the season change.
-    return _smoothstep(80.0, 84.0, d)
+    return species_despawn_rate(WILD_BY_KEY["mushroom"], local_day(day, x, y))
 
 
 def trees_grow_factor(day: float) -> float:

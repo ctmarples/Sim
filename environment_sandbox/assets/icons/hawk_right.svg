@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 40 40"
+   width="400"
+   height="400"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="hawk_right.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <defs
+     id="defs1" />
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="0.8265382"
+     inkscape:cx="194.78834"
+     inkscape:cy="50.814348"
+     inkscape:window-width="1083"
+     inkscape:window-height="835"
+     inkscape:window-x="388"
+     inkscape:window-y="63"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="deer_male" />
+  <title
+     id="title1">deer male</title>
+  <desc
+     id="desc1">Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <g
+     id="deer_male"
+     inkscape:groupmode="layer"
+     inkscape:label="deer_male">
+    <path
+       id="svg_5-6-1"
+       style="fill:#9f5a22;fill-opacity:1;stroke-width:0.683125"
+       class="body"
+       d="m 23.630224,18.42182 c -1.494355,-1.230896 -2.081717,-5.076331 -1.185417,-6.117251 1.045057,-0.05619 2.324907,0.973642 3.887366,1.411102 0.575205,1.557991 0.445923,0.394338 0.759355,1.578924 -2.174344,2.422785 -1.022047,0.942279 -3.461304,3.127225 z"
+       sodipodi:nodetypes="ccccc" />
+    <path
+       id="body"
+       class="body"
+       d="m 24.957238,14.076405 c 3.634072,-1.064445 7.564106,-1.612054 7.81777,-1.55683 2.916616,0.634966 2.855239,1.179128 0.89955,2.514838 -1.738277,1.187222 -4.913241,0.197515 -8.136299,0.408597 -1.0001,0.0655 -1.237163,-1.174416 -0.581021,-1.366605 z"
+       fill="#a0643c"
+       stroke="none"
+       sodipodi:nodetypes="sssss"
+       style="fill:#6c3e16;fill-opacity:1;stroke-width:0.660615" />
+    <path
+       id="svg_5-6"
+       style="fill:#a45f25;fill-opacity:1;stroke-width:0.683125"
+       class="body"
+       d="m 32.289101,12.70356 c -0.238695,0.770148 -4.373196,0.996407 -4.898951,0.712543 -0.797431,-0.900654 -1.576172,-1.679652 -2.546272,-3.7041869 -1.113936,-2.4268872 -0.93315,-4.8537744 -0.45122,-7.2806616 1.045057,-0.05619 1.180272,-1.0579183 4.621919,1.3765046 0.440977,2.6188778 1.363112,5.0884845 2.280568,7.5835779 z"
+       sodipodi:nodetypes="ccccccc" />
+    <path
+       id="svg_5-6-0"
+       style="fill:#f9e6de;fill-opacity:1;stroke-width:0.533189"
+       class="body"
+       d="m 28.143454,13.013873 c -0.160071,0.699629 -0.277289,0.320383 -0.629863,0.06251 -0.534763,-0.818185 -2.175059,-2.110641 -2.825614,-3.949798 -0.747014,-2.2046684 -0.416141,-4.2144077 -0.09295,-6.4190761 0.700822,-0.051045 1.630047,-0.8960734 3.938039,1.3154407 0.295722,2.3790793 -2.020809,1.6336434 -1.405557,3.9002726 z"
+       sodipodi:nodetypes="ccccccc" />
+    <path
+       id="svg_5-6-6"
+       style="fill:#a45f25;fill-opacity:1;stroke-width:0.752771"
+       class="body"
+       d="m 27.900864,14.983983 c 0.14942,-0.53828 4.835507,-0.715151 5.470478,-0.289275 l 0.802256,4.007348 3.2073,5.197415 c -1.210716,0.05889 -2.038504,1.296071 -6.025711,-1.255566 -1.450473,-1.434465 -2.183213,-2.525258 -3.246102,-5.140486 z"
+       sodipodi:nodetypes="ccccccc" />
+    <path
+       id="svg_5-6-0-9"
+       style="fill:#f9e6de;fill-opacity:1;stroke-width:0.533656"
+       class="body"
+       d="m 29.983029,15.164716 c -0.16007,-0.700858 -1.465233,-0.190993 -1.817807,0.06733 -0.534764,0.819622 0.06107,1.854442 0.668341,3.371948 1.069843,1.948635 0.981442,1.752709 2.492576,3.701344 0.700822,0.05113 3.307146,2.197174 5.335622,1.281303 0.295722,-2.383258 -3.767788,-2.026371 -4.619996,-3.907123 z"
+       sodipodi:nodetypes="ccccccc" />
+  </g>
+  <metadata
+     id="metadata1">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:title>deer male</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+</svg>

@@ -591,9 +591,10 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "migrated_this_year": a.migrated_this_year,
             "scare_from": list(a.scare_from) if a.scare_from else None,
             "scare_steps": a.scare_steps,
+            "facing_right": bool(getattr(a, "facing_right", True)),
         }
         for a in game.wildlife.animals
-        if a.kind in (AnimalKind.DEER, AnimalKind.BOAR)
+        if a.kind in (AnimalKind.DEER, AnimalKind.BOAR, AnimalKind.OWL, AnimalKind.HAWK)
     ]
     colonies = [
         {
@@ -620,6 +621,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
     wolf_packs = [
         {
             "id": p.id,
+            "kind": p.kind.name,
             "x": p.x,
             "y": p.y,
             "fed_days_remaining": p.fed_days_remaining,
@@ -1460,8 +1462,15 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         except KeyError:
             kind = AnimalKind.DEER
         # Legacy bee/rabbit individuals → drop (colonies handle those now).
-        if kind in (AnimalKind.BEE, AnimalKind.RABBIT):
+        if kind in (AnimalKind.BEE, AnimalKind.RABBIT, AnimalKind.FOX):
             continue
+        if kind not in (
+            AnimalKind.DEER,
+            AnimalKind.BOAR,
+            AnimalKind.OWL,
+            AnimalKind.HAWK,
+        ):
+            kind = AnimalKind.DEER
         sex_name = a.get("sex", "MALE")
         try:
             sex = AnimalSex[sex_name]
@@ -1491,6 +1500,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                 migrated_this_year=bool(a.get("migrated_this_year", False)),
                 scare_from=scare_from,
                 scare_steps=int(a.get("scare_steps", 0)),
+                facing_right=bool(a.get("facing_right", True)),
             )
         )
     game.wildlife.next_id = int(wild.get("next_id", 1))
@@ -1506,7 +1516,12 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             kind = AnimalKind[kind_name]
         except KeyError:
             continue
-        if kind not in (AnimalKind.BEE, AnimalKind.RABBIT):
+        if kind not in (
+            AnimalKind.BEE,
+            AnimalKind.RABBIT,
+            AnimalKind.FROG,
+            AnimalKind.VOLE,
+        ):
             continue
         colony = Colony(
             id=int(c["id"]),
@@ -1546,6 +1561,13 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             )
         if not members:
             continue
+        kind_name = str(p.get("kind", "WOLF")).upper()
+        try:
+            pack_kind = AnimalKind[kind_name]
+        except KeyError:
+            pack_kind = AnimalKind.WOLF
+        if pack_kind not in (AnimalKind.WOLF, AnimalKind.FOX):
+            pack_kind = AnimalKind.WOLF
         # Prefer countdown; migrate legacy absolute fed_until_day (year-wrap bug).
         if "fed_days_remaining" in p:
             remaining = float(p.get("fed_days_remaining", 0) or 0)
@@ -1571,6 +1593,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                 x=int(p["x"]),
                 y=int(p["y"]),
                 members=members,
+                kind=pack_kind,
                 fed_days_remaining=remaining,
                 move_cooldown=int(p.get("move_cooldown", 0)),
                 last_prey=str(p.get("last_prey", "") or ""),
@@ -1585,8 +1608,15 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         )
     )
     # Legacy / empty: seed starting packs onto an already-settled map.
-    if not game.wildlife.wolf_packs:
+    if not any(p.kind == AnimalKind.WOLF for p in game.wildlife.wolf_packs):
         game.wildlife._seed_wolf_packs(game.world)
+    if not any(p.kind == AnimalKind.FOX for p in game.wildlife.wolf_packs):
+        game.wildlife._seed_fox_packs(game.world)
+    from wildlife import BIRD_KINDS
+
+    for bird_kind in BIRD_KINDS:
+        if game.wildlife.count_kind(bird_kind) <= 0:
+            game.wildlife._seed_birds(game.world, kind=bird_kind)
 
     fish_data = data.get("fish", {})
 

@@ -1668,6 +1668,14 @@ ICON_FISH_PIKE = "fish_pike"
 ICON_FISH_ROACH = "fish_roach"
 ICON_WOLF_MALE = "wolf_male"
 ICON_WOLF_FEMALE = "wolf_female"
+ICON_FOX_MALE = "fox_male"
+ICON_FOX_FEMALE = "fox_female"
+ICON_FROG = "frog"
+ICON_VOLE = "vole"
+ICON_OWL_LEFT = "owl_left"
+ICON_OWL_RIGHT = "owl_right"
+ICON_HAWK_LEFT = "hawk_left"
+ICON_HAWK_RIGHT = "hawk_right"
 ICON_VILLAGER = "villager"
 ICON_PLAYER = "player"
 ICON_MEAT_MARKER = "meat_marker"
@@ -1745,6 +1753,14 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_FISH_ROACH,
     ICON_WOLF_MALE,
     ICON_WOLF_FEMALE,
+    ICON_FOX_MALE,
+    ICON_FOX_FEMALE,
+    ICON_FROG,
+    ICON_VOLE,
+    ICON_OWL_LEFT,
+    ICON_OWL_RIGHT,
+    ICON_HAWK_LEFT,
+    ICON_HAWK_RIGHT,
     ICON_VILLAGER,
     ICON_PLAYER,
     ICON_MEAT_MARKER,
@@ -1796,6 +1812,7 @@ def icon_base_for_feature(
     # Local import avoids a hard cycle with world.py at module load.
     from trees import resolve_tree
     from resource_balance import ROCK_LARGE_MIN
+    from wild_species import resolve_species
     from world import FeatureType
 
     if not isinstance(feature, FeatureType) or feature == FeatureType.NONE:
@@ -1807,9 +1824,15 @@ def icon_base_for_feature(
         tree = resolve_tree(tree_species)
         return ICON_SAPLING_CONE if tree.shape == "cone" else ICON_SAPLING_ROUND
     if feature in (FeatureType.HERB, FeatureType.WILD_CROP):
+        species = resolve_species(feature.name, crop_kind)
+        if species is not None and species.icon_base:
+            return species.icon_base
         return crop_icon_base(crop_kind, dense=False)
     if feature == FeatureType.CROP_HERB:
         return crop_icon_base(crop_kind, dense=growth_ticks <= 0)
+    species = resolve_species(feature.name, crop_kind)
+    if species is not None and species.icon_base:
+        return species.icon_base
     mapping = {
         FeatureType.ROCK: ICON_ROCK_BIG if deposit >= ROCK_LARGE_MIN else ICON_ROCK,
         FeatureType.HOME: ICON_HOME,

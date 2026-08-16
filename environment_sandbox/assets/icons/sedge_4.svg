@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 40 40"
+   width="400"
+   height="400"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="sedge_4.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <defs
+     id="defs1" />
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="1.1493356"
+     inkscape:cx="198.81051"
+     inkscape:cy="219.25711"
+     inkscape:window-width="1470"
+     inkscape:window-height="835"
+     inkscape:window-x="0"
+     inkscape:window-y="33"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="reed" />
+  <title
+     id="title1">reed</title>
+  <desc
+     id="desc1">Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <g
+     id="reed"
+     inkscape:groupmode="layer"
+     inkscape:label="reed">
+    <g
+       id="g1-9"
+       transform="matrix(-0.93104465,0,0,0.99999999,40.542056,-2.8353062)">
+      <path
+         id="rect1-0-3-3-4-1"
+         style="fill:#2e5423;fill-opacity:1;stroke-width:0.111207"
+         d="m 28.358271,16.717832 c -2.493395,4.039198 -4.82287,7.048254 -4.998034,12.142187 -0.531435,2.723838 0.928986,5.347096 1.856572,7.127071 l 2.2846,-0.264095 c -6.582695,-6.335054 0.05546,-12.67011 0.856862,-19.005163 z"
+         sodipodi:nodetypes="ccccc" />
+      <path
+         id="rect1-60"
+         style="fill:#8fb64a;fill-opacity:1;stroke-width:0.0989354"
+         d="m 19.666637,16.957583 c 1.97347,4.039198 3.8172,7.048254 3.955838,12.142188 0.42062,2.723838 -0.456691,5.141219 -1.190855,6.921194 l -2.086795,-0.05822 C 25.554889,29.627689 20.300935,23.292634 19.666637,16.95758 Z"
+         sodipodi:nodetypes="ccccc" />
+      <path
+         id="rect1-6-3"
+         style="fill:#3c9456;fill-opacity:1;stroke-width:0.0998351"
+         d="m 19.358145,24.402021 c 1.973471,4.11299 2.460642,3.521081 4.181932,4.783317 0.420619,2.773599 1.712502,5.081353 0.978338,6.893845 l -4.17359,-0.116436 c 5.001255,-6.649403 -0.432252,-5.185902 -0.98668,-11.560726 z"
+         sodipodi:nodetypes="ccccc" />
+      <path
+         id="rect1-0-2"
+         style="fill:#8aa140;fill-opacity:1;stroke-width:0.0778998"
+         d="m 27.106684,20.281579 c -0.836893,-0.08774 -5.028674,11.064892 -3.702316,15.766524 l 1.114047,0.03108 c -3.015296,-3.393286 4.28652,-15.153875 2.588269,-15.797607 z"
+         sodipodi:nodetypes="cccc" />
+      <path
+         id="rect1-0-3-6"
+         style="fill:#3c9456;fill-opacity:1;stroke-width:0.0820905"
+         d="m 28.663062,22.630154 c -2.086264,2.630488 -4.933958,4.590108 -5.08052,7.907484 -0.44466,1.773873 0.304359,4.34187 1.080485,5.501061 l 2.838382,-0.315704 c -6.286097,-3.515281 -0.278038,-8.917304 1.161653,-13.092841 z"
+         sodipodi:nodetypes="ccccc" />
+    </g>
+    <g
+       id="g2"
+       transform="translate(3.2538424,-5.4007338)">
+      <path
+         id="rect1-0-3-3-4-4"
+         style="fill:#78973e;fill-opacity:1;stroke-width:0.0793263"
+         d="m 28.740505,6.3884593 c 2.083574,2.459488 4.030171,4.2917177 4.176545,7.3934377 0.444087,1.65856 -0.776296,3.255875 -1.551421,4.33971 l -1.909098,-0.160809 c 5.500746,-3.857446 -0.04634,-7.714893 -0.716026,-11.5723387 z"
+         sodipodi:nodetypes="ccccc" />
+      <path
+         id="rect1-0-3-3-8"
+         style="fill:#78973e;fill-opacity:1;stroke-width:0.0799932"
+         d="m 36.097627,2.6874653 c -1.611765,3.233165 -3.11757,5.641757 -3.230798,9.7191817 -0.343527,2.180289 0.600509,4.280069 1.200113,5.704846 L 35.54374,17.900098 C 31.288593,12.829221 35.57959,7.7583423 36.097627,2.6874653 Z"
+         sodipodi:nodetypes="ccccc" />
+      <path
+         id="rect1-8"
+         style="fill:#a09a2e;fill-opacity:1;stroke-width:0.0711662"
+         d="m 30.479232,2.879373 c 1.275679,3.2331663 2.467493,5.6417573 2.557111,9.719182 0.271894,2.18029 -0.295212,4.115276 -0.769786,5.540053 l -1.348933,-0.0466 C 34.285483,13.021125 30.889252,7.9502463 30.479232,2.8793688 Z"
+         sodipodi:nodetypes="ccccc" />
+      <path
+         id="rect1-6-35"
+         style="fill:#3c9456;fill-opacity:1;stroke-width:0.0718133"
+         d="m 30.279819,8.8382553 c 1.275679,3.2922307 1.590594,2.8184387 2.70326,3.8287927 0.271894,2.22012 1.106986,4.067355 0.632411,5.518161 l -2.697866,-0.0932 C 34.150505,12.769512 30.63821,13.940968 30.279819,8.8382573 Z"
+         sodipodi:nodetypes="ccccc" />
+      <path
+         id="rect1-0-22"
+         style="fill:#3c9456;fill-opacity:1;stroke-width:0.0560349"
+         d="M 35.288584,5.5400563 C 34.747605,5.4698263 32.037978,14.396921 32.895355,18.16033 l 0.720135,0.02488 C 31.666361,15.469063 36.386358,6.0553303 35.288584,5.5400563 Z"
+         sodipodi:nodetypes="cccc" />
+      <path
+         id="rect1-0-3-66"
+         style="fill:#749a2c;fill-opacity:1;stroke-width:0.0590493"
+         d="m 36.20117,7.4523733 c -1.348591,2.105568 -3.18938,3.6741397 -3.28412,6.3295237 -0.287434,1.419893 0.196742,3.475439 0.69844,4.403312 l 0.715946,-0.08262 c -2.09292,-2.972085 1.436282,-7.347858 1.869734,-10.6502177 z"
+         sodipodi:nodetypes="ccccc" />
+    </g>
+  </g>
+  <metadata
+     id="metadata1">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:title>reed</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+</svg>

@@ -36,10 +36,9 @@ from seasons import (
     growth_halted,
     herb_despawn_rate,
     herb_spawn_rate,
+    local_day,
     mushroom_despawn_rate,
     mushroom_spawn_rate,
-    reed_despawn_rate,
-    reed_spawn_rate,
     Season,
     season_for_day,
     trees_grow_factor,
@@ -57,8 +56,6 @@ from resource_balance import (
     NATURAL_SPROUT_CHANCE,
     NATURAL_SPROUT_INTERVAL,
     NATURAL_SPROUT_MIN_PATCH,
-    REED_INITIAL_FRACTION,
-    REED_SPAWN_ACTIVITY,
     ROCK_LARGE_MAX,
     ROCK_LARGE_MIN,
     ROCK_SMALL_MAX,
@@ -66,6 +63,15 @@ from resource_balance import (
     WILD_PLANT_MAX_FRACTION,
     WOOD_BUSH_SEED_CHANCE,
     WOOD_BUSH_YIELD,
+)
+from wild_species import (
+    WILD_BY_KEY,
+    non_crop_on_terrain,
+    resolve_species,
+    spawn_group_leader,
+    species_despawn_rate,
+    species_spawn_rate,
+    wild_crops_by_terrain,
 )
 from settings import (
     DISTURBANCE_INTERACTION_BOOST,
@@ -116,12 +122,18 @@ HARDSCAPE: tuple[TerrainType, ...] = (
 )
 
 # Wild forage plants by preferred terrain (farm crops may still grow on fields).
-WILD_CROPS_BY_TERRAIN: dict[TerrainType, tuple[str, ...]] = {
-    TerrainType.MEADOW: ("flax", "hemp", "sage", "mint"),
-    TerrainType.GRASS: ("wheat", "rye"),
-    TerrainType.SOIL: ("onion", "cabbage", "carrot", "garlic"),
-    TerrainType.FOREST_FLOOR: ("onion", "cabbage", "carrot", "garlic"),
-}
+# Built from ``wild_species.WILD_SPECIES`` — edit that catalogue to add crops.
+def _wild_crops_map() -> dict[TerrainType, tuple[str, ...]]:
+    out: dict[TerrainType, tuple[str, ...]] = {}
+    for terrain_name, crops in wild_crops_by_terrain().items():
+        try:
+            out[TerrainType[terrain_name]] = crops
+        except KeyError:
+            continue
+    return out
+
+
+WILD_CROPS_BY_TERRAIN: dict[TerrainType, tuple[str, ...]] = _wild_crops_map()
 
 # Terrains that accept planted saplings / natural sprouts.
 PLANTABLE_LAND: tuple[TerrainType, ...] = (
@@ -269,7 +281,7 @@ class Cell:
     hide_deposit: int = 0
     fur_deposit: int = 0
     fish_deposit: int = 0
-    crop_kind: str | None = None  # CropDef key for wild & farm crops
+    crop_kind: str | None = None  # CropDef / WildSpeciesDef key
     tree_species: str | None = None  # TreeDef key for TREE / SAPLING
     # 1-based icon variant (e.g. tree_round_2); rolled on first draw.
     icon_variant: int | None = None
@@ -775,6 +787,10 @@ class World:
                 cell.deposit = rng.randint(ROCK_SMALL_MIN, ROCK_SMALL_MAX)
 
         # Permanent berry bushes (fruit only in season; no natural spread).
+        berry = WILD_BY_KEY["berry_bush"]
+        berry_terrains = tuple(
+            TerrainType[n] for n in berry.terrains if n in TerrainType.__members__
+        )
         placed_bushes = 0
         attempts = 0
         target_bushes = max(0, int(BERRY_INITIAL_COUNT))
@@ -783,8 +799,9 @@ class World:
             x = rng.randint(0, self.cols - 1)
             y = rng.randint(0, self.rows - 1)
             cell = self.cells[y][x]
-            if cell.feature == FeatureType.NONE and cell.terrain == TerrainType.GRASS:
+            if cell.feature == FeatureType.NONE and cell.terrain in berry_terrains:
                 cell.feature = FeatureType.BERRY_BUSH
+                cell.crop_kind = berry.key
                 cell.deposit = 0
                 cell.growth_ticks = 0
                 placed_bushes += 1
@@ -885,7 +902,10 @@ class World:
 
     def _seed_wood_near_trees(self, rng: random.Random) -> None:
         """Place fallen wood on empty tiles adjacent to trees (forest edges)."""
-        plantable = SOIL_LIKE + (TerrainType.GRASS, TerrainType.MEADOW)
+        wood = WILD_BY_KEY["wood_bush"]
+        plantable = tuple(
+            TerrainType[n] for n in wood.terrains if n in TerrainType.__members__
+        )
         tree_tiles = [
             (x, y)
             for y in range(self.rows)
@@ -903,6 +923,7 @@ class World:
                     and rng.random() < WOOD_BUSH_SEED_CHANCE
                 ):
                     cell.feature = FeatureType.WOOD_BUSH
+                    cell.crop_kind = wood.key
                     cell.deposit = WOOD_BUSH_YIELD
 
     def _paint_terrain_subclusters(self, rng: random.Random) -> None:
@@ -1263,17 +1284,52 @@ class World:
                 else:
                     self.cells[y][x].terrain = TerrainType.GRASS
 
+    def _species_can_occupy(self, x: int, y: int, species) -> bool:
+        """True if cell terrain (and optional edge neighbour) match the species."""
+        cell = self.get_cell(x, y)
+        if cell is None:
+            return False
+        if cell.terrain.name not in species.terrains:
+            return False
+        if not species.edge_terrains:
+            return True
+        edge = {
+            TerrainType[n]
+            for n in species.edge_terrains
+            if n in TerrainType.__members__
+        }
+        if not edge:
+            return True
+        for ny, nx in self.neighbourhood(x, y, radius=1):
+            if (nx, ny) == (x, y):
+                continue
+            if self.cells[ny][nx].terrain in edge:
+                return True
+        return False
+
     def _seed_initial_reeds(self, rng: random.Random) -> None:
-        """Place reeds on a fraction of riparian shoreline (available year-round)."""
+        """Place riparian plants from the wild-species catalogue."""
+        riparian = sorted(
+            non_crop_on_terrain("RIPARIAN"),
+            key=lambda s: (0 if s.edge_terrains else 1, s.key),
+        )
         for y in range(self.rows):
             for x in range(self.cols):
                 cell = self.cells[y][x]
-                if (
-                    cell.feature == FeatureType.NONE
-                    and cell.terrain == TerrainType.RIPARIAN
-                    and rng.random() < REED_INITIAL_FRACTION
-                ):
-                    cell.feature = FeatureType.REED
+                if cell.feature != FeatureType.NONE or cell.terrain != TerrainType.RIPARIAN:
+                    continue
+                for species in riparian:
+                    if species.initial_fraction <= 0:
+                        continue
+                    if not self._species_can_occupy(x, y, species):
+                        continue
+                    if rng.random() < species.initial_fraction:
+                        try:
+                            cell.feature = FeatureType[species.feature]
+                        except KeyError:
+                            continue
+                        cell.crop_kind = species.key
+                        break
 
     def _paint_riparian_strips(self, rng: random.Random) -> None:
         """Convert ~50% of land cells that touch water into riparian strips."""
@@ -1807,7 +1863,12 @@ class World:
                     cell.growth_ticks -= grow_step * ticks
                     if cell.growth_ticks <= 0:
                         if cell.deposit <= 0 and berry_fruiting(day, x, y):
-                            cell.deposit = BERRY_BUSH_YIELD
+                            species = resolve_species("BERRY_BUSH", cell.crop_kind)
+                            cell.deposit = (
+                                int(species.yield_amount)
+                                if species is not None
+                                else BERRY_BUSH_YIELD
+                            )
                         cell.growth_ticks = 0
                     if cell.growth_ticks > 0:
                         still_growing.append((x, y))
@@ -1880,6 +1941,13 @@ class World:
             wild_n[terrain] = w
             total_n[terrain] = t
 
+        herb_leader = spawn_group_leader("wild_crop")
+        herb_activity = float(herb_leader.spawn_activity) if herb_leader else 0.55
+        riparian_species = sorted(
+            non_crop_on_terrain("RIPARIAN"),
+            key=lambda s: (0 if s.edge_terrains else 1, s.key),
+        )
+
         def room(terrain: TerrainType) -> bool:
             tot = total_n.get(terrain, 0)
             if tot <= 0:
@@ -1890,7 +1958,13 @@ class World:
             for x in range(self.cols):
                 cell = self.cells[y][x]
                 if cell.feature == FeatureType.REED:
-                    if self._forage_rng.random() < reed_despawn_rate(day, x, y):
+                    species = resolve_species("REED", cell.crop_kind)
+                    rate = (
+                        species_despawn_rate(species, local_day(day, x, y))
+                        if species is not None
+                        else 0.0
+                    )
+                    if self._forage_rng.random() < rate:
                         terrain = cell.terrain
                         cell.feature = FeatureType.NONE
                         cell.deposit = 0
@@ -1911,22 +1985,36 @@ class World:
                     cell.feature == FeatureType.NONE
                     and cell.terrain == TerrainType.RIPARIAN
                     and room(TerrainType.RIPARIAN)
-                    and self._forage_rng.random()
-                    < reed_spawn_rate(day, x, y)
-                    * REED_SPAWN_ACTIVITY
-                    * disturbance_activity_multiplier(
-                        effective_disturbance_at(self, x, y)
-                    )
                 ):
-                    cell.feature = FeatureType.REED
-                    wild_n[TerrainType.RIPARIAN] = wild_n.get(TerrainType.RIPARIAN, 0) + 1
+                    for species in riparian_species:
+                        if species.spawn_peak <= 0:
+                            continue
+                        if not self._species_can_occupy(x, y, species):
+                            continue
+                        chance = (
+                            species_spawn_rate(species, local_day(day, x, y))
+                            * species.spawn_activity
+                            * disturbance_activity_multiplier(
+                                effective_disturbance_at(self, x, y)
+                            )
+                        )
+                        if self._forage_rng.random() < chance:
+                            try:
+                                cell.feature = FeatureType[species.feature]
+                            except KeyError:
+                                continue
+                            cell.crop_kind = species.key
+                            wild_n[TerrainType.RIPARIAN] = (
+                                wild_n.get(TerrainType.RIPARIAN, 0) + 1
+                            )
+                            break
                 elif (
                     cell.feature == FeatureType.NONE
                     and cell.terrain in WILD_CROPS_BY_TERRAIN
                     and room(cell.terrain)
                     and self._forage_rng.random()
                     < herb_spawn_rate(day, x, y)
-                    * 0.55
+                    * herb_activity
                     * disturbance_activity_multiplier(
                         effective_disturbance_at(self, x, y)
                     )
@@ -1949,7 +2037,9 @@ class World:
         """Place a small contiguous wild-crop patch centred near (x, y)."""
         if not self.plant_wild_crop(x, y, crop_key, wild_n=wild_n, total_n=total_n):
             return
-        extras = self._forage_rng.randint(1, 4)
+        species = WILD_BY_KEY.get(crop_key) or spawn_group_leader("wild_crop")
+        lo, hi = (1, 4) if species is None else species.patch_extras
+        extras = self._forage_rng.randint(int(lo), int(hi))
         placed = 0
         candidates = [
             (nx, ny)
@@ -1974,12 +2064,27 @@ class World:
                     continue
                 if berry_fruiting(day, x, y):
                     if cell.deposit <= 0 and cell.growth_ticks <= 0:
-                        cell.deposit = BERRY_BUSH_YIELD
+                        species = resolve_species("BERRY_BUSH", cell.crop_kind)
+                        cell.deposit = (
+                            int(species.yield_amount)
+                            if species is not None
+                            else BERRY_BUSH_YIELD
+                        )
+                        if not cell.crop_kind and species is not None:
+                            cell.crop_kind = species.key
                 else:
                     cell.deposit = 0
                     cell.growth_ticks = 0
 
     def _tick_mushrooms_seasonal(self, day: float) -> None:
+        mushroom = WILD_BY_KEY["mushroom"]
+        wood = WILD_BY_KEY["wood_bush"]
+        mush_terrains = tuple(
+            TerrainType[n] for n in mushroom.terrains if n in TerrainType.__members__
+        )
+        wood_terrains = tuple(
+            TerrainType[n] for n in wood.terrains if n in TerrainType.__members__
+        )
         # Winter: wipe immediately (also covers any leftovers mid-tick).
         if season_for_day(int(day)) == Season.WINTER:
             self.clear_mushrooms()
@@ -1996,6 +2101,7 @@ class World:
                 cell = self.cells[my][mx]
                 cell.feature = FeatureType.NONE
                 cell.deposit = 0
+                cell.crop_kind = None
                 continue
             # Seasonal spread while mushrooms are peaking.
             for ny, nx in self.neighbourhood(mx, my, radius=1):
@@ -2004,7 +2110,7 @@ class World:
                 cell = self.cells[ny][nx]
                 if (
                     cell.feature == FeatureType.NONE
-                    and cell.terrain in SOIL_LIKE
+                    and cell.terrain in mush_terrains
                     and self._forage_rng.random()
                     < MUSHROOM_SPREAD_CHANCE
                     * mushroom_spawn_rate(day, nx, ny)
@@ -2014,6 +2120,7 @@ class World:
                     )
                 ):
                     cell.feature = FeatureType.MUSHROOM
+                    cell.crop_kind = mushroom.key
 
         for y in range(self.rows):
             for x in range(self.cols):
@@ -2025,7 +2132,7 @@ class World:
                     cell = self.cells[ny][nx]
                     if (
                         cell.feature == FeatureType.NONE
-                        and cell.terrain in SOIL_LIKE
+                        and cell.terrain in mush_terrains
                         and self._forage_rng.random()
                         < mushroom_spawn_rate(day, nx, ny)
                         * disturbance_activity_multiplier(
@@ -2033,6 +2140,7 @@ class World:
                         )
                     ):
                         cell.feature = FeatureType.MUSHROOM
+                        cell.crop_kind = mushroom.key
 
         # Autumn fallen wood beside trees (independent of mushrooms).
         for y in range(self.rows):
@@ -2045,10 +2153,11 @@ class World:
                     cell = self.cells[ny][nx]
                     if (
                         cell.feature == FeatureType.NONE
-                        and cell.terrain in SOIL_LIKE
+                        and cell.terrain in wood_terrains
                         and self._forage_rng.random() < wood_bush_spawn_rate(day, nx, ny)
                     ):
                         cell.feature = FeatureType.WOOD_BUSH
+                        cell.crop_kind = wood.key
                         cell.deposit = WOOD_BUSH_YIELD
 
     def clear_mushrooms(self) -> None:
@@ -2059,6 +2168,7 @@ class World:
                 if cell.feature in (FeatureType.MUSHROOM, FeatureType.WOOD_BUSH):
                     cell.feature = FeatureType.NONE
                     cell.deposit = 0
+                    cell.crop_kind = None
 
     def _wild_plant_counts(self, terrain: TerrainType) -> tuple[int, int]:
         """Return (wild plant tiles, total tiles) for a terrain type."""
@@ -2147,11 +2257,16 @@ class World:
         cell = self.get_cell(x, y)
         if cell is None or cell.feature != FeatureType.NONE:
             return False
-        if cell.terrain != TerrainType.GRASS:
+        berry = WILD_BY_KEY["berry_bush"]
+        berry_terrains = tuple(
+            TerrainType[n] for n in berry.terrains if n in TerrainType.__members__
+        )
+        if cell.terrain not in berry_terrains:
             return False
-        if not self._wild_plant_room(TerrainType.GRASS):
+        if not self._wild_plant_room(cell.terrain):
             return False
         cell.feature = FeatureType.BERRY_BUSH
+        cell.crop_kind = berry.key
         # Fruit appears only during berry season; the bush itself is permanent.
         cell.deposit = 0
         cell.growth_ticks = 0
@@ -2299,6 +2414,7 @@ class World:
         if cell is None or cell.feature != FeatureType.MUSHROOM:
             return False
         cell.feature = FeatureType.NONE
+        cell.crop_kind = None
         return True
 
     def harvest_wood_bush(self, x: int, y: int) -> int:
@@ -2309,6 +2425,7 @@ class World:
         cell.deposit -= taken
         if cell.deposit <= 0:
             cell.feature = FeatureType.NONE
+            cell.crop_kind = None
         return taken
 
     def harvest_berries(self, x: int, y: int, amount: int = 1) -> int:
@@ -2322,13 +2439,15 @@ class World:
         return taken
 
     def harvest_herb(self, x: int, y: int) -> str | None:
-        """Harvest wild crop/herb/reed; returns produce key or crop kind."""
+        """Harvest wild crop/herb/reed; returns wild species / crop key."""
         cell = self.get_cell(x, y)
         if cell is None:
             return None
         if cell.feature == FeatureType.REED:
+            kind = cell.crop_kind or "reed"
             cell.feature = FeatureType.NONE
-            return "reeds"
+            cell.crop_kind = None
+            return kind
         if cell.feature == FeatureType.HERB:
             cell.feature = FeatureType.NONE
             cell.crop_kind = None
@@ -2345,6 +2464,7 @@ class World:
         if cell is None or cell.feature != FeatureType.REED:
             return False
         cell.feature = FeatureType.NONE
+        cell.crop_kind = None
         return True
 
     def remove_feature(self, x: int, y: int) -> FeatureType | None:
@@ -2496,6 +2616,26 @@ class World:
             for y in range(self.rows)
             for x in range(self.cols)
             if self.cells[y][x].terrain == TerrainType.MEADOW
+        }
+        return self._connected_patches(cells)
+
+    def grass_patches(self) -> list[list[tuple[int, int]]]:
+        """Connected grass terrain patches (8-connected)."""
+        cells = {
+            (x, y)
+            for y in range(self.rows)
+            for x in range(self.cols)
+            if self.cells[y][x].terrain == TerrainType.GRASS
+        }
+        return self._connected_patches(cells)
+
+    def riparian_patches(self) -> list[list[tuple[int, int]]]:
+        """Connected riparian terrain patches (8-connected)."""
+        cells = {
+            (x, y)
+            for y in range(self.rows)
+            for x in range(self.cols)
+            if self.cells[y][x].terrain == TerrainType.RIPARIAN
         }
         return self._connected_patches(cells)
 

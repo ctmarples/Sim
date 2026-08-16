@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 40 40"
+   width="400"
+   height="400"
+   version="1.1"
+   id="svg4"
+   sodipodi:docname="frog.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <defs
+     id="defs4" />
+  <sodipodi:namedview
+     id="namedview4"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="0.88655982"
+     inkscape:cx="122.94715"
+     inkscape:cy="244.76634"
+     inkscape:window-width="1083"
+     inkscape:window-height="835"
+     inkscape:window-x="387"
+     inkscape:window-y="33"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg4" />
+  <title
+     id="title1">rabbit</title>
+  <desc
+     id="desc1">Rabbit. classes: body, ear</desc>
+  <g
+     id="g1"
+     transform="matrix(1.8999013,0,0,1.7361998,-11.12285,-20.809607)">
+    <path
+       id="circle3-6-1-5"
+       class="body"
+       style="fill:#486a1e;fill-opacity:1;stroke-width:0.145888"
+       d="m 12.589832,27.444241 c 0.647388,0.763849 0.995443,0.445923 1.811206,0.814751 0.114279,0.05167 0.262407,-0.182162 -0.01833,-0.396698 -0.2122,-0.162161 -0.862155,-0.263955 -0.862155,-0.503402 0,-1.073312 -0.368757,-2.506049 -0.665048,-2.498489 -0.5833,0.01488 -0.624143,2.264174 -0.26565,2.583838 z"
+       sodipodi:nodetypes="sssssss" />
+    <path
+       id="circle3"
+       class="body"
+       style="fill:#406e38;fill-opacity:1;stroke-width:0.22374"
+       d="m 17.743178,25.272364 c 0,1.073312 -1.878527,1.352203 -2.502507,1.658953 -0.702237,0.345221 -2.189128,0.987962 -2.189128,-0.08535 0,-1.073311 0.720679,-1.619564 1.417761,-1.619564 0.697082,0 3.273874,-0.61374 3.273874,0.04596 z"
+       sodipodi:nodetypes="ssssss" />
+    <path
+       id="circle3-5"
+       class="body"
+       style="fill:#6db062;fill-opacity:1;stroke-width:0.14936"
+       d="m 15.882122,26.697805 c -0.534168,0.216809 -1.960669,0.959732 -1.960669,0.336259 0,-0.623473 0.878164,-0.924812 1.412942,-0.924812 0.534777,0 2.408783,-0.836886 2.408783,-0.836886 0,0 0.05736,0.144255 -0.165816,0.509277 -0.323814,0.529622 -1.135772,0.689085 -1.69524,0.916162 z"
+       sodipodi:nodetypes="ssscss" />
+    <path
+       id="circle3-6"
+       class="body"
+       style="fill:#756631;fill-opacity:1;stroke-width:0.145888"
+       d="m 12.990732,27.119413 c 0.336046,0.299668 0.930721,0.987963 0.930721,-0.08535 0,-1.073312 -0.63215,-2.299244 -0.92844,-2.291683 -0.583301,0.01488 -0.36075,2.057368 -0.0023,2.377032 z"
+       sodipodi:nodetypes="ssss" />
+    <path
+       id="circle3-6-1"
+       class="body"
+       style="fill:#5f844c;fill-opacity:1;stroke-width:0.0795691"
+       d="m 15.81414,27.638102 c 0.158441,0.189071 0.438822,0.62334 0.438822,-0.05385 0,-0.677189 -0.29805,-1.450672 -0.437747,-1.445901 -0.275018,0.0094 -0.170088,1.298064 -0.0011,1.499751 z"
+       sodipodi:nodetypes="ssss" />
+  </g>
+  <metadata
+     id="metadata1">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:title>rabbit</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+</svg>

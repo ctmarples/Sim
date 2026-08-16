@@ -1,0 +1,414 @@
+"""Central catalogue for wild map flora.
+
+Add or tune a forage plant here — terrain, seasonality, yield, seeding, and
+icon — instead of scattering knobs across ``world.py``, ``seasons.py``,
+``resource_balance.py``, and ``ui.py``.
+
+``feature`` must match a ``FeatureType`` name (e.g. ``WILD_CROP``, ``REED``).
+For ``WILD_CROP``, set ``crop_key`` to a ``CropDef.key`` from ``crops.py``
+(plant art then comes from that CropDef unless ``icon_base`` is set).
+
+Non-crop plants (reed, mushroom, …) set ``icon_base`` to an SVG name under
+``assets/icons/`` and ``icon_recolour`` for SVG CSS classes.
+
+Day-of-year windows use the 112-day calendar (spring 0–28, summer 28–56,
+autumn 56–84, winter 84–112). Spawn envelope = rise×(1−fall) × ``spawn_peak``.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+Colour = tuple[int, int, int]
+
+
+@dataclass(frozen=True)
+class WildSpeciesDef:
+    key: str
+    label: str
+    feature: str
+    # Terrains this may occupy (TerrainType names).
+    terrains: tuple[str, ...]
+    # If non-empty, tile must also touch at least one of these terrains
+    # (ecotone / border placement, e.g. riparian beside grass).
+    edge_terrains: tuple[str, ...] = ()
+    # Inventory / produce key when harvested (empty = not collectable).
+    resource_key: str = ""
+    # Deposit left on the tile (or fruit amount when ``fruiting``).
+    yield_amount: int = 0
+    # CropDef key when feature is WILD_CROP.
+    crop_key: str | None = None
+
+    # --- Drawing (SVG under assets/icons/) --------------------------------
+    # Empty → WILD_CROP uses CropDef.icon_base; non-crops should set this.
+    icon_base: str = ""
+    # SVG class → RGB (vibrancy applied at draw time).
+    icon_recolour: tuple[tuple[str, Colour], ...] = ()
+    # Optional fruit class swapped when tile deposit > 0 (berry bushes).
+    fruit_class: str = ""
+    fruit_colour: Colour | None = None
+    empty_fruit_colour: Colour | None = None
+
+    # --- New-map seeding -------------------------------------------------
+    initial_count: int = 0
+    initial_fraction: float = 0.0
+    # Place beside this FeatureType name (e.g. TREE → fallen wood).
+    seed_near_feature: str | None = None
+    seed_near_chance: float = 0.0
+
+    # --- Ongoing spawn (per forage/mushroom tick) ------------------------
+    spawn_peak: float = 0.0
+    spawn_rise: tuple[float, float] = (0.0, 0.0)
+    spawn_fall: tuple[float, float] = (0.0, 0.0)
+    spawn_activity: float = 1.0
+    # Only spawn on empty tiles adjacent to this FeatureType.
+    near_feature: str | None = None
+    spread_chance: float = 0.0
+    # Extra plants when a wild-crop seed lands (min, max inclusive extras).
+    patch_extras: tuple[int, int] = (0, 0)
+
+    # --- Despawn / clear -------------------------------------------------
+    despawn_fade: tuple[float, float] = (0.0, 0.0)
+    despawn_fade_end: tuple[float, float] = (0.0, 0.0)
+    despawn_fade_chance: float = 0.0
+    despawn_leftover_from: float = -1.0
+    despawn_leftover_chance: float = 0.0
+    # Hard wipe when local day >= this (−1 = never). Winter mushrooms = 84.
+    clear_from_day: float = -1.0
+    # Smooth ramp to full despawn over this many days before clear_from_day.
+    clear_ramp_days: float = 0.0
+
+    # --- Caps / fruit ----------------------------------------------------
+    counts_toward_cap: bool = True
+    # Permanent plant; deposit refreshes while fruit window is active.
+    fruiting: bool = False
+    fruit_rise: tuple[float, float] = (0.0, 0.0)
+    fruit_fall: tuple[float, float] = (0.0, 0.0)
+
+    # Species that share one spawn roll (wild crops). First entry's envelope wins.
+    spawn_group: str | None = None
+
+
+# Max fraction of each terrain that may be covered by cap-counting wild plants.
+WILD_PLANT_MAX_FRACTION: float = 0.20
+
+# FeatureType names drawn / resolved via this catalogue (not buildings/trees).
+WILD_FEATURE_NAMES: frozenset[str] = frozenset(
+    {"WILD_CROP", "HERB", "REED", "MUSHROOM", "BERRY_BUSH", "WOOD_BUSH"}
+)
+
+# ---------------------------------------------------------------------------
+# Catalogue — edit this list to add species
+# ---------------------------------------------------------------------------
+# Shared wild-crop seasonality (spring sprout, late-summer/autumn wither).
+_WC_RISE = (0.0, 8.0)
+_WC_FALL = (18.0, 30.0)
+_WC_DESPAWN_FADE = (48.0, 58.0)
+_WC_DESPAWN_FADE_END = (72.0, 82.0)
+_WC_DESPAWN_FADE_CHANCE = 0.08
+_WC_LEFTOVER_FROM = 70.0
+_WC_LEFTOVER_CHANCE = 0.15
+_WC_PEAK = 0.045
+_WC_PATCH = (1, 4)
+
+
+def _wild_crop(
+    key: str,
+    label: str,
+    terrains: tuple[str, ...],
+) -> WildSpeciesDef:
+    return WildSpeciesDef(
+        key=key,
+        label=label,
+        feature="WILD_CROP",
+        crop_key=key,
+        terrains=terrains,
+        resource_key=key,
+        yield_amount=3,
+        # Art from CropDef (stem/flower recolour); leave icon_base empty.
+        spawn_peak=_WC_PEAK,
+        spawn_rise=_WC_RISE,
+        spawn_fall=_WC_FALL,
+        spawn_activity=0.55,
+        patch_extras=_WC_PATCH,
+        despawn_fade=_WC_DESPAWN_FADE,
+        despawn_fade_end=_WC_DESPAWN_FADE_END,
+        despawn_fade_chance=_WC_DESPAWN_FADE_CHANCE,
+        despawn_leftover_from=_WC_LEFTOVER_FROM,
+        despawn_leftover_chance=_WC_LEFTOVER_CHANCE,
+        spawn_group="wild_crop",
+    )
+
+
+WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
+    # --- Permanent / special features ------------------------------------
+    WildSpeciesDef(
+        key="berry_bush",
+        label="Berry bush",
+        feature="BERRY_BUSH",
+        terrains=("GRASS",),
+        resource_key="berries",
+        yield_amount=4,
+        icon_base="berry_bush",
+        icon_recolour=(("bush", (50, 110, 50)),),
+        fruit_class="berry",
+        fruit_colour=(160, 40, 90),
+        empty_fruit_colour=(70, 95, 55),
+        initial_count=6,
+        spawn_peak=0.0,
+        fruiting=True,
+        fruit_rise=(26.0, 36.0),
+        fruit_fall=(48.0, 58.0),
+        counts_toward_cap=True,
+    ),
+    WildSpeciesDef(
+        key="reed",
+        label="Reed",
+        feature="REED",
+        terrains=("RIPARIAN"),
+        edge_terrains=("RIVER","WATER"),
+        resource_key="reeds",
+        yield_amount=3,
+        icon_base="reed",
+        initial_fraction=0.55,
+        spawn_peak=0.09,
+        spawn_rise=(0.0, 6.0),
+        spawn_fall=(52.0, 58.0),
+        spawn_activity=0.85,
+        counts_toward_cap=True,
+    ),
+    WildSpeciesDef(
+        key="sedge",
+        label="Sedge",
+        feature="REED",
+        terrains=("RIPARIAN",),
+        # Landward rim of the shore strip (beside open grass / meadow).
+        edge_terrains=("GRASS", "MEADOW"),
+        resource_key="",  # scenery only — not collectable
+        yield_amount=0,
+        icon_base="sedge",
+        initial_fraction=0.55,
+        spawn_peak=0.08,
+        spawn_rise=(0.0, 6.0),
+        spawn_fall=(52.0, 58.0),
+        spawn_activity=0.85,
+        counts_toward_cap=True,
+    ),
+    WildSpeciesDef(
+        key="cattail",
+        label="Cattail",
+        feature="REED",
+        terrains=("WATER"),
+        edge_terrains=("RIPARIAN","GRASS","MEADOW","SOIL"),
+        resource_key="",  # scenery only — not collectable
+        yield_amount=0,
+        icon_base="cattail",
+        initial_fraction=0.55,
+        spawn_peak=0.08,
+        spawn_rise=(0.0, 6.0),
+        spawn_fall=(52.0, 58.0),
+        spawn_activity=0.85,
+        counts_toward_cap=True,
+    ),
+    WildSpeciesDef(
+        key="mushroom",
+        label="Mushroom",
+        feature="MUSHROOM",
+        terrains=("SOIL", "FOREST_FLOOR"),
+        resource_key="mushrooms",
+        yield_amount=4,
+        icon_base="mushroom",
+        icon_recolour=(
+            ("cap", (200, 170, 140)),
+            ("stem", (210, 200, 180)),
+        ),
+        spawn_peak=0.015,
+        spawn_rise=(56.0, 64.0),
+        spawn_fall=(78.0, 84.0),
+        near_feature="TREE",
+        spread_chance=0.01,
+        clear_from_day=84.0,
+        clear_ramp_days=4.0,
+        counts_toward_cap=False,
+    ),
+    WildSpeciesDef(
+        key="wood_bush",
+        label="Fallen wood",
+        feature="WOOD_BUSH",
+        terrains=("SOIL", "FOREST_FLOOR", "GRASS", "MEADOW"),
+        resource_key="wood",
+        yield_amount=1,
+        icon_base="wood",
+        icon_recolour=(
+            ("body", (120, 90, 50)),
+            ("leaf", (70, 130, 55)),
+        ),
+        seed_near_feature="TREE",
+        seed_near_chance=0.1,
+        spawn_peak=0.01,
+        spawn_rise=(54.0, 62.0),
+        spawn_fall=(78.0, 84.0),
+        near_feature="TREE",
+        clear_from_day=84.0,
+        counts_toward_cap=False,
+    ),
+    # --- Wild crops by terrain (art from crops.CropDef) --------------------
+    _wild_crop("flax", "Flax", ("MEADOW",)),
+    _wild_crop("hemp", "Hemp", ("MEADOW",)),
+    _wild_crop("sage", "Sage", ("MEADOW",)),
+    _wild_crop("mint", "Mint", ("MEADOW",)),
+    _wild_crop("wheat", "Wheat", ("GRASS",)),
+    _wild_crop("rye", "Rye", ("GRASS",)),
+    _wild_crop("onion", "Onion", ("SOIL", "FOREST_FLOOR")),
+    _wild_crop("cabbage", "Cabbage", ("SOIL", "FOREST_FLOOR")),
+    _wild_crop("carrot", "Carrot", ("SOIL", "FOREST_FLOOR")),
+    _wild_crop("garlic", "Garlic", ("SOIL", "FOREST_FLOOR")),
+)
+
+WILD_BY_KEY: dict[str, WildSpeciesDef] = {s.key: s for s in WILD_SPECIES}
+
+
+def species_for_feature(feature_name: str) -> WildSpeciesDef | None:
+    """Default species for a FeatureType (first non-group match, else any)."""
+    for s in WILD_SPECIES:
+        if s.feature == feature_name and s.spawn_group is None:
+            return s
+    for s in WILD_SPECIES:
+        if s.feature == feature_name:
+            return s
+    return None
+
+
+def resolve_species(
+    feature_name: str,
+    kind: str | None = None,
+) -> WildSpeciesDef | None:
+    """Resolve catalogue entry from feature + optional cell kind key."""
+    if kind:
+        s = WILD_BY_KEY.get(kind)
+        if s is not None and (
+            s.feature == feature_name
+            or (feature_name in ("WILD_CROP", "HERB", "CROP_HERB") and s.feature == "WILD_CROP")
+        ):
+            return s
+        # Farm / wild crop keyed only in crops.py.
+        if feature_name in ("WILD_CROP", "HERB", "CROP_HERB"):
+            crop_match = WILD_BY_KEY.get(kind)
+            if crop_match is not None and crop_match.feature == "WILD_CROP":
+                return crop_match
+    return species_for_feature(feature_name)
+
+
+def species_sharing_feature(feature_name: str) -> tuple[WildSpeciesDef, ...]:
+    return tuple(s for s in WILD_SPECIES if s.feature == feature_name)
+
+
+def non_crop_on_terrain(terrain_name: str) -> tuple[WildSpeciesDef, ...]:
+    return tuple(
+        s
+        for s in WILD_SPECIES
+        if s.feature != "WILD_CROP" and terrain_name in s.terrains
+    )
+
+
+def is_harvestable(species: WildSpeciesDef | None) -> bool:
+    """True when the plant yields a collectable inventory resource."""
+    if species is None:
+        return False
+    return bool(species.resource_key) and int(species.yield_amount) > 0
+
+
+def wild_crops_by_terrain() -> dict[str, tuple[str, ...]]:
+    """Terrain name → crop keys allowed on that terrain."""
+    out: dict[str, list[str]] = {}
+    for s in WILD_SPECIES:
+        if s.feature != "WILD_CROP" or not s.crop_key:
+            continue
+        for t in s.terrains:
+            out.setdefault(t, []).append(s.crop_key)
+    return {k: tuple(v) for k, v in out.items()}
+
+
+def spawn_group_leader(group: str) -> WildSpeciesDef | None:
+    for s in WILD_SPECIES:
+        if s.spawn_group == group:
+            return s
+    return None
+
+
+def icon_recolour_for(
+    species: WildSpeciesDef,
+    *,
+    deposit: int = 0,
+) -> dict[str, Colour]:
+    """Build SVG class→colour map for blit_icon (before vibrancy)."""
+    out: dict[str, Colour] = {cls: rgb for cls, rgb in species.icon_recolour}
+    if species.fruit_class:
+        if deposit > 0 and species.fruit_colour is not None:
+            out[species.fruit_class] = species.fruit_colour
+        elif species.empty_fruit_colour is not None:
+            out[species.fruit_class] = species.empty_fruit_colour
+    return out
+
+
+def _smoothstep(edge0: float, edge1: float, x: float) -> float:
+    if edge1 <= edge0:
+        return 1.0 if x >= edge1 else 0.0
+    t = max(0.0, min(1.0, (x - edge0) / (edge1 - edge0)))
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _envelope(
+    day: float,
+    rise: tuple[float, float],
+    fall: tuple[float, float],
+) -> float:
+    if rise == (0.0, 0.0) and fall == (0.0, 0.0):
+        return 0.0
+    r = _smoothstep(rise[0], rise[1], day) if rise != (0.0, 0.0) else 1.0
+    f = (
+        (1.0 - _smoothstep(fall[0], fall[1], day))
+        if fall != (0.0, 0.0)
+        else 1.0
+    )
+    return r * f
+
+
+def species_spawn_rate(species: WildSpeciesDef, day: float) -> float:
+    """Chance contribution at peak×envelope for this species."""
+    if species.spawn_peak <= 0:
+        return 0.0
+    return species.spawn_peak * _envelope(day, species.spawn_rise, species.spawn_fall)
+
+
+def species_despawn_rate(species: WildSpeciesDef, day: float) -> float:
+    if species.clear_from_day >= 0:
+        if day >= species.clear_from_day:
+            return 1.0
+        if species.clear_ramp_days > 0:
+            ramp = _smoothstep(
+                species.clear_from_day - species.clear_ramp_days,
+                species.clear_from_day,
+                day,
+            )
+            if ramp > 0:
+                return ramp
+    rate = 0.0
+    if species.despawn_fade_chance > 0 and species.despawn_fade != (0.0, 0.0):
+        fade = _envelope(day, species.despawn_fade, species.despawn_fade_end)
+        rate += species.despawn_fade_chance * fade
+    if species.despawn_leftover_from >= 0 and species.despawn_leftover_chance > 0:
+        leftover = _smoothstep(
+            species.despawn_leftover_from,
+            species.despawn_leftover_from + 8.0,
+            day,
+        )
+        rate += species.despawn_leftover_chance * leftover
+    return min(1.0, rate)
+
+
+def species_fruiting(species: WildSpeciesDef, day: float) -> bool:
+    if not species.fruiting:
+        return False
+    return _envelope(day, species.fruit_rise, species.fruit_fall) > 0.05

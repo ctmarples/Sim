@@ -284,7 +284,12 @@ class ManagementWindow:
             "BOAR",
             "BEE",
             "RABBIT",
+            "FROG",
+            "VOLE",
             "WOLF",
+            "FOX",
+            "HAWK",
+            "OWL",
         }
 
     def open_window(
@@ -844,14 +849,24 @@ class ManagementWindow:
         )
         y += 20
 
-        if view.panel_kind == "wolf":
-            for label, value in (
-                ("Pack", view.population),
-                ("Activity", view.activity or "—"),
-                ("Last meal", view.last_meal or "None yet"),
-                ("Food", view.food_status or "Hungry"),
-                ("Fed until", view.fed_until or "—"),
-            ):
+        if view.panel_kind in ("wolf", "bird"):
+            is_bird = view.panel_kind == "bird"
+            rows = (
+                [
+                    ("Bird", view.population),
+                    ("Activity", view.activity or "—"),
+                    ("Diet", view.food_status or "—"),
+                ]
+                if is_bird
+                else [
+                    ("Pack", view.population),
+                    ("Activity", view.activity or "—"),
+                    ("Last meal", view.last_meal or "None yet"),
+                    ("Food", view.food_status or "Hungry"),
+                    ("Fed until", view.fed_until or "—"),
+                ]
+            )
+            for label, value in rows:
                 surface.blit(
                     self.font_small.render(f"{label}: {value}", True, COLOUR_TEXT),
                     (x, y),
@@ -880,15 +895,16 @@ class ManagementWindow:
                 ),
                 (x, y),
             )
-            y += 18
-            surface.blit(
-                self.font_small.render(
-                    f"Breeding chance: {view.breed_chance_pct:.0f}% / tick",
-                    True,
-                    COLOUR_TEXT,
-                ),
-                (x, y),
-            )
+            if not is_bird:
+                y += 18
+                surface.blit(
+                    self.font_small.render(
+                        f"Breeding chance: {view.breed_chance_pct:.0f}% / tick",
+                        True,
+                        COLOUR_TEXT,
+                    ),
+                    (x, y),
+                )
             return
 
         for label, value in (
@@ -1364,7 +1380,7 @@ class ManagementWindow:
         mouse_pos: tuple[int, int] | None,
     ) -> None:
         rect = self._list_rect
-        filter_h = 52
+        filter_h = 72
         filter_rect = pygame.Rect(rect.x + 2, rect.y + 2, rect.w - 4, filter_h)
         self._draw_wildlife_filters(surface, filter_rect, mouse_pos)
 
@@ -1379,7 +1395,12 @@ class ManagementWindow:
             "BOAR": "boar_male",
             "BEE": "bee_hive",
             "RABBIT": "burrow",
+            "FROG": "frog",
+            "VOLE": "vole",
             "WOLF": "wolf_male",
+            "FOX": "fox_male",
+            "HAWK": "hawk_right",
+            "OWL": "owl_right",
         }
         shown = 0
         for kind, patch_id, title, subtitle, inhabited in rows:
@@ -1452,9 +1473,17 @@ class ManagementWindow:
             ("BOAR", "boar_male", "Boar"),
             ("BEE", "bee_hive", "Bees"),
             ("RABBIT", "burrow", "Rabbits"),
+            ("FROG", "frog", "Frogs"),
+            ("VOLE", "vole", "Voles"),
             ("WOLF", "wolf_male", "Wolves"),
+            ("FOX", "fox_male", "Foxes"),
+            ("HAWK", "hawk_right", "Hawks"),
+            ("OWL", "owl_right", "Owls"),
         )
         for name, icon, tip in species:
+            if x + 26 > rect.right - 4:
+                x = rect.x + 6
+                y += 22
             btn = pygame.Rect(x, y, 26, 20)
             active = name in self.wildlife_species
             hovered = mouse_pos is not None and btn.collidepoint(mouse_pos)

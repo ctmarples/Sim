@@ -2037,79 +2037,120 @@ def draw_feature(
         blit_building(surface, "house", cx, cy, size, variant=v)
     elif feature == FeatureType.COMMUNITY:
         blit_building(surface, "tent", cx, cy, size, variant=v)
-    elif feature == FeatureType.MUSHROOM:
-        blit_icon(
-            surface,
-            ICON_MUSHROOM,
-            cx,
-            cy,
-            size,
-            variant=v,
-            recolour={
-                "cap": adjust_colour(COLOUR_MUSHROOM, vibrancy),
-                "stem": (210, 200, 180),
-            },
-        )
-    elif feature == FeatureType.WOOD_BUSH:
-        blit_icon(
-            surface,
-            ICON_WOOD,
-            cx,
-            cy,
-            size,
-            variant=v,
-            recolour={
-                "body": adjust_colour((120, 90, 50), vibrancy),
-                "leaf": adjust_colour((70, 130, 55), vibrancy),
-            },
-        )
-    elif feature == FeatureType.BERRY_BUSH:
-        berry_colour = (
-            adjust_colour(COLOUR_BERRY, vibrancy)
-            if deposit > 0
-            else adjust_colour((70, 95, 55), vibrancy)
-        )
-        blit_icon(
-            surface,
-            ICON_BERRY_BUSH,
-            cx,
-            cy,
-            size,
-            variant=v,
-            recolour={
-                "bush": adjust_colour((50, 110, 50), vibrancy),
-                "berry": berry_colour,
-            },
-        )
-    elif feature == FeatureType.REED:
-        blit_icon(
-            surface,
-            ICON_REED,
-            cx,
-            cy,
-            size,
-            variant=v,
-            recolour={"stem": adjust_colour(COLOUR_REED, vibrancy)},
-        )
-    elif feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.CROP_HERB):
-        crop = CROP_BY_KEY.get(crop_kind or "sage") or CROP_BY_KEY["sage"]
-        stem = adjust_colour(crop.stem_colour, vibrancy)
-        # Farm crops look sparse while growing; dense only when ready to harvest.
-        ripe = feature != FeatureType.CROP_HERB or growth_ticks <= 0
-        name = crop.plant_icon(dense=ripe and feature == FeatureType.CROP_HERB)
-        recolour = {"stem": stem}
-        omit: tuple[str, ...] = ()
-        if crop.flower_colour is not None:
-            recolour["flower"] = adjust_colour(crop.flower_colour, vibrancy)
+    elif feature in (
+        FeatureType.MUSHROOM,
+        FeatureType.WOOD_BUSH,
+        FeatureType.BERRY_BUSH,
+        FeatureType.REED,
+    ):
+        from wild_species import icon_recolour_for, resolve_species
+
+        species = resolve_species(feature.name, crop_kind)
+        if species is not None and species.icon_base:
+            recolour = {
+                cls: adjust_colour(rgb, vibrancy)
+                for cls, rgb in icon_recolour_for(species, deposit=deposit).items()
+            }
+            blit_icon(
+                surface,
+                species.icon_base,
+                cx,
+                cy,
+                size,
+                variant=v,
+                recolour=recolour,
+            )
+        elif feature == FeatureType.MUSHROOM:
+            blit_icon(
+                surface,
+                ICON_MUSHROOM,
+                cx,
+                cy,
+                size,
+                variant=v,
+                recolour={
+                    "cap": adjust_colour(COLOUR_MUSHROOM, vibrancy),
+                    "stem": (210, 200, 180),
+                },
+            )
+        elif feature == FeatureType.WOOD_BUSH:
+            blit_icon(
+                surface,
+                ICON_WOOD,
+                cx,
+                cy,
+                size,
+                variant=v,
+                recolour={
+                    "body": adjust_colour((120, 90, 50), vibrancy),
+                    "leaf": adjust_colour((70, 130, 55), vibrancy),
+                },
+            )
+        elif feature == FeatureType.BERRY_BUSH:
+            berry_colour = (
+                adjust_colour(COLOUR_BERRY, vibrancy)
+                if deposit > 0
+                else adjust_colour((70, 95, 55), vibrancy)
+            )
+            blit_icon(
+                surface,
+                ICON_BERRY_BUSH,
+                cx,
+                cy,
+                size,
+                variant=v,
+                recolour={
+                    "bush": adjust_colour((50, 110, 50), vibrancy),
+                    "berry": berry_colour,
+                },
+            )
         else:
-            omit = ("flower",)
-        blit_icon(
-            surface,
-            name,
-            cx,
-            cy,
-            size,
-            variant=v,
-            recolour=recolour,
-            omit_classes=omit,
-        )
+            blit_icon(
+                surface,
+                ICON_REED,
+                cx,
+                cy,
+                size,
+                variant=v,
+                recolour={"stem": adjust_colour(COLOUR_REED, vibrancy)},
+            )
+    elif feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.CROP_HERB):
+        from wild_species import icon_recolour_for, resolve_species
+
+        species = resolve_species(feature.name, crop_kind)
+        if species is not None and species.icon_base:
+            recolour = {
+                cls: adjust_colour(rgb, vibrancy)
+                for cls, rgb in icon_recolour_for(species, deposit=deposit).items()
+            }
+            blit_icon(
+                surface,
+                species.icon_base,
+                cx,
+                cy,
+                size,
+                variant=v,
+                recolour=recolour,
+            )
+        else:
+            crop = CROP_BY_KEY.get(crop_kind or "sage") or CROP_BY_KEY["sage"]
+            stem = adjust_colour(crop.stem_colour, vibrancy)
+            # Farm crops look sparse while growing; dense only when ready to harvest.
+            ripe = feature != FeatureType.CROP_HERB or growth_ticks <= 0
+            name = crop.plant_icon(dense=ripe and feature == FeatureType.CROP_HERB)
+            recolour = {"stem": stem}
+            omit: tuple[str, ...] = ()
+            if crop.flower_colour is not None:
+                recolour["flower"] = adjust_colour(crop.flower_colour, vibrancy)
+            else:
+                omit = ("flower",)
+            blit_icon(
+                surface,
+                name,
+                cx,
+                cy,
+                size,
+                variant=v,
+                recolour=recolour,
+                omit_classes=omit,
+            )

@@ -439,6 +439,9 @@ WILDLIFE_DISTURBANCE_SENSITIVITY: float = 1.0
 # Forage tiles required per colony level (level 1 → this many, level 4 → 4×).
 WILDLIFE_BEE_FORAGE_PER_LEVEL: int = 10
 WILDLIFE_RABBIT_FORAGE_PER_LEVEL: int = 10
+# Frogs use thin riparian strips — lower bar than rabbits.
+WILDLIFE_FROG_FORAGE_PER_LEVEL: int = 3
+WILDLIFE_VOLE_FORAGE_PER_LEVEL: int = 6
 # Wolves — packs roam the whole map; total individuals capped.
 WOLF_MAX_POPULATION: int = 20
 WOLF_SEED_PACKS: int = 2
@@ -451,6 +454,18 @@ WOLF_HUNT_RABBIT_MIN: int = 2
 WOLF_FEED_BOAR_DAYS: float = 5.0
 WOLF_FEED_DEER_DAYS: float = 3.0
 WOLF_FEED_RABBIT_DAYS: float = 3.0
+WOLF_HUNT_FOX_MIN: int = 2
+WOLF_FEED_FOX_DAYS: float = 2.0
+# Fox packs — same machinery as wolves; smaller cap and simpler prey.
+FOX_MAX_POPULATION: int = 40
+FOX_SEED_PACKS: int = 2
+FOX_BREED_CHANCE: float = 0.35
+FOX_FEED_RABBIT_DAYS: float = 2.0
+FOX_FEED_FROG_DAYS: float = 2.0
+FOX_FEED_VOLE_DAYS: float = 2.0
+# Solo birds — nest on forest edge, roam the whole map.
+BIRD_SEED_COUNT: int = 2
+BIRD_ROAM_SPEED_MULT: float = 2.5
 # Calendar days for a food stack's quality to fall from fresh (1) to spoil (0).
 FOOD_SPOILAGE_DAYS: float = 10.0
 # Chebyshev radius for neighbourhood-averaged disturbance (read + spread falloff).

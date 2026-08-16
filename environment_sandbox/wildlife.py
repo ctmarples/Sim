@@ -51,7 +51,6 @@ from resource_balance import (
     DEER_CROP_EAT_CHANCE,
     FISH_WATER_PER_CAP,
     FISH_SPAWN_WEIGHTS,
-    FISH_SPECIES_YIELD,
     HONEY_PER_BEE_LEVEL,
     HUNT_APPROACH_RADIUS,
     HUNT_SCARE_RADIUS,
@@ -128,7 +127,12 @@ class AnimalKind(Enum):
     BOAR = auto()
     BEE = auto()
     RABBIT = auto()
+    FROG = auto()
+    VOLE = auto()
     WOLF = auto()
+    FOX = auto()
+    OWL = auto()
+    HAWK = auto()
 
 
 class FishKind(Enum):
@@ -140,33 +144,59 @@ class FishKind(Enum):
 
 def fish_yield_for(kind: FishKind) -> int:
     """Cargo fish units dropped/collected for this species."""
-    return int(FISH_SPECIES_YIELD.get(kind.name, 1))
+    from wildlife_species import fish_yield_amount
+
+    return fish_yield_amount(kind.name)
 
 
 def fish_icon_for(kind: FishKind) -> str:
-    return {
-        FishKind.CARP: "fish_carp",
-        FishKind.PERCH: "fish_perch",
-        FishKind.PIKE: "fish_pike",
-        FishKind.ROACH: "fish_roach",
-    }.get(kind, "fish_roach")
+    from wildlife_species import fish_icon_name
+
+    return fish_icon_name(kind.name)
 
 
 FOREST_KINDS: tuple[AnimalKind, ...] = (AnimalKind.DEER, AnimalKind.BOAR)
-COLONY_KINDS: tuple[AnimalKind, ...] = (AnimalKind.BEE, AnimalKind.RABBIT)
+COLONY_KINDS: tuple[AnimalKind, ...] = (
+    AnimalKind.BEE,
+    AnimalKind.RABBIT,
+    AnimalKind.FROG,
+    AnimalKind.VOLE,
+)
+BIRD_KINDS: tuple[AnimalKind, ...] = (AnimalKind.OWL, AnimalKind.HAWK)
+PACK_KINDS: tuple[AnimalKind, ...] = (AnimalKind.WOLF, AnimalKind.FOX)
 
 
 def colony_forage_per_level(kind: AnimalKind) -> int:
-    """Balance: forage tiles required per colony level for bees / rabbits."""
+    """Balance: forage tiles required per colony level."""
     from balance_config import active_balance
 
     if kind == AnimalKind.BEE:
         key = "WILDLIFE_BEE_FORAGE_PER_LEVEL"
     elif kind == AnimalKind.RABBIT:
         key = "WILDLIFE_RABBIT_FORAGE_PER_LEVEL"
+    elif kind == AnimalKind.FROG:
+        key = "WILDLIFE_FROG_FORAGE_PER_LEVEL"
+    elif kind == AnimalKind.VOLE:
+        key = "WILDLIFE_VOLE_FORAGE_PER_LEVEL"
     else:
         return 1
-    return max(1, active_balance().get_int(key))
+    try:
+        return max(1, active_balance().get_int(key))
+    except Exception:
+        from settings import (
+            WILDLIFE_BEE_FORAGE_PER_LEVEL,
+            WILDLIFE_FROG_FORAGE_PER_LEVEL,
+            WILDLIFE_RABBIT_FORAGE_PER_LEVEL,
+            WILDLIFE_VOLE_FORAGE_PER_LEVEL,
+        )
+
+        defaults = {
+            "WILDLIFE_BEE_FORAGE_PER_LEVEL": WILDLIFE_BEE_FORAGE_PER_LEVEL,
+            "WILDLIFE_RABBIT_FORAGE_PER_LEVEL": WILDLIFE_RABBIT_FORAGE_PER_LEVEL,
+            "WILDLIFE_FROG_FORAGE_PER_LEVEL": WILDLIFE_FROG_FORAGE_PER_LEVEL,
+            "WILDLIFE_VOLE_FORAGE_PER_LEVEL": WILDLIFE_VOLE_FORAGE_PER_LEVEL,
+        }
+        return max(1, int(defaults.get(key, 10)))
 
 
 def colony_max_level_for_forage(kind: AnimalKind, forage_count: int) -> int:
@@ -210,6 +240,14 @@ class Animal:
     # Hunt panic: flee away from kill site for scare_steps rapid hops.
     scare_from: tuple[int, int] | None = None
     scare_steps: int = 0
+    # Hawks / owls face last horizontal move when drawn.
+    facing_right: bool = True
+    # Straight-line soar: remaining steps and heading (Chebyshev).
+    roam_leg: int = 0
+    roam_dx: int = 0
+    roam_dy: int = 0
+    # Live status for inspect / wildlife list (birds).
+    activity: str = ""
     # Runtime-only path cache for migration / blocked steps (not saved).
     _path_cache: list[tuple[int, int]] | None = field(
         default=None, repr=False, compare=False
@@ -271,6 +309,7 @@ class WolfPack:
     x: int
     y: int
     members: list[WolfMember] = field(default_factory=list)
+    kind: AnimalKind = AnimalKind.WOLF
     # Days of food left (counts down; capped at boar feed duration).
     fed_days_remaining: float = 0.0
     move_cooldown: int = 0
@@ -327,6 +366,8 @@ class OpenHabitat:
     forage_tiles: set[tuple[int, int]]
     allow_bee: bool = True
     allow_rabbit: bool = True
+    allow_frog: bool = False
+    allow_vole: bool = False
 
     # One colony of each allowed kind per nest site (UI / capacity display).
     @property
@@ -336,6 +377,14 @@ class OpenHabitat:
     @property
     def rabbit_cap(self) -> int:
         return 1 if self.allow_rabbit and self.nest_tiles else 0
+
+    @property
+    def frog_cap(self) -> int:
+        return 1 if self.allow_frog and self.nest_tiles else 0
+
+    @property
+    def vole_cap(self) -> int:
+        return 1 if self.allow_vole and self.nest_tiles else 0
 
 
 Habitat = ForestHabitat | OpenHabitat
@@ -388,7 +437,15 @@ class WildlifeManager:
         return [a for a in self.animals if a.kind == AnimalKind.BOAR]
 
     def wolf_count(self) -> int:
-        return sum(p.size() for p in self.wolf_packs)
+        return sum(
+            p.size() for p in self.wolf_packs if p.kind == AnimalKind.WOLF
+        )
+
+    def fox_count(self) -> int:
+        return sum(p.size() for p in self.wolf_packs if p.kind == AnimalKind.FOX)
+
+    def pack_count(self, kind: AnimalKind) -> int:
+        return sum(p.size() for p in self.wolf_packs if p.kind == kind)
 
     def wolf_positions(self) -> list[tuple[int, int]]:
         out: list[tuple[int, int]] = []
@@ -410,6 +467,10 @@ class WildlifeManager:
     def count_kind(self, kind: AnimalKind) -> int:
         if kind in COLONY_KINDS:
             return len(self.colonies_of(kind))
+        if kind == AnimalKind.FOX:
+            return self.fox_count()
+        if kind in BIRD_KINDS:
+            return sum(1 for a in self.animals if a.kind == kind)
         return sum(1 for a in self.animals if a.kind == kind)
 
     def colony_members_total(self, kind: AnimalKind) -> int:
@@ -418,7 +479,10 @@ class WildlifeManager:
     def total_capacity(self, world: World | None = None) -> int:
         del world
         forest = sum(h.deer_cap + h.boar_cap for h in self.habitats)
-        open_cap = sum(h.bee_cap + h.rabbit_cap for h in self.open_habitats)
+        open_cap = sum(
+            h.bee_cap + h.rabbit_cap + h.frog_cap + h.vole_cap
+            for h in self.open_habitats
+        )
         return forest + open_cap
 
     def animal_at(self, x: int, y: int) -> Animal | None:
@@ -520,6 +584,10 @@ class WildlifeManager:
             return hab.allow_bee
         if kind == AnimalKind.RABBIT:
             return hab.allow_rabbit
+        if kind == AnimalKind.FROG:
+            return hab.allow_frog
+        if kind == AnimalKind.VOLE:
+            return hab.allow_vole
         return False
 
     def _colony_forage_count(self, colony: Colony) -> int:
@@ -652,11 +720,14 @@ class WildlifeManager:
         old_nests = [set(h.nest_tiles) for h in self.open_habitats]
         old_colony_ids = [c.habitat_id for c in self.colonies]
 
+        meadow_terrain = (TerrainType.MEADOW, TerrainType.GRASS)
+        vole_terrain = (TerrainType.MEADOW, TerrainType.GRASS, TerrainType.RIPARIAN)
+
         habitats: list[OpenHabitat] = []
         hid = 0
         for patch in world.meadow_patches():
             nest = list(patch)
-            forage = self._forage_from_nests(world, nest)
+            forage = self._forage_from_nests(world, nest, meadow_terrain)
             if not nest or not forage:
                 continue
             habitats.append(
@@ -666,6 +737,37 @@ class WildlifeManager:
                     forage_tiles=forage,
                     allow_bee=True,
                     allow_rabbit=True,
+                    allow_vole=True,
+                )
+            )
+            hid += 1
+        for patch in world.grass_patches():
+            nest = list(patch)
+            forage = self._forage_from_nests(world, nest, (TerrainType.GRASS,))
+            if not nest or not forage:
+                continue
+            habitats.append(
+                OpenHabitat(
+                    id=hid,
+                    nest_tiles=nest,
+                    forage_tiles=forage,
+                    allow_vole=True,
+                )
+            )
+            hid += 1
+        for patch in world.riparian_patches():
+            nest = list(patch)
+            # Shore forage: riparian plus adjacent grass/meadow within radius.
+            forage = self._forage_from_nests(world, nest, vole_terrain)
+            if not nest or not forage:
+                continue
+            habitats.append(
+                OpenHabitat(
+                    id=hid,
+                    nest_tiles=nest,
+                    forage_tiles=forage,
+                    allow_frog=True,
+                    allow_vole=True,
                 )
             )
             hid += 1
@@ -673,7 +775,7 @@ class WildlifeManager:
             if not fh.deer_breeding:
                 continue
             nest = list(fh.deer_breeding)
-            forage = self._forage_from_nests(world, nest)
+            forage = self._forage_from_nests(world, nest, meadow_terrain)
             if not forage:
                 continue
             habitats.append(
@@ -691,23 +793,33 @@ class WildlifeManager:
         self._enforce_colony_forage_caps()
 
     @staticmethod
-    def _is_forage_tile(world: World, x: int, y: int) -> bool:
+    def _is_forage_tile(
+        world: World,
+        x: int,
+        y: int,
+        terrains: tuple[TerrainType, ...] | None = None,
+    ) -> bool:
         cell = world.get_cell(x, y)
         if cell is None or not world.is_walkable(x, y):
             return False
-        if cell.terrain in (TerrainType.MEADOW, TerrainType.GRASS):
+        if terrains is None:
+            terrains = (TerrainType.MEADOW, TerrainType.GRASS)
+        if cell.terrain in terrains:
             return True
         return cell.feature == FeatureType.FIELD
 
     def _forage_from_nests(
-        self, world: World, nests: list[tuple[int, int]]
+        self,
+        world: World,
+        nests: list[tuple[int, int]],
+        terrains: tuple[TerrainType, ...] | None = None,
     ) -> set[tuple[int, int]]:
         """Contiguous forage tiles within ``SMALL_GAME_FORAGE_RADIUS`` of nests."""
         radius = SMALL_GAME_FORAGE_RADIUS
         candidates: set[tuple[int, int]] = set()
         for nx, ny in nests:
             for cy, cx in world.neighbourhood(nx, ny, radius=radius):
-                if self._is_forage_tile(world, cx, cy):
+                if self._is_forage_tile(world, cx, cy, terrains):
                     candidates.add((cx, cy))
         starts: set[tuple[int, int]] = set()
         for nx, ny in nests:
@@ -884,6 +996,10 @@ class WildlifeManager:
                 return hab.bee_cap
             if kind == AnimalKind.RABBIT:
                 return hab.rabbit_cap
+            if kind == AnimalKind.FROG:
+                return hab.frog_cap
+            if kind == AnimalKind.VOLE:
+                return hab.vole_cap
             return 0
         if kind == AnimalKind.DEER:
             return hab.deer_cap
@@ -896,6 +1012,10 @@ class WildlifeManager:
             if kind == AnimalKind.BEE and hab.allow_bee:
                 return hab.nest_tiles
             if kind == AnimalKind.RABBIT and hab.allow_rabbit:
+                return hab.nest_tiles
+            if kind == AnimalKind.FROG and hab.allow_frog:
+                return hab.nest_tiles
+            if kind == AnimalKind.VOLE and hab.allow_vole:
                 return hab.nest_tiles
             return []
         if kind == AnimalKind.DEER:
@@ -1012,6 +1132,8 @@ class WildlifeManager:
                 self._seed_patch(kind, hab, WILDLIFE_SEED_COUNT, occupied)
         self._seed_colonies(world)
         self._seed_wolf_packs(world)
+        self._seed_fox_packs(world)
+        self._seed_birds(world)
         self._seeded = True
 
     def _seed_colonies(self, world: World) -> None:
@@ -1127,6 +1249,12 @@ class WildlifeManager:
             if not sites:
                 continue
             self._spawn_colony(kind, self.rng.choice(sites), level=1)
+        if self.pack_count(AnimalKind.FOX) <= 0:
+            self._seed_fox_packs(world)
+        for kind in BIRD_KINDS:
+            if self.count_kind(kind) > 0:
+                continue
+            self._seed_birds(world, kind=kind)
 
     def _kill_failed_migrants(self) -> None:
         """Animals still searching for a new breeding ground die when winter arrives."""
@@ -1143,6 +1271,8 @@ class WildlifeManager:
     def _start_autumn_retreat(self, world: World) -> None:
         open_land = (TerrainType.GRASS, TerrainType.MEADOW)
         for animal in self.animals:
+            if animal.kind in BIRD_KINDS:
+                continue
             cell = world.get_cell(animal.x, animal.y)
             if cell is None or cell.terrain not in open_land:
                 animal.retreat_target = None
@@ -1218,6 +1348,7 @@ class WildlifeManager:
             villager_threats=hunter_threats,
             flee_interval=flee_interval,
         )
+        self._tick_birds(world, day, biodiversity=biodiversity)
         if not animals_multiply(day):
             return
         self.growth_timer -= 1
@@ -1298,6 +1429,8 @@ class WildlifeManager:
     def _wolf_threat_positions(self) -> list[tuple[int, int]]:
         threats: list[tuple[int, int]] = []
         for pack in self.wolf_packs:
+            if pack.kind != AnimalKind.WOLF:
+                continue
             threats.append((pack.x, pack.y))
             threats.extend((m.x, m.y) for m in pack.members)
         return threats
@@ -1970,6 +2103,10 @@ class WildlifeManager:
         for animal in self.animals:
             if animal.id in moved:
                 continue
+            if animal.kind in BIRD_KINDS:
+                if animal.move_cooldown > 0:
+                    animal.move_cooldown -= 1
+                continue
             if animal.move_cooldown > 0:
                 animal.move_cooldown -= 1
                 continue
@@ -2364,6 +2501,14 @@ class WildlifeManager:
                 TerrainType.GRASS,
             ):
                 return True
+            if colony.kind == AnimalKind.VOLE and cell.terrain in (
+                TerrainType.MEADOW,
+                TerrainType.GRASS,
+                TerrainType.RIPARIAN,
+            ):
+                return True
+            if colony.kind == AnimalKind.FROG and cell.terrain == TerrainType.RIPARIAN:
+                return True
         return False
 
     def _sync_colony_members(self, colony: Colony, hab: OpenHabitat | None) -> None:
@@ -2422,7 +2567,8 @@ class WildlifeManager:
             # Rabbits: hop one tile, then pause. Bees: shorter continuous roam.
             pause = (
                 rabbit_pause_interval()
-                if colony.kind == AnimalKind.RABBIT
+                if colony.kind
+                in (AnimalKind.RABBIT, AnimalKind.FROG, AnimalKind.VOLE)
                 else animal_roam_interval()
             )
             for member in ready:
@@ -2495,7 +2641,11 @@ class WildlifeManager:
             return None
         if kind is not None and colony.kind != kind:
             return None
-        if colony.kind == AnimalKind.RABBIT:
+        if colony.kind in (
+            AnimalKind.RABBIT,
+            AnimalKind.FROG,
+            AnimalKind.VOLE,
+        ):
             amount = 1  # actual loot comes from hunter recipe outputs in game.py
         elif colony.kind == AnimalKind.BEE:
             amount = HONEY_PER_BEE_LEVEL
@@ -2597,15 +2747,26 @@ class WildlifeManager:
             self._spawn_colony(colony.kind, sites[0], level=1)
 
     # ------------------------------------------------------------------
-    # Wolf packs
+    # Wolf / fox packs
     # ------------------------------------------------------------------
-    def _wolf_max_pop(self) -> int:
+    def _pack_max_pop(self, kind: AnimalKind) -> int:
         from balance_config import active_balance
 
-        return max(0, active_balance().get_int("WOLF_MAX_POPULATION"))
+        key = (
+            "WOLF_MAX_POPULATION"
+            if kind == AnimalKind.WOLF
+            else "FOX_MAX_POPULATION"
+        )
+        return max(0, active_balance().get_int(key))
+
+    def _pack_room(self, kind: AnimalKind) -> int:
+        return max(0, self._pack_max_pop(kind) - self.pack_count(kind))
+
+    def _wolf_max_pop(self) -> int:
+        return self._pack_max_pop(AnimalKind.WOLF)
 
     def _wolf_room(self) -> int:
-        return max(0, self._wolf_max_pop() - self.wolf_count())
+        return self._pack_room(AnimalKind.WOLF)
 
     def _seed_wolf_packs(self, world: World) -> None:
         from balance_config import active_balance
@@ -2614,13 +2775,37 @@ class WildlifeManager:
         if n_packs <= 0:
             return
         for _ in range(n_packs):
-            if self._wolf_room() < 2:
+            if self._pack_room(AnimalKind.WOLF) < 2:
                 break
             cell = self._random_walkable_cell(world)
             if cell is None:
                 break
             self._spawn_wolf_pack(
-                world, cell[0], cell[1], sexes=(AnimalSex.MALE, AnimalSex.FEMALE)
+                world,
+                cell[0],
+                cell[1],
+                sexes=(AnimalSex.MALE, AnimalSex.FEMALE),
+                kind=AnimalKind.WOLF,
+            )
+
+    def _seed_fox_packs(self, world: World) -> None:
+        from balance_config import active_balance
+
+        n_packs = max(0, active_balance().get_int("FOX_SEED_PACKS"))
+        if n_packs <= 0:
+            return
+        for _ in range(n_packs):
+            if self._pack_room(AnimalKind.FOX) < 2:
+                break
+            cell = self._random_walkable_cell(world)
+            if cell is None:
+                break
+            self._spawn_wolf_pack(
+                world,
+                cell[0],
+                cell[1],
+                sexes=(AnimalSex.MALE, AnimalSex.FEMALE),
+                kind=AnimalKind.FOX,
             )
 
     def _random_walkable_cell(self, world: World) -> tuple[int, int] | None:
@@ -2644,12 +2829,15 @@ class WildlifeManager:
         y: int,
         *,
         sexes: tuple[AnimalSex, ...],
+        kind: AnimalKind = AnimalKind.WOLF,
     ) -> WolfPack | None:
         if not world.is_walkable(x, y):
             return None
-        if self._wolf_room() < len(sexes):
+        if self._pack_room(kind) < len(sexes):
             return None
-        pack = WolfPack(id=self.next_wolf_pack_id, x=x, y=y, members=[])
+        pack = WolfPack(
+            id=self.next_wolf_pack_id, x=x, y=y, members=[], kind=kind
+        )
         self.next_wolf_pack_id += 1
         for sex in sexes:
             mx, my = self._place_wolf_near(world, pack, x, y)
@@ -2851,7 +3039,8 @@ class WildlifeManager:
 
         for pack in list(self.wolf_packs):
             if not pack.members:
-                self.wolf_packs.remove(pack)
+                if pack in self.wolf_packs:
+                    self.wolf_packs.remove(pack)
                 continue
             if pack.move_cooldown > 0:
                 pack.move_cooldown -= 1
@@ -2869,6 +3058,16 @@ class WildlifeManager:
                 self._wolf_step_flee(world, pack, threat)
                 self._arm_wolf_pack(pack, flee_iv)
                 continue
+
+            if pack.kind == AnimalKind.FOX:
+                wolf_threat = self._nearest_pack_threat(
+                    pack, self._wolf_threat_positions(), HUNT_APPROACH_RADIUS
+                )
+                if wolf_threat is not None:
+                    pack.activity = "Fleeing wolves"
+                    self._wolf_step_flee(world, pack, wolf_threat)
+                    self._arm_wolf_pack(pack, flee_iv)
+                    continue
 
             if pack.is_fed(day):
                 pack.activity = "Fed — seeking cover"
@@ -2938,32 +3137,64 @@ class WildlifeManager:
     def _wolf_can_hunt(self, pack: WolfPack, prey: str) -> bool:
         from balance_config import active_balance
 
+        if pack.kind == AnimalKind.FOX:
+            return prey in ("rabbit", "frog", "vole")
         bal = active_balance()
         need = {
             "boar": bal.get_int("WOLF_HUNT_BOAR_MIN"),
             "deer": bal.get_int("WOLF_HUNT_DEER_MIN"),
             "rabbit": bal.get_int("WOLF_HUNT_RABBIT_MIN"),
+            "fox": bal.get_int("WOLF_HUNT_FOX_MIN"),
         }.get(prey, 99)
         return pack.size() >= max(1, need)
 
-    def _wolf_feed_days(self, prey: str) -> float:
+    def _wolf_feed_days(self, prey: str, pack: WolfPack | None = None) -> float:
         from balance_config import active_balance
+        from settings import (
+            FOX_FEED_FROG_DAYS,
+            FOX_FEED_RABBIT_DAYS,
+            FOX_FEED_VOLE_DAYS,
+        )
 
         bal = active_balance()
+        kind = pack.kind if pack is not None else AnimalKind.WOLF
+        if kind == AnimalKind.FOX:
+            return {
+                "rabbit": FOX_FEED_RABBIT_DAYS,
+                "frog": FOX_FEED_FROG_DAYS,
+                "vole": FOX_FEED_VOLE_DAYS,
+            }.get(prey, 1.0)
         return {
             "boar": bal.get_float("WOLF_FEED_BOAR_DAYS"),
             "deer": bal.get_float("WOLF_FEED_DEER_DAYS"),
             "rabbit": bal.get_float("WOLF_FEED_RABBIT_DAYS"),
+            "fox": bal.get_float("WOLF_FEED_FOX_DAYS"),
         }.get(prey, 1.0)
 
+    def _pack_feed_cap(self, pack: WolfPack) -> float:
+        if pack.kind == AnimalKind.FOX:
+            return max(
+                0.0,
+                self._wolf_feed_days("rabbit", pack),
+                self._wolf_feed_days("frog", pack),
+                self._wolf_feed_days("vole", pack),
+            )
+        return max(
+            0.0,
+            self._wolf_feed_days("boar", pack),
+            self._wolf_feed_days("deer", pack),
+            self._wolf_feed_days("rabbit", pack),
+            self._wolf_feed_days("fox", pack),
+        )
+
     def _wolf_feed_cap(self) -> float:
-        """Largest single-meal feed duration (boar)."""
+        """Largest single-meal feed duration for wolf packs (legacy / save cap)."""
         return max(0.0, self._wolf_feed_days("boar"))
 
     def _apply_wolf_feed(self, pack: WolfPack, prey: str, day: float) -> None:
-        """Set pack food from a kill; never above boar-meal duration."""
-        feed = max(0.0, self._wolf_feed_days(prey))
-        cap = self._wolf_feed_cap()
+        """Set pack food from a kill; capped at the largest meal for this pack kind."""
+        feed = max(0.0, self._wolf_feed_days(prey, pack))
+        cap = self._pack_feed_cap(pack)
         pack.fed_days_remaining = min(cap, feed)
         pack.last_prey = prey
         pack.last_meal_day = float(day)
@@ -2985,10 +3216,10 @@ class WildlifeManager:
         self._wolf_food_day = cur
         if delta <= 0.0:
             return
-        cap = self._wolf_feed_cap()
         for pack in self.wolf_packs:
             if pack.fed_days_remaining <= 0.0:
                 continue
+            cap = self._pack_feed_cap(pack)
             pack.fed_days_remaining = min(
                 cap, max(0.0, float(pack.fed_days_remaining) - delta)
             )
@@ -2996,40 +3227,78 @@ class WildlifeManager:
     def _wolf_member_on_prey(self, pack: WolfPack, x: int, y: int) -> bool:
         return any(m.x == x and m.y == y for m in pack.members)
 
-    def _wolf_try_hunt(self, world: World, pack: WolfPack, day: float) -> bool:
-        """Kill prey only when a pack wolf stands on the same cell."""
-        del world
-        order: list[tuple[str, AnimalKind | None]] = []
-        if self._wolf_can_hunt(pack, "boar"):
-            order.append(("boar", AnimalKind.BOAR))
-        if self._wolf_can_hunt(pack, "deer"):
-            order.append(("deer", AnimalKind.DEER))
-        if self._wolf_can_hunt(pack, "rabbit"):
-            order.append(("rabbit", None))
+    def _try_harvest_colony_prey(
+        self,
+        pack: WolfPack,
+        prey_name: str,
+        colony_kind: AnimalKind,
+        day: float,
+    ) -> bool:
+        for colony in self.colonies:
+            if colony.kind != colony_kind or not colony.can_harvest():
+                continue
+            cells = {(colony.x, colony.y)}
+            cells.update((m.x, m.y) for m in colony.members)
+            if not any(self._wolf_member_on_prey(pack, cx, cy) for cx, cy in cells):
+                continue
+            if self.harvest_colony(colony.id, kind=colony_kind) is None:
+                continue
+            self._apply_wolf_feed(pack, prey_name, day)
+            return True
+        return False
 
-        for prey_name, kind in order:
-            if kind is not None:
-                for animal in self.animals:
-                    if animal.kind != kind:
-                        continue
-                    if not self._wolf_member_on_prey(pack, animal.x, animal.y):
-                        continue
-                    if self.kill_animal(animal.id) is None:
-                        continue
-                    self._apply_wolf_feed(pack, prey_name, day)
+    def _wolf_try_hunt(self, world: World, pack: WolfPack, day: float) -> bool:
+        """Kill prey only when a pack member stands on the same cell."""
+        del world
+        if pack.kind == AnimalKind.FOX:
+            for prey_name, colony_kind in (
+                ("rabbit", AnimalKind.RABBIT),
+                ("frog", AnimalKind.FROG),
+                ("vole", AnimalKind.VOLE),
+            ):
+                if not self._wolf_can_hunt(pack, prey_name):
+                    continue
+                if self._try_harvest_colony_prey(pack, prey_name, colony_kind, day):
                     return True
-            else:
-                for colony in self.colonies:
-                    if colony.kind != AnimalKind.RABBIT or not colony.can_harvest():
+            return False
+
+        if self._wolf_can_hunt(pack, "boar"):
+            for animal in self.animals:
+                if animal.kind != AnimalKind.BOAR:
+                    continue
+                if not self._wolf_member_on_prey(pack, animal.x, animal.y):
+                    continue
+                if self.kill_animal(animal.id) is None:
+                    continue
+                self._apply_wolf_feed(pack, "boar", day)
+                return True
+        if self._wolf_can_hunt(pack, "deer"):
+            for animal in self.animals:
+                if animal.kind != AnimalKind.DEER:
+                    continue
+                if not self._wolf_member_on_prey(pack, animal.x, animal.y):
+                    continue
+                if self.kill_animal(animal.id) is None:
+                    continue
+                self._apply_wolf_feed(pack, "deer", day)
+                return True
+        if self._wolf_can_hunt(pack, "fox"):
+            for fox_pack in list(self.wolf_packs):
+                if fox_pack.kind != AnimalKind.FOX:
+                    continue
+                for member in list(fox_pack.members):
+                    if not self._wolf_member_on_prey(pack, member.x, member.y):
                         continue
-                    cells = {(colony.x, colony.y)}
-                    cells.update((m.x, m.y) for m in colony.members)
-                    if not any(self._wolf_member_on_prey(pack, cx, cy) for cx, cy in cells):
-                        continue
-                    if self.harvest_colony(colony.id, kind=AnimalKind.RABBIT) is None:
-                        continue
-                    self._apply_wolf_feed(pack, "rabbit", day)
+                    fox_pack.members.remove(member)
+                    if not fox_pack.members and fox_pack in self.wolf_packs:
+                        self.wolf_packs.remove(fox_pack)
+                    self._apply_wolf_feed(pack, "fox", day)
                     return True
+        if self._wolf_can_hunt(pack, "rabbit"):
+            if self._try_harvest_colony_prey(
+                pack, "rabbit", AnimalKind.RABBIT, day
+            ):
+                return True
         return False
 
     def _wolf_nearest_prey(
@@ -3037,11 +3306,6 @@ class WildlifeManager:
     ) -> tuple[int, int, int] | None:
         """Nearest huntable prey as ``(x, y, chebyshev_dist)`` from closest wolf."""
         best: tuple[int, int, int] | None = None
-        can_boar = self._wolf_can_hunt(pack, "boar")
-        can_deer = self._wolf_can_hunt(pack, "deer")
-        can_rabbit = self._wolf_can_hunt(pack, "rabbit")
-        if not (can_boar or can_deer or can_rabbit):
-            return None
 
         def _dist_to(x: int, y: int) -> int:
             return min(max(abs(m.x - x), abs(m.y - y)) for m in pack.members)
@@ -3052,6 +3316,32 @@ class WildlifeManager:
             if best is None or d < best[2]:
                 best = (x, y, d)
 
+        if pack.kind == AnimalKind.FOX:
+            colony_targets = (
+                ("rabbit", AnimalKind.RABBIT),
+                ("frog", AnimalKind.FROG),
+                ("vole", AnimalKind.VOLE),
+            )
+            any_prey = False
+            for prey_name, colony_kind in colony_targets:
+                if not self._wolf_can_hunt(pack, prey_name):
+                    continue
+                any_prey = True
+                for colony in self.colonies:
+                    if colony.kind != colony_kind or not colony.can_harvest():
+                        continue
+                    _consider(colony.x, colony.y)
+                    for member in colony.members:
+                        _consider(member.x, member.y)
+            return best if any_prey else None
+
+        can_boar = self._wolf_can_hunt(pack, "boar")
+        can_deer = self._wolf_can_hunt(pack, "deer")
+        can_rabbit = self._wolf_can_hunt(pack, "rabbit")
+        can_fox = self._wolf_can_hunt(pack, "fox")
+        if not (can_boar or can_deer or can_rabbit or can_fox):
+            return None
+
         for animal in self.animals:
             if animal.kind == AnimalKind.BOAR and not can_boar:
                 continue
@@ -3060,11 +3350,17 @@ class WildlifeManager:
             if animal.kind not in (AnimalKind.BOAR, AnimalKind.DEER):
                 continue
             _consider(animal.x, animal.y)
+        if can_fox:
+            for fox_pack in self.wolf_packs:
+                if fox_pack.kind != AnimalKind.FOX:
+                    continue
+                _consider(fox_pack.x, fox_pack.y)
+                for member in fox_pack.members:
+                    _consider(member.x, member.y)
         if can_rabbit:
             for colony in self.colonies:
                 if colony.kind != AnimalKind.RABBIT or not colony.can_harvest():
                     continue
-                # Chase nest or any visible rabbit — empty nests are not prey.
                 _consider(colony.x, colony.y)
                 for member in colony.members:
                     _consider(member.x, member.y)
@@ -3113,30 +3409,292 @@ class WildlifeManager:
     def _breed_wolves(self, world: World) -> None:
         from balance_config import active_balance
 
-        chance = active_balance().get_float("WOLF_BREED_CHANCE")
-        for pack in list(self.wolf_packs):
-            if self._wolf_room() <= 0:
-                return
-            if not pack.has_pair():
-                continue
-            if self.rng.random() >= chance:
-                continue
-            males = sum(1 for m in pack.members if m.sex == AnimalSex.MALE)
-            females = len(pack.members) - males
-            sex = AnimalSex.FEMALE if males > females else AnimalSex.MALE
-            if males == females:
-                sex = self._random_sex()
-            if pack.size() >= 4 and self._wolf_room() >= 2 and self.rng.random() < 0.35:
-                land = self._wolf_neighbour_opts(world, pack) or [(pack.x, pack.y)]
-                sx, sy = self.rng.choice(land)
-                self._spawn_wolf_pack(
-                    world, sx, sy, sexes=(AnimalSex.MALE, AnimalSex.FEMALE)
-                )
-                continue
-            mx, my = self._place_wolf_near(world, pack, pack.x, pack.y)
-            pack.members.append(
-                WolfMember(sex=sex, x=mx, y=my, move_cooldown=animal_roam_interval())
+        bal = active_balance()
+        for pack_kind in PACK_KINDS:
+            cap_key = (
+                "WOLF_MAX_POPULATION"
+                if pack_kind == AnimalKind.WOLF
+                else "FOX_MAX_POPULATION"
             )
+            chance_key = (
+                "WOLF_BREED_CHANCE"
+                if pack_kind == AnimalKind.WOLF
+                else "FOX_BREED_CHANCE"
+            )
+            chance = bal.get_float(chance_key)
+            for pack in list(self.wolf_packs):
+                if pack.kind != pack_kind:
+                    continue
+                if self._pack_room(pack_kind) <= 0:
+                    return
+                if not pack.has_pair():
+                    continue
+                if self.rng.random() >= chance:
+                    continue
+                males = sum(1 for m in pack.members if m.sex == AnimalSex.MALE)
+                females = len(pack.members) - males
+                sex = AnimalSex.FEMALE if males > females else AnimalSex.MALE
+                if males == females:
+                    sex = self._random_sex()
+                if (
+                    pack.size() >= 4
+                    and self._pack_room(pack_kind) >= 2
+                    and self.rng.random() < 0.35
+                ):
+                    land = self._wolf_neighbour_opts(world, pack) or [(pack.x, pack.y)]
+                    sx, sy = self.rng.choice(land)
+                    self._spawn_wolf_pack(
+                        world,
+                        sx,
+                        sy,
+                        sexes=(AnimalSex.MALE, AnimalSex.FEMALE),
+                        kind=pack_kind,
+                    )
+                    continue
+                mx, my = self._place_wolf_near(world, pack, pack.x, pack.y)
+                pack.members.append(
+                    WolfMember(
+                        sex=sex, x=mx, y=my, move_cooldown=animal_roam_interval()
+                    )
+                )
+
+    # ------------------------------------------------------------------
+    # Hawks / owls
+    # ------------------------------------------------------------------
+    def _bird_nest_sites(self) -> list[tuple[int, int]]:
+        nests: list[tuple[int, int]] = []
+        for fh in self.habitats:
+            nests.extend(fh.deer_breeding)
+        return nests
+
+    def _seed_birds(self, world: World, *, kind: AnimalKind | None = None) -> None:
+        from settings import BIRD_SEED_COUNT
+
+        kinds = [kind] if kind is not None else list(BIRD_KINDS)
+        n_each = max(0, int(BIRD_SEED_COUNT))
+        if n_each <= 0:
+            return
+        nests = self._bird_nest_sites()
+        if not nests:
+            return
+        occupied = self._occupied()
+        self.rng.shuffle(nests)
+        for bird_kind in kinds:
+            placed = 0
+            for nx, ny in nests:
+                if placed >= n_each:
+                    break
+                if not world.is_walkable(nx, ny):
+                    continue
+                if (nx, ny) in occupied:
+                    continue
+                self.animals.append(
+                    Animal(
+                        id=self.next_id,
+                        x=nx,
+                        y=ny,
+                        kind=bird_kind,
+                        move_cooldown=animal_roam_interval(),
+                        retreat_target=(nx, ny),
+                    )
+                )
+                self.next_id += 1
+                occupied.add((nx, ny))
+                placed += 1
+        self._index_animals()
+
+    def _bird_prey_kinds(self, kind: AnimalKind) -> tuple[AnimalKind, ...]:
+        if kind == AnimalKind.HAWK:
+            return (AnimalKind.RABBIT, AnimalKind.VOLE, AnimalKind.FROG)
+        if kind == AnimalKind.OWL:
+            return (AnimalKind.VOLE, AnimalKind.FROG)
+        return ()
+
+    def _bird_on_colony(self, bird: Animal, colony: Colony) -> bool:
+        if (bird.x, bird.y) == (colony.x, colony.y):
+            return True
+        return any(m.x == bird.x and m.y == bird.y for m in colony.members)
+
+    def _bird_try_hunt(self, bird: Animal) -> bool:
+        for prey_kind in self._bird_prey_kinds(bird.kind):
+            for colony in self.colonies:
+                if colony.kind != prey_kind or not colony.can_harvest():
+                    continue
+                if not self._bird_on_colony(bird, colony):
+                    continue
+                if self.harvest_colony(colony.id, kind=prey_kind) is None:
+                    continue
+                return True
+        return False
+
+    def _bird_nearest_other(self, bird: Animal) -> tuple[int, int] | None:
+        other = AnimalKind.HAWK if bird.kind == AnimalKind.OWL else AnimalKind.OWL
+        best: tuple[int, tuple[int, int]] | None = None
+        for other_bird in self.animals:
+            if other_bird.kind != other:
+                continue
+            d = max(abs(bird.x - other_bird.x), abs(bird.y - other_bird.y))
+            if d > HUNT_APPROACH_RADIUS:
+                continue
+            if best is None or d < best[0]:
+                best = (d, (other_bird.x, other_bird.y))
+        return best[1] if best is not None else None
+
+    def _bird_step(self, world: World, bird: Animal, nx: int, ny: int) -> None:
+        del world
+        if nx != bird.x:
+            bird.facing_right = nx > bird.x
+        note_cell_step(bird, nx, ny)
+
+    def _bird_pick_heading(self) -> tuple[int, int, int]:
+        """Return (dx, dy, leg_length) for a long straight soar."""
+        dirs = [
+            (1, 0),
+            (-1, 0),
+            (0, 1),
+            (0, -1),
+            (1, 1),
+            (1, -1),
+            (-1, 1),
+            (-1, -1),
+        ]
+        dx, dy = self.rng.choice(dirs)
+        leg = self.rng.randint(10, 22)
+        return dx, dy, leg
+
+    def _bird_continue_leg(
+        self,
+        world: World,
+        bird: Animal,
+        occupied: set[tuple[int, int]],
+    ) -> bool:
+        """Take one step along the current heading if possible."""
+        if bird.roam_leg <= 0 or (bird.roam_dx == 0 and bird.roam_dy == 0):
+            return False
+        nx, ny = bird.x + bird.roam_dx, bird.y + bird.roam_dy
+        if (
+            not world.is_walkable(nx, ny)
+            or (nx, ny) in occupied
+            or (nx, ny) == (bird.x, bird.y)
+        ):
+            bird.roam_leg = 0
+            return False
+        occupied.discard((bird.x, bird.y))
+        self._bird_step(world, bird, nx, ny)
+        occupied.add((bird.x, bird.y))
+        bird.roam_leg -= 1
+        return True
+
+    def _bird_step_flee(
+        self,
+        world: World,
+        bird: Animal,
+        threat: tuple[int, int],
+        occupied: set[tuple[int, int]],
+    ) -> None:
+        tx, ty = threat
+        opts = [
+            (nx, ny)
+            for ny, nx in world.neighbourhood(bird.x, bird.y, radius=1)
+            if (nx, ny) != (bird.x, bird.y)
+            and world.is_walkable(nx, ny)
+            and (nx, ny) not in occupied
+        ]
+        if not opts:
+            return
+        best = max(opts, key=lambda p: max(abs(p[0] - tx), abs(p[1] - ty)))
+        ox, oy = bird.x, bird.y
+        occupied.discard((bird.x, bird.y))
+        self._bird_step(world, bird, best[0], best[1])
+        occupied.add((bird.x, bird.y))
+        bird.roam_dx = 0 if best[0] == ox else (1 if best[0] > ox else -1)
+        bird.roam_dy = 0 if best[1] == oy else (1 if best[1] > oy else -1)
+        bird.roam_leg = self.rng.randint(6, 12)
+
+    def _tick_birds(
+        self,
+        world: World,
+        day: float,
+        *,
+        biodiversity: list[list[float]] | None = None,
+    ) -> None:
+        from settings import BIRD_ROAM_SPEED_MULT
+
+        del biodiversity
+        slow = 1 + int(2 * freeze_amount(day)) if animals_slow(day) else 1
+        roam_iv = max(
+            4,
+            int(
+                round(
+                    animal_roam_interval()
+                    * slow
+                    / max(1.0, float(BIRD_ROAM_SPEED_MULT))
+                )
+            ),
+        )
+        occupied = self._occupied()
+        for bird in self.animals:
+            if bird.kind not in BIRD_KINDS:
+                continue
+            if bird.move_cooldown > 0:
+                bird.move_cooldown -= 1
+                continue
+
+            other = self._bird_nearest_other(bird)
+            if other is not None:
+                bird.activity = "Avoiding rival"
+                self._bird_step_flee(world, bird, other, occupied)
+                self._arm_move(bird, roam_iv)
+                continue
+
+            if self._bird_try_hunt(bird):
+                bird.activity = "Hunting"
+                bird.roam_leg = 0
+                self._arm_move(bird, roam_iv)
+                continue
+
+            # Prefer continuing a long straight leg.
+            if self._bird_continue_leg(world, bird, occupied):
+                bird.activity = "Soaring"
+                self._arm_move(bird, roam_iv)
+                continue
+
+            # Start a new leg — bias toward nearest huntable colony if any.
+            prey_pos: tuple[int, int] | None = None
+            best_d = 10**9
+            for prey_kind in self._bird_prey_kinds(bird.kind):
+                for colony in self.colonies:
+                    if colony.kind != prey_kind or not colony.can_harvest():
+                        continue
+                    d = max(abs(bird.x - colony.x), abs(bird.y - colony.y))
+                    if d < best_d:
+                        best_d = d
+                        prey_pos = (colony.x, colony.y)
+            if prey_pos is not None and best_d <= 24:
+                px, py = prey_pos
+                bird.roam_dx = 0 if px == bird.x else (1 if px > bird.x else -1)
+                bird.roam_dy = 0 if py == bird.y else (1 if py > bird.y else -1)
+                bird.roam_leg = self.rng.randint(8, 18)
+                bird.activity = "Hunting"
+            else:
+                bird.roam_dx, bird.roam_dy, bird.roam_leg = self._bird_pick_heading()
+                bird.activity = "Soaring"
+            if not self._bird_continue_leg(world, bird, occupied):
+                # Blocked immediately — random neighbour step, then new heading next tick.
+                opts = [
+                    (nx, ny)
+                    for ny, nx in world.neighbourhood(bird.x, bird.y, radius=1)
+                    if (nx, ny) != (bird.x, bird.y)
+                    and world.is_walkable(nx, ny)
+                    and (nx, ny) not in occupied
+                ]
+                if opts:
+                    occupied.discard((bird.x, bird.y))
+                    nx, ny = self.rng.choice(opts)
+                    self._bird_step(world, bird, nx, ny)
+                    occupied.add((bird.x, bird.y))
+                bird.roam_leg = 0
+            self._arm_move(bird, roam_iv)
 
 
 @dataclass
