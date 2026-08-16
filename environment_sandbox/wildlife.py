@@ -711,8 +711,14 @@ class WildlifeManager:
         self._refresh_open_habitats(world)
         if getattr(self, "_colonies_need_seed", False):
             self._colonies_need_seed = False
-            if not self.colonies:
-                self._seed_colonies(world)
+            # Seed any colony kinds that are still absent (not only when none exist).
+            for kind in COLONY_KINDS:
+                if self.count_kind(kind) > 0:
+                    continue
+                sites = self._empty_colony_sites(kind)
+                self.rng.shuffle(sites)
+                for hab in sites[:COLONY_SEED_GROUNDS]:
+                    self._spawn_colony(kind, hab, level=1)
         for colony in self.colonies:
             self._sync_colony_members(colony, self._colony_habitat(colony))
 
@@ -1134,6 +1140,28 @@ class WildlifeManager:
         self._seed_wolf_packs(world)
         self._seed_fox_packs(world)
         self._seed_birds(world)
+        self._seeded = True
+
+    def ensure_missing_wildlife(self, world: World) -> None:
+        """Backfill species missing from older saves or after a partial seed.
+
+        Habitats must be rebuilt first so bird nests / colony sites exist.
+        """
+        self.refresh_habitats(world)
+        for kind in COLONY_KINDS:
+            if self.count_kind(kind) > 0:
+                continue
+            sites = self._empty_colony_sites(kind)
+            self.rng.shuffle(sites)
+            for hab in sites[:COLONY_SEED_GROUNDS]:
+                self._spawn_colony(kind, hab, level=1)
+        if self.pack_count(AnimalKind.WOLF) <= 0:
+            self._seed_wolf_packs(world)
+        if self.pack_count(AnimalKind.FOX) <= 0:
+            self._seed_fox_packs(world)
+        for kind in BIRD_KINDS:
+            if self.count_kind(kind) <= 0:
+                self._seed_birds(world, kind=kind)
         self._seeded = True
 
     def _seed_colonies(self, world: World) -> None:

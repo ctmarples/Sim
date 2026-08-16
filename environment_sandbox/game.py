@@ -531,6 +531,9 @@ class Game:
         self.selected_villager_id: int | None = None
         self.selected_habitat_kind: AnimalKind | None = None
         self.selected_habitat_id: int | None = None
+        # H toggles map-wide wildlife habitat outlines (hover + click to select).
+        self.habitat_view_mode: bool = False
+        self._habitat_hover: tuple[AnimalKind, int] | None = None
         self.assign_workplace_mode = False
         self.assign_workplace_picking = False
         self.assign_workplace_slot: int = 0
@@ -1609,6 +1612,11 @@ class Game:
             if self.habitat_inspect.open:
                 self.habitat_inspect.close()
                 return
+            if self.habitat_view_mode:
+                self.habitat_view_mode = False
+                self._habitat_hover = None
+                self._set_status("Habitat view OFF.")
+                return
             if self.height_edit_mode:
                 self._toggle_height_edit()
                 return
@@ -1648,9 +1656,9 @@ class Game:
             self._toggle_pause()
         elif key == pygame.K_h:
             if self.height_edit_mode:
-                self._set_status("Exit map edit (Y) before toggling warp (H).")
+                self._set_status("Exit map edit (Y) before toggling habitat view (H).")
             else:
-                self._toggle_height_sample()
+                self._toggle_habitat_view()
         elif key == pygame.K_y:
             self._toggle_height_edit()
         elif self.height_edit_mode and key in (
@@ -2305,6 +2313,13 @@ class Game:
             self._set_status("Click a building or home to assign workplace.")
             return
 
+        if self.habitat_view_mode:
+            hit = self._habitat_at_cell(x, y)
+            if hit is not None:
+                kind, hid = hit
+                self._select_habitat(kind, hid)
+                return
+
         villager = self._villager_at(x, y)
         if villager is not None:
             self._open_villager_inspect(villager, detail_only=True)
@@ -2515,6 +2530,10 @@ class Game:
         return False
 
     def _select_habitat(self, kind: AnimalKind, patch_id: int) -> None:
+        """Select a wildlife unit into the management Wildlife inspect pane.
+
+        Floating habitat inspect is not used (avoids duplicate deer/pack popups).
+        """
         if kind in (AnimalKind.WOLF, AnimalKind.FOX):
             pack = next(
                 (p for p in self.wildlife.wolf_packs if p.id == patch_id), None
@@ -2529,11 +2548,9 @@ class Game:
             self.villager_inspect.close()
             self.resource_inspect.close()
             self.field_plan_dialog.close()
+            self.habitat_inspect.close()
             self.camera.center_on(pack.x, pack.y, self.world.cols, self.world.rows)
-            screen_xy = self.camera.world_to_screen(pack.x, pack.y)
-            self.habitat_inspect.open_for(kind, patch_id, screen_xy=screen_xy)
-            if self.management.open:
-                self.management.select_habitat(kind, patch_id)
+            self.management.select_habitat(kind, patch_id)
             return
 
         if kind in (AnimalKind.OWL, AnimalKind.HAWK):
@@ -2555,11 +2572,9 @@ class Game:
             self.villager_inspect.close()
             self.resource_inspect.close()
             self.field_plan_dialog.close()
+            self.habitat_inspect.close()
             self.camera.center_on(bird.x, bird.y, self.world.cols, self.world.rows)
-            screen_xy = self.camera.world_to_screen(bird.x, bird.y)
-            self.habitat_inspect.open_for(kind, patch_id, screen_xy=screen_xy)
-            if self.management.open:
-                self.management.select_habitat(kind, patch_id)
+            self.management.select_habitat(kind, patch_id)
             return
 
         hab = self.wildlife.habitat(patch_id, kind)
@@ -2576,14 +2591,11 @@ class Game:
         self.villager_inspect.close()
         self.resource_inspect.close()
         self.field_plan_dialog.close()
+        self.habitat_inspect.close()
         cx = sum(p[0] for p in breed) // len(breed)
         cy = sum(p[1] for p in breed) // len(breed)
         self.camera.center_on(cx, cy, self.world.cols, self.world.rows)
-        screen_xy = self.camera.world_to_screen(cx, cy)
-        self.habitat_inspect.open_for(kind, patch_id, screen_xy=screen_xy)
-        # Also mirror into management Wildlife tab (floating inspect stays open).
-        if self.management.open:
-            self.management.select_habitat(kind, patch_id)
+        self.management.select_habitat(kind, patch_id)
 
     def _wolf_pack_by_id(self, pack_id: int):
         return next(

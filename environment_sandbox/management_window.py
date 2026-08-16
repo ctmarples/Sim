@@ -342,8 +342,17 @@ class ManagementWindow:
         # Preserve hire/assign context when already open.
         mode = self.people_mode if self.open else "roster"
         assign = self.assign_building_id if self.open else None
+        same = (
+            self.open
+            and self.tab == MgmtTab.PEOPLE
+            and self.people_mode == mode
+            and self.assign_building_id == assign
+        )
         self.open_window(
-            MgmtTab.PEOPLE, people_mode=mode, assign_building_id=assign
+            MgmtTab.PEOPLE,
+            people_mode=mode,
+            assign_building_id=assign,
+            reset_scroll=not same,
         )
         self.selected_villager_id = vid
         self.selected_building_id = None
@@ -358,7 +367,8 @@ class ManagementWindow:
     def select_building(
         self, bid: int, *, show_player: bool = False, detail_only: bool = False
     ) -> None:
-        self.open_window(MgmtTab.BUILDINGS)
+        same = self.open and self.tab == MgmtTab.BUILDINGS
+        self.open_window(MgmtTab.BUILDINGS, reset_scroll=not same)
         self.selected_building_id = bid
         self.selected_construction_id = None
         self.selected_villager_id = None
@@ -370,7 +380,8 @@ class ManagementWindow:
             self._layout_panel()
 
     def select_construction(self, sid: int, *, detail_only: bool = False) -> None:
-        self.open_window(MgmtTab.BUILDINGS)
+        same = self.open and self.tab == MgmtTab.BUILDINGS
+        self.open_window(MgmtTab.BUILDINGS, reset_scroll=not same)
         self.selected_construction_id = sid
         self.selected_building_id = None
         self.selected_villager_id = None
@@ -382,7 +393,8 @@ class ManagementWindow:
             self._layout_panel()
 
     def select_habitat(self, kind: Any, patch_id: int) -> None:
-        self.open_window(MgmtTab.WILDLIFE)
+        same = self.open and self.tab == MgmtTab.WILDLIFE
+        self.open_window(MgmtTab.WILDLIFE, reset_scroll=not same)
         self.selected_habitat = (kind, patch_id)
         self.selected_building_id = None
         self.selected_construction_id = None

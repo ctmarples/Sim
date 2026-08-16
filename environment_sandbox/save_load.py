@@ -1540,8 +1540,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             max((c.id for c in game.wildlife.colonies), default=0) + 1,
         )
     )
-    # Colony seeding deferred until habitats refresh (_sample_environment).
-    game.wildlife._colonies_need_seed = not bool(game.wildlife.colonies)
+    # Colony backfill happens in ensure_missing_wildlife after packs load.
+    game.wildlife._colonies_need_seed = False
 
     game.wildlife.wolf_packs = []
     for p in wild.get("wolf_packs", []):
@@ -1607,16 +1607,10 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             max((p.id for p in game.wildlife.wolf_packs), default=0) + 1,
         )
     )
-    # Legacy / empty: seed starting packs onto an already-settled map.
-    if not any(p.kind == AnimalKind.WOLF for p in game.wildlife.wolf_packs):
-        game.wildlife._seed_wolf_packs(game.world)
-    if not any(p.kind == AnimalKind.FOX for p in game.wildlife.wolf_packs):
-        game.wildlife._seed_fox_packs(game.world)
-    from wildlife import BIRD_KINDS
-
-    for bird_kind in BIRD_KINDS:
-        if game.wildlife.count_kind(bird_kind) <= 0:
-            game.wildlife._seed_birds(game.world, kind=bird_kind)
+    # Rebuild habitats then backfill any species older saves lack
+    # (frogs/voles/birds need sites that do not exist until refresh).
+    game.wildlife.ensure_missing_wildlife(game.world)
+    game.wildlife._colonies_need_seed = False
 
     fish_data = data.get("fish", {})
 
