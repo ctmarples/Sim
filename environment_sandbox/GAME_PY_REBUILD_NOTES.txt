@@ -1,0 +1,108 @@
+Game.py rebuild notes (2026-08-16)
+====================================
+
+Context
+-------
+`environment_sandbox/game.py` was accidentally emptied and restored from the last
+git commit. Supporting modules kept the fish-species + wolf work; most of the
+lost work is **game.py wiring** back into those modules.
+
+Last good supporting state lives in (still modified / untracked at commit time):
+  wildlife.py, save_load.py, balance_config.py, settings.py,
+  management_window.py, habitat_inspect_dialog.py, indicators.py,
+  environment.py, resources.py, resource_balance.py, icons.py, ui.py,
+  fish_*.svg / wolf_*.svg assets.
+
+What still works without game rebuild
+-------------------------------------
+- Fish species spawn / yields / save-load (wildlife + resource_balance + save_load)
+- Wolf pack simulation, hunt, breed, fed_days_remaining (wildlife + save_load)
+- File → Balance → Wildlife params (balance_config + settings); wildlife reads most live
+- Management Wildlife UI shell: Inhabited/All, species filters, wolf detail layout
+- Indicators/environment APIs for multi-species fish + wolf positions
+- Fisher catch capacity fix (species yield gating) — re-applied after restore
+
+Balance controls (intact; do not redefine)
+------------------------------------------
+File → Balance → Wildlife already has:
+  ANIMAL_MOVE_SECONDS_AT_X1, ANIMAL_FLEE_SECONDS_AT_X1,
+  FISH_MOVE_SECONDS_AT_X1, RABBIT_MOVE_PAUSE_SECONDS_AT_X1,
+  WOLF_SEEK_SPEED_MULT, WOLF_CHASE_SPEED_MULT,
+  ANIMAL_WEIGHT_BIODIVERSITY, ANIMAL_WEIGHT_AWAY_DISTURBANCE,
+  WOLF_WEIGHT_BIODIVERSITY, WOLF_WEIGHT_AWAY_DISTURBANCE, WOLF_WEIGHT_TOWARD_PREY,
+  WILDLIFE_BREED_CHANCE, WILDLIFE_COLONY_GROW_CHANCE, WILDLIFE_COLONY_SPLIT_CHANCE,
+  WILDLIFE_DISTURBANCE_SENSITIVITY, WILDLIFE_BEE_FORAGE_PER_LEVEL,
+  WILDLIFE_RABBIT_FORAGE_PER_LEVEL,
+  WOLF_MAX_POPULATION, WOLF_SEED_PACKS, WOLF_BREED_CHANCE,
+  WOLF_HUNT_BOAR_MIN, WOLF_HUNT_DEER_MIN, WOLF_HUNT_RABBIT_MIN,
+  WOLF_FEED_BOAR_DAYS, WOLF_FEED_DEER_DAYS, WOLF_FEED_RABBIT_DAYS
+
+Rebuild checklist for game.py
+-----------------------------
+
+1) Fish drawing (_draw_fish)
+   - Use wildlife.fish_icon_for(item.kind)
+   - Do NOT recolour body (species SVGs keep native colours)
+
+2) Fish biodiversity (_sample_environment)
+   - Pass fish_positions=((f.x, f.y, f.kind.name.lower()) for f in self.fish.fish)
+   - Also pass wolf_positions=self.wildlife.wolf_positions() (or equivalent)
+   - environment.EnvMaps.sample / indicators.biodiversity_snapshot already accept these
+
+3) Wolf drawing (_draw_animals or dedicated helper)
+   - Draw each pack member with wolf_male / wolf_female icons
+   - Viewport cull + entity_draw_xy (same pattern as deer pairs)
+   - Outline members when a wolf pack is selected in management/inspect
+
+4) Wildlife tick (_tick_wildlife)
+   - Pass biodiversity=getattr(self.env_maps, "biodiversity", None)
+   - Keep hunter_threats= and flee_interval=
+
+5) Threats (_hunt_threat_positions)
+   - Player + ALL villagers (not only assigned hunters)
+   - Deer/boar/wolves flee these; prey also flee wolf positions inside wildlife
+
+6) Flee interval (_hunter_flee_interval)
+   - Read balance ANIMAL_FLEE_SECONDS_AT_X1 via seconds_to_ticks
+   - Do not use plain villager walk ticks alone
+
+7) Wildlife management list (_wildlife_management_rows)
+   - Return 5-tuples: (kind, id, title, subtitle, inhabited: bool)
+   - Include wolf packs as AnimalKind.WOLF (or stable kind token management expects)
+   - inhabited=False for empty deer/boar grounds and empty bee/rabbit nests
+   - management_window filters on wildlife_inhabited_only + wildlife_species
+
+8) Select / inspect wolves
+   - Handle habitat list hit for WOLF / wolf_pack id
+   - Build HabitatInspectView with panel_kind="wolf":
+       activity, last_meal, food_status (days left), fed_until,
+       pack size/sexes, hunt capability, health, breed chance, location/bio
+   - Use pack.food_days_left(day) / fed_days_remaining (not year-wrap fed_until_day math)
+   - Mirror selection into management.select_habitat
+
+9) Player + fisher catch (already mostly restored)
+   - kill_fish returns (x, y, FishKind)
+   - yield via fish_yield_for(kind)
+   - Fisher: gate on can_add(1) then filter catchable by fish_yield_for(f.kind);
+     if add fails after kill, shore-deposit instead of losing fish
+   - Delivery when holding fish and cannot fit FISH_YIELD (max species)
+
+10) Imports
+   - From wildlife as needed: fish_icon_for, fish_yield_for, FishKind, AnimalKind.WOLF
+   - Icons: wolf_male, wolf_female already in icons.py
+
+Verify after rebuild
+--------------------
+- python -c "from game import Game"
+- Load saves/wolfhunt.json
+- See species fish icons (no washed recolour)
+- See wolf packs on map
+- Management → Wildlife: Inhabited/All + species filters; wolves listed; inspect meal/food
+- Balance → Wildlife sliders affect roam/flee/wolf seek
+- Catch fish with nearly-full inventory (1–3 free slots) still works for roach/perch/carp
+
+Do not
+------
+- Re-empty game.py
+- Redefine balance params already in settings/balance_config
+- Revert wildlife.py / save_load wolf feed countdown
