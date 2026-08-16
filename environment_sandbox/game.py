@@ -2515,6 +2515,27 @@ class Game:
         return False
 
     def _select_habitat(self, kind: AnimalKind, patch_id: int) -> None:
+        if kind == AnimalKind.WOLF:
+            pack = next(
+                (p for p in self.wildlife.wolf_packs if p.id == patch_id), None
+            )
+            if pack is None or pack.size() <= 0:
+                return
+            self.selected_building_id = None
+            self.selected_villager_id = None
+            self.selected_habitat_kind = kind
+            self.selected_habitat_id = patch_id
+            self.building_inspect.close()
+            self.villager_inspect.close()
+            self.resource_inspect.close()
+            self.field_plan_dialog.close()
+            self.camera.center_on(pack.x, pack.y, self.world.cols, self.world.rows)
+            screen_xy = self.camera.world_to_screen(pack.x, pack.y)
+            self.habitat_inspect.open_for(kind, patch_id, screen_xy=screen_xy)
+            if self.management.open:
+                self.management.select_habitat(kind, patch_id)
+            return
+
         hab = self.wildlife.habitat(patch_id, kind)
         if hab is None:
             return
@@ -2538,11 +2559,18 @@ class Game:
         if self.management.open:
             self.management.select_habitat(kind, patch_id)
 
+    def _wolf_pack_by_id(self, pack_id: int):
+        return next(
+            (p for p in self.wildlife.wolf_packs if p.id == pack_id), None
+        )
+
     def _habitat_inspect_view(self) -> HabitatInspectView | None:
         if self.selected_habitat_id is None or self.selected_habitat_kind is None:
             return None
         kind = self.selected_habitat_kind
         patch_id = self.selected_habitat_id
+        if kind == AnimalKind.WOLF:
+            return self._wolf_inspect_view(patch_id)
         hab = self.wildlife.habitat(patch_id, kind)
         if hab is None:
             return None
@@ -2631,6 +2659,97 @@ class Game:
             breed_chance_pct=breed_pct,
             health_pct=health,
             benefits=benefits,
+        )
+
+    def _wolf_inspect_view(self, pack_id: int) -> HabitatInspectView | None:
+        pack = self._wolf_pack_by_id(pack_id)
+        if pack is None:
+            return None
+        from balance_config import active_balance
+        from world import effective_disturbance_at, wildlife_ecology_multiplier
+
+        day = float(self.calendar_day)
+        males = sum(1 for m in pack.members if m.sex.name == "MALE")
+        females = pack.size() - males
+        population = f"{pack.size()} wolves · {males}♂ {females}♀"
+        left = pack.food_days_left(day)
+        if left > 0.05:
+            food_status = f"{left:.1f} days of food left"
+            until_day = int(day + left) % YEAR_DAYS
+            fed_until = format_date(until_day)
+        else:
+            food_status = "Hungry — needs a kill"
+            fed_until = "—"
+        if pack.last_prey and pack.last_meal_day >= 0:
+            last_meal = (
+                f"{pack.last_prey} on {format_date(int(pack.last_meal_day))}"
+            )
+        else:
+            last_meal = "None yet"
+
+        can = [
+            prey
+            for prey in ("boar", "deer", "rabbit")
+            if self.wildlife._wolf_can_hunt(pack, prey)
+        ]
+        inhabited_rabbits = any(
+            c.can_harvest()
+            for c in self.wildlife.colonies
+            if c.kind == AnimalKind.RABBIT
+        )
+        if "rabbit" in can and not inhabited_rabbits:
+            can = [
+                ("rabbit (none inhabited)" if p == "rabbit" else p) for p in can
+            ]
+        hunt = ", ".join(can) if can else "too small to hunt"
+
+        sample = [(pack.x, pack.y)] + [(m.x, m.y) for m in pack.members]
+        dist_values = [
+            effective_disturbance_at(self.world, x, y) for x, y in sample
+        ]
+        avg_dist = sum(dist_values) / max(1, len(dist_values))
+        max_dist = max(dist_values) if dist_values else 0.0
+        ecology = wildlife_ecology_multiplier(avg_dist)
+        bio = self.env_maps.farm_biodiversity(sample)
+        bal = active_balance()
+        base_breed = bal.get_float("WOLF_BREED_CHANCE")
+        pop_cap = max(1, bal.get_int("WOLF_MAX_POPULATION"))
+        pop_factor = min(1.0, self.wildlife.wolf_count() / float(pop_cap))
+        health = max(
+            0.0,
+            min(
+                100.0,
+                100.0 * ecology * (0.45 + 0.55 * min(1.0, pack.size() / 4.0))
+                * (0.7 + 0.3 * (1.0 if left > 0 else 0.5)),
+            ),
+        )
+        breed_pct = (
+            base_breed * ecology * 100.0 if pack.has_pair() else 0.0
+        )
+        benefits = [
+            ("Can hunt", hunt),
+            ("Location", f"({pack.x}, {pack.y})"),
+            ("Biodiversity", f"{bio * 100:.0f}%"),
+            ("Landscape wolves", f"{self.wildlife.wolf_count()}/{pop_cap}"),
+            ("Disturbance", f"{avg_dist:.2f}"),
+        ]
+        return HabitatInspectView(
+            title=f"Wolf pack #{pack.id}",
+            subtitle=pack.activity or "Roaming",
+            population=population,
+            breeding_tiles=0,
+            roam_tiles=0,
+            avg_disturbance=avg_dist,
+            max_disturbance=max_dist,
+            ecology_mult=ecology,
+            breed_chance_pct=breed_pct,
+            health_pct=health,
+            benefits=benefits,
+            panel_kind="wolf",
+            activity=pack.activity or "Roaming",
+            last_meal=last_meal,
+            food_status=food_status,
+            fed_until=fed_until,
         )
 
     def _assign_unassigned_to_selected_building(self) -> None:
@@ -3113,11 +3232,12 @@ class Game:
         if not rows:
             self.management.selected_habitat = None
             return
-        kind, patch_id, _title, _sub = rows[0]
+        kind, patch_id, _title, _sub, _inhabited = rows[0]
         self._select_habitat(kind, patch_id)
         self.management.select_habitat(kind, patch_id)
 
     def _wildlife_management_rows(self) -> list[tuple]:
+        """List rows: (kind, id, title, subtitle, inhabited)."""
         rows: list[tuple] = []
         for kind, label in (
             (AnimalKind.DEER, "Deer ground"),
@@ -3126,7 +3246,39 @@ class Game:
             (AnimalKind.RABBIT, "Rabbit warren"),
         ):
             for hab in self.wildlife.breeding_grounds(kind):
-                rows.append((kind, int(hab.id), f"{label} #{hab.id}", ""))
+                hid = int(hab.id)
+                if kind in (AnimalKind.BEE, AnimalKind.RABBIT):
+                    colony = self.wildlife._colony_on_habitat(kind, hid)
+                    inhabited = colony is not None and colony.level >= 1
+                else:
+                    _present, _mig, total, _pairs = self.wildlife.patch_occupancy(
+                        kind, hid
+                    )
+                    inhabited = total > 0
+                subtitle = "" if inhabited else "Empty"
+                rows.append(
+                    (kind, hid, f"{label} #{hid}", subtitle, inhabited)
+                )
+        for pack in self.wildlife.wolf_packs:
+            males = sum(1 for m in pack.members if m.sex.name == "MALE")
+            females = pack.size() - males
+            sex_bits = []
+            if males:
+                sex_bits.append(f"{males}♂")
+            if females:
+                sex_bits.append(f"{females}♀")
+            subtitle = " · ".join(sex_bits) if sex_bits else "Empty"
+            if pack.activity:
+                subtitle = f"{subtitle} · {pack.activity}" if subtitle else pack.activity
+            rows.append(
+                (
+                    AnimalKind.WOLF,
+                    int(pack.id),
+                    f"Wolf pack #{pack.id}",
+                    subtitle,
+                    pack.size() > 0,
+                )
+            )
         return rows
 
     def _unassign_worker_from_selected_building(self) -> None:
@@ -3831,9 +3983,12 @@ class Game:
             self.world,
             deer_positions=((a.x, a.y) for a in self.wildlife.deer()),
             boar_positions=((a.x, a.y) for a in self.wildlife.boars()),
-            fish_positions=((f.x, f.y) for f in self.fish.fish),
+            fish_positions=(
+                (f.x, f.y, f.kind.name.lower()) for f in self.fish.fish
+            ),
             bee_positions=bee_pos,
             rabbit_positions=rabbit_pos,
+            wolf_positions=self.wildlife.wolf_positions(),
             bee_nests=bee_nests,
         )
         self._biodiversity_samples = self.env_maps.biodiversity_samples
@@ -4338,6 +4493,13 @@ class Game:
         if self.selected_habitat_id is None or self.selected_habitat_kind is None:
             return
         kind = self.selected_habitat_kind
+        if kind == AnimalKind.WOLF:
+            pack = self._wolf_pack_by_id(self.selected_habitat_id)
+            if pack is None or pack.size() <= 0:
+                self.selected_habitat_kind = None
+                self.selected_habitat_id = None
+                self.habitat_inspect.close()
+            return
         hab = self.wildlife.habitat(self.selected_habitat_id, kind)
         if hab is None:
             self.selected_habitat_kind = None
@@ -7903,19 +8065,22 @@ class Game:
         )
 
     def _hunt_threat_positions(self) -> list[tuple[int, int]]:
-        """Player + assigned hunters — deer/boar flee these positions."""
+        """Player + all villagers — wildlife flees these positions."""
         threats: list[tuple[int, int]] = [(self.player.x, self.player.y)]
-        for villager in self.villagers:
-            if villager.building_id is None:
-                continue
-            building = self.buildings.get(villager.building_id)
-            if building is not None and building.kind == BuildingKind.HUNTER:
-                threats.append((villager.x, villager.y))
+        threats.extend((v.x, v.y) for v in self.villagers)
         return threats
 
     def _hunter_flee_interval(self) -> int:
-        """Match unbuffed healthy villager walk pace (after eating, no food speed buff)."""
-        return max(4, self._walk_interval_ticks())
+        """Deer/boar/wolf flee pace from File → Balance → Wildlife."""
+        from settings import seconds_to_ticks
+
+        try:
+            seconds = float(self.balance.get_float("ANIMAL_FLEE_SECONDS_AT_X1"))
+        except Exception:
+            from settings import ANIMAL_FLEE_SECONDS_AT_X1
+
+            seconds = float(ANIMAL_FLEE_SECONDS_AT_X1)
+        return max(4, seconds_to_ticks(seconds))
 
     def _tick_wildlife(self, day: float) -> None:
         self.wildlife.tick(
@@ -7923,6 +8088,7 @@ class Game:
             day,
             hunter_threats=self._hunt_threat_positions(),
             flee_interval=self._hunter_flee_interval(),
+            biodiversity=getattr(self.env_maps, "biodiversity", None),
         )
 
     def _collect_fish(self, x: int, y: int, inventory: Inventory, status: bool = False) -> bool:
@@ -18257,22 +18423,37 @@ class Game:
                 cy += max(1, size // 20)
                 blit_icon(self.screen, member_name, cx, cy, member_size)
 
-    def _draw_fish(self) -> None:
-        from icons import ICON_FISH, blit_icon
+        # Wolf packs — native SVG colours, same cull pattern as deer.
+        from icons import ICON_WOLF_FEMALE, ICON_WOLF_MALE
 
-        freeze = freeze_amount(
-            float(self.calendar_day) + (1.0 - self.day_tick / self.ticks_per_day)
-        )
-        colour = blend_colour(COLOUR_FISH, (150, 190, 210), freeze)
+        for pack in self.wildlife.wolf_packs:
+            for member in pack.members:
+                if not (vx0 <= member.x <= vx1 and vy0 <= member.y <= vy1):
+                    continue
+                mx, my = entity_draw_xy(member)
+                cx, cy = self._cell_center(mx, my)
+                cy += max(1, size // 20)
+                name = (
+                    ICON_WOLF_FEMALE
+                    if member.sex == AnimalSex.FEMALE
+                    else ICON_WOLF_MALE
+                )
+                blit_icon(self.screen, name, cx, cy, size)
+
+    def _draw_fish(self) -> None:
+        from icons import blit_icon
+        from wildlife import fish_icon_for
+
         size = self.camera.view_cell_px()
         # Draw cull only — FishManager.tick still moves every fish.
+        # Species SVGs keep native colours (no body recolour).
         x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
         for item in self.fish.fish:
             if not (x0 <= item.x <= x1 and y0 <= item.y <= y1):
                 continue
             fx, fy = entity_draw_xy(item)
             cx, cy = self._cell_center(fx, fy)
-            blit_icon(self.screen, ICON_FISH, cx, cy, size, recolour={"body": colour})
+            blit_icon(self.screen, fish_icon_for(item.kind), cx, cy, size)
 
     def _draw_villagers(self) -> None:
         from icons import ICON_VILLAGER, blit_icon
@@ -18611,23 +18792,34 @@ class Game:
             and self.selected_habitat_kind is not None
         ):
             kind = self.selected_habitat_kind
-            hab = self.wildlife.habitat(self.selected_habitat_id, kind)
-            if hab is not None:
-                tiles = set(self.wildlife._breeding_for(kind, hab))
-                roam = self.wildlife._cold_roaming_for(kind, hab)
-                roam_only = roam - tiles
-                if roam_only:
-                    self._draw_cell_set_outline(
-                        roam_only,
-                        colour=(120, 140, 80),
-                        width=1,
-                    )
-                if tiles:
-                    self._draw_cell_set_outline(
-                        tiles,
-                        colour=COLOUR_SELECTED_ENTITY,
-                        width=2,
-                    )
+            if kind == AnimalKind.WOLF:
+                pack = self._wolf_pack_by_id(self.selected_habitat_id)
+                if pack is not None:
+                    tiles = {(m.x, m.y) for m in pack.members} | {(pack.x, pack.y)}
+                    if tiles:
+                        self._draw_cell_set_outline(
+                            tiles,
+                            colour=COLOUR_SELECTED_ENTITY,
+                            width=2,
+                        )
+            else:
+                hab = self.wildlife.habitat(self.selected_habitat_id, kind)
+                if hab is not None:
+                    tiles = set(self.wildlife._breeding_for(kind, hab))
+                    roam = self.wildlife._cold_roaming_for(kind, hab)
+                    roam_only = roam - tiles
+                    if roam_only:
+                        self._draw_cell_set_outline(
+                            roam_only,
+                            colour=(120, 140, 80),
+                            width=1,
+                        )
+                    if tiles:
+                        self._draw_cell_set_outline(
+                            tiles,
+                            colour=COLOUR_SELECTED_ENTITY,
+                            width=2,
+                        )
 
     def _draw_minimap(self) -> None:
         """Draw minimap showing terrain, buildings, and camera viewport."""
