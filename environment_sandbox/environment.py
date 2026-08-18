@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from collections import deque
+import math
 from typing import Iterable
 
 from indicators import (
@@ -54,6 +56,147 @@ class EnvLayer(Enum):
     PEST_CONTROL = auto()
     FLORAL_RESOURCES = auto()
     POLLINATION = auto()
+    SOIL_MOISTURE = auto()
+    TEMPERATURE = auto()
+
+
+# Seasonal rainfall / evapotranspiration balance, indexed by Season.name.
+# Spring and autumn recharge soil; summer drying and winter freeze reduce the
+# amount available to plants.
+SEASON_MOISTURE: dict[str, float] = {
+    "SPRING": 0.16,
+    "SUMMER": -0.18,
+    "AUTUMN": 0.12,
+    "WINTER": -0.04,
+}
+
+
+def soil_moisture_grid(world: World, calendar_day: int) -> list[list[float]]:
+    """Build a 0–1 soil-moisture map from terrain, features, and climate.
+
+    Distance to water is calculated across the grid (including rivers and
+    lakes). Trees, saplings, reeds, and low vegetation locally retain water.
+    The result is deterministic and intentionally sampled with the other
+    environmental maps rather than fluctuating every simulation tick.
+    """
+    from seasons import season_for_day
+    from world import FeatureType, TerrainType, is_water_terrain
+
+    bases = {
+        TerrainType.SOIL: 0.48,
+        TerrainType.FOREST_FLOOR: 0.62,
+        TerrainType.GRASS: 0.43,
+        TerrainType.MEADOW: 0.47,
+        TerrainType.RIPARIAN: 0.76,
+        TerrainType.ROCK: 0.08,
+        TerrainType.URBAN: 0.04,
+        TerrainType.PATH: 0.12,
+    }
+    distances = [[world.rows + world.cols] * world.cols for _ in range(world.rows)]
+    queue: deque[tuple[int, int]] = deque()
+    for y in range(world.rows):
+        for x in range(world.cols):
+            if is_water_terrain(world.cells[y][x].terrain):
+                distances[y][x] = 0
+                queue.append((x, y))
+    while queue:
+        x, y = queue.popleft()
+        nd = distances[y][x] + 1
+        for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            if 0 <= nx < world.cols and 0 <= ny < world.rows and nd < distances[ny][nx]:
+                distances[ny][nx] = nd
+                queue.append((nx, ny))
+
+    retaining = {
+        FeatureType.TREE: 0.10,
+        FeatureType.SAPLING: 0.05,
+        FeatureType.REED: 0.12,
+        FeatureType.BERRY_BUSH: 0.05,
+        FeatureType.WOOD_BUSH: 0.03,
+        FeatureType.WILD_CROP: 0.03,
+        FeatureType.CROP_HERB: 0.02,
+    }
+    climate = SEASON_MOISTURE.get(season_for_day(calendar_day).name, 0.0)
+    out = _zero_grid(world.rows, world.cols)
+    for y in range(world.rows):
+        for x in range(world.cols):
+            cell = world.cells[y][x]
+            if is_water_terrain(cell.terrain):
+                out[y][x] = 1.0
+                continue
+            # Groundwater influence fades to zero four cells from open water.
+            water = max(0.0, (4.0 - float(distances[y][x])) / 4.0) * 0.30
+            feature = retaining.get(cell.feature, 0.0)
+            out[y][x] = max(0.0, min(1.0, bases.get(cell.terrain, 0.35) + water + feature + climate))
+    return out
+
+
+def temperature_grid(world: World, calendar_day: int) -> list[list[float]]:
+    """Build a local air-temperature map in degrees Celsius.
+
+    Open grassland follows the ambient yearly ``-cos`` curve. Forest cover
+    damps that curve (cooler summers, warmer winters), while nearby water has
+    thermal inertia and increasingly dominates the microclimate when it forms
+    a large local body. Terrain and vegetation add smaller local adjustments.
+    """
+    from seasons import TEMP_SUMMER_C, TEMP_WINTER_C, YEAR_DAYS, ambient_temperature_c
+    from world import FeatureType, TerrainType, is_water_terrain
+
+    ambient = ambient_temperature_c(calendar_day)
+    midpoint = 0.5 * (TEMP_WINTER_C + TEMP_SUMMER_C)
+    # Same annual -cosine, but water only swings 4 C around a cool mean.
+    angle = 2.0 * math.pi * (float(calendar_day) - 42.0) / float(YEAR_DAYS)
+    water_temperature = 9.0 + 4.0 * math.cos(angle)
+    terrain_offset = {
+        TerrainType.SOIL: 0.8,
+        TerrainType.FOREST_FLOOR: -0.8,
+        TerrainType.GRASS: 0.0,
+        TerrainType.MEADOW: 0.2,
+        TerrainType.RIPARIAN: -0.8,
+        TerrainType.ROCK: 1.5,
+        TerrainType.URBAN: 2.0,
+        TerrainType.PATH: 0.8,
+    }
+    shade_features = {
+        FeatureType.TREE: 1.0,
+        FeatureType.SAPLING: 0.45,
+        FeatureType.BERRY_BUSH: 0.25,
+        FeatureType.REED: 0.20,
+    }
+    out = _zero_grid(world.rows, world.cols)
+    for y in range(world.rows):
+        for x in range(world.cols):
+            cell = world.cells[y][x]
+            if is_water_terrain(cell.terrain):
+                out[y][x] = water_temperature
+                continue
+
+            water_count = 0
+            forest_weight = 0.0
+            local_count = 0
+            for ny in range(max(0, y - 3), min(world.rows, y + 4)):
+                for nx in range(max(0, x - 3), min(world.cols, x + 4)):
+                    if (nx - x) ** 2 + (ny - y) ** 2 > 9:
+                        continue
+                    nearby = world.cells[ny][nx]
+                    local_count += 1
+                    if is_water_terrain(nearby.terrain):
+                        water_count += 1
+                    if nearby.terrain == TerrainType.FOREST_FLOOR:
+                        forest_weight += 0.65
+                    forest_weight += shade_features.get(nearby.feature, 0.0)
+
+            water_share = water_count / max(1, local_count)
+            forest_share = min(1.0, forest_weight / max(1, local_count * 0.55))
+            # A lone tree has a small effect; a continuous forest canopy damps
+            # up to 45% of the seasonal departure from the annual midpoint.
+            forest_temp = midpoint + (ambient - midpoint) * (1.0 - 0.45 * forest_share)
+            temp = forest_temp + terrain_offset.get(cell.terrain, 0.0)
+            # Large water bodies exert more influence than isolated water tiles.
+            water_influence = min(0.75, water_share * 2.2)
+            temp += (water_temperature - temp) * water_influence
+            out[y][x] = temp
+    return out
 
 
 def is_env_sample_day(calendar_day: int) -> bool:
@@ -188,6 +331,8 @@ class EnvMaps:
     floral_resources: list[list[float]] = field(default_factory=list)
     pollination: list[list[float]] = field(default_factory=list)
     erosion: list[list[float]] = field(default_factory=list)
+    soil_moisture: list[list[float]] = field(default_factory=list)
+    temperature: list[list[float]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.biodiversity:
@@ -200,6 +345,10 @@ class EnvMaps:
             self.pollination = _zero_grid(self.rows, self.cols)
         if not self.erosion:
             self.erosion = _zero_grid(self.rows, self.cols)
+        if not self.soil_moisture:
+            self.soil_moisture = _zero_grid(self.rows, self.cols)
+        if not self.temperature:
+            self.temperature = _zero_grid(self.rows, self.cols)
 
     @classmethod
     def blank(cls, rows: int, cols: int) -> EnvMaps:
@@ -215,6 +364,8 @@ class EnvMaps:
         self.floral_resources = _zero_grid(rows, cols)
         self.pollination = _zero_grid(rows, cols)
         self.erosion = _zero_grid(rows, cols)
+        self.soil_moisture = _zero_grid(rows, cols)
+        self.temperature = _zero_grid(rows, cols)
 
     def layer_grid(self, layer: EnvLayer) -> list[list[float]]:
         if layer == EnvLayer.BIODIVERSITY:
@@ -225,6 +376,10 @@ class EnvMaps:
             return self.floral_resources
         if layer == EnvLayer.POLLINATION:
             return self.pollination
+        if layer == EnvLayer.SOIL_MOISTURE:
+            return self.soil_moisture
+        if layer == EnvLayer.TEMPERATURE:
+            return self.temperature
         return self.biodiversity
 
     def value_at(self, layer: EnvLayer, x: int, y: int) -> float:
@@ -254,6 +409,7 @@ class EnvMaps:
         rabbit_positions: Iterable[tuple[int, int]] = (),
         wolf_positions: Iterable[tuple[int, int]] = (),
         bee_nests: Iterable[tuple[int, int, int]] = (),
+        calendar_day: int = 0,
     ) -> None:
         """Take cyclic snapshots and refresh stable production / overlay grids."""
         if world.rows != self.rows or world.cols != self.cols:
@@ -291,6 +447,8 @@ class EnvMaps:
             base_strength=POLLINATOR_BASE_STRENGTH,
             strength_per_level=POLLINATOR_STRENGTH_PER_LEVEL,
         )
+        self.soil_moisture = soil_moisture_grid(world, calendar_day)
+        self.temperature = temperature_grid(world, calendar_day)
 
     def farm_pest_control(self, cells: Iterable[tuple[int, int]]) -> float:
         return self.average_over(EnvLayer.PEST_CONTROL, cells)
@@ -304,6 +462,12 @@ class EnvMaps:
     def farm_pollination(self, cells: Iterable[tuple[int, int]]) -> float:
         return self.average_over(EnvLayer.POLLINATION, cells)
 
+    def farm_soil_moisture(self, cells: Iterable[tuple[int, int]]) -> float:
+        return self.average_over(EnvLayer.SOIL_MOISTURE, cells)
+
+    def farm_temperature(self, cells: Iterable[tuple[int, int]]) -> float:
+        return self.average_over(EnvLayer.TEMPERATURE, cells)
+
     def to_save_dict(self) -> dict:
         return {
             "biodiversity_samples": self.biodiversity_samples,
@@ -313,6 +477,8 @@ class EnvMaps:
             "floral_resources": self.floral_resources,
             "pollination": self.pollination,
             "erosion": self.erosion,
+            "soil_moisture": self.soil_moisture,
+            "temperature": self.temperature,
         }
 
     def load_save_dict(self, data: dict | None) -> None:
@@ -346,6 +512,22 @@ class EnvMaps:
 
         if isinstance(data.get("pollination"), list):
             self.pollination = data["pollination"]
+        moisture = data.get("soil_moisture")
+        if (
+            isinstance(moisture, list)
+            and len(moisture) == self.rows
+            and moisture
+            and len(moisture[0]) == self.cols
+        ):
+            self.soil_moisture = moisture
+        temperature = data.get("temperature")
+        if (
+            isinstance(temperature, list)
+            and len(temperature) == self.rows
+            and temperature
+            and len(temperature[0]) == self.cols
+        ):
+            self.temperature = temperature
         erosion = data.get("erosion")
         if (
             isinstance(erosion, list)

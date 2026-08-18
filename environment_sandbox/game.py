@@ -121,6 +121,8 @@ from environment import (
     crop_health_min,
     is_env_sample_day,
     pollination_yield_multiplier,
+    soil_moisture_grid,
+    temperature_grid,
 )
 from farm_pipeline import (
     FarmJob,
@@ -989,12 +991,8 @@ class Game:
         villager.idle_work_gen = self._work_gen
 
     def _idle_decision_pending(self, villager: Villager) -> bool:
-        """True when an IDLE villager is allowed to skip the full AI pass."""
         return (
-            villager.state == VillagerState.IDLE
-            and villager.target is None
-            and not villager.seeking_food
-            and not villager.job_change_deposit
+            not villager.job_change_deposit
             and villager.decision_cooldown > 0
             and villager.idle_work_gen == self._work_gen
             and not villager.needs_food()
@@ -1419,6 +1417,8 @@ class Game:
                     self.resource_tracker.handle_mousemotion(event.pos)
                 if self.drawing or self._height_painting:
                     self._on_mouse_drag(event.pos)
+                elif self.habitat_view_mode:
+                    self._update_habitat_hover(event.pos)
             elif event.type == pygame.MOUSEWHEEL:
                 if self.file_dialog.open:
                     self.file_dialog.handle_mousewheel(event.y)
@@ -1711,6 +1711,10 @@ class Game:
             self._set_overlay(OverlayMode.EROSION)
         elif key == pygame.K_0 and not self.height_edit_mode:
             self._set_overlay(OverlayMode.FERTILITY)
+        elif key == pygame.K_F10:
+            self._set_overlay(OverlayMode.SOIL_MOISTURE)
+        elif key == pygame.K_F11:
+            self._set_overlay(OverlayMode.TEMPERATURE)
         elif key in (pygame.K_LEFTBRACKET, pygame.K_COMMA):
             self._cycle_ticks_per_day(-1)
         elif key in (pygame.K_RIGHTBRACKET, pygame.K_PERIOD):
@@ -2172,6 +2176,8 @@ class Game:
         return self.camera.cell_rect(x, y)
 
     def _on_mouse_down(self, pos: tuple[int, int]) -> None:
+        if self.resource_bar.layers_open and not self.resource_bar.contains(pos):
+            self.resource_bar.layers_open = False
         building = self._selected_building()
         if self.toolbar.contains(pos) or self.toolbar.file_menu_open:
             action = self.toolbar.hit_test(
@@ -2186,7 +2192,11 @@ class Game:
                 self.toolbar.file_menu_open = False
             return
         if self.resource_bar.contains(pos):
-            if self.resource_bar.handle_click(pos):
+            previous_view = self.resource_bar.view_mode
+            handled, layer = self.resource_bar.handle_click(pos, self.overlay_mode)
+            if layer is not None:
+                self._set_overlay(layer)
+            elif handled and self.resource_bar.view_mode != previous_view:
                 self._set_status(f"Resources: {VIEW_LABELS[self.resource_bar.view_mode]}")
             return
 
@@ -2596,6 +2606,66 @@ class Game:
         cy = sum(p[1] for p in breed) // len(breed)
         self.camera.center_on(cx, cy, self.world.cols, self.world.rows)
         self.management.select_habitat(kind, patch_id)
+
+    def _toggle_habitat_view(self) -> None:
+        self.habitat_view_mode = not self.habitat_view_mode
+        if self.habitat_view_mode:
+            self._update_habitat_hover(pygame.mouse.get_pos())
+            self._set_status(
+                "Habitat view ON. Hover wildlife grounds, click to inspect."
+            )
+        else:
+            self._habitat_hover = None
+            self._set_status("Habitat view OFF.")
+
+    def _update_habitat_hover(self, pos: tuple[int, int]) -> None:
+        if not self.habitat_view_mode:
+            self._habitat_hover = None
+            return
+        mx, my = pos
+        if mx >= map_view_width() or my < MAP_OFFSET_Y:
+            self._habitat_hover = None
+            return
+        cell = self._map_cell_from_pos(pos)
+        self._habitat_hover = self._habitat_at_cell(*cell) if cell is not None else None
+
+    def _habitat_at_cell(self, x: int, y: int) -> tuple[AnimalKind, int] | None:
+        if not self.world.in_bounds(x, y):
+            return None
+
+        def _hit_for_kind(kind: AnimalKind) -> tuple[AnimalKind, int] | None:
+            if kind in (
+                AnimalKind.WOLF,
+                AnimalKind.FOX,
+                AnimalKind.OWL,
+                AnimalKind.HAWK,
+            ):
+                return None
+            for hab in self.wildlife.breeding_grounds(kind):
+                if (x, y) in self.wildlife._breeding_for(kind, hab):
+                    return kind, hab.id
+            return None
+
+        preferred = self.selected_habitat_kind
+        if preferred is not None:
+            hit = _hit_for_kind(preferred)
+            if hit is not None:
+                return hit
+
+        for kind in (
+            AnimalKind.DEER,
+            AnimalKind.BOAR,
+            AnimalKind.BEE,
+            AnimalKind.RABBIT,
+            AnimalKind.FROG,
+            AnimalKind.VOLE,
+        ):
+            if kind == preferred:
+                continue
+            hit = _hit_for_kind(kind)
+            if hit is not None:
+                return hit
+        return None
 
     def _wolf_pack_by_id(self, pack_id: int):
         return next(
@@ -3736,6 +3806,8 @@ class Game:
                 OverlayMode.FLORAL_RESOURCES,
                 OverlayMode.POLLINATION,
                 OverlayMode.EROSION,
+                OverlayMode.SOIL_MOISTURE,
+                OverlayMode.TEMPERATURE,
                 OverlayMode.FIELD_YIELD,
             ):
                 self._refresh_indicators()
@@ -4056,8 +4128,16 @@ class Game:
             self._refresh_market_demands()
             self._set_status(f"{format_date(self.calendar_day)} begins.")
             self._apply_path_fertility_drain()
-        # Environmental layers (habitats, forest floor, paths, urban): ≤8×/year.
-        if is_env_sample_day(self.calendar_day):
+        # Temperature follows the annual cosine each day; slower ecological
+        # layers (habitats, forest floor, paths, urban) remain at ≤8×/year.
+        sample_day = is_env_sample_day(self.calendar_day)
+        if not sample_day:
+            self.env_maps.temperature = temperature_grid(
+                self.world, self.calendar_day
+            )
+            if self.overlay_mode == OverlayMode.TEMPERATURE:
+                self._refresh_indicators()
+        if sample_day:
             self._sample_environment()
             self._sync_habitat_selection()
 
@@ -4117,6 +4197,7 @@ class Game:
             rabbit_positions=rabbit_pos,
             wolf_positions=self.wildlife.wolf_positions(),
             bee_nests=bee_nests,
+            calendar_day=self.calendar_day,
         )
         self._biodiversity_samples = self.env_maps.biodiversity_samples
         self._biodiversity_average = self.env_maps.biodiversity
@@ -4125,6 +4206,8 @@ class Game:
             OverlayMode.BIODIVERSITY,
             OverlayMode.FLORAL_RESOURCES,
             OverlayMode.POLLINATION,
+            OverlayMode.SOIL_MOISTURE,
+            OverlayMode.TEMPERATURE,
         ):
             self._refresh_indicators()
 
@@ -4463,7 +4546,7 @@ class Game:
         return nests
 
     def _backfill_env_overlays(self) -> None:
-        """Fill floral if missing; always rebuild pollination from current nests."""
+        """Fill missing derived layers and refresh instantaneous overlays."""
         if not self.env_maps.floral_samples:
             floral = floral_resources_snapshot(self.world)
             self.env_maps.floral_samples = [floral]
@@ -4478,6 +4561,26 @@ class Game:
             base_strength=POLLINATOR_BASE_STRENGTH,
             strength_per_level=POLLINATOR_STRENGTH_PER_LEVEL,
         )
+        # Older saves predate soil moisture; a zero grid is not a useful
+        # fallback because it would show the whole landscape as bone dry.
+        has_moisture = any(
+            any(float(v) > 0.0 for v in row)
+            for row in self.env_maps.soil_moisture
+        )
+        if not has_moisture:
+            self.env_maps.soil_moisture = soil_moisture_grid(
+                self.world, self.calendar_day
+            )
+        # Zero can be a legitimate temperature, so detect the pre-layer save
+        # by checking whether every value retained the blank-map default.
+        has_temperature = any(
+            any(float(v) != 0.0 for v in row)
+            for row in self.env_maps.temperature
+        )
+        if not has_temperature:
+            self.env_maps.temperature = temperature_grid(
+                self.world, self.calendar_day
+            )
 
     # Back-compat alias for save_load / diagnostics.
     def _sample_biodiversity(self) -> None:
@@ -16143,6 +16246,12 @@ class Game:
         if self.overlay_mode == OverlayMode.EROSION:
             self.overlay_values = [row[:] for row in self.env_maps.erosion]
             return
+        if self.overlay_mode == OverlayMode.SOIL_MOISTURE:
+            self.overlay_values = [row[:] for row in self.env_maps.soil_moisture]
+            return
+        if self.overlay_mode == OverlayMode.TEMPERATURE:
+            self.overlay_values = [row[:] for row in self.env_maps.temperature]
+            return
         if self.overlay_mode == OverlayMode.FIELD_YIELD:
             cols, rows = self.world.cols, self.world.rows
             grid = [[0.0] * cols for _ in range(rows)]
@@ -16202,6 +16311,8 @@ class Game:
             OverlayMode.FLORAL_RESOURCES,
             OverlayMode.POLLINATION,
             OverlayMode.EROSION,
+            OverlayMode.SOIL_MOISTURE,
+            OverlayMode.TEMPERATURE,
             OverlayMode.FIELD_YIELD,
         ):
             self._refresh_indicators()
@@ -16589,6 +16700,7 @@ class Game:
             housed=housed_count(self.villagers),
             needing=len(self.villagers),
             regional_wealth=self.regional_wealth,
+            overlay_mode=self.overlay_mode,
         )
         self.toolbar.draw(
             self.screen,
@@ -16791,11 +16903,6 @@ class Game:
             mouse_pos=mouse,
         )
         self.balance_dialog.draw(self.screen, self.balance, mouse_pos=mouse)
-        self.habitat_inspect.draw(
-            self.screen,
-            self._habitat_inspect_view(),
-            mouse_pos=mouse,
-        )
         if self.villager_roster.open:
             if self.villager_roster.mode == "hire":
                 foods = self._village_food_amounts()
@@ -18959,6 +19066,77 @@ class Game:
                 pygame.draw.line(self.screen, colour, ne, se, width)
 
     def _draw_selection_highlights(self) -> None:
+        if self.habitat_view_mode:
+            from wildlife import OpenHabitat
+
+            for kind in (
+                AnimalKind.DEER,
+                AnimalKind.BOAR,
+                AnimalKind.BEE,
+                AnimalKind.RABBIT,
+                AnimalKind.FROG,
+                AnimalKind.VOLE,
+            ):
+                if kind in (AnimalKind.DEER, AnimalKind.BOAR):
+                    base_colour = (92, 122, 86) if kind == AnimalKind.DEER else (128, 106, 78)
+                else:
+                    base_colour = (108, 128, 78)
+                for hab in self.wildlife.breeding_grounds(kind):
+                    breed = set(self.wildlife._breeding_for(kind, hab))
+                    if not breed:
+                        continue
+                    if isinstance(hab, OpenHabitat):
+                        roam = set(hab.forage_tiles) - breed
+                    else:
+                        roam = self.wildlife._cold_roaming_for(kind, hab) - breed
+                    if roam:
+                        self._draw_cell_set_outline(roam, colour=base_colour, width=1)
+                    self._draw_cell_set_outline(breed, colour=base_colour, width=2)
+        if self.habitat_view_mode and self._habitat_hover is not None:
+            kind, hid = self._habitat_hover
+            if kind in (AnimalKind.WOLF, AnimalKind.FOX):
+                pack = self._wolf_pack_by_id(hid)
+                if pack is not None and pack.kind == kind:
+                    tiles = {(m.x, m.y) for m in pack.members} | {(pack.x, pack.y)}
+                    if tiles:
+                        self._draw_cell_set_outline(
+                            tiles,
+                            colour=COLOUR_SELECTED_ENTITY,
+                            width=3,
+                        )
+            elif kind in (AnimalKind.OWL, AnimalKind.HAWK):
+                bird = next(
+                    (
+                        a
+                        for a in self.wildlife.animals
+                        if a.id == hid and a.kind == kind
+                    ),
+                    None,
+                )
+                if bird is not None:
+                    self._draw_cell_set_outline(
+                        {(bird.x, bird.y)},
+                        colour=COLOUR_SELECTED_ENTITY,
+                        width=3,
+                    )
+            else:
+                hab = self.wildlife.habitat(hid, kind)
+                if hab is not None:
+                    tiles = set(self.wildlife._breeding_for(kind, hab))
+                    roam = self.wildlife._cold_roaming_for(kind, hab)
+                    roam_only = roam - tiles
+                    if roam_only:
+                        self._draw_cell_set_outline(
+                            roam_only,
+                            colour=COLOUR_SELECTED_ENTITY,
+                            width=2,
+                        )
+                    if tiles:
+                        self._draw_cell_set_outline(
+                            tiles,
+                            colour=COLOUR_SELECTED_ENTITY,
+                            width=3,
+                        )
         if self.selected_villager_id is not None:
             villager = self._get_villager(self.selected_villager_id)
             if villager is not None:
@@ -19120,4 +19298,3 @@ class Game:
             1,
         )
         pygame.draw.rect(self.screen, (100, 100, 110), minimap_rect, 2)
-

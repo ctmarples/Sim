@@ -6,11 +6,11 @@ The player interacts only with the cell they currently stand on (press E).
 Mouse drag draws rectangular task areas for hired villagers.
 
 Future extension points:
-- soil moisture fields
 - habitat connectivity graphs
 - GIS-derived terrain import
 
-Soil fertility and weeds are per-cell. Erosion potential is a prebaked
+Soil fertility and weeds are per-cell. Soil moisture is a sampled environmental
+grid. Erosion potential is a prebaked
 slope grid on ``environment.EnvMaps``. Disturbance is a live per-cell field
 (urban floors mixed with path-traffic wear).
 """

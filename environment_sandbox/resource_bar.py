@@ -7,6 +7,7 @@ from enum import Enum, auto
 import pygame
 
 from entities import Building, HomeStorage, Player, Villager
+from indicators import OVERLAY_LABELS, OverlayMode
 from resources import (
     GROUP_LABELS,
     GROUP_ORDER,
@@ -51,6 +52,14 @@ class ResourceBar:
         self._hover_group: str | None = None
         self.view_mode = ResourceView.TOTAL
         self._toggle_rect = pygame.Rect(0, 0, 0, 0)
+        self.layers_open = False
+        self._layers_rect = pygame.Rect(0, 0, 0, 0)
+        self._layer_rects: dict[OverlayMode, pygame.Rect] = {}
+
+    @staticmethod
+    def layer_modes() -> tuple[OverlayMode, ...]:
+        """Layers shown in the single-select top-panel menu."""
+        return tuple(mode for mode in OverlayMode if mode != OverlayMode.NONE)
 
     def cycle_view(self) -> ResourceView:
         order = [ResourceView.PLAYER, ResourceView.STOREHOUSE, ResourceView.TOTAL]
@@ -83,13 +92,29 @@ class ResourceBar:
 
     def contains(self, pos: tuple[int, int]) -> bool:
         _, my = pos
-        return TOOLBAR_HEIGHT <= my < MAP_OFFSET_Y
+        if TOOLBAR_HEIGHT <= my < MAP_OFFSET_Y:
+            return True
+        return self.layers_open and any(
+            rect.collidepoint(pos) for rect in self._layer_rects.values()
+        )
 
-    def handle_click(self, pos: tuple[int, int]) -> bool:
+    def handle_click(
+        self, pos: tuple[int, int], overlay_mode: OverlayMode
+    ) -> tuple[bool, OverlayMode | None]:
+        """Handle resource/layer controls; return ``(handled, new_layer)``."""
         if self._toggle_rect.collidepoint(pos):
             self.cycle_view()
-            return True
-        return False
+            self.layers_open = False
+            return True, None
+        if self._layers_rect.collidepoint(pos):
+            self.layers_open = not self.layers_open
+            return True, None
+        if self.layers_open:
+            for mode, rect in self._layer_rects.items():
+                if rect.collidepoint(pos):
+                    self.layers_open = False
+                    return True, OverlayMode.NONE if mode == overlay_mode else mode
+        return False, None
 
     def draw(
         self,
@@ -103,6 +128,7 @@ class ResourceBar:
         housed: int | None = None,
         needing: int | None = None,
         regional_wealth: int = 0,
+        overlay_mode: OverlayMode = OverlayMode.NONE,
     ) -> None:
         bar = pygame.Rect(0, TOOLBAR_HEIGHT, WINDOW_WIDTH, RESOURCE_BAR_HEIGHT)
         pygame.draw.rect(surface, COLOUR_TOOLBAR_BG, bar)
@@ -234,6 +260,63 @@ class ResourceBar:
         self.update_hover(mouse_pos)
         if self._hover_group is not None:
             self._draw_popup(surface, amounts, self._hover_group)
+        self._draw_layers(surface, mouse_pos, overlay_mode)
+
+    def _draw_layers(
+        self,
+        surface: pygame.Surface,
+        mouse_pos: tuple[int, int],
+        overlay_mode: OverlayMode,
+    ) -> None:
+        """Draw the single-select environmental layer control and its menu."""
+        y = TOOLBAR_HEIGHT + 6
+        h = RESOURCE_BAR_HEIGHT - 12
+        active = OVERLAY_LABELS.get(overlay_mode, "None")
+        label = "Layers" if overlay_mode == OverlayMode.NONE else f"Layer: {active}"
+        width = max(82, self.font.size(label)[0] + 20)
+        self._layers_rect = pygame.Rect(WINDOW_WIDTH - width - 12, y, width, h)
+        hovered = self._layers_rect.collidepoint(mouse_pos)
+        colour = (
+            COLOUR_TOOLBAR_BTN_ACTIVE
+            if self.layers_open or overlay_mode != OverlayMode.NONE
+            else COLOUR_TOOLBAR_BTN_HOVER if hovered else COLOUR_TOOLBAR_BTN
+        )
+        pygame.draw.rect(surface, colour, self._layers_rect, border_radius=4)
+        pygame.draw.rect(
+            surface, COLOUR_TOOLBAR_BORDER, self._layers_rect, 1, border_radius=4
+        )
+        text = self.font.render(label, True, COLOUR_TEXT)
+        surface.blit(text, (self._layers_rect.centerx - text.get_width() // 2,
+                            self._layers_rect.centery - text.get_height() // 2))
+
+        self._layer_rects = {}
+        if not self.layers_open:
+            return
+        modes = self.layer_modes()
+        menu_width = max(
+            178, max(self.font.size(OVERLAY_LABELS[mode])[0] for mode in modes) + 34
+        )
+        item_h = 24
+        menu_x = self._layers_rect.right - menu_width
+        menu_y = MAP_OFFSET_Y + 2
+        menu = pygame.Rect(menu_x, menu_y, menu_width, item_h * len(modes) + 8)
+        pygame.draw.rect(surface, COLOUR_MENU_BG, menu, border_radius=4)
+        pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, menu, 1, border_radius=4)
+        for index, mode in enumerate(modes):
+            rect = pygame.Rect(menu_x + 4, menu_y + 4 + index * item_h,
+                               menu_width - 8, item_h)
+            self._layer_rects[mode] = rect
+            is_active = mode == overlay_mode
+            if rect.collidepoint(mouse_pos) or is_active:
+                pygame.draw.rect(
+                    surface,
+                    COLOUR_TOOLBAR_BTN_ACTIVE if is_active else COLOUR_TOOLBAR_BTN_HOVER,
+                    rect,
+                    border_radius=3,
+                )
+            marker = "• " if is_active else "  "
+            item = self.font.render(marker + OVERLAY_LABELS[mode], True, COLOUR_TEXT)
+            surface.blit(item, (rect.x + 7, rect.centery - item.get_height() // 2))
 
     def _draw_popup(
         self, surface: pygame.Surface, amounts: dict[str, int], group: str

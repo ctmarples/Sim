@@ -54,6 +54,8 @@ class OverlayMode(Enum):
     FLORAL_RESOURCES = auto()
     POLLINATION = auto()
     EROSION = auto()
+    SOIL_MOISTURE = auto()
+    TEMPERATURE = auto()
     FERTILITY = auto()
     FIELD_YIELD = auto()
 
@@ -68,6 +70,8 @@ OVERLAY_LABELS: dict[OverlayMode, str] = {
     OverlayMode.FLORAL_RESOURCES: "Floral resources",
     OverlayMode.POLLINATION: "Pollination",
     OverlayMode.EROSION: "Soil erosion",
+    OverlayMode.SOIL_MOISTURE: "Soil moisture",
+    OverlayMode.TEMPERATURE: "Temperature",
     OverlayMode.FERTILITY: "Soil fertility",
     OverlayMode.FIELD_YIELD: "Field yield",
 }
@@ -85,6 +89,8 @@ def format_overlay_value(mode: OverlayMode, value: float) -> str:
         return f"{value * 100:.0f}% of base"
     if mode == OverlayMode.FLORAL_RESOURCES:
         return f"{value:.2f}"
+    if mode == OverlayMode.TEMPERATURE:
+        return f"{value:.1f} C"
     # Most live overlays are 0–1 fractions mapped to the colour ramp.
     return f"{value * 100:.0f}%"
 
@@ -406,6 +412,14 @@ def overlay_colour(mode: OverlayMode, value: float) -> Colour:
         return pollination_colour(value)
     if mode == OverlayMode.EROSION:
         return lerp_colour(COLOUR_EROSION_LOW, COLOUR_EROSION_HIGH, value)
+    if mode == OverlayMode.SOIL_MOISTURE:
+        return lerp_colour((176, 132, 72), (45, 125, 210), value)
+    if mode == OverlayMode.TEMPERATURE:
+        # Deep blue at -10 C, pale neutral around 12 C, hot red at 35 C.
+        t = max(0.0, min(1.0, (float(value) + 10.0) / 45.0))
+        if t < 0.5:
+            return lerp_colour((35, 85, 205), (225, 225, 205), t * 2.0)
+        return lerp_colour((225, 225, 205), (220, 55, 35), (t - 0.5) * 2.0)
     if mode == OverlayMode.FERTILITY:
         return lerp_colour(COLOUR_FERTILITY_LOW, COLOUR_FERTILITY_HIGH, value)
     if mode == OverlayMode.FIELD_YIELD:
@@ -422,6 +436,8 @@ def build_overlay_grid(world: World, mode: OverlayMode) -> list[list[float]]:
         OverlayMode.FLORAL_RESOURCES,
         OverlayMode.POLLINATION,
         OverlayMode.EROSION,
+        OverlayMode.SOIL_MOISTURE,
+        OverlayMode.TEMPERATURE,
         OverlayMode.FIELD_YIELD,
     ):
         return [[0.0] * world.cols for _ in range(world.rows)]
