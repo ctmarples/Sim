@@ -5,7 +5,7 @@ from wild_species import (
     icon_recolour_for,
     niche_audit, niche_response, species_environment_suitability,
 )
-from world import TerrainType, World
+from world import FeatureType, TerrainType, World
 
 
 class NicheMathTests(unittest.TestCase):
@@ -58,6 +58,26 @@ class NicheMathTests(unittest.TestCase):
         species = WildSpeciesDef("test", "Test", "HERB", ("WATER",))
         world.cells[0][0].terrain = TerrainType.GRASS
         self.assertFalse(world.species_can_establish_at(0, 0, species))
+
+    def test_fallen_wood_requires_an_adjacent_tree(self):
+        world = World(cols=8, rows=8, seed=2)
+        for row in world.cells:
+            for cell in row:
+                cell.feature = FeatureType.NONE
+                cell.terrain = TerrainType.GRASS
+        wood = WILD_BY_KEY["wood_bush"]
+        self.assertFalse(world._species_can_occupy(4, 4, wood))
+        world.cells[4][3].feature = FeatureType.TREE
+        self.assertTrue(world._species_can_occupy(4, 4, wood))
+
+    def test_fallen_wood_uses_loose_wood_variants(self):
+        from icons import variant_names
+
+        self.assertEqual(WILD_BY_KEY["wood_bush"].icon_base, "wood_loose")
+        self.assertEqual(
+            variant_names("wood_loose"),
+            ("wood_loose_1", "wood_loose_2", "wood_loose_3", "wood_loose_4"),
+        )
 
     def test_audit_has_all_representative_scenarios(self):
         audit = niche_audit()

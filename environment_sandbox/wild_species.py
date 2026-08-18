@@ -304,7 +304,7 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
         terrains=("SOIL", "FOREST_FLOOR", "GRASS", "MEADOW"),
         resource_key="wood",
         yield_amount=1,
-        icon_base="wood",
+        icon_base="wood_loose",
         icon_recolour=(
             ("body", (120, 90, 50)),
             ("leaf", (70, 130, 55)),

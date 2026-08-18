@@ -1294,12 +1294,24 @@ class World:
                     self.cells[y][x].terrain = TerrainType.GRASS
 
     def _species_can_occupy(self, x: int, y: int, species) -> bool:
-        """True if cell terrain (and optional edge neighbour) match the species."""
+        """True if terrain, edge, and required neighbouring feature all match."""
         cell = self.get_cell(x, y)
         if cell is None:
             return False
         if cell.terrain.name not in species.terrains:
             return False
+        near_name = getattr(species, "near_feature", None)
+        if near_name:
+            try:
+                required_feature = FeatureType[near_name]
+            except KeyError:
+                return False
+            if not any(
+                (nx, ny) != (x, y)
+                and self.cells[ny][nx].feature == required_feature
+                for ny, nx in self.neighbourhood(x, y, radius=1)
+            ):
+                return False
         if not species.edge_terrains:
             return True
         edge = {
@@ -2039,7 +2051,12 @@ class World:
         herb_leader = spawn_group_leader("wild_crop")
         herb_activity = float(herb_leader.spawn_activity) if herb_leader else 0.55
         non_crop_species = {
-            terrain: sorted(non_crop_on_terrain(terrain.name),
+            # Species tied to a neighbouring feature have dedicated spawn
+            # passes below. Including them here spawned mushrooms/fallen wood
+            # independently as well, bypassing proximity and doubling output.
+            terrain: sorted(
+                            (s for s in non_crop_on_terrain(terrain.name)
+                             if not s.near_feature),
                             key=lambda s: (0 if s.edge_terrains else 1, s.key))
             for terrain in terrains
         }
@@ -2247,6 +2264,19 @@ class World:
             self.clear_mushrooms()
             return
 
+        # Clean up legacy/off-rule fallen wood created by the former generic
+        # spawn path. Valid piles must remain immediately beside a tree.
+        for y in range(self.rows):
+            for x in range(self.cols):
+                cell = self.cells[y][x]
+                if (
+                    cell.feature == FeatureType.WOOD_BUSH
+                    and not self._species_can_occupy(x, y, wood)
+                ):
+                    cell.feature = FeatureType.NONE
+                    cell.deposit = 0
+                    cell.crop_kind = None
+
         existing = [
             (x, y)
             for y in range(self.rows)
@@ -2297,7 +2327,10 @@ class World:
                         cell.feature = FeatureType.MUSHROOM
                         cell.crop_kind = mushroom.key
 
-        # Autumn fallen wood beside trees (independent of mushrooms).
+        # Autumn fallen wood beside trees (independent of mushrooms). Build a
+        # candidate set first so a tile gets one roll per seasonal tick, not one
+        # roll for every adjacent tree in dense forest.
+        wood_candidates: set[tuple[int, int]] = set()
         for y in range(self.rows):
             for x in range(self.cols):
                 if self.cells[y][x].feature != FeatureType.TREE:
@@ -2305,15 +2338,17 @@ class World:
                 for ny, nx in self.neighbourhood(x, y, radius=1):
                     if (nx, ny) == (x, y):
                         continue
-                    cell = self.cells[ny][nx]
-                    if (
-                        cell.feature == FeatureType.NONE
-                        and cell.terrain in wood_terrains
-                        and self._forage_rng.random() < wood_bush_spawn_rate(day, nx, ny)
-                    ):
-                        cell.feature = FeatureType.WOOD_BUSH
-                        cell.crop_kind = wood.key
-                        cell.deposit = WOOD_BUSH_YIELD
+                    wood_candidates.add((nx, ny))
+        for nx, ny in wood_candidates:
+            cell = self.cells[ny][nx]
+            if (
+                cell.feature == FeatureType.NONE
+                and cell.terrain in wood_terrains
+                and self._forage_rng.random() < wood_bush_spawn_rate(day, nx, ny)
+            ):
+                cell.feature = FeatureType.WOOD_BUSH
+                cell.crop_kind = wood.key
+                cell.deposit = WOOD_BUSH_YIELD
 
     def clear_mushrooms(self) -> None:
         """Remove mushrooms and fallen wood (called at winter onset)."""

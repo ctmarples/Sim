@@ -265,7 +265,8 @@ WORKPLACE_EXTRA_TOOLS: dict[BuildingKind, tuple[str, ...]] = {
     BuildingKind.HUNTER: ("bow",),
 }
 
-# Additional tools that must be equipped alongside the primary / weapon tool.
+# Auxiliary tools workers should collect when available. They must not block the
+# primary job; hunters without a knife can kill animals but cannot recover pelts.
 WORKPLACE_ALSO_REQUIRES: dict[BuildingKind, tuple[str, ...]] = {
     BuildingKind.HUNTER: ("knife",),
 }

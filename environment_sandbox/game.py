@@ -258,9 +258,7 @@ from villager_inspect_dialog import VillagerInspectDialog
 from resource_bar import VIEW_LABELS, ResourceBar
 from recipes import (
     apply_recipe,
-    apply_recipe_outputs,
     hunt_recipe,
-    recipe_outputs_fit,
 )
 from bug_log import BugLog
 from save_load import load_from_path, save_to_path
@@ -770,8 +768,6 @@ class Game:
         )
         self._refresh_hardscape_terrain()
         self._invalidate_height_sample_cache()
-        # Fallen wood beside trees so foragers have something to gather at start.
-        self.world._seed_wood_near_trees(random.Random(int(self.world.seed) ^ 0xA70D))
         self._seed_map_communities()
         self._refresh_indicators()
         self._apply_time_balance()
@@ -7968,17 +7964,36 @@ class Game:
         )
 
     def _apply_hunt_recipe_to_inventory(
-        self, inventory: Inventory, recipe_name: str
+        self, inventory: Inventory, recipe_name: str, *, has_knife: bool = True
     ) -> bool:
         recipe = hunt_recipe(recipe_name)
         if recipe is None or not recipe.outputs:
             return False
-        if not recipe_outputs_fit(inventory, recipe):
-            return False
-        apply_recipe_outputs(inventory, recipe)
-        for key, n in recipe.outputs.items():
+        outputs = {
+            key: n
+            for key, n in recipe.outputs.items()
+            if has_knife or key not in ("hide", "fur")
+        }
+        for key, n in outputs.items():
+            if not inventory.can_add(int(n), key=str(key)):
+                return False
+        for key, n in outputs.items():
+            inventory.add_item(str(key), int(n))
             self.record_produced(key, n)
         return True
+
+    @staticmethod
+    def _hunt_recipe_outputs_fit(
+        inventory: Inventory, recipe_name: str, *, has_knife: bool
+    ) -> bool:
+        recipe = hunt_recipe(recipe_name)
+        if recipe is None or not recipe.outputs:
+            return False
+        return all(
+            inventory.can_add(int(amount), key=str(key))
+            for key, amount in recipe.outputs.items()
+            if has_knife or key not in ("hide", "fur")
+        )
 
     def _drop_hunt_yields(
         self,
@@ -7987,6 +8002,7 @@ class Game:
         kind,
         *,
         building: Building | None = None,
+        has_knife: bool = True,
     ) -> int:
         """Leave hunt loot on the kill tile from hunter CSV outputs. Returns meat amount."""
         name = kind.name.lower()
@@ -7998,6 +8014,8 @@ class Game:
         for key, amount in outputs.items():
             if amount <= 0:
                 continue
+            if key in ("hide", "fur") and not has_knife:
+                continue
             if key == "meat":
                 self.world.add_meat_deposit(x, y, amount)
                 meat += amount
@@ -8007,13 +8025,17 @@ class Game:
                 self.world.add_fur_deposit(x, y, amount)
         return meat
 
-    def _hunt_recipe_status_bits(self, recipe_name: str) -> list[str]:
+    def _hunt_recipe_status_bits(
+        self, recipe_name: str, *, has_knife: bool = True
+    ) -> list[str]:
         recipe = hunt_recipe(recipe_name)
         if recipe is None:
             return []
         bits: list[str] = []
         for key, amount in recipe.outputs.items():
             if amount <= 0:
+                continue
+            if key in ("hide", "fur") and not has_knife:
                 continue
             from resources import resource_label
 
@@ -8336,37 +8358,39 @@ class Game:
     def _player_hunt_warren(self, colony) -> None:
         """Spear-hunt a rabbit warren within melee range."""
         inv = self.player.inventory
-        if not inv.has_equipped_tool("knife"):
-            self._set_status("Equip a knife (I or Q) to dress rabbits.")
-            return
         if not inv.has_equipped_tool("spear"):
             self._set_status("Equip a spear (I or Q) to hunt rabbits.")
             return
         if not colony.can_harvest() or colony.kind != AnimalKind.RABBIT:
             self._set_status("Warren is not ready to hunt.")
             return
+        has_knife = inv.has_equipped_tool("knife")
         recipe = hunt_recipe("rabbit")
-        if recipe is None or not recipe_outputs_fit(inv, recipe):
+        if recipe is None or not inv.can_add(
+            int(recipe.outputs.get("meat", 0)), key="meat"
+        ):
             self._set_status("Inventory is full.")
             return
         result = self.wildlife.harvest_colony(colony.id, kind=AnimalKind.RABBIT)
         if result is None:
             self._set_status("Rabbits got away.")
             return
-        if not self._apply_hunt_recipe_to_inventory(inv, "rabbit"):
+        if not self._apply_hunt_recipe_to_inventory(
+            inv, "rabbit", has_knife=has_knife
+        ):
             self._set_status("Inventory is full.")
             return
         self.world.apply_extraction_disturbance(colony.x, colony.y)
         self._refresh_indicators()
         self._finish_player_work()
-        loot = ", ".join(self._hunt_recipe_status_bits("rabbit")) or "loot"
+        loot = ", ".join(
+            self._hunt_recipe_status_bits("rabbit", has_knife=has_knife)
+        ) or "loot"
         self._set_status(f"Hunted warren. {loot}.")
 
     def _player_hunt(self, animal) -> None:
         inv = self.player.inventory
-        if not inv.has_equipped_tool("knife"):
-            self._set_status("Equip a knife (I or Q) to dress carcasses.")
-            return
+        has_knife = inv.has_equipped_tool("knife")
         has_spear = inv.has_equipped_tool("spear")
         has_bow = inv.has_equipped_tool("bow") and int(getattr(inv, "stone_arrows", 0)) > 0
         if not has_spear and not has_bow:
@@ -8380,7 +8404,7 @@ class Game:
             inv.consume_item("stone_arrows", 1)
             self.record_consumed("stone_arrows", 1)
         x, y, kind = result
-        meat = self._drop_hunt_yields(x, y, kind)
+        meat = self._drop_hunt_yields(x, y, kind, has_knife=has_knife)
         label = "boar" if kind == AnimalKind.BOAR else "deer"
         self.world.apply_extraction_disturbance(x, y)
         if kind in (AnimalKind.DEER, AnimalKind.BOAR):
@@ -8388,7 +8412,9 @@ class Game:
         self._refresh_indicators()
         self._finish_player_work()
         weapon = "spear" if has_spear else "bow"
-        loot = ", ".join(self._hunt_recipe_status_bits(kind.name.lower())) or f"{meat} meat"
+        loot = ", ".join(
+            self._hunt_recipe_status_bits(kind.name.lower(), has_knife=has_knife)
+        ) or f"{meat} meat"
         self._set_status(
             f"Hunted {label} with {weapon}. {loot} on ({x}, {y})."
         )
@@ -8531,6 +8557,7 @@ class Game:
                     can_eat = (
                         self._food_count(villager.inventory) > 0
                         or self._find_nearest_food_store(villager) is not None
+                        or self._find_nearest_map_food(villager) is not None
                     )
                     if can_eat:
                         self._update_seek_food(villager)
@@ -9336,24 +9363,54 @@ class Game:
                 return building
         return None
 
-    def _find_nearest_food_store(self, villager: Villager) -> tuple[int, int] | None:
-        """Best village food stockpile: meal quality first, then distance."""
+    def _food_store_options(self) -> list[tuple[int, int]]:
+        """Positions of village stores that currently contain edible food."""
         options: list[tuple[int, int]] = []
         if self._food_count(self.home_storage) > 0:
             options.append(self.world.home_pos)
         for building in self.buildings.values():
-            if building.kind not in (
+            if building.kind in (
                 BuildingKind.FORAGER,
                 BuildingKind.HUNTER,
                 BuildingKind.FISHER,
                 BuildingKind.FARM,
                 BuildingKind.KITCHEN,
-            ):
-                continue
-            if self._food_count(building) > 0:
+            ) and self._food_count(building) > 0:
                 options.append(building.center_cell())
+        return options
+
+    def _find_nearest_food_store(
+        self, villager: Villager, *, preferred_only: bool = False
+    ) -> tuple[int, int] | None:
+        """Best village food stockpile: meal quality first, then distance."""
+        options = self._food_store_options()
         if not options:
             return None
+
+        if preferred_only:
+            favourite = [
+                pos
+                for pos in options
+                if any(
+                    int(getattr(self._food_store_at(pos), key, 0)) > 0
+                    for key in villager.favourite_foods
+                )
+            ]
+            if favourite:
+                options = favourite
+            else:
+                priority = [
+                    pos
+                    for pos in options
+                    if any(
+                        meal_covers_any_requirement([key], villager.required_foods)
+                        and int(getattr(self._food_store_at(pos), key, 0)) > 0
+                        for key in VILLAGER_FOOD_KEYS
+                    )
+                ]
+                if not priority:
+                    return None
+                options = priority
 
         def rank(pos: tuple[int, int]) -> tuple[float, int]:
             storage = self._food_store_at(pos)
@@ -9368,6 +9425,32 @@ class Game:
             return (-score, dist)
 
         return min(options, key=rank)
+
+    def _find_nearest_map_food(self, villager: Villager) -> tuple[int, int] | None:
+        """Nearest discovered, reachable wild food resource."""
+        candidates: list[tuple[int, int]] = []
+        for key in VILLAGER_FOOD_KEYS:
+            candidates.extend(self._forage_cells_for_key(key))
+        return self._pick_nearest_reachable(
+            (villager.x, villager.y),
+            candidates,
+            pos_fn=lambda pos: pos,
+            villager=villager,
+        )
+
+    def _collect_map_food(self, villager: Villager, pos: tuple[int, int]) -> bool:
+        """Harvest one wild food target into a hungry villager's inventory."""
+        x, y = pos
+        cell = self.world.get_cell(x, y)
+        if cell is None or self._forage_key_for_cell(cell) not in VILLAGER_FOOD_KEYS:
+            return False
+        if cell.feature == FeatureType.MUSHROOM:
+            return self._collect_mushroom(x, y, villager.inventory, status=False)
+        if cell.feature == FeatureType.BERRY_BUSH:
+            return self._collect_berries(x, y, villager.inventory, status=False)
+        if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.REED):
+            return self._collect_herb(x, y, villager.inventory, status=False)
+        return False
 
     def _eat_random_from(
         self, storage, eater: Villager | Player | None = None
@@ -9507,40 +9590,36 @@ class Game:
         return len(eaten_keys)
 
     def _update_seek_food(self, villager: Villager) -> None:
-        """Walk to food; at the storehouse also deposit cargo and restock gear."""
+        """Seek preferred stores, then carried food, then any store/wild food."""
         villager.seeking_food = True
         home = self.world.home_pos
+
+        # A known favourite or required staple takes priority over pack food.
+        # Only fall back to the carried meal when no preferred village stock exists.
+        dest = self._find_nearest_food_store(villager, preferred_only=True)
+        carried_food = self._food_count(villager.inventory) > 0
+        if dest is None and carried_food:
+            eaten = self._eat_random_from(villager.inventory, villager)
+            if eaten > 0:
+                villager.seeking_food = False
+                villager.target = None
+                villager.work_cooldown = self._villager_work_interval(villager)
+                villager.state = VillagerState.WORKING
+                return
+
         needs_home_stop = self._inventory_needs_store_deposit(
             villager.inventory
         ) or self._villager_needs_home_restock(villager)
 
-        dest = self._find_nearest_food_store(villager)
-        store = self._food_store_at(dest) if dest is not None else None
-        store_score = (
-            storage_meal_score(store, required_foods=list(villager.required_foods))
-            if store is not None
-            else 0.0
-        )
-        inv_score = storage_meal_score(
-            villager.inventory, required_foods=list(villager.required_foods)
-        )
-
-        # Eat carried food only when it matches the best village meal and we do not
-        # still need a storehouse stop for deposits / tool restock.
-        if (
-            not needs_home_stop
-            and self._food_count(villager.inventory) > 0
-            and inv_score + 0.05 >= store_score
-        ):
-            eaten = self._eat_random_from(villager.inventory, villager)
-            if eaten > 0:
-                villager.seeking_food = False
-                villager.work_cooldown = self._villager_work_interval(villager)
-                villager.state = VillagerState.WORKING
-            return
-
-        # Drop cargo / restock tools at home before (or instead of) a kitchen run.
-        if needs_home_stop:
+        if dest is None:
+            dest = self._find_nearest_food_store(villager)
+        if dest is None and not carried_food:
+            dest = self._find_nearest_map_food(villager)
+        # A full pack cannot harvest map food; clear it at home first.
+        if dest is not None and self._food_store_at(dest) is None:
+            if needs_home_stop and villager.inventory.is_full:
+                dest = home
+        elif dest is None and needs_home_stop:
             dest = home
 
         if dest is None:
@@ -9562,6 +9641,7 @@ class Game:
             return
 
         villager.state = VillagerState.WORKING
+        villager.target = dest
         if (villager.x, villager.y) == dest:
             if villager.work_cooldown > 0:
                 return
@@ -9571,7 +9651,14 @@ class Game:
                 self._restock_workplace_gear_at_home(villager)
             storage = self._food_store_at(dest)
             if storage is None:
-                # Deposited at home with no food left here — retry next tick (kitchen).
+                if self._collect_map_food(villager, dest):
+                    eaten = self._eat_random_from(villager.inventory, villager)
+                    if eaten > 0:
+                        villager.seeking_food = False
+                        villager.target = None
+                        villager.work_cooldown = self._villager_work_interval(villager)
+                        return
+                # Resource vanished/cargo was full; choose again next tick.
                 villager.seeking_food = villager.needs_food()
                 return
             if self._food_count(storage) <= 0:
@@ -9580,6 +9667,7 @@ class Game:
             eaten = self._eat_random_from(storage, villager)
             if eaten > 0:
                 villager.seeking_food = False
+                villager.target = None
             else:
                 villager.seeking_food = villager.needs_food()
             villager.work_cooldown = self._villager_work_interval(villager)
@@ -10097,10 +10185,7 @@ class Game:
         return self._ensure_work_tool(villager, "spear")
 
     def _ensure_hunter_tools(self, villager: Villager) -> bool:
-        """Knife for dressing plus spear or bow for the kill."""
-        for tool in WORKPLACE_ALSO_REQUIRES.get(BuildingKind.HUNTER, ()):
-            if not self._ensure_work_tool(villager, tool):
-                return False
+        """Ensure a spear or bow for the kill; a knife only improves the yield."""
         return self._ensure_hunter_weapon(villager)
 
     def _workplace_needs_tool_fetch(
@@ -13799,9 +13884,9 @@ class Game:
             dist = max(abs(colony.x - villager.x), abs(colony.y - villager.y))
             if dist <= 1:
                 if villager.work_cooldown == 0:
-                    recipe = hunt_recipe("rabbit")
-                    if recipe is None or not recipe_outputs_fit(
-                        villager.inventory, recipe
+                    has_knife = villager.inventory.has_equipped_tool("knife")
+                    if not self._hunt_recipe_outputs_fit(
+                        villager.inventory, "rabbit", has_knife=has_knife
                     ):
                         villager.hunt_colony_id = None
                         self._force_assigned_delivery(villager, building)
@@ -13812,7 +13897,9 @@ class Game:
                     villager.hunt_colony_id = None
                     if result is not None:
                         if self._apply_hunt_recipe_to_inventory(
-                            villager.inventory, "rabbit"
+                            villager.inventory,
+                            "rabbit",
+                            has_knife=has_knife,
                         ):
                             self.world.apply_extraction_disturbance(colony.x, colony.y)
                             self._refresh_indicators()
@@ -13859,7 +13946,13 @@ class Game:
                 villager.hunt_animal_id = None
                 if result is not None:
                     x, y, kind = result
-                    self._drop_hunt_yields(x, y, kind, building=building)
+                    self._drop_hunt_yields(
+                        x,
+                        y,
+                        kind,
+                        building=building,
+                        has_knife=villager.inventory.has_equipped_tool("knife"),
+                    )
                     self.world.apply_extraction_disturbance(x, y)
                     if kind in (AnimalKind.DEER, AnimalKind.BOAR):
                         self.wildlife.scare_from_kill(x, y)
@@ -13931,7 +14024,13 @@ class Game:
             return
         x, y, kind = result
         building = self.buildings.get(villager.building_id) if villager.building_id else None
-        self._drop_hunt_yields(x, y, kind, building=building)
+        self._drop_hunt_yields(
+            x,
+            y,
+            kind,
+            building=building,
+            has_knife=villager.inventory.has_equipped_tool("knife"),
+        )
         self.world.apply_extraction_disturbance(x, y)
         if kind in (AnimalKind.DEER, AnimalKind.BOAR):
             self.wildlife.scare_from_kill(x, y)
@@ -13979,8 +14078,11 @@ class Game:
 
         if not building.allows_hunt_kind("rabbit"):
             return None
-        recipe = hunt_recipe("rabbit")
-        if recipe is None or not recipe_outputs_fit(villager.inventory, recipe):
+        if not self._hunt_recipe_outputs_fit(
+            villager.inventory,
+            "rabbit",
+            has_knife=villager.inventory.has_equipped_tool("knife"),
+        ):
             return None
         taken = self._claimed_colony_ids(villager.id)
         colonies = [
