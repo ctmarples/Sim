@@ -93,6 +93,12 @@ from settings import (
     FOX_MAX_POPULATION,
     FOX_SEED_PACKS,
     FOX_BREED_CHANCE,
+    WEATHER_EVENT_DAYS,
+    WEATHER_FREQUENCY,
+    WEATHER_INTENSITY,
+    WEATHER_LOCAL_VARIATION,
+    WEATHER_RAIN_CELLS,
+    WEATHER_CELL_RADIUS,
 )
 
 ParamKind = Literal["float", "int"]
@@ -165,6 +171,45 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
                 8,
                 1,
                 "Usually leave at 2. Speed buttons multiply this. Higher = more sim per displayed frame.",
+            ),
+        ),
+    ),
+    BalanceCategory(
+        "weather",
+        "Weather & rainfall",
+        (
+            BalanceParam(
+                "WEATHER_EVENT_DAYS", "Rain event duration", "int",
+                WEATHER_EVENT_DAYS, 1, 14, 1,
+                "Number of consecutive days that a rain event keeps the same regional intensity and local rain cells.",
+                " days",
+            ),
+            BalanceParam(
+                "WEATHER_FREQUENCY", "Rain event frequency", "float",
+                WEATHER_FREQUENCY, 0.0, 2.0, 0.1,
+                "Multiplier on the seasonal chance of a new rain event starting. 0 disables new rain.",
+                "×",
+            ),
+            BalanceParam(
+                "WEATHER_INTENSITY", "Rain intensity", "float",
+                WEATHER_INTENSITY, 0.1, 2.0, 0.1,
+                "Multiplier on event strength, affecting visuals, the rainfall layer, and soil recharge.",
+                "×",
+            ),
+            BalanceParam(
+                "WEATHER_LOCAL_VARIATION", "Local intensity variation", "float",
+                WEATHER_LOCAL_VARIATION, 0.0, 1.0, 0.05,
+                "How strongly random rain cells separate wet and dry parts of the map. 0 is regionally uniform.",
+            ),
+            BalanceParam(
+                "WEATHER_RAIN_CELLS", "Rain cells per event", "int",
+                WEATHER_RAIN_CELLS, 1, 12, 1,
+                "Number of randomly positioned areas of concentrated rain in each event.",
+            ),
+            BalanceParam(
+                "WEATHER_CELL_RADIUS", "Rain-cell radius", "float",
+                WEATHER_CELL_RADIUS, 0.05, 0.75, 0.05,
+                "Approximate radius of each rain cell as a fraction of the map size.",
             ),
         ),
     ),

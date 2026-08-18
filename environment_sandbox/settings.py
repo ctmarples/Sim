@@ -41,6 +41,14 @@ WALK_SECONDS_AT_X1: float = 0.40  # real seconds to walk one tile at ×1 / 60 FP
 WORK_SECONDS_AT_X1: float = 1.20  # real seconds between work actions at ×1 / 60 FPS
 DAY_SECONDS_OPTIONS: tuple[float, ...] = (1.0, 2.0, 5.0, 10.0, 20.0, 30.0)
 
+# Seasonal rainfall events (File → Balance → Weather & rainfall).
+WEATHER_EVENT_DAYS: int = 3
+WEATHER_FREQUENCY: float = 1.0
+WEATHER_INTENSITY: float = 1.0
+WEATHER_LOCAL_VARIATION: float = 0.9
+WEATHER_RAIN_CELLS: int = 4
+WEATHER_CELL_RADIUS: float = 0.22
+
 # Recipe walk / hunger / work multipliers are authored at REF/5 (default 3/5).
 # File → Balance scales the gap from 1.0, then rounds the multiplier to one decimal.
 BUFF_STRENGTH_REF: int = 3

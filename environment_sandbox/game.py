@@ -123,7 +123,10 @@ from environment import (
     pollination_yield_multiplier,
     soil_moisture_grid,
     temperature_grid,
+    rainfall_modifier_grid,
 )
+from weather import WeatherState
+from rain_effect import RainEffect
 from farm_pipeline import (
     FarmJob,
     FarmJobKind,
@@ -554,6 +557,8 @@ class Game:
         self.overlay_values: list[list[float]] = build_overlay_grid(self.world, self.overlay_mode)
         # Cyclic env layers (8×/year): biodiversity → pest-control modifiers.
         self.env_maps = EnvMaps.blank(self.world.rows, self.world.cols)
+        self.weather = WeatherState(seed=self.world.seed ^ 0x51A7)
+        self.rain_effect = RainEffect(self.world.seed)
         # Compat aliases used by overlay draw / older diagnostics.
         self._biodiversity_samples = self.env_maps.biodiversity_samples
         self._biodiversity_average = self.env_maps.biodiversity
@@ -828,6 +833,7 @@ class Game:
             self._update_player_move_input(dt)
             self._update_camera_input(dt)
             self.camera.update(dt, self.world.cols, self.world.rows)
+            self.rain_effect.update(dt, self.weather.intensity)
             self._update_status_timer()
             self._draw()
             self.clock.tick(FPS)
@@ -914,6 +920,8 @@ class Game:
         self._height_paint_last = None
         self._food_rng.seed(99)
         self._start_fresh_game()
+        self.weather = WeatherState(seed=self.world.seed ^ 0x51A7)
+        self.rain_effect.reset_seed(self.world.seed)
         self.height_sample = generate_height_sample(
             self.world.cols,
             self.world.rows,
@@ -3808,6 +3816,7 @@ class Game:
                 OverlayMode.EROSION,
                 OverlayMode.SOIL_MOISTURE,
                 OverlayMode.TEMPERATURE,
+                OverlayMode.RAINFALL,
                 OverlayMode.FIELD_YIELD,
             ):
                 self._refresh_indicators()
@@ -4110,6 +4119,7 @@ class Game:
     def _advance_day(self) -> None:
         prev = self.season
         self.calendar_day = (self.calendar_day + 1) % YEAR_DAYS
+        self.weather.advance_day(self.calendar_day)
         self._bump_work_gen()
         self.resource_history.record_stock(self._village_stock_amounts())
         self.resource_history.advance_day()
@@ -4131,15 +4141,22 @@ class Game:
         # Temperature follows the annual cosine each day; slower ecological
         # layers (habitats, forest floor, paths, urban) remain at ≤8×/year.
         sample_day = is_env_sample_day(self.calendar_day)
-        if not sample_day:
-            self.env_maps.temperature = temperature_grid(
-                self.world, self.calendar_day
-            )
-            if self.overlay_mode == OverlayMode.TEMPERATURE:
-                self._refresh_indicators()
         if sample_day:
             self._sample_environment()
             self._sync_habitat_selection()
+        else:
+            self.env_maps.temperature = temperature_grid(
+                self.world, self.calendar_day
+            )
+        self.env_maps.update_weather(
+            self.world,
+            self.weather.intensity,
+            self.calendar_day,
+            self.weather.localisation_grid(self.world.rows, self.world.cols),
+        )
+        if self.overlay_mode in (OverlayMode.TEMPERATURE, OverlayMode.RAINFALL,
+                                 OverlayMode.SOIL_MOISTURE):
+            self._refresh_indicators()
 
     def _apply_path_fertility_drain(self) -> None:
         """Each season a path remains, drain fertility on soft land (floor 0.3)."""
@@ -4208,6 +4225,7 @@ class Game:
             OverlayMode.POLLINATION,
             OverlayMode.SOIL_MOISTURE,
             OverlayMode.TEMPERATURE,
+            OverlayMode.RAINFALL,
         ):
             self._refresh_indicators()
 
@@ -4581,6 +4599,9 @@ class Game:
             self.env_maps.temperature = temperature_grid(
                 self.world, self.calendar_day
             )
+        if not any(any(float(v) > 0.0 for v in row)
+                   for row in self.env_maps.rainfall_modifiers):
+            self.env_maps.rainfall_modifiers = rainfall_modifier_grid(self.world)
 
     # Back-compat alias for save_load / diagnostics.
     def _sample_biodiversity(self) -> None:
@@ -16252,6 +16273,9 @@ class Game:
         if self.overlay_mode == OverlayMode.TEMPERATURE:
             self.overlay_values = [row[:] for row in self.env_maps.temperature]
             return
+        if self.overlay_mode == OverlayMode.RAINFALL:
+            self.overlay_values = [row[:] for row in self.env_maps.rainfall]
+            return
         if self.overlay_mode == OverlayMode.FIELD_YIELD:
             cols, rows = self.world.cols, self.world.rows
             grid = [[0.0] * cols for _ in range(rows)]
@@ -16313,6 +16337,7 @@ class Game:
             OverlayMode.EROSION,
             OverlayMode.SOIL_MOISTURE,
             OverlayMode.TEMPERATURE,
+            OverlayMode.RAINFALL,
             OverlayMode.FIELD_YIELD,
         ):
             self._refresh_indicators()
@@ -16651,6 +16676,7 @@ class Game:
         self._draw_villagers()
         self._draw_arrow_shots()
         self._draw_player()
+        self._draw_rain_effect()
         self._draw_player_status_hud()
         self._draw_overlay_hud()
         self._draw_selection_highlights()
@@ -16711,6 +16737,11 @@ class Game:
             season_label=(
                 f"{format_date(self.calendar_day)}  "
                 f"Temperature: {ambient_temperature_c(self.calendar_day):.0f}C"
+                + (
+                    f"  Rain: {self.weather.intensity * 100:.0f}%"
+                    if self.weather.raining
+                    else "  Dry"
+                )
             ),
             field_crop=self.field_crop_kind,
             built_kinds=unlock_built_kinds(self.buildings),
@@ -18450,6 +18481,19 @@ class Game:
         self.screen.blit(
             detail,
             (panel.x + pad_x, panel.y + pad_y + title.get_height() + gap),
+        )
+
+    def _draw_rain_effect(self) -> None:
+        if self.headless or self.weather.intensity <= 0.0:
+            return
+        map_clip = pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())
+        visible_w, visible_h = self.camera.visible_cells()
+        self.rain_effect.draw(
+            self.screen,
+            map_clip,
+            self.weather.intensity,
+            rainfall=self.env_maps.rainfall,
+            world_view=(self.camera.x, self.camera.y, visible_w, visible_h),
         )
 
     def _draw_task_areas(self) -> None:

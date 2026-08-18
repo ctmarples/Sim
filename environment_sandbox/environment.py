@@ -58,6 +58,7 @@ class EnvLayer(Enum):
     POLLINATION = auto()
     SOIL_MOISTURE = auto()
     TEMPERATURE = auto()
+    RAINFALL = auto()
 
 
 # Seasonal rainfall / evapotranspiration balance, indexed by Season.name.
@@ -199,6 +200,85 @@ def temperature_grid(world: World, calendar_day: int) -> list[list[float]]:
     return out
 
 
+def rainfall_modifier_grid(world: World) -> list[list[float]]:
+    """Static-ish local rainfall/throughfall modifier from nearby landscape."""
+    from world import FeatureType, TerrainType, is_water_terrain
+
+    out = _zero_grid(world.rows, world.cols)
+    for y in range(world.rows):
+        for x in range(world.cols):
+            water = 0
+            canopy = 0.0
+            count = 0
+            for ny in range(max(0, y - 2), min(world.rows, y + 3)):
+                for nx in range(max(0, x - 2), min(world.cols, x + 3)):
+                    if (nx - x) ** 2 + (ny - y) ** 2 > 4:
+                        continue
+                    nearby = world.cells[ny][nx]
+                    count += 1
+                    water += int(is_water_terrain(nearby.terrain))
+                    if nearby.feature == FeatureType.TREE:
+                        canopy += 1.0
+                    elif nearby.feature == FeatureType.SAPLING:
+                        canopy += 0.35
+            water_share = water / max(1, count)
+            canopy_share = canopy / max(1, count)
+            cell = world.cells[y][x]
+            modifier = 1.0 + min(0.16, water_share * 0.30)
+            # Forest humidity raises local precipitation slightly, while the
+            # canopy intercepts some rain before it reaches the ground.
+            modifier += min(0.08, canopy_share * 0.12)
+            if cell.feature == FeatureType.TREE:
+                modifier *= 0.86
+            elif cell.feature == FeatureType.SAPLING:
+                modifier *= 0.94
+            if cell.terrain == TerrainType.RIPARIAN:
+                modifier *= 1.06
+            out[y][x] = max(0.65, min(1.25, modifier))
+    return out
+
+
+def update_soil_moisture_from_rain(
+    world: World,
+    moisture: list[list[float]],
+    rainfall: list[list[float]],
+    temperature: list[list[float]],
+    calendar_day: int,
+) -> list[list[float]]:
+    """Advance persistent soil water by one day of rain, drying, and recharge."""
+    from world import FeatureType, TerrainType, is_water_terrain
+
+    baseline = soil_moisture_grid(world, calendar_day)
+    infiltration = {
+        TerrainType.SOIL: 1.0,
+        TerrainType.FOREST_FLOOR: 0.92,
+        TerrainType.GRASS: 0.82,
+        TerrainType.MEADOW: 0.86,
+        TerrainType.RIPARIAN: 1.0,
+        TerrainType.ROCK: 0.12,
+        TerrainType.URBAN: 0.05,
+        TerrainType.PATH: 0.25,
+    }
+    out = _zero_grid(world.rows, world.cols)
+    valid = len(moisture) == world.rows and bool(moisture)
+    for y in range(world.rows):
+        for x in range(world.cols):
+            cell = world.cells[y][x]
+            if is_water_terrain(cell.terrain):
+                out[y][x] = 1.0
+                continue
+            old = moisture[y][x] if valid and x < len(moisture[y]) else baseline[y][x]
+            rain_gain = rainfall[y][x] * 0.34 * infiltration.get(cell.terrain, 0.65)
+            temp = temperature[y][x] if temperature else 12.0
+            heat = max(0.0, min(1.0, (temp + 5.0) / 40.0))
+            evaporation = 0.012 + heat * 0.045
+            if cell.feature in (FeatureType.TREE, FeatureType.SAPLING):
+                evaporation *= 0.72
+            recharge = (baseline[y][x] - old) * 0.035
+            out[y][x] = max(0.0, min(1.0, old + rain_gain - evaporation + recharge))
+    return out
+
+
 def is_env_sample_day(calendar_day: int) -> bool:
     """True on season start and midpoint (8 times per 112-day year)."""
     d = day_in_season(calendar_day)
@@ -333,6 +413,8 @@ class EnvMaps:
     erosion: list[list[float]] = field(default_factory=list)
     soil_moisture: list[list[float]] = field(default_factory=list)
     temperature: list[list[float]] = field(default_factory=list)
+    rainfall_modifiers: list[list[float]] = field(default_factory=list)
+    rainfall: list[list[float]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.biodiversity:
@@ -349,6 +431,10 @@ class EnvMaps:
             self.soil_moisture = _zero_grid(self.rows, self.cols)
         if not self.temperature:
             self.temperature = _zero_grid(self.rows, self.cols)
+        if not self.rainfall_modifiers:
+            self.rainfall_modifiers = _zero_grid(self.rows, self.cols)
+        if not self.rainfall:
+            self.rainfall = _zero_grid(self.rows, self.cols)
 
     @classmethod
     def blank(cls, rows: int, cols: int) -> EnvMaps:
@@ -366,6 +452,8 @@ class EnvMaps:
         self.erosion = _zero_grid(rows, cols)
         self.soil_moisture = _zero_grid(rows, cols)
         self.temperature = _zero_grid(rows, cols)
+        self.rainfall_modifiers = _zero_grid(rows, cols)
+        self.rainfall = _zero_grid(rows, cols)
 
     def layer_grid(self, layer: EnvLayer) -> list[list[float]]:
         if layer == EnvLayer.BIODIVERSITY:
@@ -380,6 +468,8 @@ class EnvMaps:
             return self.soil_moisture
         if layer == EnvLayer.TEMPERATURE:
             return self.temperature
+        if layer == EnvLayer.RAINFALL:
+            return self.rainfall
         return self.biodiversity
 
     def value_at(self, layer: EnvLayer, x: int, y: int) -> float:
@@ -447,8 +537,33 @@ class EnvMaps:
             base_strength=POLLINATOR_BASE_STRENGTH,
             strength_per_level=POLLINATOR_STRENGTH_PER_LEVEL,
         )
-        self.soil_moisture = soil_moisture_grid(world, calendar_day)
+        if not any(any(float(v) > 0.0 for v in row) for row in self.soil_moisture):
+            self.soil_moisture = soil_moisture_grid(world, calendar_day)
         self.temperature = temperature_grid(world, calendar_day)
+        self.rainfall_modifiers = rainfall_modifier_grid(world)
+
+    def update_weather(
+        self,
+        world: World,
+        intensity: float,
+        calendar_day: int,
+        localisation: list[list[float]] | None = None,
+    ) -> None:
+        """Apply today's regional rain to local rainfall and soil moisture."""
+        if not self.rainfall_modifiers or len(self.rainfall_modifiers) != self.rows:
+            self.rainfall_modifiers = rainfall_modifier_grid(world)
+        strength = max(0.0, min(1.0, float(intensity)))
+        local = localisation or [[1.0] * self.cols for _ in range(self.rows)]
+        self.rainfall = [
+            [
+                max(0.0, min(1.0, strength * modifier * local[y][x]))
+                for x, modifier in enumerate(row)
+            ]
+            for y, row in enumerate(self.rainfall_modifiers)
+        ]
+        self.soil_moisture = update_soil_moisture_from_rain(
+            world, self.soil_moisture, self.rainfall, self.temperature, calendar_day
+        )
 
     def farm_pest_control(self, cells: Iterable[tuple[int, int]]) -> float:
         return self.average_over(EnvLayer.PEST_CONTROL, cells)
@@ -468,6 +583,9 @@ class EnvMaps:
     def farm_temperature(self, cells: Iterable[tuple[int, int]]) -> float:
         return self.average_over(EnvLayer.TEMPERATURE, cells)
 
+    def farm_rainfall(self, cells: Iterable[tuple[int, int]]) -> float:
+        return self.average_over(EnvLayer.RAINFALL, cells)
+
     def to_save_dict(self) -> dict:
         return {
             "biodiversity_samples": self.biodiversity_samples,
@@ -479,6 +597,8 @@ class EnvMaps:
             "erosion": self.erosion,
             "soil_moisture": self.soil_moisture,
             "temperature": self.temperature,
+            "rainfall_modifiers": self.rainfall_modifiers,
+            "rainfall": self.rainfall,
         }
 
     def load_save_dict(self, data: dict | None) -> None:
@@ -528,6 +648,15 @@ class EnvMaps:
             and len(temperature[0]) == self.cols
         ):
             self.temperature = temperature
+        for key in ("rainfall_modifiers", "rainfall"):
+            grid = data.get(key)
+            if (
+                isinstance(grid, list)
+                and len(grid) == self.rows
+                and grid
+                and len(grid[0]) == self.cols
+            ):
+                setattr(self, key, grid)
         erosion = data.get("erosion")
         if (
             isinstance(erosion, list)

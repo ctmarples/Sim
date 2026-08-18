@@ -56,6 +56,7 @@ class OverlayMode(Enum):
     EROSION = auto()
     SOIL_MOISTURE = auto()
     TEMPERATURE = auto()
+    RAINFALL = auto()
     FERTILITY = auto()
     FIELD_YIELD = auto()
 
@@ -72,6 +73,7 @@ OVERLAY_LABELS: dict[OverlayMode, str] = {
     OverlayMode.EROSION: "Soil erosion",
     OverlayMode.SOIL_MOISTURE: "Soil moisture",
     OverlayMode.TEMPERATURE: "Temperature",
+    OverlayMode.RAINFALL: "Rainfall",
     OverlayMode.FERTILITY: "Soil fertility",
     OverlayMode.FIELD_YIELD: "Field yield",
 }
@@ -91,6 +93,8 @@ def format_overlay_value(mode: OverlayMode, value: float) -> str:
         return f"{value:.2f}"
     if mode == OverlayMode.TEMPERATURE:
         return f"{value:.1f} C"
+    if mode == OverlayMode.RAINFALL:
+        return f"{value * 100:.0f}% intensity"
     # Most live overlays are 0–1 fractions mapped to the colour ramp.
     return f"{value * 100:.0f}%"
 
@@ -420,6 +424,8 @@ def overlay_colour(mode: OverlayMode, value: float) -> Colour:
         if t < 0.5:
             return lerp_colour((35, 85, 205), (225, 225, 205), t * 2.0)
         return lerp_colour((225, 225, 205), (220, 55, 35), (t - 0.5) * 2.0)
+    if mode == OverlayMode.RAINFALL:
+        return lerp_colour((215, 220, 210), (35, 105, 225), value)
     if mode == OverlayMode.FERTILITY:
         return lerp_colour(COLOUR_FERTILITY_LOW, COLOUR_FERTILITY_HIGH, value)
     if mode == OverlayMode.FIELD_YIELD:
@@ -438,6 +444,7 @@ def build_overlay_grid(world: World, mode: OverlayMode) -> list[list[float]]:
         OverlayMode.EROSION,
         OverlayMode.SOIL_MOISTURE,
         OverlayMode.TEMPERATURE,
+        OverlayMode.RAINFALL,
         OverlayMode.FIELD_YIELD,
     ):
         return [[0.0] * world.cols for _ in range(world.rows)]

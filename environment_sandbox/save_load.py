@@ -712,6 +712,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
     }
     if hasattr(game, "env_maps"):
         payload["env_maps"] = game.env_maps.to_save_dict()
+    if hasattr(game, "weather"):
+        payload["weather"] = game.weather.to_dict()
     if hasattr(game, "field_crop_kind"):
         payload["field_crop_kind"] = game.field_crop_kind
     if hasattr(game, "resource_history"):
@@ -1773,6 +1775,11 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         )
         if needs_bake:
             game._bake_erosion()
+
+    if hasattr(game, "weather"):
+        game.weather.load_dict(data.get("weather"))
+        if hasattr(game, "rain_effect"):
+            game.rain_effect.reset_seed(game.world.seed)
 
     # Villager wear map for PATH painting (optional; older saves omit it).
     if hasattr(game, "_path_traffic"):
