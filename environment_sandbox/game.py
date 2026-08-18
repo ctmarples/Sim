@@ -3334,6 +3334,14 @@ class Game:
             self.field_plan_dialog.close()
             self._mgmt_auto_select_wildlife()
             return
+        if action == "tab_flora":
+            self.management.tab = MgmtTab.FLORA
+            self.management._scroll = 0
+            self.management._layout_panel()
+            self.field_plan_dialog.close()
+            if self.management.selected_flora_key is None:
+                self.management.selected_flora_key = "wild:berry_bush"
+            return
         if action == "toggle_detail":
             if self.management.show_detail and not self.management.show_list:
                 return
@@ -3374,6 +3382,9 @@ class Game:
             pid = int(pid_s)
             self._select_habitat(kind, pid)
             self.management.select_habitat(kind, pid)
+            return
+        if action.startswith("select_flora:"):
+            self.management.selected_flora_key = action.split(":", 1)[1]
             return
         if (
             action.startswith("hire_cand:")

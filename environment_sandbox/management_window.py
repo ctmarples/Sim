@@ -1,4 +1,4 @@
-"""Central management window: People / Buildings / Wildlife.
+"""Central management window: People / Buildings / Wildlife / Flora.
 
 Left pane = selected entity detail; right pane = list. Independent pane
 toggles keep at least one pane visible. Villager/building selection opens
@@ -63,6 +63,9 @@ from villager_roster import (
     sort_entries,
     villager_job_colour,
 )
+from crops import CROP_BY_KEY
+from trees import TREES, TREE_BY_KEY, TreeDef
+from wild_species import WILD_BY_KEY, WILD_SPECIES, WildSpeciesDef
 
 TITLE_BAR_H = 32
 TAB_H = 36
@@ -75,13 +78,91 @@ class MgmtTab(Enum):
     PEOPLE = auto()
     BUILDINGS = auto()
     WILDLIFE = auto()
+    FLORA = auto()
 
 
 _TAB_META: dict[MgmtTab, tuple[str, str]] = {
     MgmtTab.PEOPLE: ("villager", "People"),
     MgmtTab.BUILDINGS: ("construction_site", "Buildings"),
     MgmtTab.WILDLIFE: ("deer_male", "Wildlife"),
+    MgmtTab.FLORA: ("flower_plant", "Flora"),
 }
+
+
+def _flora_icon(species: WildSpeciesDef | TreeDef) -> str:
+    if isinstance(species, TreeDef):
+        return "tree_cone" if species.shape == "cone" else "tree_round"
+    if species.icon_base:
+        return species.icon_base
+    crop = CROP_BY_KEY.get(species.crop_key or species.key)
+    return crop.icon_base if crop is not None else "flower_plant"
+
+
+def _season_name(day: float) -> str:
+    return ("Spring", "Summer", "Autumn", "Winter")[int(day) % 112 // 28]
+
+
+def _window_text(start: tuple[float, float], end: tuple[float, float]) -> str:
+    return f"{_season_name(start[0])} to {_season_name(end[1])}"
+
+
+def _niche_text(species: WildSpeciesDef) -> str:
+    terrain = ", ".join(t.replace("_", " ").title() for t in species.terrains)
+    if species.edge_terrains:
+        edges = ", ".join(t.replace("_", " ").title() for t in species.edge_terrains)
+        terrain += f", beside {edges}"
+    preferences: list[str] = []
+    for label, niche in (("moisture", species.moisture_niche),
+                         ("fertility", species.fertility_niche),
+                         ("disturbance", species.disturbance_niche)):
+        if niche is None:
+            continue
+        mid = (niche.optimum_low + niche.optimum_high) / 2
+        level = "low" if mid < .36 else "moderate" if mid < .68 else "high"
+        preferences.append(f"{level} {label}")
+    suffix = f"; prefers {', '.join(preferences)}" if preferences else ""
+    return f"Found on {terrain}{suffix}."
+
+
+def _wild_description(species: WildSpeciesDef) -> str:
+    kinds = {
+        "BERRY_BUSH": "A perennial fruiting shrub",
+        "REED": "A waterside perennial",
+        "MUSHROOM": "A seasonal woodland fungus",
+        "WOOD_BUSH": "Fallen woody vegetation",
+        "WILD_CROP": "A feral crop plant",
+        "HERB": "A wild herbaceous plant",
+    }
+    return f"{kinds.get(species.feature, 'A wild plant')} in the world ecosystem."
+
+
+def _growth_text(species: WildSpeciesDef | TreeDef) -> str:
+    if isinstance(species, TreeDef):
+        return f"Saplings mature in about {species.growth_years:g} year(s)."
+    if species.fruiting:
+        return f"Permanent growth; fruits {_window_text(species.fruit_rise, species.fruit_fall)}."
+    if species.spawn_peak <= 0:
+        return "Persistent growth with no seasonal establishment window."
+    active = _window_text(species.spawn_rise, species.spawn_fall)
+    if species.clear_from_day >= 0:
+        return f"Appears {active}; clears in {_season_name(species.clear_from_day)}."
+    return f"Active growth from {active}."
+
+
+def _uses_text(species: WildSpeciesDef | TreeDef) -> str:
+    if isinstance(species, TreeDef):
+        wood = species.yield_key.replace("_", " ")
+        return f"Forestry: yields {species.yield_amount} {wood}; saplings can be replanted."
+    uses: list[str] = []
+    if species.resource_key and species.yield_amount > 0:
+        uses.append(f"harvested for {species.yield_amount} {species.resource_key.replace('_', ' ')}")
+    tag_uses = {
+        "flowering": "supports flowers", "pollinator_food": "feeds pollinators",
+        "grazer_forage": "feeds grazing wildlife", "wetland_cover": "provides wetland cover",
+        "amphibian_habitat": "shelters amphibians", "feral_crop": "provides wild seed stock",
+    }
+    uses.extend(tag_uses[tag] for tag in species.ecology_tags if tag in tag_uses)
+    return ("; ".join(uses).capitalize() + ".") if uses else "Ecological ground cover; not harvestable."
 
 _BUILD_ICON: dict[BuildingKind, str] = {
     BuildingKind.HOME: "storehouse",
@@ -255,6 +336,7 @@ class ManagementWindow:
         self.selected_building_id: int | None = None
         self.selected_construction_id: int | None = None
         self.selected_habitat: tuple[Any, int] | None = None  # (AnimalKind, id)
+        self.selected_flora_key: str | None = None
         self.show_player = False
         # hire / assign / roster modes for people tab list actions
         self.people_mode: str = "roster"  # roster | hire | assign
@@ -432,7 +514,7 @@ class ManagementWindow:
         elif self.tab == MgmtTab.BUILDINGS:
             w = min(400, map_w - 40)
         else:
-            w = min(360, map_w - 40)
+            w = min(400 if self.tab == MgmtTab.FLORA else 360, map_w - 40)
 
         if self._panel.w > 0:
             cx, cy = self._panel.center
@@ -660,6 +742,7 @@ class ManagementWindow:
             MgmtTab.PEOPLE: "Management — People",
             MgmtTab.BUILDINGS: "Management — Buildings",
             MgmtTab.WILDLIFE: "Management — Wildlife",
+            MgmtTab.FLORA: "Management — Flora",
         }[self.tab]
         surface.blit(
             self.font_title.render(title, True, COLOUR_TEXT),
@@ -756,6 +839,8 @@ class ManagementWindow:
                     self._blit_dim(surface, self._detail_rect, "Select a building")
             elif self.tab == MgmtTab.WILDLIFE:
                 self._draw_wildlife_detail(surface, self._detail_rect, habitat_view)
+            elif self.tab == MgmtTab.FLORA:
+                self._draw_flora_detail(surface, self._detail_rect)
 
         if self.show_list and self._list_rect.w > 0:
             pygame.draw.rect(surface, (38, 40, 46), self._list_rect, border_radius=6)
@@ -780,8 +865,10 @@ class ManagementWindow:
                     villagers,
                     mouse_pos,
                 )
-            else:
+            elif self.tab == MgmtTab.WILDLIFE:
                 self._draw_wildlife_list(surface, wildlife_rows, mouse_pos)
+            else:
+                self._draw_flora_list(surface)
 
         if self._tooltip is not None:
             tip, (tx, ty) = self._tooltip
@@ -1450,6 +1537,87 @@ class ManagementWindow:
                 (view.x + 8, view.y + 8),
             )
         surface.set_clip(old)
+
+    def _flora_rows(self) -> list[tuple[str, WildSpeciesDef | TreeDef]]:
+        rows: list[tuple[str, WildSpeciesDef | TreeDef]] = [
+            (f"wild:{species.key}", species) for species in WILD_SPECIES
+        ]
+        rows.extend((f"tree:{tree.key}", tree) for tree in TREES)
+        return sorted(rows, key=lambda item: item[1].label)
+
+    def _draw_flora_list(self, surface: pygame.Surface) -> None:
+        rect = self._list_rect
+        view = pygame.Rect(rect.x + 2, rect.y + 2, rect.w - 4, rect.h - 4)
+        y = view.y + 4 - self._scroll
+        old = surface.get_clip()
+        surface.set_clip(view)
+        for key, species in self._flora_rows():
+            row = pygame.Rect(view.x + 2, y, view.w - 8, LIST_ROW_H)
+            if self.selected_flora_key == key:
+                pygame.draw.rect(surface, (55, 70, 55), row, border_radius=3)
+                pygame.draw.rect(surface, COLOUR_SELECTED_ENTITY, row, 1, border_radius=3)
+            blit_icon(surface, _flora_icon(species), row.x + 18, row.centery, 28)
+            surface.blit(self.font_small.render(species.label, True, COLOUR_TEXT),
+                         (row.x + 38, row.y + 4))
+            group = "Tree" if isinstance(species, TreeDef) else species.feature.replace("_", " ").title()
+            surface.blit(self.font_tiny.render(group, True, COLOUR_TEXT_DIM),
+                         (row.x + 38, row.y + 20))
+            if row.bottom >= view.y and row.top <= view.bottom:
+                self._list_hits.append((row, "flora", key))
+            y += LIST_ROW_H + 2
+        surface.set_clip(old)
+
+    def _wrapped(self, text: str, max_width: int) -> list[str]:
+        lines: list[str] = []
+        line = ""
+        for word in text.split():
+            candidate = f"{line} {word}".strip()
+            if line and self.font_small.size(candidate)[0] > max_width:
+                lines.append(line)
+                line = word
+            else:
+                line = candidate
+        if line:
+            lines.append(line)
+        return lines
+
+    def _draw_flora_detail(self, surface: pygame.Surface, rect: pygame.Rect) -> None:
+        lookup: dict[str, WildSpeciesDef | TreeDef] = {
+            **{f"wild:{key}": value for key, value in WILD_BY_KEY.items()},
+            **{f"tree:{key}": value for key, value in TREE_BY_KEY.items()},
+        }
+        species = lookup.get(self.selected_flora_key or "")
+        if species is None:
+            self._blit_dim(surface, rect, "Select a flora species")
+            return
+        x, y = rect.x + PAD, rect.y + PAD
+        blit_icon(surface, _flora_icon(species), x + 24, y + 24, 44)
+        surface.blit(self.font_title.render(species.label, True, COLOUR_TEXT), (x + 54, y + 7))
+        kind = "Tree" if isinstance(species, TreeDef) else species.feature.replace("_", " ").title()
+        surface.blit(self.font_tiny.render(kind, True, COLOUR_TEXT_DIM), (x + 54, y + 27))
+        y += 62
+        if isinstance(species, TreeDef):
+            sections = (
+                ("Description", f"A {species.shape}-canopied woodland tree species."),
+                ("Environment niche", "Found in wooded soil and managed forest plots."),
+                ("Seasonal growth", _growth_text(species)),
+                ("Uses", _uses_text(species)),
+            )
+        else:
+            sections = (
+                ("Description", _wild_description(species)),
+                ("Environment niche", _niche_text(species)),
+                ("Seasonal growth", _growth_text(species)),
+                ("Uses", _uses_text(species)),
+            )
+        max_width = rect.w - PAD * 2
+        for heading, body in sections:
+            surface.blit(self.font.render(heading, True, COLOUR_TEXT), (x, y))
+            y += 19
+            for line in self._wrapped(body, max_width):
+                surface.blit(self.font_small.render(line, True, COLOUR_TEXT_DIM), (x, y))
+                y += 16
+            y += 10
 
     def _draw_wildlife_filters(
         self,
