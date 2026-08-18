@@ -667,6 +667,12 @@ def serialize_game(game: Game) -> dict[str, Any]:
         "player": {
             "x": game.player.x,
             "y": game.player.y,
+            "discovered_cells": [
+                [x, y]
+                for x, y in sorted(
+                    game.discovered_cells, key=lambda p: (p[1], p[0])
+                )
+            ],
             "inventory": _inv_to_dict(game.player.inventory),
             "satiation": float(getattr(game.player, "satiation", 0.75)),
             "energy": float(getattr(game.player, "energy", 1.0)),
@@ -976,6 +982,14 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     player_data = data["player"]
     game.player.x = int(player_data["x"])
     game.player.y = int(player_data["y"])
+    saved_discovery = player_data.get("discovered_cells")
+    game.discovered_cells = {
+        (int(pos[0]), int(pos[1]))
+        for pos in (saved_discovery or [])
+        if isinstance(pos, (list, tuple)) and len(pos) == 2
+    }
+    # Older saves begin with a normal reveal around their loaded player position.
+    game._reveal_around_player()
     game.player.inventory = _inv_from_dict(player_data["inventory"])
     game.player.satiation = float(player_data.get("satiation", 0.75))
     game.player.energy = float(player_data.get("energy", 1.0))

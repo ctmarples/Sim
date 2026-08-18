@@ -202,6 +202,7 @@ from settings import (
     MASON_COST_ROCK,
     MASON_COST_WOOD,
     MAX_VILLAGERS,
+    MAP_DISCOVERY_RADIUS,
     MILL_COST_ROCK,
     MILL_COST_WOOD,
     MINIMAP_HEIGHT,
@@ -493,6 +494,8 @@ class Game:
             corners=self.world.height_corners,
         )
         self.player = Player(x=self.world.start_pos[0], y=self.world.start_pos[1])
+        self.discovered_cells: set[tuple[int, int]] = set()
+        self._reveal_around_player()
         self.player_craft_building_id: int | None = None
         self.player_craft_recipe: str | None = None
         self.player_craft_split: bool = False
@@ -760,6 +763,8 @@ class Game:
         self.place_kind = None
         self._path_traffic.clear()
         self.player.reset(self.world.start_pos[0], self.world.start_pos[1])
+        self.discovered_cells = set()
+        self._reveal_around_player()
         self.camera.center_on(
             self.player.x, self.player.y, self.world.cols, self.world.rows
         )
@@ -1772,8 +1777,14 @@ class Game:
         ):
             if not self.world.in_bounds(ix, iy):
                 return None
-            return ix, iy
-        return self._map_cell_from_pos_height(mx, my, fx, fy)
+            cell = (ix, iy)
+        else:
+            cell = self._map_cell_from_pos_height(mx, my, fx, fy)
+        if cell is None:
+            return None
+        if not self.height_edit_mode and not self.is_discovered(*cell):
+            return None
+        return cell
 
     @staticmethod
     def _point_in_convex_quad(
@@ -6086,6 +6097,7 @@ class Game:
         if not self.world.is_walkable(nx, ny):
             return
         note_cell_step(self.player, nx, ny)
+        self._reveal_around_player()
         interval = self._player_move_interval()
         self.player.move_cooldown = interval
         arm_cell_step_visual(self.player, interval)
@@ -6096,6 +6108,23 @@ class Game:
         )
         if follow_camera:
             self._ensure_player_in_view()
+
+    def _reveal_around_player(self) -> None:
+        """Permanently reveal the tunable circular radius around the player."""
+        radius = max(0, int(MAP_DISCOVERY_RADIUS))
+        radius_sq = radius * radius
+        px, py = self.player.x, self.player.y
+        before = len(self.discovered_cells)
+        for y in range(max(0, py - radius), min(self.world.rows, py + radius + 1)):
+            for x in range(max(0, px - radius), min(self.world.cols, px + radius + 1)):
+                if (x - px) ** 2 + (y - py) ** 2 <= radius_sq:
+                    self.discovered_cells.add((x, y))
+        if len(self.discovered_cells) != before and hasattr(self, "_forage_cell_index"):
+            self._invalidate_forage_index()
+
+    def is_discovered(self, x: int, y: int) -> bool:
+        """Whether map actors may know about and interact with a cell."""
+        return (x, y) in self.discovered_cells
 
     def _ensure_player_in_view(self, *, margin: float = 2.5) -> None:
         """Pan the camera when the player reaches the edge of the viewport."""
@@ -11339,6 +11368,8 @@ class Game:
     ) -> bool:
         """True if a sticky gather/plant target is still worth walking to."""
         x, y = pos
+        if not self.is_discovered(x, y):
+            return False
         cell = self.world.get_cell(x, y)
         if cell is None or not self.world.is_walkable(x, y):
             return False
@@ -12121,6 +12152,8 @@ class Game:
 
         def consider(x: int, y: int) -> None:
             if (x, y) in claimed:
+                return
+            if not self.is_discovered(x, y):
                 return
             cell = self.world.get_cell(x, y)
             if cell is None or cell.feature != FeatureType.TREE or cell.deposit <= 0:
@@ -13981,6 +14014,7 @@ class Game:
             if (
                 colony is not None
                 and colony.can_harvest()
+                and self.is_discovered(colony.x, colony.y)
                 and self._within_work_search(
                     (villager.x, villager.y), (colony.x, colony.y)
                 )
@@ -14024,7 +14058,7 @@ class Game:
         if villager.hunt_animal_id is not None:
             for animal in self.wildlife.animals:
                 if animal.id == villager.hunt_animal_id:
-                    if self._within_work_search(
+                    if self.is_discovered(animal.x, animal.y) and self._within_work_search(
                         (villager.x, villager.y), (animal.x, animal.y)
                     ):
                         return animal
@@ -14284,7 +14318,8 @@ class Game:
         return [
             f
             for f in found
-            if self._within_work_search(origin, (f.x, f.y))
+            if self.is_discovered(f.x, f.y)
+            and self._within_work_search(origin, (f.x, f.y))
         ]
 
     def _fish_deposit_available(
@@ -14298,6 +14333,8 @@ class Game:
                     continue
                 for x, y in area.cells():
                     if (x, y) in claimed:
+                        continue
+                    if not self.is_discovered(x, y):
                         continue
                     cell = self.world.get_cell(x, y)
                     if cell is not None and cell.fish_deposit > 0:
@@ -14314,6 +14351,8 @@ class Game:
         for y in range(self.world.rows):
             for x in range(self.world.cols):
                 if (x, y) in claimed:
+                    continue
+                if not self.is_discovered(x, y):
                     continue
                 if self.world.cells[y][x].fish_deposit > 0:
                     return True
@@ -15296,6 +15335,8 @@ class Game:
         by_dist: dict[int, list] = {}
         for item in candidates:
             px, py = pos_fn(item)
+            if not self.is_discovered(px, py):
+                continue
             d = abs(px - ox) + abs(py - oy)
             if d > r_max:
                 continue
@@ -15531,6 +15572,8 @@ class Game:
                     continue
                 if exclude_cells and (x, y) in exclude_cells:
                     continue
+                if not self.is_discovered(x, y):
+                    continue
                 cell = row[x]
                 if is_water_terrain(cell.terrain):
                     continue
@@ -15582,6 +15625,8 @@ class Game:
         ]
 
         def cell_ok(x: int, y: int) -> bool:
+            if not self.is_discovered(x, y):
+                return False
             cell = self.world.get_cell(x, y)
             if cell is None or not self.world.is_walkable(x, y):
                 return False
@@ -15627,6 +15672,8 @@ class Game:
 
         def consider(x: int, y: int) -> None:
             if exclude_cells and (x, y) in exclude_cells:
+                return
+            if not self.is_discovered(x, y):
                 return
             cell = self.world.get_cell(x, y)
             if cell is None or not self.world.is_walkable(x, y):
@@ -15701,6 +15748,8 @@ class Game:
 
         def consider_cell(x: int, y: int) -> None:
             if (x, y) in claimed:
+                return
+            if not self.is_discovered(x, y):
                 return
             cell = self.world.get_cell(x, y)
             if cell is None or not self.world.is_walkable(x, y):
@@ -15854,6 +15903,8 @@ class Game:
         for y in range(self.world.rows):
             row = cells[y]
             for x in range(self.world.cols):
+                if not self.is_discovered(x, y):
+                    continue
                 cell = row[x]
                 if is_water_terrain(cell.terrain):
                     continue
@@ -15891,6 +15942,8 @@ class Game:
                     can_plant_herb=can_plant_herb,
                 ):
                     continue
+                if not self.is_discovered(x, y):
+                    continue
                 d = abs(x - ox) + abs(y - oy)
                 if d < best_d:
                     best_d = d
@@ -15921,6 +15974,8 @@ class Game:
                     if not (0 <= x < cols and 0 <= y < rows):
                         continue
                     if exclude_cells and (x, y) in exclude_cells:
+                        continue
+                    if not self.is_discovered(x, y):
                         continue
                     cell = cells[y][x]
                     if is_water_terrain(cell.terrain):
@@ -16059,6 +16114,8 @@ class Game:
         self, villager: Villager, building: Building, pos: tuple[int, int]
     ) -> None:
         x, y = pos
+        if not self.is_discovered(x, y):
+            return
         cell = self.world.get_cell(x, y)
         if cell is None:
             return
@@ -16676,11 +16733,12 @@ class Game:
         self._draw_fish()
         self._draw_villagers()
         self._draw_arrow_shots()
-        self._draw_player()
         self._draw_rain_effect()
-        self._draw_player_status_hud()
         self._draw_overlay_hud()
         self._draw_selection_highlights()
+        self._draw_map_shroud()
+        self._draw_player()
+        self._draw_player_status_hud()
         self._draw_minimap()
         self._draw_autotile_diag_overlay()
         mouse = pygame.mouse.get_pos()
@@ -18025,6 +18083,25 @@ class Game:
         oy = dest[1] - int(round((sy - src.y) * zoom))
         self.screen.blit(scaled, (ox, oy), special_flags=special_flags)
 
+    def _draw_map_shroud(self) -> None:
+        """Cover undiscovered terrain using the same height-warped cell quads."""
+        map_clip = pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())
+        old_clip = self.screen.get_clip()
+        self.screen.set_clip(map_clip)
+        x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
+        height_halo = 1
+        if self.height_sample_enabled and self.height_sample is not None:
+            lift_px = max(0.0, float(self.height_sample.max_height)) * HEIGHT_LIFT_PX
+            height_halo += int(math.ceil(lift_px / max(1.0, self.camera.view_cell())))
+        shroud_colour = (10, 12, 16)
+        for y in range(max(0, y0 - 1), min(self.world.rows, y1 + height_halo + 1)):
+            for x in range(max(0, x0 - 1), min(self.world.cols, x1 + 2)):
+                if not self.is_discovered(x, y):
+                    pygame.draw.polygon(
+                        self.screen, shroud_colour, self._cell_quad_points(x, y)
+                    )
+        self.screen.set_clip(old_clip)
+
     def _draw_world(self) -> None:
         """Draw tiled terrain under camera, then features for visible cells."""
         day = float(self.calendar_day) + (1.0 - self.day_tick / self.ticks_per_day)
@@ -19283,6 +19360,20 @@ class Game:
 
         self.screen.blit(self._minimap_terrain, minimap_rect.topleft)
 
+        # Apply discovery after the cached terrain so exploration changes do not
+        # force a costly minimap terrain rebuild.
+        for wy in range(0, self.world.rows, sample_step):
+            for wx in range(0, self.world.cols, sample_step):
+                if self.is_discovered(wx, wy):
+                    continue
+                mini_x = minimap_rect.x + int(wx * MINIMAP_WIDTH / self.world.cols)
+                mini_y = minimap_rect.y + int(wy * MINIMAP_HEIGHT / self.world.rows)
+                pixel_w = max(1, int(sample_step * MINIMAP_WIDTH / self.world.cols))
+                pixel_h = max(1, int(sample_step * MINIMAP_HEIGHT / self.world.rows))
+                self.screen.fill(
+                    (10, 12, 16), pygame.Rect(mini_x, mini_y, pixel_w, pixel_h)
+                )
+
         from settings import (
             COLOUR_CRAFT_BENCH,
             COLOUR_ALCHEMIST,
@@ -19322,6 +19413,8 @@ class Game:
         }
         for building in self.buildings.values():
             cx, cy = building.center_cell()
+            if not self.is_discovered(cx, cy):
+                continue
             mini_x = minimap_rect.x + int(cx * MINIMAP_WIDTH / self.world.cols)
             mini_y = minimap_rect.y + int(cy * MINIMAP_HEIGHT / self.world.rows)
             colour = colour_map.get(building.kind, (200, 200, 200))

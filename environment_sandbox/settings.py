@@ -388,6 +388,9 @@ FARM_FIELD_RADIUS: int = 20
 STARTING_WOOD: int = 2  # processed wood (not logs)
 STARTING_ROCK: int = 2
 STARTING_TWINE: int = 5
+
+# Permanent circular exploration reveal around the player's current cell.
+MAP_DISCOVERY_RADIUS: int = 8
 STARTING_VILLAGERS: int = 3
 # Fresh game boots from this save (terrain / height / wildlife), then strips
 # to storehouse-only + starting villagers.
