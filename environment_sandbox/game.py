@@ -557,6 +557,7 @@ class Game:
         self.overlay_values: list[list[float]] = build_overlay_grid(self.world, self.overlay_mode)
         # Cyclic env layers (8×/year): biodiversity → pest-control modifiers.
         self.env_maps = EnvMaps.blank(self.world.rows, self.world.cols)
+        self.world.env_maps = self.env_maps
         self.weather = WeatherState(seed=self.world.seed ^ 0x51A7)
         self.rain_effect = RainEffect(self.world.seed)
         # Compat aliases used by overlay draw / older diagnostics.

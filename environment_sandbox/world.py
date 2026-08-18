@@ -71,6 +71,13 @@ from wild_species import (
     spawn_group_leader,
     species_despawn_rate,
     species_spawn_rate,
+    species_environment_suitability,
+    environment_allows_establishment,
+    environmental_mortality_rate,
+    normalize_temperature_c,
+    WILD_PROPAGULE_NEIGHBOUR_BONUS,
+    WILD_PROPAGULE_MAX_MULTIPLIER,
+    format_environment_debug,
     wild_crops_by_terrain,
 )
 from settings import (
@@ -367,6 +374,8 @@ class World:
     """Grid landscape with generation and local queries."""
 
     def __init__(self, cols: int | None = None, rows: int | None = None, seed: int = RANDOM_SEED) -> None:
+        # Bound by Game after EnvMaps construction; worlds remain usable standalone.
+        self.env_maps = None
         # Resolve at construction time so configure_for_display() can resize the grid.
         import settings as cfg
 
@@ -1307,6 +1316,77 @@ class World:
                 return True
         return False
 
+    def species_suitability_at(self, x: int, y: int, species):
+        """Evaluate a species from authoritative cached grids and live cell state."""
+        cell = self.get_cell(x, y)
+        maps = self.env_maps
+        if cell is None or maps is None:
+            return species_environment_suitability(
+                species, temperature=.5, rainfall=.5, soil_moisture=.5,
+                fertility=float(getattr(cell, "fertility", .5)) if cell else .5,
+                disturbance=effective_disturbance_at(self, x, y),
+            )
+        def grid_value(grid, default):
+            return float(grid[y][x]) if 0 <= y < len(grid) and 0 <= x < len(grid[y]) else default
+        cached_disturbance = getattr(self, "_wild_tick_disturbance", None)
+        disturbance = (cached_disturbance[y][x] if cached_disturbance is not None
+                       else effective_disturbance_at(self, x, y))
+        return species_environment_suitability(
+            species,
+            temperature=normalize_temperature_c(grid_value(maps.temperature, 12.5)),
+            rainfall=max(0.0, min(1.0, grid_value(maps.rainfall, .5))),
+            soil_moisture=max(0.0, min(1.0, grid_value(maps.soil_moisture, .5))),
+            fertility=max(0.0, min(1.0, float(cell.fertility))),
+            disturbance=disturbance,
+        )
+
+    def _build_effective_disturbance_grid(self) -> list[list[float]]:
+        """Exact neighborhood means via a summed-area table for flora ticks."""
+        from balance_config import active_balance
+
+        radius = active_balance().get_int("DISTURBANCE_RADIUS")
+        if radius <= 0:
+            return [[max(0.0, min(1.0, float(cell.disturbance))) for cell in row]
+                    for row in self.cells]
+        sums = [[0.0] * (self.cols + 1) for _ in range(self.rows + 1)]
+        for y, row in enumerate(self.cells, 1):
+            running = 0.0
+            above = sums[y - 1]
+            current = sums[y]
+            for x, cell in enumerate(row, 1):
+                running += float(cell.disturbance)
+                current[x] = above[x] + running
+        out = [[0.0] * self.cols for _ in range(self.rows)]
+        for y in range(self.rows):
+            y0, y1 = max(0, y - radius), min(self.rows - 1, y + radius)
+            for x in range(self.cols):
+                x0, x1 = max(0, x - radius), min(self.cols - 1, x + radius)
+                total = sums[y1 + 1][x1 + 1] - sums[y0][x1 + 1] - sums[y1 + 1][x0] + sums[y0][x0]
+                out[y][x] = max(0.0, min(1.0, total / ((x1 - x0 + 1) * (y1 - y0 + 1))))
+        return out
+
+    def species_can_establish_at(self, x: int, y: int, species) -> bool:
+        return (self._species_can_occupy(x, y, species) and
+                environment_allows_establishment(species, self.species_suitability_at(x, y, species)))
+
+    def wild_species_debug_at(self, x: int, y: int, species, day: float) -> str:
+        """Developer-facing cell report suitable for an inspector or log."""
+        cell = self.get_cell(x, y)
+        maps = self.env_maps
+        def value(grid, default):
+            return float(grid[y][x]) if grid and 0 <= y < len(grid) and 0 <= x < len(grid[y]) else default
+        temp = normalize_temperature_c(value(getattr(maps, "temperature", None), 12.5))
+        rain = max(0.0, min(1.0, value(getattr(maps, "rainfall", None), .5)))
+        moisture = max(0.0, min(1.0, value(getattr(maps, "soil_moisture", None), .5)))
+        fertility = float(cell.fertility) if cell else .5
+        disturbance = effective_disturbance_at(self, x, y)
+        score = species_environment_suitability(species, temperature=temp, rainfall=rain,
+                                                soil_moisture=moisture, fertility=fertility,
+                                                disturbance=disturbance)
+        return format_environment_debug(species, score, temperature=temp, rainfall=rain,
+                                        soil_moisture=moisture, fertility=fertility,
+                                        disturbance=disturbance, day=local_day(day, x, y))
+
     def _seed_initial_reeds(self, rng: random.Random) -> None:
         """Place riparian plants from the wild-species catalogue."""
         riparian = sorted(
@@ -1933,20 +2013,43 @@ class World:
 
     def _tick_herbs_seasonal(self, day: float) -> None:
         """Wild crop patches on meadow / grass / soil by crop preference."""
+        self._wild_tick_disturbance = self._build_effective_disturbance_grid()
         wild_n: dict[TerrainType, int] = {}
         total_n: dict[TerrainType, int] = {}
-        terrains = tuple(WILD_CROPS_BY_TERRAIN.keys()) + (TerrainType.RIPARIAN,)
+        catalogue_terrains = {
+            TerrainType[name] for species in WILD_BY_KEY.values()
+            for name in species.terrains if name in TerrainType.__members__
+        }
+        terrains = tuple(set(WILD_CROPS_BY_TERRAIN.keys()) | catalogue_terrains)
+        # One map pass, rather than one full scan per catalogue terrain.
+        wild_features = (FeatureType.WILD_CROP, FeatureType.HERB,
+                         FeatureType.BERRY_BUSH, FeatureType.REED)
+        terrain_set = set(terrains)
         for terrain in terrains:
-            w, t = self._wild_plant_counts(terrain)
-            wild_n[terrain] = w
-            total_n[terrain] = t
+            wild_n[terrain] = 0
+            total_n[terrain] = 0
+        for row in self.cells:
+            for cell in row:
+                if cell.terrain not in terrain_set:
+                    continue
+                total_n[cell.terrain] += 1
+                if cell.feature in wild_features:
+                    wild_n[cell.terrain] += 1
 
         herb_leader = spawn_group_leader("wild_crop")
         herb_activity = float(herb_leader.spawn_activity) if herb_leader else 0.55
-        riparian_species = sorted(
-            non_crop_on_terrain("RIPARIAN"),
-            key=lambda s: (0 if s.edge_terrains else 1, s.key),
-        )
+        non_crop_species = {
+            terrain: sorted(non_crop_on_terrain(terrain.name),
+                            key=lambda s: (0 if s.edge_terrains else 1, s.key))
+            for terrain in terrains
+        }
+        non_crop_peak = {
+            terrain: max((species.spawn_peak * species.spawn_activity
+                          for species in species_list), default=0.0)
+            for terrain, species_list in non_crop_species.items()
+        }
+        crop_peak = (float(herb_leader.spawn_peak) * herb_activity
+                     if herb_leader is not None else 0.0)
 
         def room(terrain: TerrainType) -> bool:
             tot = total_n.get(terrain, 0)
@@ -1964,6 +2067,9 @@ class World:
                         if species is not None
                         else 0.0
                     )
+                    if species is not None:
+                        rate = min(1.0, rate + environmental_mortality_rate(
+                            self.species_suitability_at(x, y, species).combined) / 8.0)
                     if self._forage_rng.random() < rate:
                         terrain = cell.terrain
                         cell.feature = FeatureType.NONE
@@ -1972,6 +2078,8 @@ class World:
                         cell.crop_kind = None
                         if terrain in wild_n:
                             wild_n[terrain] = max(0, wild_n[terrain] - 1)
+                    elif species is not None:
+                        self._try_wild_species_spread(x, y, species, wild_n, total_n)
                 elif cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP):
                     if self._forage_rng.random() < herb_despawn_rate(day, x, y):
                         terrain = cell.terrain
@@ -1981,49 +2089,96 @@ class World:
                         cell.crop_kind = None
                         if terrain in wild_n:
                             wild_n[terrain] = max(0, wild_n[terrain] - 1)
+                    elif cell.feature == FeatureType.HERB:
+                        species = resolve_species("HERB", cell.crop_kind)
+                        if species is not None:
+                            self._try_wild_species_spread(x, y, species, wild_n, total_n)
                 elif (
                     cell.feature == FeatureType.NONE
-                    and cell.terrain == TerrainType.RIPARIAN
-                    and room(TerrainType.RIPARIAN)
+                    and cell.terrain in non_crop_species
+                    and room(cell.terrain)
+                    and self._forage_rng.random() < non_crop_peak[cell.terrain]
                 ):
-                    for species in riparian_species:
-                        if species.spawn_peak <= 0:
-                            continue
-                        if not self._species_can_occupy(x, y, species):
-                            continue
-                        chance = (
-                            species_spawn_rate(species, local_day(day, x, y))
-                            * species.spawn_activity
-                            * disturbance_activity_multiplier(
-                                effective_disturbance_at(self, x, y)
-                            )
-                        )
-                        if self._forage_rng.random() < chance:
+                    local = local_day(day, x, y)
+                    opportunities = [
+                        (species, species_spawn_rate(species, local) * species.spawn_activity)
+                        for species in non_crop_species[cell.terrain]
+                        if species.spawn_peak > 0
+                    ]
+                    # These species share one empty-tile establishment opportunity;
+                    # adding every chance made four flowers quadruple tick work and
+                    # drove the terrain straight to its cap.
+                    total_opportunity = sum(chance for _, chance in opportunities)
+                    roll_chance = max((chance for _, chance in opportunities), default=0.0)
+                    peak = non_crop_peak[cell.terrain]
+                    if (opportunities and peak > 0
+                            and self._forage_rng.random() < roll_chance / peak):
+                        pick = self._forage_rng.random() * total_opportunity
+                        species = opportunities[-1][0]
+                        for candidate, chance in opportunities:
+                            pick -= chance
+                            if pick <= 0:
+                                species = candidate
+                                break
+                        if self._species_can_occupy(x, y, species):
+                            suitability = self.species_suitability_at(x, y, species)
+                            if not environment_allows_establishment(species, suitability):
+                                continue
+                            if self._forage_rng.random() >= suitability.combined:
+                                continue
                             try:
                                 cell.feature = FeatureType[species.feature]
                             except KeyError:
-                                continue
-                            cell.crop_kind = species.key
-                            wild_n[TerrainType.RIPARIAN] = (
-                                wild_n.get(TerrainType.RIPARIAN, 0) + 1
-                            )
-                            break
-                elif (
+                                pass
+                            else:
+                                cell.crop_kind = species.key
+                                wild_n[cell.terrain] = wild_n.get(cell.terrain, 0) + 1
+                if (
                     cell.feature == FeatureType.NONE
                     and cell.terrain in WILD_CROPS_BY_TERRAIN
                     and room(cell.terrain)
-                    and self._forage_rng.random()
-                    < herb_spawn_rate(day, x, y)
-                    * herb_activity
-                    * disturbance_activity_multiplier(
-                        effective_disturbance_at(self, x, y)
-                    )
+                    and crop_peak > 0
+                    and self._forage_rng.random() < crop_peak
                 ):
-                    crops = WILD_CROPS_BY_TERRAIN[cell.terrain]
-                    crop_key = self._forage_rng.choice(crops)
-                    self._plant_wild_crop_patch(
-                        x, y, crop_key, wild_n=wild_n, total_n=total_n
-                    )
+                    base_chance = herb_spawn_rate(day, x, y) * herb_activity
+                    if self._forage_rng.random() < base_chance / crop_peak:
+                        crop_key = self._forage_rng.choice(WILD_CROPS_BY_TERRAIN[cell.terrain])
+                        species = WILD_BY_KEY[crop_key]
+                        score = self.species_suitability_at(x, y, species)
+                        if (environment_allows_establishment(species, score)
+                                and self._forage_rng.random() < score.combined):
+                            self._plant_wild_crop_patch(
+                                x, y, crop_key, wild_n=wild_n, total_n=total_n,
+                                environment_checked=True,
+                            )
+        self._wild_tick_disturbance = None
+
+    def _try_wild_species_spread(self, x, y, species, wild_n, total_n) -> bool:
+        """One modest propagule attempt; establishment is scored at the target."""
+        if species.spread_chance <= 0:
+            return False
+        targets = [(nx, ny) for ny, nx in self.neighbourhood(x, y, radius=1)
+                   if (nx, ny) != (x, y) and self.cells[ny][nx].feature == FeatureType.NONE]
+        if not targets:
+            return False
+        nx, ny = self._forage_rng.choice(targets)
+        target = self.cells[ny][nx]
+        if not self._wild_plant_room(target.terrain, wild_n=wild_n, total_n=total_n):
+            return False
+        if not self.species_can_establish_at(nx, ny, species):
+            return False
+        neighbours = sum(1 for ay, ax in self.neighbourhood(nx, ny, radius=1)
+                         if self.cells[ay][ax].crop_kind == species.key)
+        pressure = min(WILD_PROPAGULE_MAX_MULTIPLIER,
+                       1.0 + neighbours * WILD_PROPAGULE_NEIGHBOUR_BONUS)
+        suitability = self.species_suitability_at(nx, ny, species).combined
+        if self._forage_rng.random() >= species.spread_chance * suitability * pressure:
+            return False
+        target.feature = FeatureType[species.feature]
+        target.crop_kind = species.key
+        target.deposit = 0
+        wild_n[target.terrain] = wild_n.get(target.terrain, 0) + 1
+        return True
 
     def _plant_wild_crop_patch(
         self,
@@ -2033,9 +2188,11 @@ class World:
         *,
         wild_n: dict[TerrainType, int] | None = None,
         total_n: dict[TerrainType, int] | None = None,
+        environment_checked: bool = False,
     ) -> None:
         """Place a small contiguous wild-crop patch centred near (x, y)."""
-        if not self.plant_wild_crop(x, y, crop_key, wild_n=wild_n, total_n=total_n):
+        if not self.plant_wild_crop(x, y, crop_key, wild_n=wild_n, total_n=total_n,
+                                    environment_checked=environment_checked):
             return
         species = WILD_BY_KEY.get(crop_key) or spawn_group_leader("wild_crop")
         lo, hi = (1, 4) if species is None else species.patch_extras
@@ -2111,13 +2268,12 @@ class World:
                 if (
                     cell.feature == FeatureType.NONE
                     and cell.terrain in mush_terrains
+                    and self.species_can_establish_at(nx, ny, mushroom)
                     and self._forage_rng.random()
                     < MUSHROOM_SPREAD_CHANCE
                     * mushroom_spawn_rate(day, nx, ny)
                     * 20.0
-                    * disturbance_activity_multiplier(
-                        effective_disturbance_at(self, nx, ny)
-                    )
+                    * self.species_suitability_at(nx, ny, mushroom).combined
                 ):
                     cell.feature = FeatureType.MUSHROOM
                     cell.crop_kind = mushroom.key
@@ -2133,11 +2289,10 @@ class World:
                     if (
                         cell.feature == FeatureType.NONE
                         and cell.terrain in mush_terrains
+                        and self.species_can_establish_at(nx, ny, mushroom)
                         and self._forage_rng.random()
                         < mushroom_spawn_rate(day, nx, ny)
-                        * disturbance_activity_multiplier(
-                            effective_disturbance_at(self, nx, ny)
-                        )
+                        * self.species_suitability_at(nx, ny, mushroom).combined
                     ):
                         cell.feature = FeatureType.MUSHROOM
                         cell.crop_kind = mushroom.key
@@ -2284,6 +2439,7 @@ class World:
         *,
         wild_n: dict[TerrainType, int] | None = None,
         total_n: dict[TerrainType, int] | None = None,
+        environment_checked: bool = False,
     ) -> bool:
         cell = self.get_cell(x, y)
         if cell is None or cell.feature != FeatureType.NONE:
@@ -2295,6 +2451,13 @@ class World:
             crop_key = allowed[0]
         if crop_key not in allowed:
             return False
+        species = WILD_BY_KEY.get(crop_key)
+        if species is not None and not environment_checked:
+            if not self._species_can_occupy(x, y, species):
+                return False
+            suitability = self.species_suitability_at(x, y, species)
+            if not environment_allows_establishment(species, suitability):
+                return False
         if not self._wild_plant_room(cell.terrain, wild_n=wild_n, total_n=total_n):
             return False
         cell.feature = FeatureType.WILD_CROP
