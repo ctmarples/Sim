@@ -154,11 +154,15 @@ class Toolbar:
             self._make_btn(
                 "file_balance", "Balance…", 8, TOOLBAR_HEIGHT + 82, 110, 24, "menu"
             ),
-            self._make_btn("file_reset", "Reset", 8, TOOLBAR_HEIGHT + 108, 110, 24, "menu"),
-            self._make_btn("day_slower", "Shorter day", 8, TOOLBAR_HEIGHT + 134, 110, 24, "menu"),
-            self._make_btn("day_faster", "Longer day", 8, TOOLBAR_HEIGHT + 160, 110, 24, "menu"),
-            self._make_btn("file_time_demo", "Time demo…", 8, TOOLBAR_HEIGHT + 186, 110, 24, "menu"),
-            self._make_btn("file_quit", "Quit", 8, TOOLBAR_HEIGHT + 212, 110, 24, "menu"),
+            self._make_btn(
+                "file_map_generator", "Map generator…", 8, TOOLBAR_HEIGHT + 108,
+                110, 24, "menu",
+            ),
+            self._make_btn("file_reset", "Reset", 8, TOOLBAR_HEIGHT + 134, 110, 24, "menu"),
+            self._make_btn("day_slower", "Shorter day", 8, TOOLBAR_HEIGHT + 160, 110, 24, "menu"),
+            self._make_btn("day_faster", "Longer day", 8, TOOLBAR_HEIGHT + 186, 110, 24, "menu"),
+            self._make_btn("file_time_demo", "Time demo…", 8, TOOLBAR_HEIGHT + 212, 110, 24, "menu"),
+            self._make_btn("file_quit", "Quit", 8, TOOLBAR_HEIGHT + 238, 110, 24, "menu"),
         ]
 
     def task_buttons_for(
@@ -258,8 +262,10 @@ class Toolbar:
         if my < TOOLBAR_HEIGHT:
             return True
         if self.file_menu_open:
-            menu_h = 7 * 26 + 8
-            if 8 <= pos[0] <= 112 and TOOLBAR_HEIGHT <= my <= TOOLBAR_HEIGHT + menu_h:
+            menu_rect = pygame.Rect(
+                6, TOOLBAR_HEIGHT - 2, 114, len(self._menu_buttons) * 26 + 10
+            )
+            if menu_rect.collidepoint(pos):
                 return True
         return False
 
@@ -331,7 +337,9 @@ class Toolbar:
                 surface.blit(text, (left - text.get_width(), 10))
 
         if self.file_menu_open:
-            menu_rect = pygame.Rect(6, TOOLBAR_HEIGHT - 2, 108, 9 * 26 + 10)
+            menu_rect = pygame.Rect(
+                6, TOOLBAR_HEIGHT - 2, 114, len(self._menu_buttons) * 26 + 10
+            )
             pygame.draw.rect(surface, COLOUR_MENU_BG, menu_rect)
             pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, menu_rect, 1)
             for btn in self._menu_buttons:

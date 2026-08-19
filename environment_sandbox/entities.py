@@ -314,7 +314,9 @@ def default_building_plot(kind: BuildingKind) -> tuple[int, int]:
     if kind == BuildingKind.HOUSE:
         return 2, 2
     n = max(1, int(BUILDING_FOOTPRINT))
-    return n, n
+    # Main building art remains three cells tall, but its occupied ground is
+    # shallower so the roof may overhang slightly to the north.
+    return n, max(1, n - 1)
 
 
 def default_building_storage(kind: BuildingKind) -> BuildingStorageSpec:

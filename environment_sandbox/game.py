@@ -228,6 +228,7 @@ from settings import (
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
     WORLD_COLS,
+    WORLD_ROWS,
     ZOOM_STEP,
     MAP_OFFSET_Y,
     map_view_height,
@@ -579,7 +580,35 @@ class Game:
         self._drop_rng = random.Random(42)
         self._food_rng = random.Random(99)
 
-        self._boot_game()
+        # Live games begin at a native launch menu. Headless diagnostics retain
+        # the historical automatic boot so existing simulations stay unattended.
+        self._launch_menu: str | None = None if headless else "main"
+        self._launch_map_files: list[Path] = []
+        self._launch_gen = {
+            "composition": "valley",
+            "climate": "temperate",
+            "seed": random.randrange(1, 999999999),
+            "temperature": .5,
+            "rainfall": .55,
+            "roughness": .5,
+            "water": .12,
+            "grass": .27,
+            "meadow": .16,
+            "soil": .16,
+            "forest": .21,
+            "rock": .08,
+            "large_game": .75,
+            "small_game": .75,
+            "predators": .55,
+            "fish": .70,
+            "starting_villagers": 3,
+            "lake": True,
+            "river": True,
+        }
+        self._launch_preview = None
+        self._launch_slider_drag: str | None = None
+        if headless:
+            self._boot_game()
         if not getattr(self, "status_message", None):
             self.status_message = (
                 "Valley ready. Build a Forager first — hover build icons for costs. "
@@ -823,6 +852,292 @@ class Game:
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
+    def _launch_buttons(self) -> list[tuple[pygame.Rect, str, str]]:
+        """Buttons for the startup overlay: (rectangle, action, label)."""
+        panel = self._launch_panel()
+        x, w, h = panel.x + 70, panel.w - 140, 42
+        if self._launch_menu == "main":
+            return [
+                (pygame.Rect(x, panel.y + 145, w, h), "new", "New game"),
+                (pygame.Rect(x, panel.y + 199, w, h), "load", "Load game"),
+                (pygame.Rect(x, panel.y + 253, w, h), "quit", "Quit"),
+            ]
+        if self._launch_menu == "new":
+            return [
+                (pygame.Rect(x, panel.y + 125, w, h), "default", "Default valley"),
+                (pygame.Rect(x, panel.y + 179, w, h), "maps", "Choose existing map"),
+                (pygame.Rect(x, panel.y + 233, w, h), "generate", "Generate new map"),
+                (pygame.Rect(x, panel.y + 307, w, h), "back", "Back"),
+            ]
+        if self._launch_menu == "maps":
+            buttons: list[tuple[pygame.Rect, str, str]] = []
+            for index, path in enumerate(self._launch_map_files[:6]):
+                buttons.append(
+                    (pygame.Rect(x, panel.y + 92 + index * 43, w, 36), f"map:{index}", path.stem)
+                )
+            buttons.extend(
+                [
+                    (pygame.Rect(x, panel.bottom - 92, (w - 10) // 2, 36), "refresh", "Refresh"),
+                    (pygame.Rect(x + (w + 10) // 2, panel.bottom - 92, (w - 10) // 2, 36), "back_new", "Back"),
+                ]
+            )
+            return buttons
+        if self._launch_menu == "generator":
+            return [
+                (pygame.Rect(panel.x + 35, panel.y + 92, 195, 36), "cycle_composition", ""),
+                (pygame.Rect(panel.x + 242, panel.y + 92, 195, 36), "cycle_climate", ""),
+                (pygame.Rect(panel.x + 449, panel.y + 92, 215, 36), "random_seed", ""),
+                (pygame.Rect(panel.x + 382, panel.y + 432, 125, 34), "toggle_lake", ""),
+                (pygame.Rect(panel.x + 520, panel.y + 432, 125, 34), "toggle_river", ""),
+                (pygame.Rect(panel.x + 180, panel.bottom - 58, 170, 40), "preview_map", "Generate preview"),
+                (pygame.Rect(panel.x + 365, panel.bottom - 58, 150, 40), "back_new", "Back"),
+            ]
+        if self._launch_menu == "preview":
+            return [
+                (pygame.Rect(panel.x + 105, panel.bottom - 58, 150, 40), "regenerate", "Regenerate"),
+                (pygame.Rect(panel.x + 270, panel.bottom - 58, 150, 40), "accept_map", "Accept & start"),
+                (pygame.Rect(panel.x + 435, panel.bottom - 58, 150, 40), "edit_generator", "Edit options"),
+            ]
+        return []
+
+    def _launch_panel(self) -> pygame.Rect:
+        if self._launch_menu in ("generator", "preview"):
+            w, h = min(700, WINDOW_WIDTH - 30), min(620, WINDOW_HEIGHT - 30)
+        else:
+            w, h = min(520, WINDOW_WIDTH - 30), min(460, WINDOW_HEIGHT - 30)
+        return pygame.Rect((WINDOW_WIDTH - w) // 2, (WINDOW_HEIGHT - h) // 2, w, h)
+
+    def _launch_slider_rects(self) -> dict[str, pygame.Rect]:
+        if self._launch_menu != "generator":
+            return {}
+        panel = self._launch_panel()
+        left = ("temperature", "rainfall", "roughness", "water", "grass", "meadow", "soil", "forest", "rock")
+        right = ("large_game", "small_game", "predators", "fish", "starting_villagers")
+        result = {}
+        for index, key in enumerate(left):
+            result[key] = pygame.Rect(panel.x + 145, panel.y + 166 + index * 38, 185, 12)
+        for index, key in enumerate(right):
+            result[key] = pygame.Rect(panel.x + 480, panel.y + 166 + index * 52, 155, 12)
+        return result
+
+    @staticmethod
+    def _generated_map_paths():
+        from pathlib import Path
+
+        folder = Path(__file__).resolve().parent / "generated_maps"
+        if not folder.is_dir():
+            return []
+        return sorted(folder.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+
+    def _handle_launch_event(self, event: pygame.event.Event) -> None:
+        if self.file_dialog.open:
+            if event.type == pygame.KEYDOWN:
+                self.file_dialog.handle_keydown(event)
+                self._finish_file_dialog_if_needed()
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                self.file_dialog.handle_click(event.pos)
+                self._finish_file_dialog_if_needed()
+            elif event.type == pygame.MOUSEWHEEL:
+                self.file_dialog.handle_mousewheel(event.y)
+            return
+        if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            self._launch_slider_drag = None
+            return
+        if event.type == pygame.MOUSEMOTION and self._launch_slider_drag:
+            self._set_launch_slider(self._launch_slider_drag, event.pos[0])
+            return
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            if self._launch_menu in ("new", "load"):
+                self._launch_menu = "main"
+            elif self._launch_menu in ("maps", "generator", "preview"):
+                self._launch_menu = "new"
+            return
+        if event.type != pygame.MOUSEBUTTONDOWN or event.button != 1:
+            return
+        for key, rect in self._launch_slider_rects().items():
+            hit = rect.inflate(0, 22)
+            if hit.collidepoint(event.pos):
+                self._launch_slider_drag = key
+                self._set_launch_slider(key, event.pos[0])
+                return
+        action = next(
+            (action for rect, action, _label in self._launch_buttons() if rect.collidepoint(event.pos)),
+            None,
+        )
+        if action == "new":
+            self._launch_menu = "new"
+        elif action == "load":
+            self._launch_menu = "load"
+            self._pending_file_action = "launch_load"
+            self.file_dialog.open_load()
+        elif action == "quit":
+            self.running = False
+        elif action == "default":
+            self._begin_new_game()
+        elif action == "maps":
+            self._launch_map_files = self._generated_map_paths()
+            self._launch_menu = "maps"
+        elif action == "generate":
+            self._launch_menu = "generator"
+        elif action == "refresh":
+            self._launch_map_files = self._generated_map_paths()
+        elif action in ("back",):
+            self._launch_menu = "main"
+        elif action == "back_new":
+            self._launch_menu = "new"
+        elif action == "cycle_composition":
+            values = ("valley", "plains", "highlands", "archipelago")
+            current = self._launch_gen["composition"]
+            self._launch_gen["composition"] = values[(values.index(current) + 1) % len(values)]
+        elif action == "cycle_climate":
+            values = ("temperate", "arid", "tropical", "cold", "continental")
+            current = self._launch_gen["climate"]
+            self._launch_gen["climate"] = values[(values.index(current) + 1) % len(values)]
+        elif action == "random_seed":
+            self._launch_gen["seed"] = random.randrange(1, 999999999)
+        elif action == "toggle_lake":
+            self._launch_gen["lake"] = not self._launch_gen["lake"]
+        elif action == "toggle_river":
+            self._launch_gen["river"] = not self._launch_gen["river"]
+        elif action in ("preview_map", "regenerate"):
+            self._generate_launch_preview(randomise=action == "regenerate")
+        elif action == "edit_generator":
+            self._launch_menu = "generator"
+        elif action == "accept_map" and self._launch_preview is not None:
+            self._begin_new_game(generated=self._launch_preview)
+        elif action and action.startswith("map:"):
+            index = int(action.partition(":")[2])
+            if 0 <= index < len(self._launch_map_files):
+                self._begin_new_game(self._launch_map_files[index])
+
+    def _set_launch_slider(self, key: str, mouse_x: int) -> None:
+        rect = self._launch_slider_rects().get(key)
+        if rect is None:
+            return
+        fraction = max(0.0, min(1.0, (mouse_x - rect.x) / rect.w))
+        if key == "starting_villagers":
+            self._launch_gen[key] = round(fraction * min(12, MAX_VILLAGERS))
+        else:
+            self._launch_gen[key] = fraction
+
+    def _begin_new_game(self, map_path=None, *, generated=None) -> None:
+        """Initialize a clean playable game from the default or an exported map."""
+        from world import World
+
+        if map_path is None and generated is None:
+            world = World()
+            label = "default valley"
+        else:
+            from random_map_generator import GeneratedMap
+
+            try:
+                if generated is None:
+                    generated = GeneratedMap.load(map_path)
+                world = World(
+                    cols=generated.options.width,
+                    rows=generated.options.height,
+                    seed=generated.options.seed,
+                )
+                generated.apply_to_world(world)
+            except Exception as exc:
+                self._set_status(f"Could not open map: {exc}")
+                return
+            label = map_path.stem if map_path is not None else "generated map"
+        self.world = world
+        self.buildings.clear()
+        self.construction_sites.clear()
+        self.villagers.clear()
+        self.communities.clear()
+        self.hire_candidates.clear()
+        self.next_villager_id = self.next_building_id = self.next_construction_id = 1
+        self.home_storage.reset()
+        self.regional_wealth = 0
+        self.calendar_day = 0
+        self.day_tick = self.ticks_per_day
+        self.player.reset(world.start_pos[0], world.start_pos[1])
+        self.discovered_cells = set()
+        self._give_starting_resources()
+        self._ensure_core_buildings()
+        self._spawn_starting_villagers(int(self._launch_gen["starting_villagers"]))
+        self._reveal_around_player()
+        self.env_maps.resize(world.rows, world.cols)
+        world.env_maps = self.env_maps
+        self.weather = WeatherState(seed=world.seed ^ 0x51A7)
+        self.rain_effect.reset_seed(world.seed)
+        self.height_sample = generate_height_sample(
+            world.cols, world.rows, seed=world.seed, corners=world.height_corners
+        )
+        self.wildlife = WildlifeManager()
+        self.fish = FishManager()
+        self.wildlife.refresh_habitats(world)
+        self.wildlife.seed_breeding_grounds(world)
+        self._apply_launch_wildlife_density()
+        self.camera.center_on(self.player.x, self.player.y, world.cols, world.rows)
+        self._clear_selection()
+        self._seed_map_communities()
+        self._invalidate_height_sample_cache()
+        self._invalidate_terrain_layer()
+        self._invalidate_forage_index()
+        self._bake_erosion()
+        self._sample_environment()
+        self._refresh_indicators()
+        self._last_save_path = None
+        self._loaded_save_name = None
+        self._launch_menu = None
+        self._set_status(f"New game started on {label}.")
+
+    def _apply_launch_wildlife_density(self) -> None:
+        """Scale freshly seeded populations using accepted generator settings."""
+        def keep_fraction(items, fraction):
+            items = list(items)
+            rng = random.Random(self.world.seed ^ len(items) ^ 0x57494C44)
+            rng.shuffle(items)
+            return items[:round(len(items) * float(fraction))]
+
+        large = {AnimalKind.DEER, AnimalKind.BOAR}
+        large_animals = [a for a in self.wildlife.animals if a.kind in large]
+        small_animals = [a for a in self.wildlife.animals if a.kind not in large]
+        self.wildlife.animals = (
+            keep_fraction(large_animals, self._launch_gen["large_game"])
+            + keep_fraction(small_animals, self._launch_gen["small_game"])
+        )
+        self.wildlife.colonies = keep_fraction(
+            self.wildlife.colonies, self._launch_gen["small_game"]
+        )
+        self.wildlife.wolf_packs = keep_fraction(
+            self.wildlife.wolf_packs, self._launch_gen["predators"]
+        )
+        self.wildlife._index_animals()
+        target = round(self.fish.total_capacity(self.world) * float(self._launch_gen["fish"]))
+        for _ in range(target):
+            self.fish._update_population(self.world)
+        if len(self.fish.fish) > target:
+            self.fish.fish = self.fish.fish[:target]
+
+    def _generate_launch_preview(self, *, randomise: bool = False) -> None:
+        """Build terrain for inspection without populating or starting the game."""
+        from random_map_generator import MapOptions, generate_map
+
+        if randomise:
+            self._launch_gen["seed"] = random.randrange(1, 999999999)
+        climate = self._launch_gen["climate"]
+        options = MapOptions(
+            width=WORLD_COLS,
+            height=WORLD_ROWS,
+            seed=int(self._launch_gen["seed"]),
+            composition=self._launch_gen["composition"],
+            climate=climate,
+            temperature=float(self._launch_gen["temperature"]),
+            rainfall=float(self._launch_gen["rainfall"]),
+            roughness=float(self._launch_gen["roughness"]),
+            generate_lake=bool(self._launch_gen["lake"]),
+            generate_river=bool(self._launch_gen["river"]),
+            terrain_mix={key: float(self._launch_gen[key]) for key in
+                         ("water", "grass", "meadow", "soil", "forest", "rock")},
+        )
+        self._launch_preview = generate_map(options)
+        self._launch_menu = "preview"
+
     def run(self) -> None:
         pygame.key.set_repeat(180, 40)
         while self.running:
@@ -831,9 +1146,10 @@ class Game:
             self._sync_camera_height_overscan()
             # Sim first so cooldowns expire this frame; then arrows can step (matches time demo).
             # WASD pans after walk so edge-follow does not undo an active pan.
-            self._step_sim()
-            self._update_player_move_input(dt)
-            self._update_camera_input(dt)
+            if self._launch_menu is None:
+                self._step_sim()
+                self._update_player_move_input(dt)
+                self._update_camera_input(dt)
             self.camera.update(dt, self.world.cols, self.world.rows)
             self.rain_effect.update(dt, self.weather.intensity)
             self._update_status_timer()
@@ -843,7 +1159,8 @@ class Game:
 
     def _dialogs_block_world_input(self) -> bool:
         return (
-            self.file_dialog.open
+            self._launch_menu is not None
+            or self.file_dialog.open
             or self.number_input.open
             or self.field_plan_dialog.open
             or self.building_inspect.open
@@ -1140,6 +1457,9 @@ class Game:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
+            elif self._launch_menu is not None:
+                self._handle_launch_event(event)
+                continue
             elif (
                 self.management.open
                 # MOUSEBUTTONDOWN / MOUSEWHEEL are handled below so detail-pane
@@ -1535,8 +1855,12 @@ class Game:
         if self.file_dialog.open:
             return
         if self.file_dialog.cancelled:
+            was_launch = self._pending_file_action == "launch_load"
             self._pending_file_action = None
-            self._set_status("Cancelled.")
+            if was_launch:
+                self._launch_menu = "main"
+            else:
+                self._set_status("Cancelled.")
             return
         path = self.file_dialog.result_path
         if path is None:
@@ -1551,7 +1875,7 @@ class Game:
                 self._set_status(f"Saved to {path.name}")
             except Exception as exc:
                 self._set_status(f"Save failed: {exc}")
-        elif action == "load":
+        elif action in ("load", "launch_load"):
             try:
                 load_from_path(self, path)
                 self._last_save_path = path
@@ -1560,9 +1884,13 @@ class Game:
                 self._invalidate_forage_index()
                 self._minimap_terrain = None
                 self._minimap_terrain_key = None
+                if action == "launch_load":
+                    self._launch_menu = None
                 self._set_status(f"Loaded {path.name} (speed x{self.sim_speed})")
             except Exception as exc:
                 self._set_status(f"Load failed: {exc}")
+                if action == "launch_load":
+                    self._launch_menu = "main"
 
     def _quick_save(self) -> None:
         """Overwrite the last save path, else newest save, else quicksave.json."""
@@ -3763,6 +4091,24 @@ class Game:
         )
         self._set_status("Opened time demo window.")
 
+    def _open_map_generator(self) -> None:
+        """Open the random-map generator without blocking the simulation."""
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        script = Path(__file__).resolve().parent / "map_generator_tool.py"
+        try:
+            subprocess.Popen(
+                [sys.executable, str(script)],
+                cwd=str(script.parent),
+                start_new_session=True,
+            )
+        except OSError as exc:
+            self._set_status(f"Could not open map generator: {exc}")
+            return
+        self._set_status("Opened random map generator.")
+
     def _set_sim_speed(self, speed: int) -> None:
         if speed not in SIM_SPEEDS:
             return
@@ -4880,6 +5226,8 @@ class Game:
                     "DAY_SECONDS_AT_X1",
                     ticks_to_seconds(self.ticks_per_day, self._playback_ticks()),
                 )
+        elif action == "file_map_generator":
+            self._open_map_generator()
         elif action == "file_reset":
             self.reset()
         elif action == "file_time_demo":
@@ -6700,7 +7048,8 @@ class Game:
         need_txt = ", ".join(bits) if bits else "no materials"
         self._set_status(
             f"Construction site: {BUILDING_LABELS[kind]} "
-            f"(needs {need_txt}). Villagers will deliver & build."
+            f"(needs {need_txt}). Stand on the site and press E to deliver/build; "
+            "villagers can also help."
         )
         return True
 
@@ -7009,6 +7358,8 @@ class Game:
         labels = [requirement_label(k) for k in missing]
         if allow_pay:
             pay = season_pay_coins(missing)
+            if int(self.regional_wealth) < pay:
+                return False, f"Needs {pay} regional coins for the first season"
             return (
                 True,
                 f"unmet ({pay} coins/season): " + ", ".join(labels),
@@ -7137,13 +7488,17 @@ class Game:
             self._set_status("That traveller is no longer available.")
             return
         unmet = self._candidate_unmet_requirements(cand)
+        first_wage = season_pay_coins(unmet) if pay else 0
         ok, reason = self._hire_requirements_met(cand, allow_pay=pay)
         if not ok:
             due = season_pay_coins(unmet)
-            self._set_status(
-                f"Cannot hire {cand.name}: {reason} "
-                f"Use Pay to hire anyway ({due} coins/season while unmet)."
-            )
+            if pay:
+                self._set_status(f"Cannot pay to hire {cand.name}: {reason}.")
+            else:
+                self._set_status(
+                    f"Cannot hire {cand.name}: {reason} "
+                    f"Use Pay to hire anyway ({due} coins/season while unmet)."
+                )
             return
 
         wx, wy = self.world.workstation_pos
@@ -7180,9 +7535,11 @@ class Game:
         self._refresh_villager_season_pay(villager)
         note = ""
         if unmet and pay:
+            self.regional_wealth = int(self.regional_wealth) - first_wage
+            villager.coins_paid_total = int(villager.coins_paid_total) + first_wage
             note = (
-                f" Paying {villager.season_pay_due} coins/season "
-                "until requirements are met."
+                f" First season wage paid ({first_wage} coins); "
+                f"{villager.season_pay_due} coins/season until requirements are met."
             )
         house_note = "No bed yet. "
         if villager.housed and villager.housing_id is not None:
@@ -8919,7 +9276,9 @@ class Game:
             return False
         if self.sim_speed <= 0:
             return False
-        site.build_progress += 1
+        # Progress is measured in simulation ticks; one completed player work
+        # action contributes the interval that just elapsed, not a single tick.
+        site.build_progress += self._player_work_interval()
         self._finish_player_work()
         if site.is_complete:
             label = BUILDING_LABELS[site.kind]
@@ -11715,7 +12074,9 @@ class Game:
                 villager.state = VillagerState.BUILDING
                 return
             villager.state = VillagerState.BUILDING
-            site.build_progress += 1
+            # Construction requirements are authored in simulation ticks.
+            # Credit one full villager work interval per completed action.
+            site.build_progress += self._villager_work_interval(villager)
             self._spend_work_energy(villager)
             self._gain_job_skill(villager, "BUILD")
             if site.is_complete:
@@ -16833,6 +17194,106 @@ class Game:
     # ------------------------------------------------------------------
     # Rendering
     # ------------------------------------------------------------------
+    def _draw_launch_menu(self) -> None:
+        if self._launch_menu is None:
+            return
+        shade = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+        shade.fill((9, 14, 18, 232))
+        self.screen.blit(shade, (0, 0))
+        panel = self._launch_panel()
+        pygame.draw.rect(self.screen, (35, 43, 47), panel, border_radius=10)
+        pygame.draw.rect(self.screen, COLOUR_TOOLBAR_BORDER, panel, 2, border_radius=10)
+        title_font = pygame.font.SysFont("menlo", 28, bold=True)
+        body_font = pygame.font.SysFont("menlo", 14)
+        button_font = pygame.font.SysFont("menlo", 15, bold=True)
+        title = "Environmental Farming Sandbox"
+        subtitle = {
+            "main": "Start or continue a settlement",
+            "new": "Choose a world for your new settlement",
+            "maps": "Generated maps",
+            "generator": "Configure a fresh random world",
+            "preview": "Inspect terrain before accepting",
+            "load": "Choose a saved game",
+        }.get(self._launch_menu, "")
+        title_surf = title_font.render(title, True, COLOUR_TEXT)
+        self.screen.blit(title_surf, (panel.centerx - title_surf.get_width() // 2, panel.y + 38))
+        sub_surf = body_font.render(subtitle, True, COLOUR_TEXT_DIM)
+        self.screen.blit(sub_surf, (panel.centerx - sub_surf.get_width() // 2, panel.y + 80))
+        if self._launch_menu == "maps" and not self._launch_map_files:
+            empty = body_font.render(
+                "No maps yet. Generate one, export it, then Refresh.", True, COLOUR_TEXT_DIM
+            )
+            self.screen.blit(empty, (panel.centerx - empty.get_width() // 2, panel.y + 145))
+        if self._launch_menu == "generator":
+            slider_labels = {
+                "temperature": "Temperature", "rainfall": "Rainfall", "roughness": "Roughness",
+                "water": "Water", "grass": "Grass", "meadow": "Meadow", "soil": "Soil",
+                "forest": "Forest", "rock": "Rock", "large_game": "Large game",
+                "small_game": "Small game", "predators": "Predators", "fish": "Fish",
+                "starting_villagers": "Starting villagers",
+            }
+            heading = body_font.render("Terrain & climate", True, COLOUR_TEXT)
+            self.screen.blit(heading, (panel.x + 35, panel.y + 137))
+            heading = body_font.render("Wildlife seeding", True, COLOUR_TEXT)
+            self.screen.blit(heading, (panel.x + 382, panel.y + 137))
+            for key, rect in self._launch_slider_rects().items():
+                value = float(self._launch_gen[key])
+                if key == "starting_villagers":
+                    fraction = value / max(1, min(12, MAX_VILLAGERS))
+                    value_text = str(int(value))
+                else:
+                    fraction = value
+                    value_text = f"{value:.0%}"
+                label = body_font.render(f"{slider_labels[key]}  {value_text}", True, COLOUR_TEXT_DIM)
+                self.screen.blit(label, (rect.x - 110, rect.y - 5))
+                pygame.draw.rect(self.screen, (25, 31, 34), rect, border_radius=6)
+                fill = pygame.Rect(rect.x, rect.y, round(rect.w * fraction), rect.h)
+                pygame.draw.rect(self.screen, (91, 139, 91), fill, border_radius=6)
+                pygame.draw.circle(self.screen, COLOUR_TEXT, (rect.x + round(rect.w * fraction), rect.centery), 7)
+        elif self._launch_menu == "preview" and self._launch_preview is not None:
+            colours = {
+                "water": (54, 127, 156), "grass": (117, 153, 77),
+                "meadow": (145, 184, 91), "soil": (135, 102, 71),
+                "forest": (54, 95, 55), "rock": (119, 116, 110),
+                "riparian": (76, 132, 91),
+            }
+            area = pygame.Rect(panel.x + 30, panel.y + 110, panel.w - 60, panel.h - 190)
+            cols = self._launch_preview.options.width
+            rows = self._launch_preview.options.height
+            scale = min(area.w / cols, area.h / rows)
+            ox = area.centerx - cols * scale / 2
+            oy = area.centery - rows * scale / 2
+            for y, row in enumerate(self._launch_preview.terrain):
+                for x, terrain in enumerate(row):
+                    pygame.draw.rect(
+                        self.screen, colours[terrain],
+                        (int(ox + x * scale), int(oy + y * scale), max(1, int(scale + 1)), max(1, int(scale + 1))),
+                    )
+            summary = body_font.render(
+                f"{self._launch_preview.options.composition.title()} · "
+                f"{self._launch_preview.options.climate.title()} · seed {self._launch_preview.options.seed}",
+                True, COLOUR_TEXT,
+            )
+            self.screen.blit(summary, (panel.centerx - summary.get_width() // 2, panel.bottom - 104))
+        mouse = pygame.mouse.get_pos()
+        option_labels = {
+            "cycle_composition": f"Composition: {self._launch_gen['composition'].title()}",
+            "cycle_climate": f"Climate: {self._launch_gen['climate'].title()}",
+            "random_seed": f"Seed: {self._launch_gen['seed']}  (randomise)",
+            "toggle_lake": f"[{'x' if self._launch_gen['lake'] else ' '}] Lake",
+            "toggle_river": f"[{'x' if self._launch_gen['river'] else ' '}] River",
+        }
+        for rect, action, label in self._launch_buttons():
+            label = option_labels.get(action, label)
+            colour = (74, 93, 82) if rect.collidepoint(mouse) else (54, 66, 62)
+            pygame.draw.rect(self.screen, colour, rect, border_radius=5)
+            pygame.draw.rect(self.screen, COLOUR_TOOLBAR_BORDER, rect, 1, border_radius=5)
+            text = button_font.render(label, True, COLOUR_TEXT)
+            self.screen.blit(
+                text,
+                (rect.centerx - text.get_width() // 2, rect.centery - text.get_height() // 2),
+            )
+
     def _draw(self) -> None:
         self._center_cache = {}
         self.screen.fill(COLOUR_BG)
@@ -17143,7 +17604,8 @@ class Game:
                     mouse_pos=mouse,
                     subtitle=subtitle,
                 )
-        # Modals last so they sit above the market inspect / management panes.
+        # Startup and file modals sit above the entire game scene.
+        self._draw_launch_menu()
         self.file_dialog.draw(self.screen)
         self.number_input.draw(self.screen)
         pygame.display.flip()
@@ -18221,6 +18683,17 @@ class Game:
         freeze = freeze_amount(day)
         vibrancy = terrain_vibrancy(day)
         map_clip = pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())
+        construction_visual = tuple(
+            (
+                site.id,
+                site.have_wood,
+                site.have_logs,
+                site.have_hardwood,
+                site.have_rock,
+                site.build_progress,
+            )
+            for site in sorted(self.construction_sites.values(), key=lambda item: item.id)
+        )
         layer_key = (
             round(self.camera.x, 3),
             round(self.camera.y, 3),
@@ -18230,6 +18703,7 @@ class Game:
             int(self.calendar_day),
             self.day_tick // 16,
             getattr(self, "_work_gen", 0),
+            construction_visual,
             round(vibrancy, 1),
             int(freeze * 5),
             bool(self.height_sample_enabled),

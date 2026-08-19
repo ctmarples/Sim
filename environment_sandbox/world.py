@@ -934,6 +934,14 @@ class World:
                     cell.feature = FeatureType.WOOD_BUSH
                     cell.crop_kind = wood.key
                     cell.deposit = WOOD_BUSH_YIELD
+                    cell.growth_ticks = self._fallen_wood_lifetime_ticks()
+
+    @staticmethod
+    def _fallen_wood_lifetime_ticks() -> int:
+        """One complete in-game year using the active day length."""
+        import seasons
+
+        return max(1, int(seasons.TICKS_PER_DAY) * int(seasons.YEAR_DAYS))
 
     def _paint_terrain_subclusters(self, rng: random.Random) -> None:
         """Carve small shade clusters inside each grass / meadow / soil patch.
@@ -1866,6 +1874,8 @@ class World:
                     cells.append((x, y))
                 elif feat == FeatureType.BERRY_BUSH and cell.growth_ticks > 0:
                     cells.append((x, y))
+                elif feat == FeatureType.WOOD_BUSH:
+                    cells.append((x, y))
         self._growth_cells = cells
         self._growth_index_age = 0
 
@@ -1980,6 +1990,18 @@ class World:
                 if prev_weeds < weed_thresh <= float(getattr(cell, "weeds", 0.0) or 0.0):
                     woke = True
                 still_growing.append((x, y))
+            elif feat == FeatureType.WOOD_BUSH:
+                # Old saves did not persist a wood age. Give such piles a full
+                # year when first encountered rather than clearing them.
+                if cell.growth_ticks <= 0:
+                    cell.growth_ticks = self._fallen_wood_lifetime_ticks()
+                cell.growth_ticks = max(0, cell.growth_ticks - ticks)
+                if cell.growth_ticks <= 0:
+                    cell.feature = FeatureType.NONE
+                    cell.deposit = 0
+                    cell.crop_kind = None
+                else:
+                    still_growing.append((x, y))
         self._growth_cells = still_growing
 
         # Seasonal spawn/despawn timers: fire the same number of times as real ticks.
@@ -2259,23 +2281,10 @@ class World:
         wood_terrains = tuple(
             TerrainType[n] for n in wood.terrains if n in TerrainType.__members__
         )
-        # Winter: wipe immediately (also covers any leftovers mid-tick).
+        # Winter clears mushrooms. Fallen wood ages independently for a year.
         if season_for_day(int(day)) == Season.WINTER:
             self.clear_mushrooms()
             return
-
-        # Clean up legacy/off-rule fallen wood created by the former generic
-        # spawn path. Valid piles must remain immediately beside a tree.
-        for y in range(self.rows):
-            for x in range(self.cols):
-                cell = self.cells[y][x]
-                if (
-                    cell.feature == FeatureType.WOOD_BUSH
-                    and not self._species_can_occupy(x, y, wood)
-                ):
-                    cell.feature = FeatureType.NONE
-                    cell.deposit = 0
-                    cell.crop_kind = None
 
         existing = [
             (x, y)
@@ -2349,13 +2358,14 @@ class World:
                 cell.feature = FeatureType.WOOD_BUSH
                 cell.crop_kind = wood.key
                 cell.deposit = WOOD_BUSH_YIELD
+                cell.growth_ticks = self._fallen_wood_lifetime_ticks()
 
     def clear_mushrooms(self) -> None:
-        """Remove mushrooms and fallen wood (called at winter onset)."""
+        """Remove seasonal mushrooms; fallen wood has its own lifetime."""
         for y in range(self.rows):
             for x in range(self.cols):
                 cell = self.cells[y][x]
-                if cell.feature in (FeatureType.MUSHROOM, FeatureType.WOOD_BUSH):
+                if cell.feature == FeatureType.MUSHROOM:
                     cell.feature = FeatureType.NONE
                     cell.deposit = 0
                     cell.crop_kind = None
