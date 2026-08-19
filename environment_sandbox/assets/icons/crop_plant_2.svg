@@ -1,14 +1,103 @@
-<svg width="40" height="40" xmlns="http://www.w3.org/2000/svg">
- <title>crop plant</title>
-
- <desc>Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
- <g>
-  <title>Layer 1</title>
-  <path id="svg_3" class="stem" d="m10.69738,3.79401l0,13.2391" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke="#5aae50"/>
-  <path id="svg_5" class="stem" d="m12.58195,3.55844l0,13.2391" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke="#5aae50" transform="rotate(8.73613 12.5819 10.178)"/>
-  <path id="svg_10" class="stem" d="m31.89634,7.5601l0,13.2391" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke="#5aae50" transform="rotate(-13.6828 31.8963 14.1797)"/>
-  <path id="svg_11" class="stem" d="m33.78091,7.32454l0,13.2391" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke="#5aae50" transform="rotate(8.73613 33.7809 13.9441)"/>
-  <path id="svg_13" class="flower" d="m7.75274,17.81695c0,-1.46235 1.18547,-2.64782 2.64782,-2.64782c1.46235,0 2.64782,1.18547 2.64782,2.64782c0,1.46235 -1.18547,2.64782 -2.64782,2.64782c-1.46235,0 -2.64782,-1.18547 -2.64782,-2.64782z" fill="#466ec8"/>
-  <path id="svg_14" class="flower" d="m30.48292,20.2874c0,-1.46235 1.18547,-2.64782 2.64782,-2.64782c1.46235,0 2.64782,1.18547 2.64782,2.64782c0,1.46235 -1.18547,2.64782 -2.64782,2.64782c-1.46235,0 -2.64782,-1.18547 -2.64782,-2.64782z" fill="#466ec8"/>
- </g>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="40"
+   height="40"
+   version="1.1"
+   id="svg2"
+   sodipodi:docname="crop_plant_2.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs2" />
+  <sodipodi:namedview
+     id="namedview2"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="10.779576"
+     inkscape:cx="19.156598"
+     inkscape:cy="36.272299"
+     inkscape:window-width="1470"
+     inkscape:window-height="835"
+     inkscape:window-x="0"
+     inkscape:window-y="33"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg2" />
+  <title
+     id="title1">crop plant</title>
+  <desc
+     id="desc1">Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <path
+     id="path2-3-8"
+     style="fill:#3f2f0c;fill-opacity:0.358796;stroke-width:1.06008"
+     d="m 15.069644,15.505987 c 0,1.84772 -1.039063,4.957862 -3.735319,4.957862 -2.6962556,0 -3.7353189,-0.505707 -3.7353189,-2.353426 0,-1.84772 5.2577519,-8.8620403 7.9540079,-8.8620403 2.696255,0 -0.48337,4.4098843 -0.48337,6.2576043 z"
+     sodipodi:nodetypes="sssss"
+     inkscape:label="path2-3" />
+  <path
+     id="path2-3-8-7"
+     style="fill:#3f2f0c;fill-opacity:0.358796;stroke-width:1.06008"
+     d="m 37.374867,17.710469 c 0,1.84772 -1.039063,4.957862 -3.735319,4.957862 -2.696256,0 -3.735319,-0.505707 -3.735319,-2.353426 0,-1.84772 5.257752,-8.86204 7.954008,-8.86204 2.696255,0 -0.48337,4.409884 -0.48337,6.257604 z"
+     sodipodi:nodetypes="sssss"
+     inkscape:label="path2-3" />
+  <g
+     id="g2">
+    <title
+       id="title2">Layer 1</title>
+    <path
+       id="svg_3"
+       class="stem"
+       d="m10.69738,3.79401l0,13.2391"
+       fill="none"
+       stroke-width="2"
+       stroke-linecap="round"
+       stroke-linejoin="round"
+       stroke="#5aae50" />
+    <path
+       id="svg_5"
+       class="stem"
+       d="m12.58195,3.55844l0,13.2391"
+       fill="none"
+       stroke-width="2"
+       stroke-linecap="round"
+       stroke-linejoin="round"
+       stroke="#5aae50"
+       transform="rotate(8.73613 12.5819 10.178)" />
+    <path
+       id="svg_10"
+       class="stem"
+       d="m31.89634,7.5601l0,13.2391"
+       fill="none"
+       stroke-width="2"
+       stroke-linecap="round"
+       stroke-linejoin="round"
+       stroke="#5aae50"
+       transform="rotate(-13.6828 31.8963 14.1797)" />
+    <path
+       id="svg_11"
+       class="stem"
+       d="m33.78091,7.32454l0,13.2391"
+       fill="none"
+       stroke-width="2"
+       stroke-linecap="round"
+       stroke-linejoin="round"
+       stroke="#5aae50"
+       transform="rotate(8.73613 33.7809 13.9441)" />
+    <path
+       id="svg_13"
+       class="flower"
+       d="m7.75274,17.81695c0,-1.46235 1.18547,-2.64782 2.64782,-2.64782c1.46235,0 2.64782,1.18547 2.64782,2.64782c0,1.46235 -1.18547,2.64782 -2.64782,2.64782c-1.46235,0 -2.64782,-1.18547 -2.64782,-2.64782z"
+       fill="#466ec8" />
+    <path
+       id="svg_14"
+       class="flower"
+       d="m30.48292,20.2874c0,-1.46235 1.18547,-2.64782 2.64782,-2.64782c1.46235,0 2.64782,1.18547 2.64782,2.64782c0,1.46235 -1.18547,2.64782 -2.64782,2.64782c-1.46235,0 -2.64782,-1.18547 -2.64782,-2.64782z"
+       fill="#466ec8" />
+  </g>
 </svg>

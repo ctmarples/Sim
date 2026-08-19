@@ -1,66 +1,419 @@
-<svg width="40" height="40" xmlns="http://www.w3.org/2000/svg">
- <title>crop plant dense</title>
-
- <desc>Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
- <g>
-  <title>Layer 1</title>
-  <g id="crop_plant_dense">
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m4.625,6.32376l0,10" class="stem" id="stem_1"/>
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m10.625,6.32376l-2,10" class="stem" id="stem_3"/>
-   <path fill="#466ec8" d="m3.30068,5.17512c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="flower_1"/>
-   <path fill="#466ec8" d="m8.48311,6.01971c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="flower_3"/>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="40"
+   height="40"
+   version="1.1"
+   id="svg2"
+   sodipodi:docname="flower_plant_dense_3.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs2" />
+  <sodipodi:namedview
+     id="namedview2"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="4.1028431"
+     inkscape:cx="9.8712037"
+     inkscape:cy="24.129609"
+     inkscape:window-width="1470"
+     inkscape:window-height="835"
+     inkscape:window-x="0"
+     inkscape:window-y="33"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg2" />
+  <title
+     id="title1">crop plant dense</title>
+  <desc
+     id="desc1">Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <path
+     id="path2-3-8-1-7-3-4-0-6-3-6"
+     style="fill:#3f2f0c;fill-opacity:0.358796;stroke-width:1.1654"
+     d="m 14.466982,7.9716589 c 0,1.8477197 -3.837266,8.8862171 -7.0958709,8.8862171 -3.258604,0 -3.9531885,-1.291378 -3.9531885,-3.139097 0,-1.84772 0.2934538,-8.8620397 3.5520588,-8.8620397 3.2586026,0 7.4970006,1.2672006 7.4970006,3.1149196 z"
+     sodipodi:nodetypes="sssss"
+     inkscape:label="path2-3" />
+  <path
+     id="path2-3-8-1-7-3-4-0-6-3-6-1"
+     style="fill:#3f2f0c;fill-opacity:0.358796;stroke-width:1.1654"
+     d="m 27.556749,5.7277183 c 0,1.84772 -3.837266,8.8862157 -7.09587,8.8862157 -3.258605,0 -3.953189,-1.291378 -3.953189,-3.139096 0,-1.8477207 0.293454,-8.8620397 3.552059,-8.8620397 3.258602,0 7.497,1.2672002 7.497,3.11492 z"
+     sodipodi:nodetypes="sssss"
+     inkscape:label="path2-3" />
+  <path
+     id="path2-3-8-1-7-3-4-0-6-3-6-5"
+     style="fill:#3f2f0c;fill-opacity:0.358796;stroke-width:1.1654"
+     d="m 16.379199,22.768489 c 0,1.84772 -3.837266,8.886216 -7.0958712,8.886216 -3.2586042,0 -3.9531882,-1.291378 -3.9531882,-3.139097 0,-1.84772 0.293453,-8.862039 3.5520582,-8.862039 3.2586032,0 7.4970012,1.2672 7.4970012,3.11492 z"
+     sodipodi:nodetypes="sssss"
+     inkscape:label="path2-3" />
+  <path
+     id="path2-3-8-1-7-3-4-0-6-3-6-2"
+     style="fill:#3f2f0c;fill-opacity:0.358796;stroke-width:1.1654"
+     d="m 26.501238,14.88471 c 0,1.84772 -3.837266,8.886217 -7.09587,8.886217 -3.258605,0 -3.953189,-1.291378 -3.953189,-3.139097 0,-1.84772 0.293454,-8.862039 3.552059,-8.862039 3.258602,0 7.497,1.2672 7.497,3.114919 z"
+     sodipodi:nodetypes="sssss"
+     inkscape:label="path2-3" />
+  <path
+     id="path2-3-8-1-7-3-4-0-6-3-6-6"
+     style="fill:#3f2f0c;fill-opacity:0.358796;stroke-width:1.1654"
+     d="m 39.39108,10.165131 c 0,1.84772 -3.837266,8.886216 -7.095871,8.886216 -3.258604,0 -3.953188,-1.291378 -3.953188,-3.139097 0,-1.84772 0.293454,-8.8620386 3.552058,-8.8620386 3.258603,0 7.497001,1.2672 7.497001,3.1149196 z"
+     sodipodi:nodetypes="sssss"
+     inkscape:label="path2-3" />
+  <path
+     id="path2-3-8-1-7-3-4-0-6-3-6-84"
+     style="fill:#3f2f0c;fill-opacity:0.358796;stroke-width:1.1654"
+     d="m 39.707066,21.506009 c 0,1.84772 -3.837266,8.886217 -7.095871,8.886217 -3.258604,0 -3.953188,-1.291378 -3.953188,-3.139097 0,-1.84772 0.293453,-8.862039 3.552058,-8.862039 3.258603,0 7.497001,1.2672 7.497001,3.114919 z"
+     sodipodi:nodetypes="sssss"
+     inkscape:label="path2-3" />
+  <path
+     id="path2-3-8-1-7-3-4-0-6-3-6-7"
+     style="fill:#3f2f0c;fill-opacity:0.358796;stroke-width:1.1654"
+     d="m 25.817655,28.686948 c 0,1.84772 -3.837266,8.886217 -7.095871,8.886217 -3.258604,0 -3.953188,-1.291378 -3.953188,-3.139097 0,-1.84772 0.293453,-8.862039 3.552058,-8.862039 3.258603,0 7.497001,1.2672 7.497001,3.114919 z"
+     sodipodi:nodetypes="sssss"
+     inkscape:label="path2-3" />
+  <path
+     id="path2-3-8-1-7-3-4-0-6-3-6-87"
+     style="fill:#3f2f0c;fill-opacity:0.358796;stroke-width:1.08554"
+     d="m 33.154646,28.908303 c 0,1.84772 -3.329384,8.886217 -6.156696,8.886217 -2.827311,0 -3.429963,-1.291378 -3.429963,-3.139097 0,-1.84772 0.254613,-8.862039 3.081925,-8.862039 2.82731,0 6.504734,1.2672 6.504734,3.114919 z"
+     sodipodi:nodetypes="sssss"
+     inkscape:label="path2-3" />
+  <g
+     id="g2">
+    <title
+       id="title2">Layer 1</title>
+    <g
+       id="crop_plant_dense">
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m4.625,6.32376l0,10"
+         class="stem"
+         id="stem_1" />
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m10.625,6.32376l-2,10"
+         class="stem"
+         id="stem_3" />
+      <path
+         fill="#466ec8"
+         d="m3.30068,5.17512c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="flower_1" />
+      <path
+         fill="#466ec8"
+         d="m8.48311,6.01971c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="flower_3" />
+    </g>
+    <g
+       id="svg_9">
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m17.25309,3.01249l2,10"
+         class="stem"
+         id="svg_1" />
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m20.25309,3.01249l0,10"
+         class="stem"
+         id="svg_2" />
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m26.25309,3.51924l-2,10"
+         class="stem"
+         id="svg_4" />
+      <path
+         fill="#466ec8"
+         d="m14.55039,3.72195c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_5" />
+      <path
+         fill="#466ec8"
+         d="m18.25309,3.38411c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_6" />
+      <path
+         fill="#466ec8"
+         d="m24.28012,4.05978c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_8" />
+    </g>
+    <g
+       id="svg_18">
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m26.42765,8.58352l2,10"
+         class="stem"
+         id="svg_10" />
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m32.42765,8.58352l0,10"
+         class="stem"
+         id="svg_12" />
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m35.42765,8.58352l-2,10"
+         class="stem"
+         id="svg_13" />
+      <path
+         fill="#466ec8"
+         d="m23.89387,9.29298c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_14" />
+      <path
+         fill="#466ec8"
+         d="m30.25873,9.29298c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_16" />
+      <path
+         fill="#466ec8"
+         d="m33.96143,8.61731c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_17" />
+    </g>
+    <g
+       id="svg_54">
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m17.11486,13.59986l0,10"
+         class="stem"
+         id="svg_47" />
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m23.11486,13.59986l-2,10"
+         class="stem"
+         id="svg_49" />
+      <path
+         fill="#466ec8"
+         d="m15.75,12.62013c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_52" />
+      <path
+         fill="#466ec8"
+         d="m20.80405,12.78905c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_53" />
+    </g>
+    <g
+       id="svg_72">
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m4.54167,20.67014l2,10"
+         class="stem"
+         id="svg_64" />
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m7.54167,20.67014l0,10"
+         class="stem"
+         id="svg_65" />
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m10.54167,20.67014l0,10"
+         class="stem"
+         id="svg_66" />
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m13.54167,20.67014l-2,10"
+         class="stem"
+         id="svg_67" />
+      <path
+         fill="#466ec8"
+         d="m2.51464,20.36609c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_68" />
+      <path
+         fill="#466ec8"
+         d="m6.04843,19.69041c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_69" />
+      <path
+         fill="#466ec8"
+         d="m12.4268,20.36609c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_70" />
+      <path
+         fill="#466ec8"
+         d="m8.86599,19.69041c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_71" />
+    </g>
+    <g
+       id="svg_90">
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m28.01736,18.36806l2,10"
+         class="stem"
+         id="svg_82" />
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m31.01736,18.36806l0,10"
+         class="stem"
+         id="svg_83" />
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m34.01736,18.36806l0,10"
+         class="stem"
+         id="svg_84" />
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m37.01736,18.36806l-2,10"
+         class="stem"
+         id="svg_85" />
+      <path
+         fill="#466ec8"
+         d="m25.6525,16.54374c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_86" />
+      <path
+         fill="#466ec8"
+         d="m28.84844,18.73968c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_87" />
+      <path
+         fill="#466ec8"
+         d="m35.0579,18.23293c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_88" />
+      <path
+         fill="#466ec8"
+         d="m32.34169,17.21941c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_89" />
+    </g>
+    <g
+       id="svg_99">
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m16.07094,26.67671l2,10"
+         class="stem"
+         id="svg_91" />
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m19.07094,26.67671l0,10"
+         class="stem"
+         id="svg_92" />
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m25.2804,26.67671l0,10"
+         class="stem"
+         id="svg_93" />
+      <path
+         stroke-linejoin="round"
+         stroke-linecap="round"
+         stroke-width="2"
+         stroke="#5aae50"
+         fill="none"
+         d="m28.44932,26.67671l-2,10"
+         class="stem"
+         id="svg_94" />
+      <path
+         fill="#466ec8"
+         d="m16.40878,25.52806c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_95" />
+      <path
+         fill="#466ec8"
+         d="m14.03041,25.69698c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_96" />
+      <path
+         fill="#466ec8"
+         d="m23.61824,26.37266c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_97" />
+      <path
+         fill="#466ec8"
+         d="m27.65878,24.68347c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z"
+         class="flower"
+         id="svg_98" />
+    </g>
   </g>
-  <g id="svg_9">
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m17.25309,3.01249l2,10" class="stem" id="svg_1"/>
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m20.25309,3.01249l0,10" class="stem" id="svg_2"/>
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m26.25309,3.51924l-2,10" class="stem" id="svg_4"/>
-   <path fill="#466ec8" d="m14.55039,3.72195c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_5"/>
-   <path fill="#466ec8" d="m18.25309,3.38411c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_6"/>
-   <path fill="#466ec8" d="m24.28012,4.05978c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_8"/>
-  </g>
-  <g id="svg_18">
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m26.42765,8.58352l2,10" class="stem" id="svg_10"/>
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m32.42765,8.58352l0,10" class="stem" id="svg_12"/>
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m35.42765,8.58352l-2,10" class="stem" id="svg_13"/>
-   <path fill="#466ec8" d="m23.89387,9.29298c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_14"/>
-   <path fill="#466ec8" d="m30.25873,9.29298c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_16"/>
-   <path fill="#466ec8" d="m33.96143,8.61731c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_17"/>
-  </g>
-  <g id="svg_54">
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m17.11486,13.59986l0,10" class="stem" id="svg_47"/>
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m23.11486,13.59986l-2,10" class="stem" id="svg_49"/>
-   <path fill="#466ec8" d="m15.75,12.62013c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_52"/>
-   <path fill="#466ec8" d="m20.80405,12.78905c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_53"/>
-  </g>
-  <g id="svg_72">
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m4.54167,20.67014l2,10" class="stem" id="svg_64"/>
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m7.54167,20.67014l0,10" class="stem" id="svg_65"/>
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m10.54167,20.67014l0,10" class="stem" id="svg_66"/>
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m13.54167,20.67014l-2,10" class="stem" id="svg_67"/>
-   <path fill="#466ec8" d="m2.51464,20.36609c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_68"/>
-   <path fill="#466ec8" d="m6.04843,19.69041c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_69"/>
-   <path fill="#466ec8" d="m12.4268,20.36609c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_70"/>
-   <path fill="#466ec8" d="m8.86599,19.69041c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_71"/>
-  </g>
-  <g id="svg_90">
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m28.01736,18.36806l2,10" class="stem" id="svg_82"/>
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m31.01736,18.36806l0,10" class="stem" id="svg_83"/>
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m34.01736,18.36806l0,10" class="stem" id="svg_84"/>
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m37.01736,18.36806l-2,10" class="stem" id="svg_85"/>
-   <path fill="#466ec8" d="m25.6525,16.54374c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_86"/>
-   <path fill="#466ec8" d="m28.84844,18.73968c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_87"/>
-   <path fill="#466ec8" d="m35.0579,18.23293c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_88"/>
-   <path fill="#466ec8" d="m32.34169,17.21941c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_89"/>
-  </g>
-  <g id="svg_99">
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m16.07094,26.67671l2,10" class="stem" id="svg_91"/>
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m19.07094,26.67671l0,10" class="stem" id="svg_92"/>
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m25.2804,26.67671l0,10" class="stem" id="svg_93"/>
-   <path stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="#5aae50" fill="none" d="m28.44932,26.67671l-2,10" class="stem" id="svg_94"/>
-   <path fill="#466ec8" d="m16.40878,25.52806c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_95"/>
-   <path fill="#466ec8" d="m14.03041,25.69698c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_96"/>
-   <path fill="#466ec8" d="m23.61824,26.37266c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_97"/>
-   <path fill="#466ec8" d="m27.65878,24.68347c0,-1.10457 0.89543,-2 2,-2c1.10457,0 2,0.89543 2,2c0,1.10457 -0.89543,2 -2,2c-1.10457,0 -2,-0.89543 -2,-2z" class="flower" id="svg_98"/>
-  </g>
- </g>
 </svg>
