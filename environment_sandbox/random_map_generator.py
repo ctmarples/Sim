@@ -67,6 +67,7 @@ class GeneratedMap:
     terrain: list[list[str]]
     elevation: list[list[float]]
     moisture: list[list[float]]
+    start_pos: tuple[int, int] = (0, 0)
 
     def counts(self) -> dict[str, int]:
         result = {name: 0 for name in OUTPUT_TERRAINS}
@@ -82,6 +83,7 @@ class GeneratedMap:
             "terrain": self.terrain,
             "elevation": self.elevation,
             "moisture": self.moisture,
+            "start_pos": list(self.start_pos),
         }
 
     def save(self, path: str | Path) -> None:
@@ -103,7 +105,18 @@ class GeneratedMap:
                 raise ValueError(f"Map {label} dimensions do not match its options")
         if any(name not in OUTPUT_TERRAINS for row in terrain for name in row):
             raise ValueError("Map contains an unknown terrain type")
-        return cls(options, terrain, elevation, moisture)
+        raw_start = data.get("start_pos")
+        start_pos = (
+            (int(raw_start[0]), int(raw_start[1]))
+            if isinstance(raw_start, list) and len(raw_start) == 2
+            else choose_start_position(terrain, options.seed)
+        )
+        if (
+            not (0 <= start_pos[0] < options.width and 0 <= start_pos[1] < options.height)
+            or terrain[start_pos[1]][start_pos[0]] not in ("grass", "soil", "meadow")
+        ):
+            start_pos = choose_start_position(terrain, options.seed)
+        return cls(options, terrain, elevation, moisture, start_pos)
 
     def apply_to_world(self, world: Any) -> None:
         """Replace terrain/elevation on an existing ``world.World`` instance."""
@@ -124,6 +137,10 @@ class GeneratedMap:
             "riparian": TerrainType.RIPARIAN,
         }
         rng = random.Random(self.options.seed ^ 0x4D4150)
+        sx, sy = self.start_pos
+        world.home_pos = (sx, sy)
+        world.start_pos = (sx, sy)
+        world.workstation_pos = (min(world.cols - 1, sx + 4), sy)
         for y, row in enumerate(self.terrain):
             for x, name in enumerate(row):
                 cell = world.cells[y][x]
@@ -179,7 +196,38 @@ def generate_map(options: MapOptions) -> GeneratedMap:
 
     terrain = _assign_by_mix(opt, elevation, moisture, heat, detail)
     _paint_riparian(terrain)
-    return GeneratedMap(opt, terrain, elevation, moisture)
+    start_pos = choose_start_position(terrain, opt.seed)
+    return GeneratedMap(opt, terrain, elevation, moisture, start_pos)
+
+
+def choose_start_position(
+    terrain: list[list[str]], seed: int, *, reroll: int = 0
+) -> tuple[int, int]:
+    """Choose a safely inset grass/soil/meadow cell without changing terrain."""
+    rows, cols = len(terrain), len(terrain[0])
+    allowed = {"grass", "soil", "meadow"}
+    margin_x = min(3, max(1, cols // 8))
+    margin_y = min(3, max(1, rows // 8))
+    candidates = [
+        (x, y)
+        for y in range(margin_y, rows - margin_y)
+        for x in range(margin_x, cols - margin_x)
+        if terrain[y][x] in allowed
+        and all(
+            terrain[ny][nx] in allowed | {"forest", "riparian", "rock"}
+            for ny in range(max(0, y - 1), min(rows, y + 2))
+            for nx in range(max(0, x - 1), min(cols, x + 2))
+        )
+    ]
+    if not candidates:
+        candidates = [
+            (x, y) for y, row in enumerate(terrain) for x, name in enumerate(row)
+            if name in allowed
+        ]
+    if not candidates:
+        raise ValueError("Generated map has no grass, soil, or meadow start cell")
+    rng = random.Random(int(seed) ^ 0x53544152 ^ (int(reroll) * 0x9E3779B1))
+    return rng.choice(candidates)
 
 
 def _assign_by_mix(opt: MapOptions, elevation, moisture, heat, detail):

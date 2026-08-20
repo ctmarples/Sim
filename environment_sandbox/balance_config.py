@@ -100,6 +100,7 @@ from settings import (
     WEATHER_RAIN_CELLS,
     WEATHER_CELL_RADIUS,
 )
+from resource_balance import VILLAGER_SATIATION_DAYS
 
 ParamKind = Literal["float", "int"]
 
@@ -217,6 +218,17 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
         "buffs",
         "Buffs & debuffs",
         (
+            BalanceParam(
+                "VILLAGER_SATIATION_DAYS",
+                "Full satiation duration",
+                "float",
+                VILLAGER_SATIATION_DAYS,
+                0.5,
+                90.0,
+                0.5,
+                "Calendar days for satiation to fall from full to empty before a meal's hunger-rate multiplier.",
+                " days",
+            ),
             BalanceParam(
                 "BUFF_STRENGTH_SPEED",
                 "Food: walk-speed effect strength",

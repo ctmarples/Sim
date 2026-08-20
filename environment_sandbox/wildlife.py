@@ -3782,8 +3782,14 @@ class FishManager:
                 return pos
         return None
 
-    def tick(self, world: World, day: float = 0.0) -> None:
-        self._move_fish(world, day)
+    def tick(
+        self,
+        world: World,
+        day: float = 0.0,
+        *,
+        attractors: list[tuple[int, int]] | None = None,
+    ) -> None:
+        self._move_fish(world, day, attractors=attractors)
         if not fish_breeding_allowed(day):
             return
         self.growth_timer -= 1
@@ -3791,7 +3797,13 @@ class FishManager:
             self.growth_timer = FISH_GROWTH_INTERVAL
             self._update_population(world)
 
-    def _move_fish(self, world: World, day: float = 0.0) -> None:
+    def _move_fish(
+        self,
+        world: World,
+        day: float = 0.0,
+        *,
+        attractors: list[tuple[int, int]] | None = None,
+    ) -> None:
         from world import TerrainType
 
         lake_frozen = water_frozen(day)
@@ -3823,7 +3835,25 @@ class FishManager:
                 if (nx, ny) != (item.x, item.y) and (nx, ny) in water
             ]
             if neighbours:
-                nx, ny = self.rng.choice(neighbours)
+                nearby = [
+                    post
+                    for post in (attractors or [])
+                    if max(abs(post[0] - item.x), abs(post[1] - item.y)) <= 10
+                ]
+                if nearby:
+                    post = min(
+                        nearby,
+                        key=lambda p: abs(p[0] - item.x) + abs(p[1] - item.y),
+                    )
+                    current_d = abs(post[0] - item.x) + abs(post[1] - item.y)
+                    closer = [
+                        pos
+                        for pos in neighbours
+                        if abs(post[0] - pos[0]) + abs(post[1] - pos[1]) < current_d
+                    ]
+                    nx, ny = self.rng.choice(closer or neighbours)
+                else:
+                    nx, ny = self.rng.choice(neighbours)
                 note_cell_step(item, nx, ny)
             elif (item.x, item.y) not in water:
                 nx, ny = self.rng.choice(list(water))

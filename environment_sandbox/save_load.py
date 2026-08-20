@@ -480,6 +480,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
                 "fish_target_id": v.fish_target_id,
                 "fish_catch_pos": list(v.fish_catch_pos) if v.fish_catch_pos else None,
                 "fish_post_pos": list(v.fish_post_pos) if v.fish_post_pos else None,
+                "fish_bait_ticks": int(getattr(v, "fish_bait_ticks", 0)),
                 "forage_colony_id": v.forage_colony_id,
                 "construction_id": v.construction_id,
                 "priorities": [p.name for p in v.priorities],
@@ -1296,6 +1297,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             fish_target_id=vdata.get("fish_target_id"),
             fish_catch_pos=tuple(catch_pos) if catch_pos else None,  # type: ignore[arg-type]
             fish_post_pos=tuple(post_pos) if post_pos else None,  # type: ignore[arg-type]
+            fish_bait_ticks=max(0, int(vdata.get("fish_bait_ticks", 0))),
             forage_colony_id=vdata.get("forage_colony_id"),
             construction_id=vdata.get("construction_id"),
         )

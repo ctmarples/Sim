@@ -79,6 +79,19 @@ class NicheMathTests(unittest.TestCase):
             ("wood_loose_1", "wood_loose_2", "wood_loose_3", "wood_loose_4"),
         )
 
+    def test_mushroom_can_establish_on_dry_autumn_forest_floor(self):
+        mushroom = WILD_BY_KEY["mushroom"]
+        score = species_environment_suitability(
+            mushroom,
+            temperature=.4,
+            rainfall=0,
+            soil_moisture=.10,
+            fertility=.6,
+            disturbance=.05,
+        )
+        self.assertTrue(environment_allows_establishment(mushroom, score))
+        self.assertGreater(score.combined, 0)
+
     def test_audit_has_all_representative_scenarios(self):
         audit = niche_audit()
         self.assertEqual(len(audit), 7)

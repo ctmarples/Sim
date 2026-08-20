@@ -606,6 +606,7 @@ class Game:
             "river": True,
         }
         self._launch_preview = None
+        self._launch_start_roll = 0
         self._launch_slider_drag: str | None = None
         if headless:
             self._boot_game()
@@ -894,9 +895,10 @@ class Game:
             ]
         if self._launch_menu == "preview":
             return [
-                (pygame.Rect(panel.x + 105, panel.bottom - 58, 150, 40), "regenerate", "Regenerate"),
-                (pygame.Rect(panel.x + 270, panel.bottom - 58, 150, 40), "accept_map", "Accept & start"),
-                (pygame.Rect(panel.x + 435, panel.bottom - 58, 150, 40), "edit_generator", "Edit options"),
+                (pygame.Rect(panel.x + 35, panel.bottom - 58, 145, 40), "regenerate", "Regenerate map"),
+                (pygame.Rect(panel.x + 195, panel.bottom - 58, 145, 40), "reroll_start", "Reroll start"),
+                (pygame.Rect(panel.x + 355, panel.bottom - 58, 145, 40), "accept_map", "Accept & start"),
+                (pygame.Rect(panel.x + 515, panel.bottom - 58, 145, 40), "edit_generator", "Edit options"),
             ]
         return []
 
@@ -1003,6 +1005,15 @@ class Game:
             self._generate_launch_preview(randomise=action == "regenerate")
         elif action == "edit_generator":
             self._launch_menu = "generator"
+        elif action == "reroll_start" and self._launch_preview is not None:
+            from random_map_generator import choose_start_position
+
+            self._launch_start_roll += 1
+            self._launch_preview.start_pos = choose_start_position(
+                self._launch_preview.terrain,
+                self._launch_preview.options.seed,
+                reroll=self._launch_start_roll,
+            )
         elif action == "accept_map" and self._launch_preview is not None:
             self._begin_new_game(generated=self._launch_preview)
         elif action and action.startswith("map:"):
@@ -1136,6 +1147,7 @@ class Game:
                          ("water", "grass", "meadow", "soil", "forest", "rock")},
         )
         self._launch_preview = generate_map(options)
+        self._launch_start_roll = 0
         self._launch_menu = "preview"
 
     def run(self) -> None:
@@ -4130,7 +4142,13 @@ class Game:
             return max(1, PLAYBACK_TICKS_AT_X1)
 
     def _satiation_decay(self) -> float:
-        return satiation_decay_per_tick(self._playback_ticks())
+        try:
+            days = self.balance.get_float("VILLAGER_SATIATION_DAYS")
+            return 1.0 / max(1.0, days * self.ticks_per_day)
+        except Exception:
+            return satiation_decay_per_tick(
+                self._playback_ticks(), ticks_per_day=self.ticks_per_day
+            )
 
     def _legacy_per_tick(self, amount: float) -> float:
         """Rates authored at 1 sim tick per frame."""
@@ -5314,6 +5332,49 @@ class Game:
             return None
         return building
 
+    def _smooth_recipe_progress(
+        self, building: Building, workers: list[Villager]
+    ) -> dict[str, float]:
+        """Interpolate recipe steps across the current work cooldown for the UI."""
+        recipes = {
+            recipe.name: recipe
+            for recipe in (
+                *building.known_recipes(),
+                *building.addon_craft_recipes(),
+                *building.split_recipes(),
+                *building.plant_recipes(),
+            )
+        }
+        result = {
+            name: building.recipe_progress_fraction(name) for name in recipes
+        }
+        active: dict[str, float] = {}
+
+        def add_cycle(name: str | None, cooldown: int, interval: int) -> None:
+            recipe = recipes.get(name or "")
+            if recipe is None or cooldown <= 0:
+                return
+            steps = max(1, recipe.work_steps())
+            completed = int(building.recipe_progress.get(recipe.name, 0))
+            phase = 1.0 - min(1.0, max(0.0, cooldown / max(1, interval)))
+            smooth = (max(0, completed - 1) + phase) / steps
+            active[recipe.name] = max(active.get(recipe.name, 0.0), smooth)
+
+        for worker in workers:
+            add_cycle(
+                worker.craft_recipe_name,
+                int(worker.work_cooldown),
+                self._villager_work_interval(worker),
+            )
+        if self.player_craft_building_id == building.id:
+            add_cycle(
+                self.player_craft_recipe,
+                int(self.player.work_cooldown),
+                self._player_work_interval(),
+            )
+        result.update(active)
+        return result
+
     def _open_field_plan(
         self,
         building: Building,
@@ -5757,6 +5818,12 @@ class Game:
                 self._set_status(f"No {label} in storehouse.")
                 return
             ok = self.home_storage.withdraw_one_to(inv, key)
+        elif building.kind == BuildingKind.FARM and key in barn_sheaf_keys():
+            barn = self._linked_barn(building)
+            if barn is None or int(getattr(barn, key, 0)) <= 0:
+                self._set_status(f"No {label} in barn storage.")
+                return
+            ok = barn.give_item_to(inv, key)
         else:
             if int(getattr(building, key, 0)) <= 0:
                 self._set_status(f"No {label} in storage.")
@@ -5781,13 +5848,25 @@ class Game:
         if int(getattr(inv, key, 0)) <= 0:
             self._set_status(f"You have no {label}.")
             return
-        if key not in building.depositable_keys():
+        farm_barn_sheaf = (
+            building.kind == BuildingKind.FARM
+            and key in barn_sheaf_keys()
+            and self._linked_barn(building) is not None
+        )
+        if key not in building.depositable_keys() and not farm_barn_sheaf:
             self._set_status(f"{BUILDING_LABELS[building.kind]} cannot store {label}.")
             return
         if building.kind == BuildingKind.HOME:
             ok = self.home_storage.deposit_one_from(inv, key)
             hx, hy = self.world.home_pos
             self.world.apply_disturbance(hx, hy)
+        elif farm_barn_sheaf:
+            barn = self._linked_barn(building)
+            assert barn is not None
+            if barn.space_for_key(key) <= 0:
+                self._set_status("Barn storage is full.")
+                return
+            ok = barn.deposit_one_from(inv, key)
         else:
             if building.space_for_key(key) <= 0:
                 cap = building.item_cap(key)
@@ -8873,6 +8952,8 @@ class Game:
                 villager.work_cooldown -= 1
             if villager.decision_cooldown > 0:
                 villager.decision_cooldown -= 1
+            if villager.fish_bait_ticks > 0:
+                villager.fish_bait_ticks -= 1
 
         self._tick_village_food = self._village_food_amounts()
         if any(self._villager_needs_ai_pass(v) for v in self.villagers):
@@ -9344,6 +9425,9 @@ class Game:
                 # Barn threshing — hoe is for plough / weed only.
                 tool = None
                 extras = ()
+        if building.kind == BuildingKind.FISHER and recipe.name == "bait":
+            tool = "knife"
+            extras = ()
         if tool is not None:
             inv = self.player.inventory
             ok = inv.has_equipped_tool(tool) or any(
@@ -9359,21 +9443,42 @@ class Game:
             building.ensure_recipe_state()
             building.recipe_enabled[recipe.name] = True
 
-        # Pull matching inputs from the player into the building first.
-        building.deposit_needed_from(self.player.inventory)
-        for key in recipe.inputs:
-            while int(getattr(building, key, 0)) < int(recipe.inputs[key]):
-                if not building.deposit_one_from(self.player.inventory, key):
-                    break
+        # Ordinary crafting may pull matching inputs from the player's pack.
+        # Threshing is different: sheaves must be deposited in the barn first.
+        is_farm_thresh = (
+            building.kind == BuildingKind.FARM
+            and recipe in building.addon_craft_recipes()
+        )
+        if is_farm_thresh:
+            self._migrate_sheaves_to_barn(building)
+        else:
+            building.deposit_needed_from(self.player.inventory)
+            for key in recipe.inputs:
+                while int(getattr(building, key, 0)) < int(recipe.inputs[key]):
+                    if not building.deposit_one_from(self.player.inventory, key):
+                        break
 
         if building.kind == BuildingKind.KITCHEN and not building.has_cooking_fuel():
             self._set_status("Kitchen needs wood fuel.")
             return
-        if not recipe_ready(building, recipe):
+        inputs_ready = (
+            all(
+                self._barn_sheaf_have(building, key) >= int(need)
+                for key, need in recipe.inputs.items()
+            )
+            if is_farm_thresh
+            else recipe_ready(building, recipe)
+        )
+        if not inputs_ready:
             missing = [
                 resource_label(k)
                 for k, n in recipe.inputs.items()
-                if int(getattr(building, k, 0)) < int(n)
+                if (
+                    self._barn_sheaf_have(building, k)
+                    if is_farm_thresh
+                    else int(getattr(building, k, 0))
+                )
+                < int(n)
             ]
             self._set_status(
                 "Need inputs in building: "
@@ -9447,6 +9552,9 @@ class Game:
             elif building.kind == BuildingKind.FARM:
                 tool = None
                 extras = ()
+        if building.kind == BuildingKind.FISHER and recipe_probe is not None and recipe_probe.name == "bait":
+            tool = "knife"
+            extras = ()
         if tool is not None:
             inv = self.player.inventory
             ok = inv.has_equipped_tool(tool) or any(
@@ -9463,17 +9571,32 @@ class Game:
             self._set_status("Craft stopped — recipe unavailable.")
             return False
 
-        building.deposit_needed_from(self.player.inventory)
-        for key in recipe.inputs:
-            while int(getattr(building, key, 0)) < int(recipe.inputs[key]):
-                if not building.deposit_one_from(self.player.inventory, key):
-                    break
+        is_farm_thresh = (
+            building.kind == BuildingKind.FARM
+            and recipe in building.addon_craft_recipes()
+        )
+        if is_farm_thresh:
+            self._migrate_sheaves_to_barn(building)
+        else:
+            building.deposit_needed_from(self.player.inventory)
+            for key in recipe.inputs:
+                while int(getattr(building, key, 0)) < int(recipe.inputs[key]):
+                    if not building.deposit_one_from(self.player.inventory, key):
+                        break
 
         if building.kind == BuildingKind.KITCHEN and not building.has_cooking_fuel():
             self._clear_player_craft()
             self._set_status("Craft stopped — kitchen needs wood fuel.")
             return False
-        if not recipe_ready(building, recipe):
+        inputs_ready = (
+            all(
+                self._barn_sheaf_have(building, key) >= int(need)
+                for key, need in recipe.inputs.items()
+            )
+            if is_farm_thresh
+            else recipe_ready(building, recipe)
+        )
+        if not inputs_ready:
             self._clear_player_craft()
             self._set_status(f"Craft stopped — need more inputs for {recipe_label(recipe)}.")
             return False
@@ -9494,13 +9617,23 @@ class Game:
         label = recipe_label(recipe)
         if done:
             fuel = 1 if building.kind == BuildingKind.KITCHEN else 0
-            self._apply_recipe_tracked(building, recipe, fuel_wood=fuel)
+            if is_farm_thresh:
+                self._apply_barn_thresh_recipe(building, recipe, None)
+            else:
+                self._apply_recipe_tracked(building, recipe, fuel_wood=fuel)
             if fuel:
                 building.fuel_wood = max(0, building.fuel_wood - 1)
             # Keep producing the same recipe while inputs remain.
             village_stock = self._village_stock_amounts()
             if (
-                recipe_ready(building, recipe)
+                (
+                    all(
+                        self._barn_sheaf_have(building, key) >= int(need)
+                        for key, need in recipe.inputs.items()
+                    )
+                    if is_farm_thresh
+                    else recipe_ready(building, recipe)
+                )
                 and recipe_output_fits(
                     building,
                     recipe,
@@ -10246,7 +10379,7 @@ class Game:
         elif building.kind == BuildingKind.HUNTER:
             keys.add("meat")
         elif building.kind == BuildingKind.FISHER:
-            keys.add("fish")
+            keys.update(("fish", "meat", "bait"))
         elif building.kind == BuildingKind.FORAGER:
             keys.update(building.gather_deposit_keys())
         elif building.kind == BuildingKind.FORESTER:
@@ -10620,7 +10753,7 @@ class Game:
         return moved
 
     def _consume_barn_thresh_inputs(
-        self, farm: Building, recipe, inventory: Inventory
+        self, farm: Building, recipe, inventory: Inventory | None
     ) -> None:
         """Pull sheaf inputs from pack, then barn, then farm leftovers."""
         barn = self._linked_barn(farm)
@@ -10644,7 +10777,7 @@ class Game:
                 raise RuntimeError(f"barn thresh missing {key} x{left}")
 
     def _apply_barn_thresh_recipe(
-        self, farm: Building, recipe, inventory: Inventory
+        self, farm: Building, recipe, inventory: Inventory | None
     ) -> None:
         """Thresh: consume sheaves from barn, grain/straw land on the farm."""
         self._consume_barn_thresh_inputs(farm, recipe, inventory)
@@ -13352,7 +13485,7 @@ class Game:
             return True
         self._spend_work_energy(villager)
         if farm.advance_recipe_progress(ready):
-            self._apply_barn_thresh_recipe(farm, ready, villager.inventory)
+            self._apply_barn_thresh_recipe(farm, ready, None)
             self._gain_job_skill(villager, farm.kind.name)
         villager.work_cooldown = self._villager_work_interval(villager)
         return True
@@ -14614,6 +14747,73 @@ class Game:
                     return True
         return False
 
+    def _try_fisher_bait_craft(
+        self, villager: Villager, building: Building
+    ) -> bool:
+        """Make one four-bait batch at the hut; a knife is mandatory."""
+        recipe = next(
+            (r for r in building.known_recipes() if r.name == "bait"), None
+        )
+        if (
+            recipe is None
+            or not building.is_recipe_enabled(recipe.name)
+            or int(getattr(building, "bait", 0)) >= 4
+            or int(getattr(building, "meat", 0)) < int(recipe.inputs.get("meat", 0))
+            or not building._recipe_output_fits(
+                recipe, stock_amounts=self._village_stock_amounts()
+            )
+        ):
+            return False
+        if not self._ensure_work_tool(villager, "knife"):
+            return True
+        site = building.center_cell()
+        villager.state = VillagerState.WORKING
+        villager.target = site
+        if (villager.x, villager.y) != site:
+            if villager.move_cooldown <= 0:
+                self._step_villager_toward(villager, site)
+            return True
+        villager.craft_recipe_name = recipe.name
+        if villager.work_cooldown > 0:
+            return True
+        self._spend_work_energy(villager)
+        if building.advance_recipe_progress(recipe):
+            self._apply_recipe_tracked(building, recipe)
+            self._gain_job_skill(villager, building.kind.name)
+        villager.work_cooldown = self._villager_work_interval(villager)
+        return True
+
+    def _fisher_collect_bait(
+        self, villager: Villager, building: Building
+    ) -> bool:
+        """Fetch one prepared bait from the hut before returning to the post."""
+        if (
+            villager.fish_bait_ticks > 0
+            or int(getattr(villager.inventory, "bait", 0)) > 0
+            or int(getattr(building, "bait", 0)) <= 0
+        ):
+            return False
+        site = building.center_cell()
+        villager.state = VillagerState.WORKING
+        villager.target = site
+        if (villager.x, villager.y) != site:
+            if villager.move_cooldown <= 0:
+                self._step_villager_toward(villager, site)
+            return True
+        building.give_item_to(villager.inventory, "bait")
+        return True
+
+    def _baited_fish_posts(self) -> list[tuple[int, int]]:
+        """Active bait attraction points used by fish movement."""
+        return [
+            v.fish_post_pos
+            for v in self.villagers
+            if v.fish_bait_ticks > 0
+            and v.fish_post_pos is not None
+            and (v.x, v.y) == v.fish_post_pos
+            and v.state == VillagerState.WORKING
+        ]
+
     def _update_fisher(self, villager: Villager, building: Building) -> None:
         """Collect shore deposits, else stand at a dense shoreline and wait for fish."""
         if not fishing_allowed(self.calendar_day):
@@ -14633,6 +14833,11 @@ class Game:
 
         if not self._ensure_work_tool(villager, "fishing_rod"):
             self._maybe_assigned_transport(villager, building)
+            return
+        if self._try_fisher_bait_craft(villager, building):
+            return
+        villager.craft_recipe_name = None
+        if self._fisher_collect_bait(villager, building):
             return
         if self._workplace_primary_available(villager, building):
             pass
@@ -14689,6 +14894,13 @@ class Game:
                 villager.fish_post_pos = None
                 self._clear_villager_path(villager)
             return
+
+        if villager.fish_bait_ticks <= 0 and int(
+            getattr(villager.inventory, "bait", 0)
+        ) > 0:
+            villager.inventory.consume_item("bait", 1)
+            villager.fish_bait_ticks = max(1, self.ticks_per_day)
+            self.record_consumed("bait", 1)
 
         # At the post: catch any fish that swim within Chebyshev range 1.
         # Fish go straight into inventory (no shore drop → pick-up loop).
@@ -16858,7 +17070,7 @@ class Game:
         self._wildlife_pending = getattr(self, "_wildlife_pending", 0) + 1
         if self._wildlife_pending >= 4:
             self._tick_wildlife(day)
-            self.fish.tick(self.world, day)
+            self.fish.tick(self.world, day, attractors=self._baited_fish_posts())
             self._wildlife_pending = 0
         # Biodiversity is sample-based; skip live refresh for sampled modes.
         if self.overlay_mode not in (
@@ -16952,7 +17164,7 @@ class Game:
                 wildlife_pending += skip
                 while wildlife_pending >= 4:
                     self._tick_wildlife(day)
-                    self.fish.tick(self.world, day)
+                    self.fish.tick(self.world, day, attractors=self._baited_fish_posts())
                     wildlife_pending -= 4
                 remaining -= skip
                 continue
@@ -16978,7 +17190,7 @@ class Game:
             self._tick_arrow_shots()
             if wildlife_pending >= 4:
                 self._tick_wildlife(day)
-                self.fish.tick(self.world, day)
+                self.fish.tick(self.world, day, attractors=self._baited_fish_posts())
                 wildlife_pending = 0
             remaining -= 1
 
@@ -16990,7 +17202,7 @@ class Game:
             self._eco_pending = 0
             if self._wildlife_pending:
                 self._tick_wildlife(day)
-                self.fish.tick(self.world, day)
+                self.fish.tick(self.world, day, attractors=self._baited_fish_posts())
                 self._wildlife_pending = 0
 
     def _villager_travel_goal(self, villager: Villager) -> tuple[int, int] | None:
@@ -17269,9 +17481,15 @@ class Game:
                         self.screen, colours[terrain],
                         (int(ox + x * scale), int(oy + y * scale), max(1, int(scale + 1)), max(1, int(scale + 1))),
                     )
+            sx, sy = self._launch_preview.start_pos
+            marker = (int(ox + (sx + .5) * scale), int(oy + (sy + .5) * scale))
+            pygame.draw.circle(self.screen, (255, 244, 184), marker, max(5, int(scale * 1.15)))
+            pygame.draw.circle(self.screen, (125, 35, 35), marker, max(3, int(scale * .65)))
+            pygame.draw.circle(self.screen, (255, 255, 255), marker, max(5, int(scale * 1.15)), 1)
             summary = body_font.render(
                 f"{self._launch_preview.options.composition.title()} · "
-                f"{self._launch_preview.options.climate.title()} · seed {self._launch_preview.options.seed}",
+                f"{self._launch_preview.options.climate.title()} · seed {self._launch_preview.options.seed} · "
+                f"start ({sx}, {sy})",
                 True, COLOUR_TEXT,
             )
             self.screen.blit(summary, (panel.centerx - summary.get_width() // 2, panel.bottom - 104))
@@ -17423,6 +17641,16 @@ class Game:
             storage_amounts = None
             hired_count = 0
 
+        if inspect_b is not None and inspect_b.kind == BuildingKind.FARM:
+            barn = self._linked_barn(inspect_b)
+            if barn is not None:
+                storage_amounts = {
+                    key: int(getattr(inspect_b, key, 0))
+                    for key in inspect_b.depositable_keys()
+                }
+                for key in barn_sheaf_keys():
+                    storage_amounts[key] = int(getattr(barn, key, 0))
+
         def _draw_building_detail(surf: pygame.Surface, rect: pygame.Rect) -> None:
             if field_b is not None and embed_field:
                 self.field_plan_dialog.configure_embed(rect)
@@ -17465,6 +17693,9 @@ class Game:
                     else None
                 ),
                 village_stock=self._village_stock_amounts(),
+                recipe_progress_fractions=self._smooth_recipe_progress(
+                    inspect_b, inspect_workers
+                ),
                 crop_overview=(
                     self._farm_crop_overview(inspect_b)
                     if inspect_b.kind == BuildingKind.FARM
@@ -18801,6 +19032,15 @@ class Game:
                 and cell.feature != FeatureType.STRUCTURE_PAD
             ):
                 draw_size = vc * max(1, BUILDING_FOOTPRINT)
+                structure = self._building_at(x, y)
+                if structure is None:
+                    structure = self._construction_at(x, y)
+                if (
+                    structure is not None
+                    and max(1, structure.plot_w) == 3
+                    and max(1, structure.plot_h) == 2
+                ):
+                    cy -= vc
             draw_feature(
                 self.screen,
                 cell.feature,

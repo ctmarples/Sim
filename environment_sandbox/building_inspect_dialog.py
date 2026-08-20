@@ -524,6 +524,7 @@ class BuildingInspectDialog:
         show_fuel: bool = False,
         player_craft: bool = False,
         stock_amounts: dict[str, int] | None = None,
+        progress_fractions: dict[str, float] | None = None,
     ) -> tuple[int, str | None]:
         """Kitchen-style recipe rows with inputs. Returns (height, hovered tip key)."""
         from inventory_ui import draw_resource_cell
@@ -703,10 +704,26 @@ class BuildingInspectDialog:
                     self._inv_tip_hits.append((fuel_cell, "recipe", KITCHEN_FUEL_KEY))
                 if fuel_hov:
                     tip_key = KITCHEN_FUEL_KEY
-            fill = building.recipe_progress_fraction(recipe.name) if enabled else 0.0
+            fill = (
+                float(progress_fractions.get(recipe.name, 0.0))
+                if enabled and progress_fractions is not None
+                else building.recipe_progress_fraction(recipe.name) if enabled else 0.0
+            )
+            fill = max(0.0, min(1.0, fill))
             if player_craft:
                 player_inv = getattr(self, "_draw_player_inventory", None)
-                inputs_ok = recipe_ready_with_extra(building, recipe, player_inv)
+                storage_amounts = getattr(self, "_draw_storage_amounts", None)
+                if (
+                    building.kind == BuildingKind.FARM
+                    and recipe in building.addon_craft_recipes()
+                    and storage_amounts is not None
+                ):
+                    inputs_ok = all(
+                        int(storage_amounts.get(key, 0)) >= int(need)
+                        for key, need in recipe.inputs.items()
+                    )
+                else:
+                    inputs_ok = recipe_ready_with_extra(building, recipe, player_inv)
                 can_craft = (
                     enabled
                     and inputs_ok
@@ -919,6 +936,7 @@ class BuildingInspectDialog:
         home_storage=None,
         market_offer_fn=None,
         village_stock: dict[str, int] | None = None,
+        recipe_progress_fractions: dict[str, float] | None = None,
         crop_overview: list[dict] | None = None,
         env_status: dict | None = None,
         current_season: Season | None = None,
@@ -929,9 +947,12 @@ class BuildingInspectDialog:
             return
 
         self._draw_player_inventory = player_inventory
+        self._draw_storage_amounts = storage_amounts
         has_storage = self._has_storage(building)
         dual = self.show_player and has_storage
         storage_keys = building.depositable_keys()
+        if storage_amounts is not None:
+            storage_keys = tuple(dict.fromkeys((*storage_keys, *storage_amounts.keys())))
         if storage_keys:
             amounts = storage_amounts or {
                 k: int(getattr(building, k, 0)) for k in storage_keys
@@ -1470,6 +1491,7 @@ class BuildingInspectDialog:
                 scroll_name="split_recipes",
                 player_craft=self.allow_player_craft,
                 stock_amounts=village_stock,
+                progress_fractions=recipe_progress_fractions,
             )
             y += block_h
             if split_tip:
@@ -1488,6 +1510,7 @@ class BuildingInspectDialog:
                 scroll_name="plant_recipes",
                 player_craft=self.allow_player_craft,
                 stock_amounts=village_stock,
+                progress_fractions=recipe_progress_fractions,
             )
             y += block_h
             if plant_tip:
@@ -1513,6 +1536,7 @@ class BuildingInspectDialog:
                 show_fuel=building.kind == BuildingKind.KITCHEN,
                 player_craft=self.allow_player_craft,
                 stock_amounts=village_stock,
+                progress_fractions=recipe_progress_fractions,
             )
             y += block_h
             if craft_tip:

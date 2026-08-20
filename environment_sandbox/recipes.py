@@ -59,6 +59,7 @@ _BUILDING_RECIPE_ATTR: dict[str, str] = {
     "forester_split": "FORESTER_SPLIT_RECIPES",
     "hunter": "HUNTER_RECIPES",
     "forager": "FORAGER_RECIPES",
+    "fisher": "FISHER_RECIPES",
     "barn": "BARN_RECIPES",
     "drying_rack": "DRYING_RACK_RECIPES",
 }
@@ -117,6 +118,7 @@ FORESTER_PLANT_RECIPES: tuple[Recipe, ...] = ()
 FORESTER_SPLIT_RECIPES: tuple[Recipe, ...] = ()
 HUNTER_RECIPES: tuple[Recipe, ...] = ()
 FORAGER_RECIPES: tuple[Recipe, ...] = ()
+FISHER_RECIPES: tuple[Recipe, ...] = ()
 BARN_RECIPES: tuple[Recipe, ...] = ()
 DRYING_RACK_RECIPES: tuple[Recipe, ...] = ()
 
@@ -438,7 +440,8 @@ def _load_directory_recipes() -> None:
     global MILL_RECIPES, KITCHEN_RECIPES, CRAFT_BENCH_RECIPES, ALCHEMIST_RECIPES
     global TAILOR_RECIPES, COBBLER_RECIPES
     global FORESTER_RECIPES, FORESTER_PLANT_RECIPES, FORESTER_SPLIT_RECIPES
-    global HUNTER_RECIPES, FORAGER_RECIPES, BARN_RECIPES, DRYING_RACK_RECIPES
+    global HUNTER_RECIPES, FORAGER_RECIPES, FISHER_RECIPES
+    global BARN_RECIPES, DRYING_RACK_RECIPES
 
     if not _RECIPES_DATA_DIR.is_dir():
         return
@@ -503,6 +506,7 @@ PROCESSED_KEYS: tuple[str, ...] = tuple(
             *ALCHEMIST_OUTPUT_KEYS,
             *TAILOR_OUTPUT_KEYS,
             *COBBLER_OUTPUT_KEYS,
+            *output_keys_for_recipes(FISHER_RECIPES),
             "spoilage",
         )
     )

@@ -19,6 +19,7 @@ from settings import (
     BUFF_STRENGTH_WORK,
     FARM_PRODUCE_YIELD,
     INSECT_REPELLANT_PEST_BOOST,
+    DAY_SECONDS_AT_X1,
     pace_ticks,
     seconds_to_ticks,
 )
@@ -31,13 +32,23 @@ STARTING_FOOD: int = 12  # berries so early hires can eat
 # ---------------------------------------------------------------------------
 # Hunger / meals
 # ---------------------------------------------------------------------------
-# Satiation 1.0 → 0.0 over this many seconds at ×1.
-VILLAGER_SATIATION_SECONDS: float = 180.0
+# Satiation 1.0 → 0.0 over this many calendar days. The legacy default was
+# 180 seconds with a 10-second day, hence 18 days preserves existing balance.
+VILLAGER_SATIATION_DAYS: float = 18.0
+# Compatibility for diagnostics that still report the default wall-clock duration.
+VILLAGER_SATIATION_SECONDS: float = VILLAGER_SATIATION_DAYS * DAY_SECONDS_AT_X1
 
 
-def satiation_decay_per_tick(playback: int | None = None) -> float:
-    """Hunger drain per sim tick so 180s at ×1 is independent of playback."""
-    return 1.0 / seconds_to_ticks(VILLAGER_SATIATION_SECONDS, playback)
+def satiation_decay_per_tick(
+    playback: int | None = None, *, ticks_per_day: int | None = None
+) -> float:
+    """Hunger drain per tick, locked to a number of calendar days."""
+    day_ticks = (
+        max(1, int(ticks_per_day))
+        if ticks_per_day is not None
+        else seconds_to_ticks(DAY_SECONDS_AT_X1, playback)
+    )
+    return 1.0 / max(1.0, VILLAGER_SATIATION_DAYS * day_ticks)
 
 
 VILLAGER_SATIATION_DECAY_PER_TICK: float = satiation_decay_per_tick()

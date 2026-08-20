@@ -53,6 +53,11 @@ _ICONS_DIR = Path(__file__).resolve().parent / "assets" / "icons"
 _PNG_MANIFEST_PATH = _ICONS_DIR / "_png_anchors.json"
 _STIPPLE_TMP_DIR = _ICONS_DIR / "_stipple_tmp"
 
+# Logical icon aliases for legacy/resource names used by gameplay code.
+_ICON_BASE_ALIASES: dict[str, str] = {
+    "meat": "meat_marker",
+}
+
 # One map cell in SVG / export units (home-cell edge).
 ICON_CELL: float = 40.0
 
@@ -1224,6 +1229,7 @@ def variant_names(base: str) -> tuple[str, ...]:
     ``base_1.png``/``.svg``, ``base_2…`` (plain ``base`` is then unused).
     If no numbered files exist, falls back to a single ``base`` file.
     """
+    base = _ICON_BASE_ALIASES.get(base, base)
     cached = _VARIANT_CACHE.get(base)
     if cached is not None:
         return cached

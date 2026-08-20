@@ -285,7 +285,7 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
             ("cap", (200, 170, 140)),
             ("stem", (210, 200, 180)),
         ),
-        spawn_peak=0.015,
+        spawn_peak=0.025,
         spawn_rise=(56.0, 64.0),
         spawn_fall=(78.0, 84.0),
         near_feature="TREE",
@@ -294,7 +294,10 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
         clear_ramp_days=4.0,
         counts_toward_cap=False,
         temperature_niche=NicheRange(.05,.20,.55,.75), rainfall_niche=NicheRange(.45,.60,1,1),
-        moisture_niche=NicheRange(.50,.65,.90,1), fertility_niche=NicheRange(.25,.40,.80,.95),
+        # Autumn forest floor can be viable before the cached soil-water layer
+        # fully recharges. Keep bone-dry cells poor, without excluding nearly
+        # every tree-adjacent site after a dry summer.
+        moisture_niche=NicheRange(.03,.20,.75,.95), fertility_niche=NicheRange(.25,.40,.80,.95),
         disturbance_niche=NicheRange(0,0,.20,.45),
     ),
     WildSpeciesDef(

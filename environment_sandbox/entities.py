@@ -21,6 +21,7 @@ from recipes import (
     FORESTER_RECIPES,
     FORESTER_PLANT_RECIPES,
     FORESTER_SPLIT_RECIPES,
+    FISHER_RECIPES,
     FORAGER_RECIPES,
     HUNTER_RECIPES,
     KITCHEN_FUEL_KEY,
@@ -269,6 +270,7 @@ WORKPLACE_EXTRA_TOOLS: dict[BuildingKind, tuple[str, ...]] = {
 # primary job; hunters without a knife can kill animals but cannot recover pelts.
 WORKPLACE_ALSO_REQUIRES: dict[BuildingKind, tuple[str, ...]] = {
     BuildingKind.HUNTER: ("knife",),
+    BuildingKind.FISHER: ("knife",),
 }
 
 
@@ -1871,6 +1873,8 @@ class Building:
             return HUNTER_RECIPES
         if self.kind == BuildingKind.FORAGER:
             return FORAGER_RECIPES
+        if self.kind == BuildingKind.FISHER:
+            return FISHER_RECIPES
         if self.kind == BuildingKind.FARM:
             return self.addon_craft_recipes()
         return ()
@@ -2659,6 +2663,8 @@ class Building:
             keys = self.processor_input_keys()
         elif self.kind in (BuildingKind.FARM, BuildingKind.FORESTER):
             keys = self.plant_keys()
+        elif self.kind == BuildingKind.FISHER:
+            keys = self.active_supply_keys()
         else:
             keys = ()
         return (
@@ -2979,7 +2985,7 @@ class Building:
         if self.kind == BuildingKind.HUNTER:
             return ("meat", "fur", "hide", "leather")
         if self.kind == BuildingKind.FISHER:
-            return ("fish",)
+            return ("fish", "meat", "bait")
         if self.kind == BuildingKind.FORAGER:
             return ("wood", "rock", *_FORAGE_KEYS)
         if self.kind == BuildingKind.FARM:
@@ -3033,6 +3039,9 @@ class Building:
         if self.kind == BuildingKind.HUNTER:
             # Hide stays at the hut for drying-rack tanning; haul meat/fur/leather only.
             return ("meat", "fur", "leather")
+        if self.kind == BuildingKind.FISHER:
+            # Fish is exported; meat and bait remain as the bait-making buffer.
+            return ("fish",)
         if self.is_market():
             from market_economy import market_supply_resource_keys
 
@@ -3097,7 +3106,7 @@ class Building:
         if self.is_processor() or self.is_splitter() or self.is_market():
             return True
         # Farm / forester plant stock — concrete demand is plan-aware in game code.
-        if self.kind in (BuildingKind.FARM, BuildingKind.FORESTER):
+        if self.kind in (BuildingKind.FARM, BuildingKind.FORESTER, BuildingKind.FISHER):
             return True
         # Hunter drying rack / farm barn craft inputs (e.g. hide, grain).
         if self.addon_craft_recipes() and self.active_supply_keys():
@@ -3501,6 +3510,7 @@ class Villager:
     fish_target_id: int | None = None
     fish_catch_pos: tuple[int, int] | None = None
     fish_post_pos: tuple[int, int] | None = None
+    fish_bait_ticks: int = 0
     forage_colony_id: int | None = None
     construction_id: int | None = None
     # Sticky processor craft order (kitchen / mill / craft bench).
