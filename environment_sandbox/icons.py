@@ -1683,7 +1683,15 @@ ICON_OWL_RIGHT = "owl_right"
 ICON_HAWK_LEFT = "hawk_left"
 ICON_HAWK_RIGHT = "hawk_right"
 ICON_VILLAGER = "villager"
+ICON_VILLAGER_DOG_LEFT_1 = "villager_dog_left_1"
+ICON_VILLAGER_DOG_LEFT_2 = "villager_dog_left_2"
+ICON_VILLAGER_DOG_RIGHT_1 = "villager_dog_right_1"
+ICON_VILLAGER_DOG_RIGHT_2 = "villager_dog_right_2"
 ICON_PLAYER = "player"
+ICON_PLAYER_DOG_LEFT_1 = "player_dog_left_1"
+ICON_PLAYER_DOG_LEFT_2 = "player_dog_left_2"
+ICON_PLAYER_DOG_RIGHT_1 = "player_dog_right_1"
+ICON_PLAYER_DOG_RIGHT_2 = "player_dog_right_2"
 ICON_MEAT_MARKER = "meat_marker"
 ICON_FISH_MARKER = "fish_marker"
 ICON_SEEDS = "seeds"
@@ -1768,7 +1776,15 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_HAWK_LEFT,
     ICON_HAWK_RIGHT,
     ICON_VILLAGER,
+    ICON_VILLAGER_DOG_LEFT_1,
+    ICON_VILLAGER_DOG_LEFT_2,
+    ICON_VILLAGER_DOG_RIGHT_1,
+    ICON_VILLAGER_DOG_RIGHT_2,
     ICON_PLAYER,
+    ICON_PLAYER_DOG_LEFT_1,
+    ICON_PLAYER_DOG_LEFT_2,
+    ICON_PLAYER_DOG_RIGHT_1,
+    ICON_PLAYER_DOG_RIGHT_2,
     ICON_MEAT_MARKER,
     ICON_FISH_MARKER,
     ICON_SEEDS,

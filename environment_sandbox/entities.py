@@ -4062,6 +4062,13 @@ def note_cell_step(entity: object, nx: int, ny: int) -> None:
         return
     setattr(entity, "_vis_from_x", float(x))
     setattr(entity, "_vis_from_y", float(y))
+    if nx != x:
+        setattr(entity, "_vis_facing_right", nx > x)
+    setattr(
+        entity,
+        "_vis_walk_frame",
+        2 if int(getattr(entity, "_vis_walk_frame", 1) or 1) == 1 else 1,
+    )
     setattr(entity, "_vis_pending", True)
     setattr(entity, "x", nx)
     setattr(entity, "y", ny)

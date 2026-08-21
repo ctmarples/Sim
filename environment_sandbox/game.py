@@ -19818,16 +19818,40 @@ class Game:
             blit_icon(self.screen, fish_icon_for(item.kind), cx, cy, size)
 
     def _draw_villagers(self) -> None:
-        from icons import ICON_VILLAGER, blit_icon
+        from icons import (
+            ICON_VILLAGER_DOG_LEFT_1,
+            ICON_VILLAGER_DOG_LEFT_2,
+            ICON_VILLAGER_DOG_RIGHT_1,
+            ICON_VILLAGER_DOG_RIGHT_2,
+            blit_icon,
+        )
 
         size = self.camera.view_cell_px()
         for villager in self.villagers:
             vx, vy = entity_draw_xy(villager)
             cx, cy = self._cell_center(vx, vy)
             job_colour = self._villager_job_colour(villager)
+            facing_right = bool(getattr(villager, "_vis_facing_right", True))
+            moving = (
+                int(getattr(villager, "_vis_duration", 0) or 0) > 0
+                and int(getattr(villager, "move_cooldown", 0) or 0) > 0
+            )
+            frame = int(getattr(villager, "_vis_walk_frame", 1) or 1) if moving else 1
+            if facing_right:
+                icon = (
+                    ICON_VILLAGER_DOG_RIGHT_2
+                    if frame == 2
+                    else ICON_VILLAGER_DOG_RIGHT_1
+                )
+            else:
+                icon = (
+                    ICON_VILLAGER_DOG_LEFT_2
+                    if frame == 2
+                    else ICON_VILLAGER_DOG_LEFT_1
+                )
             blit_icon(
                 self.screen,
-                ICON_VILLAGER,
+                icon,
                 cx,
                 cy,
                 size,
@@ -19835,13 +19859,29 @@ class Game:
             )
 
     def _draw_player(self) -> None:
-        from icons import ICON_PLAYER, blit_icon
+        from icons import (
+            ICON_PLAYER_DOG_LEFT_1,
+            ICON_PLAYER_DOG_LEFT_2,
+            ICON_PLAYER_DOG_RIGHT_1,
+            ICON_PLAYER_DOG_RIGHT_2,
+            blit_icon,
+        )
 
         vx, vy = entity_draw_xy(self.player)
         cx, cy = self._cell_center(vx, vy)
+        facing_right = bool(getattr(self.player, "_vis_facing_right", True))
+        moving = (
+            int(getattr(self.player, "_vis_duration", 0) or 0) > 0
+            and int(getattr(self.player, "move_cooldown", 0) or 0) > 0
+        )
+        frame = int(getattr(self.player, "_vis_walk_frame", 1) or 1) if moving else 1
+        if facing_right:
+            icon = ICON_PLAYER_DOG_RIGHT_2 if frame == 2 else ICON_PLAYER_DOG_RIGHT_1
+        else:
+            icon = ICON_PLAYER_DOG_LEFT_2 if frame == 2 else ICON_PLAYER_DOG_LEFT_1
         blit_icon(
             self.screen,
-            ICON_PLAYER,
+            icon,
             cx,
             cy,
             self.camera.view_cell_px(),
