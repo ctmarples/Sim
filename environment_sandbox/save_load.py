@@ -472,6 +472,10 @@ def serialize_game(game: Game) -> dict[str, Any]:
                 "assigned_to_home": v.assigned_to_home,
                 "move_cooldown": v.move_cooldown,
                 "work_cooldown": v.work_cooldown,
+                # Preserve a partial craft's sticky worker assignment.  Building
+                # recipe_progress is saved separately; this prevents a reload
+                # from immediately choosing a different ready recipe.
+                "craft_recipe_name": v.craft_recipe_name,
                 "target": list(v.target) if v.target else None,
                 "haul_building_id": v.haul_building_id,
                 "hunt_animal_id": v.hunt_animal_id,
@@ -1300,6 +1304,10 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             fish_bait_ticks=max(0, int(vdata.get("fish_bait_ticks", 0))),
             forage_colony_id=vdata.get("forage_colony_id"),
             construction_id=vdata.get("construction_id"),
+        )
+        raw_craft_recipe = vdata.get("craft_recipe_name")
+        villager.craft_recipe_name = (
+            str(raw_craft_recipe) if raw_craft_recipe else None
         )
         raw_prio = vdata.get("priorities")
         if raw_prio:

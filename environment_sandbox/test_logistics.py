@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 from entities import (
     Building,
@@ -10,6 +11,7 @@ from entities import (
     Inventory,
     apply_building_storage,
 )
+from game import Game
 
 
 def _kitchen(*enabled: str) -> Building:
@@ -76,6 +78,21 @@ class FarmSeedWithdrawTests(unittest.TestCase):
         self.assertEqual(inv.cabbage_seeds, 0)
         self.assertEqual(farm.onion_seeds, 7)
         self.assertEqual(farm.cabbage_seeds, 10)
+
+
+class RoutedSupplyDemandTests(unittest.TestCase):
+    def test_hauler_sees_extension_demand_excluded_by_building(self) -> None:
+        """Barn sheaves are injected by Game, not Building.supply_demand()."""
+        game = Game.__new__(Game)
+        farm = SimpleNamespace(id=7)
+        game.buildings = {farm.id: farm}
+        game._claimed_haul_targets = lambda _villager_id: set()
+        game._building_supply_demand = lambda building: {"wheat": 4}
+        game._processor_can_be_supplied = lambda building: True
+        game._supply_sink_sort_key = lambda building: (building.id,)
+
+        villager = SimpleNamespace(id=3)
+        self.assertIs(game._find_processor_needing_supply_for(villager), farm)
 
 
 if __name__ == "__main__":

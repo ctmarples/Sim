@@ -4492,10 +4492,15 @@ class Game:
             return
         day_frac = float(steps) / max(1, self.ticks_per_day)
         days = self.balance.get_float("FOOD_SPOILAGE_DAYS")
+        carried_rate = self.balance.get_float("FOOD_SPOILAGE_CARRIED_RATE")
         tick_storage_spoilage(self.home_storage, day_frac, days)
-        tick_storage_spoilage(self.player.inventory, day_frac, days)
+        tick_storage_spoilage(
+            self.player.inventory, day_frac * carried_rate, days
+        )
         for villager in self.villagers:
-            tick_storage_spoilage(villager.inventory, day_frac, days)
+            tick_storage_spoilage(
+                villager.inventory, day_frac * carried_rate, days
+            )
         for building in self.buildings.values():
             tick_storage_spoilage(building, day_frac, days)
 
@@ -5357,10 +5362,25 @@ class Game:
             steps = max(1, recipe.work_steps())
             completed = int(building.recipe_progress.get(recipe.name, 0))
             phase = 1.0 - min(1.0, max(0.0, cooldown / max(1, interval)))
-            smooth = (max(0, completed - 1) + phase) / steps
+            # ``recipe_progress`` is advanced before the worker cooldown begins.
+            # Animate forward from that saved checkpoint toward the next step.
+            # Subtracting one here made lake.json's mill visibly rewind from
+            # wheat flour 2/3 to 1/3 as soon as its worker resumed after loading.
+            smooth = (completed + phase) / steps
+            smooth = max(result.get(recipe.name, 0.0), min(1.0, smooth))
             active[recipe.name] = max(active.get(recipe.name, 0.0), smooth)
 
         for worker in workers:
+            # ``craft_recipe_name`` deliberately survives short interruptions so
+            # the worker can resume the same order.  Hauling/eating cooldowns are
+            # unrelated to crafting, though; treating them as an active craft
+            # makes a saved partial recipe's bar jump backwards (commonly from
+            # 2/3 to about 1/3) while the worker fetches supplies.
+            if (
+                worker.state != VillagerState.WORKING
+                or worker.building_id != building.id
+            ):
+                continue
             add_cycle(
                 worker.craft_recipe_name,
                 int(worker.work_cooldown),
@@ -8966,6 +8986,7 @@ class Game:
             self._update_villager_wellbeing(villager, day_frac)
             if villager.id not in {v.id for v in self.villagers}:
                 continue
+            self._reconcile_seasonal_workplace(villager)
             if villager.state == VillagerState.SLEEPING:
                 if (
                     villager.target is not None
@@ -8994,13 +9015,16 @@ class Game:
                     continue
 
             if villager.needs_food() or villager.seeking_food:
-                # Don't abandon deliveries / hauling / building to snack — cargo
-                # would sit on the home tile and look like a stuck worker.
-                if villager.state in (
-                    VillagerState.DELIVERING,
-                    VillagerState.HAULING,
-                    VillagerState.BUILDING,
-                ):
+                # Finish trips that actually carry cargo / build materials before
+                # eating.  An empty-handed hauler is only travelling to a pickup;
+                # making that state food-proof can strand a starving worker in a
+                # very slow home↔workplace loop and stall the whole supply chain.
+                transport_has_cargo = (
+                    villager.state
+                    in (VillagerState.DELIVERING, VillagerState.HAULING)
+                    and not villager.inventory.is_empty
+                )
+                if transport_has_cargo or villager.state == VillagerState.BUILDING:
                     villager.seeking_food = True
                 else:
                     can_eat = (
@@ -9144,6 +9168,39 @@ class Game:
                 and not villager.seeking_food
             ):
                 self._park_idle_decision(villager)
+
+    def _reconcile_seasonal_workplace(self, villager: Villager) -> None:
+        """Drop stale job state when the active seasonal workplace changes."""
+        if not bool(getattr(villager, "seasonal_priorities", False)):
+            return
+        active_ids = [
+            bid
+            for bid in villager.active_workplace_slot_ids(self.season)
+            if bid is not None and bid in self.buildings
+        ]
+        if villager.building_id in active_ids:
+            building = self.buildings.get(villager.building_id or -1)
+            if building is not None and building.kind != BuildingKind.FISHER and (
+                villager.fish_target_id is not None
+                or villager.fish_catch_pos is not None
+                or villager.fish_post_pos is not None
+            ):
+                old_targets = {villager.fish_catch_pos, villager.fish_post_pos}
+                villager.fish_target_id = None
+                villager.fish_catch_pos = None
+                villager.fish_post_pos = None
+                villager._fish_post_last_catch_tick = None
+                if villager.target in old_targets:
+                    villager.target = None
+                    self._clear_villager_path(villager)
+                    if villager.state == VillagerState.WORKING:
+                        villager.state = VillagerState.IDLE
+            return
+        villager.clear_work_stickies()
+        villager.building_id = active_ids[0] if active_ids else None
+        villager.assigned_to_home = not active_ids
+        if villager.state != VillagerState.SLEEPING:
+            villager.state = VillagerState.IDLE
 
     def _satiation_speed_factor(self, satiation: float) -> float:
         """1.0 when full, down to 0.4 when starving — scales move/work pace."""
@@ -10094,12 +10151,21 @@ class Game:
 
     def _update_seek_food(self, villager: Villager) -> None:
         """Seek preferred stores, then carried food, then any store/wild food."""
+        # Recipe progress belongs to the building.  Keeping the worker's label
+        # through a meal trip makes the UI briefly claim they are still crafting
+        # at their old station while walking away from it.
+        villager.craft_recipe_name = None
         villager.seeking_food = True
         home = self.world.home_pos
 
-        # A known favourite or required staple takes priority over pack food.
-        # Only fall back to the carried meal when no preferred village stock exists.
-        dest = self._find_nearest_food_store(villager, preferred_only=True)
+        # A known favourite or required staple normally takes priority.  At
+        # critical hunger, use the nearest food instead: crossing town for a
+        # preference at starvation speed creates long food↔job loops and can
+        # keep a processor from ever reaching its station.
+        critical_hunger = float(getattr(villager, "satiation", 0.0)) <= 0.15
+        dest = None
+        if not critical_hunger:
+            dest = self._find_nearest_food_store(villager, preferred_only=True)
         carried_food = self._food_count(villager.inventory) > 0
         if dest is None and carried_food:
             eaten = self._eat_random_from(villager.inventory, villager)
@@ -10470,6 +10536,10 @@ class Game:
         if cache is not None:
             cache[building.id] = demand
         return demand
+
+    def _building_needs_supply(self, building: Building) -> bool:
+        """Whether routed logistics demand exists, including extension storage."""
+        return bool(self._building_supply_demand(building))
 
     def _farm_plan_seed_demand(self, farm: Building) -> dict[str, int]:
         """Seeds needed for nearby field plans that are in a plantable phase."""
@@ -10900,9 +10970,13 @@ class Game:
     def _farm_pack_needs_barn_or_farm_unload(
         self, villager: Villager, building: Building
     ) -> bool:
-        """Harvest unload: sheaves → barn, field produce → farm (not grain export)."""
+        """Whether a full harvest pack has somewhere appropriate to unload.
+
+        Having a single harvested item is not enough: farmers should fill their
+        remaining cargo space across nearby tiles before walking back to the farm.
+        """
         inv = villager.inventory
-        if inv.is_empty:
+        if inv.is_empty or inv.can_add(1):
             return False
         barn = self._linked_barn(building)
         if barn is not None:
@@ -12392,7 +12466,8 @@ class Game:
             if building_id is None:
                 villager.clear_assignment()
             return
-        if bid is not None:
+        if bid is not None and villager.building_id != bid:
+            villager.clear_work_stickies()
             villager.building_id = bid
 
         if building.kind == BuildingKind.HUNTER:
@@ -13937,6 +14012,15 @@ class Game:
             if crop is None:
                 continue
             cells = cells_by_crop[key]
+            planted_cells = []
+            for x, y in cells:
+                cell = self.world.get_cell(x, y)
+                if (
+                    cell is not None
+                    and cell.feature == FeatureType.CROP_HERB
+                    and (getattr(cell, "crop_kind", None) or "") == key
+                ):
+                    planted_cells.append((x, y))
             rows.append(
                 {
                     "key": key,
@@ -13944,9 +14028,11 @@ class Game:
                     "icon": crop.produce_key or key,
                     "phases": tuple(PHASE_SHORT[p] for p in crop.year_phases),
                     "tiles": len(cells),
+                    "planted_tiles": len(planted_cells),
                     "max_yield": len(cells) * base,
                     "est_yield": sum(
-                        self._farm_produce_yield_at(x, y) for x, y in cells
+                        self._farm_produce_yield_at(x, y)
+                        for x, y in planted_cells
                     ),
                 }
             )
@@ -14057,12 +14143,12 @@ class Game:
         }
 
     def _field_yield_cells(self, field: Building) -> set[tuple[int, int]]:
-        """Planned and/or planted cells used for field yield estimates."""
+        """Actually planted cells used for field yield estimates.
+
+        Plans describe potential/max yield, but empty planned soil must not add
+        to the live estimated harvest shown in the field Status panel.
+        """
         cells: set[tuple[int, int]] = set()
-        for plan in getattr(field, "plans", ()) or ():
-            for cell in plan.cells():
-                if field.contains_plot(*cell):
-                    cells.add(cell)
         for x, y in field.plot_cells():
             cell = self.world.get_cell(x, y)
             if cell is not None and cell.feature == FeatureType.CROP_HERB:
@@ -14319,8 +14405,16 @@ class Game:
                 return
             self._maybe_assigned_transport(villager, building)
             return
-        # Finish leather while hide is waiting — don't leave it for "no prey" only.
-        if self._try_addon_craft(villager, building):
+        # Do not let the first collected hide pull a hunter away from their
+        # unfinished pile.  Exhaust the claimed meat/hide/fur (or fill the pack)
+        # before leather crafting at the hut can preempt collection.
+        sticky_loot = False
+        if villager.hunt_meat_pos is not None:
+            sticky_cell = self.world.get_cell(*villager.hunt_meat_pos)
+            sticky_loot = sticky_cell is not None and self._cell_has_hunt_loot(
+                sticky_cell
+            )
+        if not sticky_loot and self._try_addon_craft(villager, building):
             return
         if self._workplace_primary_available(villager, building):
             pass
@@ -14341,6 +14435,8 @@ class Game:
         if meat_pos is not None:
             cell = self.world.get_cell(*meat_pos)
             if cell is None or not self._cell_has_hunt_loot(cell):
+                if villager.target == meat_pos:
+                    villager.target = None
                 villager.hunt_meat_pos = None
                 meat_pos = None
         if meat_pos is None:
@@ -14351,6 +14447,7 @@ class Game:
 
         if meat_pos is not None and not villager.inventory.is_full:
             villager.state = VillagerState.WORKING
+            villager.target = meat_pos
             if (villager.x, villager.y) == meat_pos:
                 if villager.work_cooldown == 0:
                     if self._collect_meat(*meat_pos, villager.inventory, status=False):
@@ -14386,6 +14483,7 @@ class Game:
 
         if colony is not None:
             villager.state = VillagerState.WORKING
+            villager.target = (colony.x, colony.y)
             dist = max(abs(colony.x - villager.x), abs(colony.y - villager.y))
             if dist <= 1:
                 if villager.work_cooldown == 0:
@@ -14421,6 +14519,7 @@ class Game:
                     if self.world.is_walkable(nx, ny):
                         approach = (nx, ny)
                         break
+            villager.target = approach
             if not self._step_villager_toward(villager, approach):
                 villager.hunt_colony_id = None
                 self._clear_villager_path(villager)
@@ -14436,6 +14535,7 @@ class Game:
             return
 
         villager.state = VillagerState.WORKING
+        villager.target = (animal.x, animal.y)
         dist = max(abs(animal.x - villager.x), abs(animal.y - villager.y))
         can_ranged = self._hunter_can_ranged(villager)
         has_spear = villager.inventory.has_equipped_tool("spear")
@@ -14483,6 +14583,7 @@ class Game:
             and max(abs(cache_goal[0] - animal.x), abs(cache_goal[1] - animal.y)) <= 2
         ):
             approach = cache_goal
+        villager.target = approach
         if not self._step_villager_toward(villager, approach):
             villager.hunt_animal_id = None
             self._clear_villager_path(villager)
@@ -14889,6 +14990,7 @@ class Game:
             return
 
         villager.state = VillagerState.WORKING
+        villager.target = post
         if (villager.x, villager.y) != post:
             if not self._step_villager_toward(villager, post):
                 villager.fish_post_pos = None
@@ -14945,6 +15047,7 @@ class Game:
             self.world.add_fish_deposit(pos[0], pos[1], yield_n)
         else:
             self.record_produced("fish", yield_n)
+            villager._fish_post_last_catch_tick = self._simulation_clock_tick()
         self.world.apply_extraction_disturbance(pos[0], pos[1])
         self._refresh_indicators()
         villager.work_cooldown = self._villager_work_interval(villager)
@@ -15120,19 +15223,24 @@ class Game:
     def _resolve_fish_post(
         self, villager: Villager, building: Building
     ) -> tuple[int, int] | None:
-        """Keep a shore post while fish still concentrate nearby; else re-pick."""
+        """Keep a static shore post until it has gone a full day without a catch."""
         post = villager.fish_post_pos
         if post is not None:
             if (
                 self._is_fishing_shore(*post)
                 and self._within_work_search((villager.x, villager.y), post)
             ):
-                fish_list = self._fisher_candidate_fish(villager, building)
-                # Stay while any fish remain nearby — avoid re-scanning every tick
-                # when a school briefly dips below MIN_FISH.
-                if self._fish_post_density(post, fish_list) >= 1:
+                if (villager.x, villager.y) != post:
+                    return post
+                now = self._simulation_clock_tick()
+                last = getattr(villager, "_fish_post_last_catch_tick", None)
+                if last is None:
+                    villager._fish_post_last_catch_tick = now
+                    return post
+                if now - int(last) < max(1, self.ticks_per_day):
                     return post
             villager.fish_post_pos = None
+            villager._fish_post_last_catch_tick = None
             self._clear_villager_path(villager)
         cd = int(getattr(villager, "_fish_post_search_cd", 0) or 0)
         if cd > 0:
@@ -15142,8 +15250,14 @@ class Game:
         villager._fish_post_search_cd = 12 if post is None else 0
         if post is not None:
             villager.fish_post_pos = post
+            villager._fish_post_last_catch_tick = self._simulation_clock_tick()
             self._register_field_claim(villager, post)
         return post
+
+    def _simulation_clock_tick(self) -> int:
+        """Monotonic calendar tick used by worker decisions during live/fast play."""
+        elapsed_today = max(0, self.ticks_per_day - int(self.day_tick))
+        return int(self.calendar_day) * max(1, self.ticks_per_day) + elapsed_today
 
     def _find_fish_target(self, villager: Villager, building: Building):
         """Legacy helper: nearest fish (availability / debug). Prefer shore posts."""
@@ -15279,6 +15393,7 @@ class Game:
                     villager.haul_building_id = None
                 else:
                     dest = claimed.center_cell()
+                    villager.target = dest
                     if (villager.x, villager.y) == dest:
                         if villager.work_cooldown == 0:
                             claimed.withdraw_to_inventory(villager.inventory)
@@ -15292,7 +15407,7 @@ class Game:
                         return
                     self._step_villager_toward(villager, dest)
                     return
-            elif claimed is not None and claimed.needs_supplied():
+            elif claimed is not None and self._building_needs_supply(claimed):
                 # Deliver ingredients the processor / forester splitter still needs.
                 if (
                     not villager.inventory.is_empty
@@ -15364,6 +15479,7 @@ class Game:
         if source is not None:
             villager.haul_building_id = source.id
             villager.state = VillagerState.HAULING
+            villager.target = source.center_cell()
             if (villager.x, villager.y) == source.center_cell():
                 if villager.work_cooldown == 0:
                     source.withdraw_to_inventory(villager.inventory)
@@ -15384,7 +15500,7 @@ class Game:
                 for b in self.buildings.values()
                 if b.id != avoid
                 and b.id not in claimed
-                and b.needs_supplied()
+                and self._building_needs_supply(b)
                 and self._processor_can_be_supplied(b)
             ]
             if others:
@@ -15485,7 +15601,7 @@ class Game:
 
         others_need_gap = any(
             b.id != sink.id
-            and b.needs_supplied()
+            and self._building_needs_supply(b)
             and sum(b.recipe_gap_demand().values()) > 0
             and self._processor_can_be_supplied(b)
             for b in self.buildings.values()
@@ -15638,7 +15754,7 @@ class Game:
         )
         needy: list[Building] = []
         for building in self.buildings.values():
-            if not building.needs_supplied():
+            if not self._building_needs_supply(building):
                 continue
             if villager is not None and building.id in claimed:
                 continue
@@ -15666,7 +15782,7 @@ class Game:
             for b in self.buildings.values()
             if b.id != primary.id
             and b.id not in claimed
-            and b.needs_supplied()
+            and self._building_needs_supply(b)
             and self._processor_can_be_supplied(b)
             and sum(b.recipe_gap_demand().values()) > 0
         ]
@@ -15677,7 +15793,7 @@ class Game:
                 for b in self.buildings.values()
                 if b.id != primary.id
                 and b.id not in claimed
-                and b.needs_supplied()
+                and self._building_needs_supply(b)
                 and self._processor_can_be_supplied(b)
             ]
         extras.sort(key=self._supply_sink_sort_key)
@@ -15705,9 +15821,9 @@ class Game:
         for building in self.buildings.values():
             if building.id in exclude:
                 continue
-            if not building.needs_supplied():
+            if not self._building_needs_supply(building):
                 continue
-            if not building.can_accept_from(inv):
+            if not self._workplace_can_accept_cargo(building, inv):
                 continue
             gap = building.recipe_gap_demand()
             full = self._building_supply_demand(building)

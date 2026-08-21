@@ -2,11 +2,47 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from entities import VillagerState
+from entities import Inventory, VillagerState
 from game import Game
 
 
 class FoodSeekingTests(unittest.TestCase):
+    def test_empty_hungry_hauler_may_interrupt_pickup_to_eat(self):
+        game = Game.__new__(Game)
+        game.villagers = []
+        game.ticks_per_day = 240
+        game._tick_job_change_deposit = Mock(return_value=False)
+        game._satiation_decay = Mock(return_value=0.0)
+        game._idle_decision_pending = Mock(return_value=False)
+        game._update_seek_food = Mock()
+        game._update_villager_wellbeing = Mock()
+        game._rebuild_villager_claim_snapshot = Mock()
+        game._reset_tick_claims = Mock()
+        game._village_food_amounts = Mock(return_value={})
+        game._villager_needs_ai_pass = Mock(return_value=True)
+        game._food_count = Mock(return_value=0)
+        game._find_nearest_food_store = Mock(return_value=(5, 5))
+        game._find_nearest_map_food = Mock(return_value=None)
+
+        villager = SimpleNamespace(
+            id=1,
+            inventory=Inventory(),
+            state=VillagerState.HAULING,
+            move_cooldown=0,
+            work_cooldown=0,
+            decision_cooldown=0,
+            fish_bait_ticks=0,
+            satiation=0.0,
+            food_hunger_mult=1.0,
+            seeking_food=True,
+            needs_food=Mock(return_value=True),
+        )
+        game.villagers = [villager]
+
+        game._update_villagers()
+
+        game._update_seek_food.assert_called_once_with(villager)
+
     def test_hungry_villager_eats_carried_food_before_depositing_cargo(self):
         game = Game.__new__(Game)
         game.world = SimpleNamespace(home_pos=(5, 5))
@@ -20,6 +56,7 @@ class FoodSeekingTests(unittest.TestCase):
 
         villager = SimpleNamespace(
             inventory=SimpleNamespace(cabbage=1, sage=3),
+            craft_recipe_name="leather_satchel",
             seeking_food=True,
             target=(9, 9),
             work_cooldown=0,
@@ -35,6 +72,7 @@ class FoodSeekingTests(unittest.TestCase):
         self.assertIsNone(villager.target)
         self.assertEqual(villager.work_cooldown, 12)
         self.assertEqual(villager.state, VillagerState.WORKING)
+        self.assertIsNone(villager.craft_recipe_name)
 
     def test_priority_food_in_store_is_sought_before_carried_fallback(self):
         game = Game.__new__(Game)
@@ -53,6 +91,7 @@ class FoodSeekingTests(unittest.TestCase):
             required_foods=["meat"],
             favourite_foods=[],
             seeking_food=True,
+            satiation=0.5,
             target=None,
             work_cooldown=0,
             state=VillagerState.IDLE,
@@ -63,6 +102,37 @@ class FoodSeekingTests(unittest.TestCase):
         game._eat_random_from.assert_not_called()
         game._step_villager_toward.assert_called_once_with(villager, (5, 5))
         self.assertEqual(villager.target, (5, 5))
+
+    def test_critical_hunger_skips_preference_detour(self):
+        game = Game.__new__(Game)
+        game.world = SimpleNamespace(home_pos=(5, 5))
+        game._food_count = Mock(return_value=0)
+        game._find_nearest_food_store = Mock(return_value=(5, 5))
+        game._find_nearest_map_food = Mock(return_value=None)
+        game._food_store_at = Mock(return_value=SimpleNamespace(cabbage=1))
+        game._inventory_needs_store_deposit = Mock(return_value=False)
+        game._villager_needs_home_restock = Mock(return_value=False)
+        game._step_villager_toward = Mock(return_value=True)
+
+        villager = SimpleNamespace(
+            x=4,
+            y=5,
+            inventory=SimpleNamespace(is_full=False),
+            satiation=0.1,
+            seeking_food=True,
+            target=None,
+            work_cooldown=0,
+            state=VillagerState.IDLE,
+        )
+
+        game._update_seek_food(villager)
+
+        self.assertNotIn(
+            unittest.mock.call(villager, preferred_only=True),
+            game._find_nearest_food_store.call_args_list,
+        )
+        game._find_nearest_food_store.assert_called_once_with(villager)
+        game._step_villager_toward.assert_called_once_with(villager, (5, 5))
 
 
 if __name__ == "__main__":

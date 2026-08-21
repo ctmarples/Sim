@@ -1133,8 +1133,9 @@ class HomeStorage:
                 if getattr(self, key, 0) <= 0 or not inventory.can_add(1, key=key):
                     remaining.pop(key, None)
                     continue
-                setattr(self, key, getattr(self, key) - 1)
-                setattr(inventory, key, getattr(inventory, key) + 1)
+                if not self.withdraw_one_to(inventory, key):
+                    remaining.pop(key, None)
+                    continue
                 remaining[key] -= 1
                 taken += 1
                 progressed = True
@@ -1148,8 +1149,8 @@ class HomeStorage:
             return 0
         taken = 0
         while getattr(self, key, 0) > 0 and inventory.can_add(1, key=key):
-            setattr(self, key, getattr(self, key) - 1)
-            setattr(inventory, key, getattr(inventory, key) + 1)
+            if not self.withdraw_one_to(inventory, key):
+                break
             taken += 1
         return taken
 
@@ -2371,7 +2372,7 @@ class Building:
         if self.kind == BuildingKind.MILL:
             return MILL_OUTPUT_KEYS
         if self.kind == BuildingKind.KITCHEN:
-            return KITCHEN_OUTPUT_KEYS
+            return KITCHEN_OUTPUT_KEYS + ("spoilage",)
         if self.kind == BuildingKind.CRAFT_BENCH:
             return CRAFT_BENCH_OUTPUT_KEYS
         if self.kind == BuildingKind.ALCHEMIST:
@@ -2761,6 +2762,38 @@ class Building:
         if not candidates:
             return None
 
+        avoid = avoid_names or ()
+        free = [r for r in candidates if r.name not in avoid]
+        pool = free if free else list(candidates)
+        # Finish partial orders before starting a newly preferable one.  Stock,
+        # priorities and output caps can change every tick; ranking first made a
+        # worker bounce between recipes and leave several half-finished bars.
+        in_progress = [
+            r for r in pool if int(self.recipe_progress.get(r.name, 0)) > 0
+        ]
+        if in_progress:
+            if prefer_name:
+                for recipe in in_progress:
+                    if recipe.name == prefer_name:
+                        return recipe
+            return min(
+                in_progress,
+                key=lambda r: (self.get_recipe_priority(r.name), r.name),
+            )
+        # A partial unclaimed order may be waiting on an ingredient or output
+        # space.  Preserve it as the station's next order instead of starting a
+        # second recipe and oscillating whenever availability changes.
+        waiting_partial = any(
+            r.name not in avoid
+            and int(self.recipe_progress.get(r.name, 0)) > 0
+            and recipe_skill_gate(
+                r, worker=worker, worker_skill_level=worker_skill_level
+            )
+            for r in recipes
+        )
+        if waiting_partial:
+            return None
+
         # Don't grill through a full meat tray while a higher-priority stew is
         # only missing vegetables that have no room to arrive.
         if (
@@ -2780,23 +2813,10 @@ class Building:
                     return None
 
         rank = self._recipe_craft_rank
-        avoid = avoid_names or ()
         free = [r for r in candidates if r.name not in avoid]
         pool = free if free else list(candidates)
         best_rank = min(rank(r) for r in pool)
         tier = [r for r in pool if rank(r) == best_rank]
-
-        in_progress = [
-            r
-            for r in tier
-            if int(self.recipe_progress.get(r.name, 0)) > 0
-        ]
-        if in_progress:
-            if prefer_name:
-                for recipe in in_progress:
-                    if recipe.name == prefer_name:
-                        return recipe
-            return min(in_progress, key=lambda r: r.name)
 
         if prefer_name:
             for recipe in tier:
@@ -2897,6 +2917,8 @@ class Building:
         if self.is_processor():
             for key in self.processor_input_keys():
                 moved += self.deposit_key_from(inventory, key)
+            if self.accepts_food_spoilage():
+                moved += self.deposit_key_from(inventory, "spoilage")
             if self.kind == BuildingKind.KITCHEN:
                 while self.deposit_one_from(inventory, KITCHEN_FUEL_KEY):
                     moved += 1
@@ -2910,6 +2932,16 @@ class Building:
                 moved += self.deposit_key_from(inventory, key)
             return moved
         return moved
+
+    def accepts_food_spoilage(self) -> bool:
+        """True for workplaces whose own production can create spoilage."""
+        return self.kind in (
+            BuildingKind.HUNTER,
+            BuildingKind.FISHER,
+            BuildingKind.FORAGER,
+            BuildingKind.FARM,
+            BuildingKind.KITCHEN,
+        )
 
     def deposit_key_from(self, inventory: Inventory, key: str) -> int:
         """Deposit as much of one key as capacity allows. Returns amount moved."""
@@ -2983,11 +3015,11 @@ class Building:
         if self.kind == BuildingKind.MASON:
             return ("rock",)
         if self.kind == BuildingKind.HUNTER:
-            return ("meat", "fur", "hide", "leather")
+            return ("meat", "fur", "hide", "leather", "spoilage")
         if self.kind == BuildingKind.FISHER:
-            return ("fish", "meat", "bait")
+            return ("fish", "meat", "bait", "spoilage")
         if self.kind == BuildingKind.FORAGER:
-            return ("wood", "rock", *_FORAGE_KEYS)
+            return ("wood", "rock", *_FORAGE_KEYS, "spoilage")
         if self.kind == BuildingKind.FARM:
             keys = PRODUCE_KEYS + SEED_KEYS + ("straw",)
             # With a barn, wheat/rye sheaves live there until threshed.
@@ -2996,7 +3028,7 @@ class Building:
 
                 sheaves = set(barn_sheaf_keys())
                 keys = tuple(k for k in keys if k not in sheaves)
-            return keys
+            return (*keys, "spoilage")
         if self.kind == BuildingKind.BARN:
             # Sheaves wait here until threshed; grain/straw outputs land on the farm.
             from farm_pipeline import barn_sheaf_keys
@@ -3011,7 +3043,10 @@ class Building:
         if self.kind == BuildingKind.MILL:
             return MILL_INPUT_KEYS + MILL_OUTPUT_KEYS
         if self.kind == BuildingKind.KITCHEN:
-            return KITCHEN_INPUT_KEYS + KITCHEN_OUTPUT_KEYS + (KITCHEN_FUEL_KEY,)
+            return KITCHEN_INPUT_KEYS + KITCHEN_OUTPUT_KEYS + (
+                KITCHEN_FUEL_KEY,
+                "spoilage",
+            )
         if self.kind == BuildingKind.CRAFT_BENCH:
             return CRAFT_BENCH_INPUT_KEYS + CRAFT_BENCH_OUTPUT_KEYS
         if self.kind == BuildingKind.ALCHEMIST:
@@ -3032,16 +3067,16 @@ class Building:
             # Always allow hauling logs / wood; mins keep a split buffer on-site.
             return ("logs", "hardwood_logs", "wood")
         if self.kind == BuildingKind.FORAGER:
-            return ("wood", "rock", *_FORAGE_KEYS)
+            return ("wood", "rock", *_FORAGE_KEYS, "spoilage")
         if self.kind == BuildingKind.FARM:
             # Produce + straw, plus surplus grain/seeds (mill / storehouse).
-            return PRODUCE_KEYS + ("straw",) + SEED_KEYS
+            return PRODUCE_KEYS + ("straw", "spoilage") + SEED_KEYS
         if self.kind == BuildingKind.HUNTER:
             # Hide stays at the hut for drying-rack tanning; haul meat/fur/leather only.
-            return ("meat", "fur", "leather")
+            return ("meat", "fur", "leather", "spoilage")
         if self.kind == BuildingKind.FISHER:
             # Fish is exported; meat and bait remain as the bait-making buffer.
-            return ("fish",)
+            return ("fish", "spoilage")
         if self.is_market():
             from market_economy import market_supply_resource_keys
 
@@ -3060,6 +3095,7 @@ class Building:
             for key in (
                 *self.processor_output_keys(),
                 *self.processor_input_keys(),
+                *(("spoilage",) if self.accepts_food_spoilage() else ()),
             ):
                 if key not in seen and self.haulable_amount(key) > 0:
                     seen.add(key)

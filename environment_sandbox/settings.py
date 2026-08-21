@@ -479,6 +479,8 @@ BIRD_SEED_COUNT: int = 2
 BIRD_ROAM_SPEED_MULT: float = 2.5
 # Calendar days for a food stack's quality to fall from fresh (1) to spoil (0).
 FOOD_SPOILAGE_DAYS: float = 10.0
+# Multiplier for food ageing while carried (1 = same as stored, 0 = paused).
+FOOD_SPOILAGE_CARRIED_RATE: float = 1.0
 # Chebyshev radius for neighbourhood-averaged disturbance (read + spread falloff).
 DISTURBANCE_RADIUS: int = 3
 

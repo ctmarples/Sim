@@ -60,8 +60,16 @@ def on_food_merged(
 
 
 def on_food_removed(storage: Any, key: str) -> None:
+    """Remove the oldest (currently spoiling) unit from a stack.
+
+    A quality meter belongs to one leading unit, not every item in the stack.
+    Once that unit is removed, the remainder starts a fresh spoilage cycle.
+    """
+    qmap = ensure_food_quality_map(storage)
     if int(getattr(storage, key, 0) or 0) <= 0:
-        ensure_food_quality_map(storage).pop(key, None)
+        qmap.pop(key, None)
+    elif is_spoilable_food(key):
+        qmap[key] = 1.0
 
 
 def serialize_food_quality(storage: Any) -> dict[str, float]:
@@ -119,7 +127,7 @@ def tick_storage_spoilage(storage: Any, day_frac: float, days_to_spoil: float) -
             continue
         quality = max(0.0, min(1.0, float(qmap.get(key, 1.0))))
         quality -= decay
-        while quality <= 0.0 and have > 0:
+        if quality <= 0.0 and have > 0:
             setattr(storage, key, have - 1)
             have -= 1
             # Prefer parking spoilage on the same storage if it accepts the key.
@@ -131,7 +139,9 @@ def tick_storage_spoilage(storage: Any, day_frac: float, days_to_spoil: float) -
                 )
             produced += 1
             if have > 0:
-                quality += 1.0
+                # Only the leading unit ages.  The next item begins fresh, and
+                # at most one unit from this stack can spoil in a simulation tick.
+                quality = 1.0
             else:
                 quality = 0.0
         if have <= 0:
