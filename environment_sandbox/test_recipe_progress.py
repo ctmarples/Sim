@@ -82,6 +82,34 @@ class RecipeProgressDisplayTests(unittest.TestCase):
 
         self.assertIsNone(kitchen.craftable_recipe())
 
+    def test_partial_tailor_order_allows_upstream_thread_recipe(self) -> None:
+        tailor = Building(id=23, kind=BuildingKind.TAILOR, x=0, y=0)
+        apply_building_storage(tailor)
+        tailor.ensure_recipe_state()
+        tailor.flax = 2
+        tailor.recipe_progress["light_shirt"] = 1
+
+        picked = tailor.craftable_recipe()
+
+        self.assertIsNotNone(picked)
+        assert picked is not None
+        self.assertEqual(picked.name, "linen_thread")
+
+    def test_capped_partial_order_does_not_freeze_other_recipes(self) -> None:
+        bench = Building(id=3, kind=BuildingKind.CRAFT_BENCH, x=0, y=0)
+        apply_building_storage(bench)
+        bench.ensure_recipe_state()
+        bench.hemp = 1
+        bench.flax = 1
+        bench.recipe_progress["knife"] = 1
+        bench.item_caps["knife"] = 10
+
+        picked = bench.craftable_recipe(stock_amounts={"knife": 10, "twine": 0})
+
+        self.assertIsNotNone(picked)
+        assert picked is not None
+        self.assertEqual(picked.name, "twine")
+
 
 if __name__ == "__main__":
     unittest.main()

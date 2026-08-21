@@ -2780,19 +2780,45 @@ class Building:
                 in_progress,
                 key=lambda r: (self.get_recipe_priority(r.name), r.name),
             )
-        # A partial unclaimed order may be waiting on an ingredient or output
-        # space.  Preserve it as the station's next order instead of starting a
-        # second recipe and oscillating whenever availability changes.
-        waiting_partial = any(
-            r.name not in avoid
+        # Preserve a viable partial order, but allow this same workstation to
+        # make its upstream ingredients first (thread → fabric → shirt).
+        # A partial whose output is already at Max must not freeze unrelated
+        # recipes either (lake.json had knife 1/3 with the knife cap reached).
+        waiting_partials = [
+            r
+            for r in recipes
+            if r.name not in avoid
             and int(self.recipe_progress.get(r.name, 0)) > 0
             and recipe_skill_gate(
                 r, worker=worker, worker_skill_level=worker_skill_level
             )
-            for r in recipes
-        )
-        if waiting_partial:
-            return None
+            and self._recipe_output_fits(r, stock_amounts=stock_amounts)
+        ]
+        if waiting_partials:
+            from recipes import missing_inputs
+
+            needed = {
+                key
+                for partial in waiting_partials
+                for key in missing_inputs(self, partial)
+            }
+            # Walk the local recipe graph backwards so multi-stage chains are
+            # included, e.g. linen_thread feeds linen_fabric which feeds a shirt.
+            changed = True
+            while changed:
+                changed = False
+                for recipe in recipes:
+                    if not needed.intersection(recipe.outputs):
+                        continue
+                    for key in recipe.inputs:
+                        if key not in needed:
+                            needed.add(key)
+                            changed = True
+            upstream = [r for r in candidates if needed.intersection(r.outputs)]
+            if upstream:
+                candidates = upstream
+            else:
+                return None
 
         # Don't grill through a full meat tray while a higher-priority stew is
         # only missing vegetables that have no room to arrive.

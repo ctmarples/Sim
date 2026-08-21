@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 40 40"
+   width="400"
+   height="400"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="villager_dog_left_2.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <defs
+     id="defs1" />
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="0.84999765"
+     inkscape:cx="111.76501"
+     inkscape:cy="222.94179"
+     inkscape:window-width="1083"
+     inkscape:window-height="834"
+     inkscape:window-x="0"
+     inkscape:window-y="33"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg1" />
+  <title
+     id="title1">villager</title>
+  <desc
+     id="desc1">Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <path
+     id="path4"
+     class="skin"
+     style="fill:#dc8c32;stroke-width:0.144537"
+     inkscape:transform-center-x="-0.53381507"
+     inkscape:transform-center-y="-0.057128899"
+     d="M 24.22463,39.02706 C 23.436393,38.714857 22.645077,38.357628 21.641614,34.900803 L 17.243491,32.79624 c -0.687245,3.012785 -0.90917,5.350428 -2.692318,6.762013 -0.121718,-3.741068 -0.758182,-7.616436 0.775332,-10.925641 l 8.008549,-0.449225 c 1.196279,3.614557 1.454759,7.229116 0.889576,10.843673 z"
+     sodipodi:nodetypes="ccccccc" />
+  <g
+     id="villager"
+     inkscape:groupmode="layer"
+     inkscape:label="villager" />
+  <path
+     id="path3"
+     class="skin"
+     style="fill:#dc8c32;fill-opacity:1;stroke-width:0.144537"
+     inkscape:transform-center-x="-1.2098046"
+     inkscape:transform-center-y="0.12044642"
+     d="m 17.787416,11.295673 3.98999,0.527172 3.449997,2.784807 c 1.140071,2.260351 -1.381636,11.794987 -1.200262,14.796005 L 14.973885,28.729744 14.28592,15.649333 c 0.867043,-2.007678 1.772961,-1.690334 3.501496,-4.35366 z"
+     sodipodi:nodetypes="ccccccc" />
+  <path
+     d="m 19.526676,5.56547 c -1.268276,0 -2.885009,1.6112186 -4.184072,1.4689799 -1.603935,-0.1756207 -2.873606,-0.7165954 -3.020742,-0.028262 -0.217282,1.016479 0.306007,2.4016789 1.404741,2.5755716 1.877598,0.2971626 3.449191,2.2599475 5.347006,2.2599475 3.05173,0 2.372946,1.734301 3.60767,-0.700016 C 23.473826,9.5791507 23.538802,7.774751 22.301358,6.9220201 21.704332,6.5106047 20.519855,5.5654782 19.526676,5.5654782 Z"
+     class="skin"
+     style="fill:#dc8c32;stroke:none;stroke-width:1.0499;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+     id="path2"
+     sodipodi:nodetypes="sssssssss" />
+  <g
+     id="g5"
+     transform="translate(-5.6943896,1.0083815)" />
+  <path
+     id="path3-1-8"
+     class="shirt"
+     style="fill:#000080;fill-opacity:1;stroke:none;stroke-width:1.44537"
+     inkscape:transform-center-x="-1.1903171"
+     inkscape:transform-center-y="0.089907361"
+     d="M 24.725922,29.242887 C 21.578639,28.60884 17.201111,27.656864 14.973233,28.382126 L 14.043329,15.517541 c 0.325208,-0.869162 2.683597,-3.948246 3.287927,-3.486546 0.596476,0.455697 0.45596,0.809169 1.307825,0.839568 1.030672,0.03679 3.247449,-0.336898 3.583187,-1.156347 0,0 3.365214,2.426739 3.803142,3.371275 z"
+     sodipodi:nodetypes="cccssccc"
+     inkscape:label="shirt_overlay">
+    <title
+       id="title5">Shirt</title>
+  </path>
+  <g
+     id="g1"
+     transform="matrix(0.87974223,0,0,0.81206079,-6.4997685,-0.04559902)">
+    <path
+       id="path3-1"
+       class="hat"
+       style="fill:#000080;fill-opacity:1;stroke:none"
+       inkscape:transform-center-x="-0.84131101"
+       inkscape:transform-center-y="0.060889911"
+       d="M 32.107154,5.3590127 C 29.882669,4.9296049 28.247768,5.3354404 26.673113,5.8266256 l 0.694309,-1.582397 c 2.544424,-1.8348693 1.718678,-1.9488813 2.835794,-2.1578344 0,0 1.433139,1.6828107 1.742665,2.3224965 z"
+       sodipodi:nodetypes="ccccc">
+      <title
+         id="title6">Hat</title>
+    </path>
+    <path
+       id="hat_overlay"
+       style="fill:#000080"
+       class="hat"
+       d="m 25.127916,7.3543523 h 9.2 l -2,-2.4 h -5.2 z"
+       sodipodi:nodetypes="ccccc" />
+    <polygon
+       id="hat_brim_overlay"
+       class="hat"
+       points="15.4,8.6 24.6,8.6 23,9.8 17,9.8 "
+       style="fill:#000080;fill-opacity:1;stroke:none"
+       transform="translate(9.8465487,-1.2456477)" />
+  </g>
+  <path
+     id="rect1"
+     style="fill:#b16c1f;fill-opacity:1;stroke-width:0.181683"
+     d="m 17.798611,6.2563155 c 0.65888,-0.8017407 1.421321,-1.0630744 2.303549,-0.6993582 0.646003,2.1027097 0.618799,4.0297741 0.376952,5.9008367 -1.455674,-0.471236 -4.445974,0.153342 -4.02074,-1.6609756 z"
+     sodipodi:nodetypes="ccccc" />
+  <path
+     id="rect2"
+     style="fill:#44290c;stroke-width:0.175969"
+     d="m 12.393059,6.7026385 c 0.504666,-0.3058533 1.009332,-0.2634177 1.513999,0.1004634 0.131099,0.4619035 -0.224065,0.8715182 -0.475971,1.3334216 -0.586206,0.3488555 -0.696443,0.3027566 -1.282649,0.052286 -0.369497,-0.495392 -0.09144,-0.9907806 0.244621,-1.486175 z"
+     sodipodi:nodetypes="ccccc" />
+  <path
+     id="rect3"
+     style="fill:#dc8c32;fill-opacity:1;stroke-width:0.129648"
+     d="m 16.905265,14.788488 c -1.065722,-0.417039 -2.208279,0.204453 -1.681129,1.183788 2.545376,3.544739 -0.01282,5.485202 2.980845,8.371034 1.389079,1.290817 2.133756,1.681538 2.166468,-0.401919 -2.860968,-2.798008 -1.810447,-6.048251 -3.466184,-9.152903 z"
+     sodipodi:nodetypes="ccccc" />
+  <metadata
+     id="metadata3">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:title>villager</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+</svg>
