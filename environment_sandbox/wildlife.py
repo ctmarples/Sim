@@ -35,7 +35,7 @@ from seasons import (
     season_for_day,
     water_frozen,
 )
-from entities import arm_cell_step_visual, note_cell_step
+from entities import arm_cell_step_visual, note_cell_step, snap_entity_visual
 from resource_balance import (
     ANIMAL_MIGRATION_CHANCE,
     ANIMAL_TREES_PER_CAP,
@@ -248,6 +248,9 @@ class Animal:
     roam_dy: int = 0
     # Live status for inspect / wildlife list (birds).
     activity: str = ""
+    # Crop raid state. The animal must remain on the crop for a full day.
+    crop_target: tuple[int, int] | None = None
+    crop_arrived_day: float | None = None
     # Runtime-only path cache for migration / blocked steps (not saved).
     _path_cache: list[tuple[int, int]] | None = field(
         default=None, repr=False, compare=False
@@ -1539,16 +1542,21 @@ class WildlifeManager:
             away_center_weight=1.0 if warm_center is not None else 0.0,
         )
 
-    @staticmethod
     def _place_animal(
+        self,
+        world: World,
         animal: Animal,
         nx: int,
         ny: int,
         occupied: set[tuple[int, int]],
-    ) -> None:
+    ) -> bool:
+        if not world.can_step(animal.x, animal.y, nx, ny):
+            self._clear_animal_path(animal)
+            return False
         occupied.discard((animal.x, animal.y))
         note_cell_step(animal, nx, ny)
         occupied.add((nx, ny))
+        return True
 
     @staticmethod
     def _arm_move(animal: Animal, move_interval: int) -> None:
@@ -1578,7 +1586,7 @@ class WildlifeManager:
         for ny, nx in world.neighbourhood(animal.x, animal.y, radius=1):
             if (nx, ny) == (animal.x, animal.y):
                 continue
-            if not world.is_walkable(nx, ny) or (nx, ny) in occupied:
+            if not world.can_step(animal.x, animal.y, nx, ny) or (nx, ny) in occupied:
                 continue
             d = max(abs(nx - tx), abs(ny - ty))
             if d < cur_d:
@@ -1597,7 +1605,7 @@ class WildlifeManager:
 
         if choice is None:
             return False
-        self._place_animal(animal, choice[0], choice[1], occupied)
+        self._place_animal(world, animal, choice[0], choice[1], occupied)
         return True
 
     def _step_flee(
@@ -1616,7 +1624,7 @@ class WildlifeManager:
         for ny, nx in world.neighbourhood(animal.x, animal.y, radius=1):
             if (nx, ny) == (animal.x, animal.y):
                 continue
-            if not world.is_walkable(nx, ny) or (nx, ny) in occupied:
+            if not world.can_step(animal.x, animal.y, nx, ny) or (nx, ny) in occupied:
                 continue
             d = max(abs(nx - tx), abs(ny - ty))
             if d > best_d:
@@ -1630,7 +1638,7 @@ class WildlifeManager:
                 (nx, ny)
                 for ny, nx in world.neighbourhood(animal.x, animal.y, radius=1)
                 if (nx, ny) != (animal.x, animal.y)
-                and world.is_walkable(nx, ny)
+                and world.can_step(animal.x, animal.y, nx, ny)
                 and (nx, ny) not in occupied
             ]
             if not options:
@@ -1640,7 +1648,7 @@ class WildlifeManager:
             )
         else:
             choice = self.rng.choice(best)
-        self._place_animal(animal, choice[0], choice[1], occupied)
+        self._place_animal(world, animal, choice[0], choice[1], occupied)
         return True
 
     def _nearest_hunter_threat(
@@ -1662,6 +1670,78 @@ class WildlifeManager:
                 best = (tx, ty)
         return best
 
+    @staticmethod
+    def _nearby_crop(world: World, animal: Animal, radius: int = 3) -> tuple[int, int] | None:
+        # Keep a live target until it is eaten or disappears. Re-selecting the
+        # nearest tile every step makes animals orbit between dense crop rows.
+        if animal.crop_target is not None:
+            current = world.get_cell(*animal.crop_target)
+            if current is not None and current.feature == FeatureType.CROP_HERB:
+                return animal.crop_target
+        crops: list[tuple[int, int, int]] = []
+        for ny, nx in world.neighbourhood(animal.x, animal.y, radius=radius):
+            cell = world.get_cell(nx, ny)
+            if cell is None or cell.feature != FeatureType.CROP_HERB:
+                continue
+            dist = max(abs(nx - animal.x), abs(ny - animal.y))
+            crops.append((dist, nx, ny))
+        if not crops:
+            return None
+        _, x, y = min(crops)
+        return x, y
+
+    def _seek_or_eat_crop(
+        self,
+        world: World,
+        animal: Animal,
+        day: float,
+        occupied: set[tuple[int, int]],
+        move_interval: int,
+    ) -> bool:
+        """Attract deer/boar to nearby crops; eat after occupying one for a day."""
+        if animal.kind not in (AnimalKind.DEER, AnimalKind.BOAR):
+            animal.crop_target = None
+            animal.crop_arrived_day = None
+            return False
+        target = self._nearby_crop(world, animal, radius=3)
+        if target is None:
+            animal.crop_target = None
+            animal.crop_arrived_day = None
+            return False
+        animal.crop_target = target
+        if (animal.x, animal.y) != target:
+            animal.crop_arrived_day = None
+            self._step_toward(world, animal, target[0], target[1], occupied)
+            if (animal.x, animal.y) == target:
+                animal.crop_arrived_day = float(day)
+                animal.activity = "Eating crop"
+            else:
+                animal.activity = "Seeking crops"
+        else:
+            if animal.crop_arrived_day is None:
+                animal.crop_arrived_day = float(day)
+            else:
+                elapsed = float(day) - animal.crop_arrived_day
+                if elapsed < 0.0:
+                    from seasons import YEAR_DAYS
+
+                    elapsed += YEAR_DAYS
+                if elapsed < 1.0:
+                    animal.activity = "Eating crop"
+                    self._arm_move(animal, move_interval)
+                    return True
+                cell = world.get_cell(*target)
+                if cell is not None and cell.feature == FeatureType.CROP_HERB:
+                    cell.feature = FeatureType.NONE
+                    cell.crop_kind = None
+                    cell.growth_ticks = 0
+                    world.mark_terrain_dirty(*target)
+                animal.crop_target = None
+                animal.crop_arrived_day = None
+                animal.activity = "Ate crop"
+        self._arm_move(animal, move_interval)
+        return True
+
     def _step_along_path(
         self,
         world: World,
@@ -1682,14 +1762,14 @@ class WildlifeManager:
                 (nx, ny)
                 for ny, nx in world.neighbourhood(animal.x, animal.y, radius=1)
                 if (nx, ny) != (animal.x, animal.y)
-                and world.is_walkable(nx, ny)
+                and world.can_step(animal.x, animal.y, nx, ny)
                 and (nx, ny) not in occupied
                 and max(abs(nx - tx), abs(ny - ty)) < cur_d
             ]
             if not improving:
                 return False
             nxt = self.rng.choice(improving)
-        self._place_animal(animal, nxt[0], nxt[1], occupied)
+        self._place_animal(world, animal, nxt[0], nxt[1], occupied)
         return True
 
     def _cached_path_step(
@@ -1707,7 +1787,8 @@ class WildlifeManager:
             nxt = cache[0]
             if (
                 max(abs(nxt[0] - animal.x), abs(nxt[1] - animal.y)) <= 1
-                and (nxt == goal or (world.is_walkable(*nxt) and nxt not in occupied))
+                and world.can_step(animal.x, animal.y, *nxt)
+                and (nxt == goal or nxt not in occupied)
             ):
                 animal._path_cache = cache[1:] or None
                 if not animal._path_cache:
@@ -1770,7 +1851,7 @@ class WildlifeManager:
                 nxt = (nx, ny)
                 if nxt in prev:
                     continue
-                if nxt != goal and (not world.is_walkable(nx, ny) or nxt in blocked):
+                if nxt != goal and (not world.can_step(cx, cy, nx, ny) or nxt in blocked):
                     continue
                 prev[nxt] = (cx, cy)
                 if nxt == goal:
@@ -2033,13 +2114,13 @@ class WildlifeManager:
             (nx, ny)
             for ny, nx in world.neighbourhood(animal.x, animal.y, radius=1)
             if (nx, ny) != (animal.x, animal.y)
-            and world.is_walkable(nx, ny)
+            and world.can_step(animal.x, animal.y, nx, ny)
             and (nx, ny) not in occupied
         ]
         if not opts:
             return
         dest = self._weighted_away_choice(opts, center)
-        self._place_animal(animal, dest[0], dest[1], occupied)
+        self._place_animal(world, animal, dest[0], dest[1], occupied)
 
     def _move_pair_away(
         self,
@@ -2077,7 +2158,7 @@ class WildlifeManager:
             dest = self._animal_roam_pick(
                 world, lead_opts, biodiversity=biodiversity, warm_center=center
             )
-            self._place_animal(a, dest[0], dest[1], occupied)
+            self._place_animal(world, a, dest[0], dest[1], occupied)
 
         # Mate stays adjacent: step toward leader first if separated.
         if max(abs(b.x - a.x), abs(b.y - a.y)) > 1:
@@ -2088,7 +2169,7 @@ class WildlifeManager:
                 for ny, nx in world.neighbourhood(b.x, b.y, radius=1)
                 if (nx, ny) != (b.x, b.y)
                 and (nx, ny) not in occupied
-                and world.is_walkable(nx, ny)
+                and world.can_step(b.x, b.y, nx, ny)
                 and max(abs(nx - a.x), abs(ny - a.y)) <= 1
             ]
             in_roam = [p for p in mate_opts if p in roam]
@@ -2097,7 +2178,7 @@ class WildlifeManager:
                 mdest = self._animal_roam_pick(
                     world, pool, biodiversity=biodiversity, warm_center=center
                 )
-                self._place_animal(b, mdest[0], mdest[1], occupied)
+                self._place_animal(world, b, mdest[0], mdest[1], occupied)
 
         self._arm_move(a, move_interval)
         self._arm_move(b, move_interval)
@@ -2135,6 +2216,31 @@ class WildlifeManager:
                 if animal.move_cooldown > 0:
                     animal.move_cooldown -= 1
                 continue
+            # Once logically on its chosen crop, hold the animal exactly on that
+            # square before cooldown/roaming logic. A nearby villager/player/wolf
+            # still breaks the hold immediately and drives it away.
+            on_crop_target = (
+                animal.kind in (AnimalKind.DEER, AnimalKind.BOAR)
+                and animal.crop_target == (animal.x, animal.y)
+            )
+            if on_crop_target:
+                crop_cell = world.get_cell(animal.x, animal.y)
+                if crop_cell is not None and crop_cell.feature == FeatureType.CROP_HERB:
+                    threat = self._nearest_hunter_threat(
+                        animal, prey_threats, HUNT_APPROACH_RADIUS
+                    )
+                    if threat is None:
+                        snap_entity_visual(animal)
+                        self._seek_or_eat_crop(
+                            world, animal, day, occupied, move_interval
+                        )
+                        moved.add(animal.id)
+                        continue
+                    self._step_flee(world, animal, threat, occupied)
+                    animal.crop_arrived_day = None
+                    self._arm_move(animal, flee_iv)
+                    moved.add(animal.id)
+                    continue
             if animal.move_cooldown > 0:
                 animal.move_cooldown -= 1
                 continue
@@ -2155,7 +2261,7 @@ class WildlifeManager:
                 continue
 
             # Flee villagers / player / wolves.
-            if animal.kind in FOREST_KINDS:
+            if animal.kind in (AnimalKind.DEER, AnimalKind.BOAR):
                 threat = self._nearest_hunter_threat(
                     animal, prey_threats, HUNT_APPROACH_RADIUS
                 )
@@ -2163,6 +2269,14 @@ class WildlifeManager:
                     self._step_flee(world, animal, threat, occupied)
                     animal.retreat_target = None
                     self._arm_move(animal, flee_iv)
+                    moved.add(animal.id)
+                    continue
+
+                # Crops attract nearby animals, but only after villager/player/wolf
+                # fear has had the opportunity to drive them away.
+                if self._seek_or_eat_crop(
+                    world, animal, day, occupied, move_interval
+                ):
                     moved.add(animal.id)
                     continue
 
@@ -2274,6 +2388,7 @@ class WildlifeManager:
                 if (nx, ny) != (animal.x, animal.y)
                 and (nx, ny) in roam
                 and (nx, ny) not in occupied
+                and world.can_step(animal.x, animal.y, nx, ny)
             ]
             if neighbours:
                 center = (
@@ -2286,8 +2401,7 @@ class WildlifeManager:
                     warm_center=center,
                 )
                 occupied.discard((animal.x, animal.y))
-                note_cell_step(animal, dest[0], dest[1])
-                occupied.add(dest)
+                self._place_animal(world, animal, dest[0], dest[1], occupied)
             elif (animal.x, animal.y) not in roam:
                 nearest = min(
                     roam, key=lambda p: max(abs(p[0] - animal.x), abs(p[1] - animal.y))
@@ -2605,13 +2719,14 @@ class WildlifeManager:
                     for p in roam
                     if p not in occupied
                     and max(abs(p[0] - member.x), abs(p[1] - member.y)) <= 1
-                    and world.is_walkable(p[0], p[1])
+                    and world.can_step(member.x, member.y, p[0], p[1])
                 ]
                 if not options:
                     options = [
                         p
                         for p in roam
-                        if p not in occupied and world.is_walkable(p[0], p[1])
+                        if p not in occupied
+                        and world.can_step(member.x, member.y, p[0], p[1])
                     ]
                 if options:
                     occupied.discard((member.x, member.y))
@@ -2637,8 +2752,9 @@ class WildlifeManager:
                             world, options, biodiversity=biodiversity
                         )
                         step_pause = pause
-                    note_cell_step(member, nx, ny)
-                    occupied.add((nx, ny))
+                    if world.can_step(member.x, member.y, nx, ny):
+                        note_cell_step(member, nx, ny)
+                        occupied.add((nx, ny))
                 else:
                     step_pause = pause
                 arm_cell_step_visual(member, step_pause)
@@ -2894,11 +3010,13 @@ class WildlifeManager:
         ox, oy = pack.x, pack.y
         if (nx, ny) == (ox, oy):
             return
+        if not world.can_step(ox, oy, nx, ny):
+            return
         dx, dy = nx - ox, ny - oy
         note_cell_step(pack, nx, ny)
         for member in pack.members:
             mx, my = member.x + dx, member.y + dy
-            if world.is_walkable(mx, my):
+            if world.can_step(member.x, member.y, mx, my):
                 note_cell_step(member, mx, my)
             else:
                 px, py = self._place_wolf_near(world, pack, pack.x, pack.y)
@@ -2920,7 +3038,8 @@ class WildlifeManager:
         opts = [
             (nx, ny)
             for ny, nx in world.neighbourhood(member.x, member.y, radius=1)
-            if (nx, ny) != (member.x, member.y) and world.is_walkable(nx, ny)
+            if (nx, ny) != (member.x, member.y)
+            and world.can_step(member.x, member.y, nx, ny)
         ]
         if not opts:
             return False
@@ -2942,6 +3061,8 @@ class WildlifeManager:
                 _bal_weight("WOLF_WEIGHT_TOWARD_PREY", 2.0) if hunting else 0.0
             ),
         )
+        if not world.can_step(member.x, member.y, nx, ny):
+            return False
         note_cell_step(member, nx, ny)
         return True
 
@@ -2959,7 +3080,8 @@ class WildlifeManager:
         opts = [
             (nx, ny)
             for ny, nx in world.neighbourhood(pack.x, pack.y, radius=1)
-            if (nx, ny) != (pack.x, pack.y) and world.is_walkable(nx, ny)
+            if (nx, ny) != (pack.x, pack.y)
+            and world.can_step(pack.x, pack.y, nx, ny)
         ]
         if not opts:
             return False
@@ -3028,7 +3150,8 @@ class WildlifeManager:
         opts = [
             (nx, ny)
             for ny, nx in world.neighbourhood(pack.x, pack.y, radius=1)
-            if (nx, ny) != (pack.x, pack.y) and world.is_walkable(nx, ny)
+            if (nx, ny) != (pack.x, pack.y)
+            and world.can_step(pack.x, pack.y, nx, ny)
         ]
         if not opts:
             return False
@@ -3411,7 +3534,8 @@ class WildlifeManager:
         return [
             (nx, ny)
             for ny, nx in world.neighbourhood(pack.x, pack.y, radius=1)
-            if (nx, ny) != (pack.x, pack.y) and world.is_walkable(nx, ny)
+            if (nx, ny) != (pack.x, pack.y)
+            and world.can_step(pack.x, pack.y, nx, ny)
         ]
 
     def _wolf_retreat_step(

@@ -12,6 +12,7 @@ from settings import BuildingStorageSpec, building_storage_spec
 EXTENSION_PARENT: dict[BuildingKind, BuildingKind] = {
     BuildingKind.BARN: BuildingKind.FARM,
     BuildingKind.PANTRY: BuildingKind.KITCHEN,
+    BuildingKind.CELLAR: BuildingKind.KITCHEN,
     BuildingKind.DRYING_RACK: BuildingKind.HUNTER,
 }
 
@@ -20,13 +21,14 @@ EXTENSION_KINDS: frozenset[BuildingKind] = frozenset(EXTENSION_PARENT)
 # Parent kind → available extension kinds (menu order).
 EXTENSIONS_FOR_PARENT: dict[BuildingKind, tuple[BuildingKind, ...]] = {
     BuildingKind.FARM: (BuildingKind.BARN,),
-    BuildingKind.KITCHEN: (BuildingKind.PANTRY,),
+    BuildingKind.KITCHEN: (BuildingKind.PANTRY, BuildingKind.CELLAR),
     BuildingKind.HUNTER: (BuildingKind.DRYING_RACK,),
 }
 
 EXTENSION_LABELS: dict[BuildingKind, str] = {
     BuildingKind.BARN: "Barn",
     BuildingKind.PANTRY: "Pantry",
+    BuildingKind.CELLAR: "Cellar",
     BuildingKind.DRYING_RACK: "Drying rack",
 }
 
@@ -82,6 +84,8 @@ def refresh_parent_extension_links(buildings: dict[int, Building]) -> None:
     """Sync ``linked_extensions`` sets on parents from completed annexes."""
     for b in buildings.values():
         b.linked_extensions = frozenset()
+        b._pantry_storage = None
+        b._food_storages = ()
     for b in buildings.values():
         if not is_extension_kind(b.kind) or b.parent_building_id is None:
             continue
@@ -89,6 +93,10 @@ def refresh_parent_extension_links(buildings: dict[int, Building]) -> None:
         if parent is None:
             continue
         parent.linked_extensions = frozenset(parent.linked_extensions | {b.kind})
+        if b.kind in (BuildingKind.PANTRY, BuildingKind.CELLAR):
+            parent._food_storages = (*parent._food_storages, b)
+            if parent._pantry_storage is None:
+                parent._pantry_storage = b
         parent._recipe_state_ready = False
         parent._invalidate_recipe_policy()
 
@@ -107,12 +115,43 @@ def apply_extension_storage_boosts(buildings: dict[int, Building]) -> None:
         if not parent.linked_extensions:
             continue
         for ext_kind in parent.linked_extensions:
+            if ext_kind in (BuildingKind.PANTRY, BuildingKind.CELLAR):
+                # Pantry inventory is a real separate 1,000-unit store.
+                continue
             bonus = building_storage_spec(ext_kind.name)
             parent.capacity += bonus.capacity
             parent.input_capacity += bonus.input_capacity
             parent.output_capacity += bonus.output_capacity
             parent.fuel_capacity += bonus.fuel_capacity
             parent.seed_capacity += bonus.seed_capacity
+    migrate_kitchen_food_to_pantries(buildings)
+
+
+def migrate_kitchen_food_to_pantries(buildings: dict[int, Building]) -> None:
+    """Move legacy/local kitchen food into its pantry without losing quality."""
+    from food_spoilage import food_quality, on_food_merged, on_food_removed
+
+    for kitchen in buildings.values():
+        if kitchen.kind != BuildingKind.KITCHEN:
+            continue
+        storages = kitchen.linked_food_storages()
+        if not storages:
+            continue
+        for key in kitchen.pantry_storage_keys():
+            have = int(getattr(kitchen, key, 0) or 0)
+            quality = food_quality(kitchen, key)
+            for pantry in storages:
+                move = min(have, pantry.space_for_key(key))
+                if move <= 0:
+                    continue
+                before = int(getattr(pantry, key, 0) or 0)
+                have -= move
+                setattr(kitchen, key, have)
+                on_food_removed(kitchen, key)
+                setattr(pantry, key, before + move)
+                on_food_merged(pantry, key, amount_before=before, amount_added=move, src_quality=quality)
+                if have <= 0:
+                    break
 
 
 def footprints_orthogonally_adjacent(

@@ -359,6 +359,8 @@ class FieldPlanDialog:
             self._result = "cleared"
         elif action == "delete_field":
             self._result = "deleted"
+        elif action == "add_fence":
+            self._result = "add_fence"
         elif action == "show_yield_map":
             self._pending_yield_map = True
         elif action.startswith("overlay_"):
@@ -567,7 +569,7 @@ class FieldPlanDialog:
             cy += 16 + 4 * 14 + 6
             if getattr(self, "_debug", False) and self._env_status:
                 cy += 4 + 14 + 12 + 12
-        cy += BTN_H + 6
+        cy += BTN_H * 2 + 10
         self._content_h = cy
         max_scroll = max(0, self._content_h - view.h)
         self._scroll = max(0, min(max_scroll, self._scroll))
@@ -754,6 +756,14 @@ class FieldPlanDialog:
         self._draw_btn(surface, map_rect, map_label, yield_map_active or hovered)
         if view.colliderect(map_rect):
             self._buttons.append(("show_yield_map", map_rect))
+        sy += BTN_H + 4
+        fence_rect = pygame.Rect(view.x, sy, min(190, inner_w), BTN_H)
+        planned = bool(building.fence_edges or building.fence_gates)
+        fence_label = "Add / place gates" if planned else "Add field fencing"
+        hovered = mouse_pos is not None and fence_rect.collidepoint(mouse_pos)
+        self._draw_btn(surface, fence_rect, fence_label, hovered)
+        if view.colliderect(fence_rect):
+            self._buttons.append(("add_fence", fence_rect))
 
         surface.set_clip(old)
 

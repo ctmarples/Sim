@@ -402,6 +402,7 @@ FEATURE_FOR_BUILDING = {
     BuildingKind.HOUSE: FeatureType.HOUSE,
     BuildingKind.BARN: FeatureType.BARN,
     BuildingKind.PANTRY: FeatureType.PANTRY,
+    BuildingKind.CELLAR: FeatureType.CELLAR,
     BuildingKind.DRYING_RACK: FeatureType.DRYING_RACK,
 }
 
@@ -510,6 +511,7 @@ class Game:
         self._last_season_for_hire_reqs: object | None = None
         self.buildings: dict[int, Building] = {}
         self.construction_sites: dict[int, ConstructionSite] = {}
+        self._fence_gate_field_id: int | None = None
         self.wildlife = WildlifeManager()
         self.fish = FishManager()
         self.next_villager_id = 1
@@ -1205,11 +1207,11 @@ class Game:
             keys[pygame.K_w] or keys[pygame.K_a] or keys[pygame.K_s] or keys[pygame.K_d]
         )
         if dx and dy:
-            if self.world.is_walkable(self.player.x + dx, self.player.y + dy):
+            if self.world.can_step(self.player.x, self.player.y, self.player.x + dx, self.player.y + dy):
                 self._try_move(dx, dy, follow_camera=not panning)
-            elif self.world.is_walkable(self.player.x + dx, self.player.y):
+            elif self.world.can_step(self.player.x, self.player.y, self.player.x + dx, self.player.y):
                 self._try_move(dx, 0, follow_camera=not panning)
-            elif self.world.is_walkable(self.player.x, self.player.y + dy):
+            elif self.world.can_step(self.player.x, self.player.y, self.player.x, self.player.y + dy):
                 self._try_move(0, dy, follow_camera=not panning)
         else:
             self._try_move(dx, dy, follow_camera=not panning)
@@ -1657,6 +1659,10 @@ class Game:
                         continue
                 self._on_mouse_down(event.pos)
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+                if self._fence_gate_field_id is not None:
+                    self._fence_gate_field_id = None
+                    self._set_status("Finished placing field gates.")
+                    continue
                 if self.player_inventory.open and self.player_inventory.contains(
                     event.pos
                 ):
@@ -2570,6 +2576,14 @@ class Game:
 
         cell = self._map_cell_from_pos(pos)
         if cell is None:
+            return
+        if self._fence_gate_field_id is not None:
+            gate_cell = self._fence_perimeter_cell_at_pos(pos)
+            field = self.buildings.get(self._fence_gate_field_id)
+            if gate_cell is not None and field is not None:
+                self._place_field_gate(field, gate_cell)
+            else:
+                self._set_status("Place gate: select a highlighted perimeter square.")
             return
         self._mouse_down_cell = cell
         if self.height_edit_mode:
@@ -4502,7 +4516,8 @@ class Game:
                 villager.inventory, day_frac * carried_rate, days
             )
         for building in self.buildings.values():
-            tick_storage_spoilage(building, day_frac, days)
+            rate = 0.5 if building.kind in (BuildingKind.PANTRY, BuildingKind.CELLAR) else 1.0
+            tick_storage_spoilage(building, day_frac * rate, days)
 
     def _advance_day(self) -> None:
         prev = self.season
@@ -6405,6 +6420,124 @@ class Game:
             if bid is not None:
                 self._delete_field_building(bid)
             return
+        if result == "add_fence":
+            bid = self.field_plan_dialog.building_id
+            field = self.buildings.get(bid) if bid is not None else None
+            if field is not None and field.kind == BuildingKind.FIELD:
+                self._fence_gate_field_id = field.id
+                self._set_status("Place gate: click a highlighted perimeter square. Right-click when done.")
+            return
+
+    @staticmethod
+    def _field_boundary_edges(field: Building) -> list[tuple[int, int, str]]:
+        left, top, right, bottom = field.plot_bounds()
+        edges: list[tuple[int, int, str]] = []
+        for x in range(left, right + 1):
+            edges.extend(((x, top, "N"), (x, bottom, "S")))
+        for y in range(top, bottom + 1):
+            edges.extend(((left, y, "W"), (right, y, "E")))
+        return list(dict.fromkeys(edges))
+
+    def _fence_segment_points(self, edge: tuple[int, int, str]):
+        x, y, side = edge
+        q = self._cell_quad_points(x, y)
+        return {"N": (q[0], q[1]), "E": (q[1], q[2]),
+                "S": (q[3], q[2]), "W": (q[0], q[3])}[side]
+
+    def _fence_edge_at_pos(self, pos: tuple[int, int]):
+        field = self.buildings.get(self._fence_gate_field_id)
+        if field is None:
+            return None
+        px, py = pos
+        best, best_d = None, 14.0
+        for edge in self._field_boundary_edges(field):
+            a, b = self._fence_segment_points(edge)
+            vx, vy = b[0] - a[0], b[1] - a[1]
+            den = max(1, vx * vx + vy * vy)
+            t = max(0.0, min(1.0, ((px-a[0])*vx + (py-a[1])*vy) / den))
+            d = math.hypot(px - (a[0] + t*vx), py - (a[1] + t*vy))
+            if d < best_d:
+                best, best_d = edge, d
+        return best
+
+    def _fence_perimeter_cells(self, field: Building) -> list[tuple[int, int]]:
+        return list(dict.fromkeys((x, y) for x, y, _ in self._field_boundary_edges(field)))
+
+    def _fence_perimeter_cell_at_pos(self, pos: tuple[int, int]):
+        field = self.buildings.get(self._fence_gate_field_id)
+        if field is None:
+            return None
+        cell = self._map_cell_from_pos(pos)
+        return cell if cell in self._fence_perimeter_cells(field) else None
+
+    def _create_field_fence_sites(self, field: Building) -> None:
+        by_cell: dict[tuple[int, int], list[str]] = {}
+        for x, y, side in self._field_boundary_edges(field):
+            if (x, y) not in field.fence_gates:
+                by_cell.setdefault((x, y), []).append(side)
+        for (x, y), sides in by_cell.items():
+            site = ConstructionSite(
+                id=self.next_construction_id, x=x, y=y,
+                kind=BuildingKind.FIELD, need_wood=1,
+                fence_field_id=field.id, fence_edges=tuple(sides),
+            )
+            self.next_construction_id += 1
+            self.construction_sites[site.id] = site
+        self._bump_work_gen()
+        self._set_status(f"Fence planned: {len(by_cell)} sites, 1 wood each.")
+
+    def _place_field_gate(self, field: Building, gate_cell: tuple[int, int]) -> None:
+        existing_sites = [
+            site for site in self.construction_sites.values()
+            if site.fence_field_id == field.id
+        ]
+        first_gate = not field.fence_edges and not field.fence_gates and not existing_sites
+        field.fence_gates.add(gate_cell)
+        gx, gy = gate_cell
+        # A retrospective gate removes every completed outward segment on this square.
+        field.fence_edges = {
+            edge for edge in field.fence_edges if edge[:2] != (gx, gy)
+        }
+        # Remove the pending square too, returning anything already delivered.
+        for site in list(existing_sites):
+            if (site.x, site.y) != gate_cell:
+                continue
+            self.home_storage.wood += site.have_wood
+            self.home_storage.logs += site.have_logs
+            self.home_storage.hardwood_logs += site.have_hardwood
+            self.home_storage.rock += site.have_rock
+            del self.construction_sites[site.id]
+            for villager in self.villagers:
+                if villager.construction_id == site.id:
+                    villager.construction_id = None
+        if first_gate:
+            self._create_field_fence_sites(field)
+        self._sync_field_fences()
+        self._bump_work_gen()
+        self._set_status(
+            f"Gate placed at ({gx}, {gy}). Place another gate, or right-click when done."
+        )
+
+    def _sync_field_fences(self) -> None:
+        offsets = {"N": (0, -1), "E": (1, 0), "S": (0, 1), "W": (-1, 0)}
+        blocked = set()
+        for field in self.buildings.values():
+            if field.kind != BuildingKind.FIELD:
+                continue
+            # Gate semantics are square-based. This also upgrades saves from
+            # the earlier single-edge gate representation.
+            field.fence_edges = {
+                edge for edge in field.fence_edges if edge[:2] not in field.fence_gates
+            }
+            for x, y, side in field.fence_edges:
+                dx, dy = offsets[side]
+                blocked.add(self.world._edge_key(x, y, x + dx, y + dy))
+        self.world.set_blocked_edges(blocked)
+        for villager in self.villagers:
+            villager._path_cache = None  # type: ignore[attr-defined]
+        for animal in self.wildlife.animals:
+            animal._path_cache = None
+            animal._path_goal = None
 
     def _apply_field_plan_ui_requests(self) -> None:
         """Overlay / yield-map actions queued by the field Status panel."""
@@ -6436,7 +6569,11 @@ class Game:
             cell = self.world.get_cell(x, y)
             if cell is not None and cell.feature == FeatureType.FIELD:
                 cell.feature = FeatureType.NONE
+        for sid, site in list(self.construction_sites.items()):
+            if site.fence_field_id == building_id:
+                del self.construction_sites[sid]
         del self.buildings[building_id]
+        self._sync_field_fences()
         left, top, right, bottom = building.plot_bounds()
         if self.selected_building_id == building_id:
             self.selected_building_id = None
@@ -6548,7 +6685,7 @@ class Game:
             return
         nx = self.player.x + dx
         ny = self.player.y + dy
-        if not self.world.is_walkable(nx, ny):
+        if not self.world.can_step(self.player.x, self.player.y, nx, ny):
             return
         note_cell_step(self.player, nx, ny)
         self._reveal_around_player()
@@ -6805,6 +6942,7 @@ class Game:
             FeatureType.STRUCTURE_PAD,
             FeatureType.BARN,
             FeatureType.PANTRY,
+            FeatureType.CELLAR,
             FeatureType.DRYING_RACK,
         ):
             # Alchemist treatments on field tiles before opening the inspect panel.
@@ -7319,6 +7457,20 @@ class Game:
         )
 
     def _complete_construction(self, site: ConstructionSite) -> None:
+        if site.fence_field_id is not None:
+            field = self.buildings.get(site.fence_field_id)
+            if field is not None:
+                for side in site.fence_edges:
+                    field.fence_edges.add((site.x, site.y, side))
+            del self.construction_sites[site.id]
+            for villager in self.villagers:
+                if villager.construction_id == site.id:
+                    villager.construction_id = None
+                    villager.state = VillagerState.IDLE
+            self._sync_field_fences()
+            self._bump_work_gen()
+            self._set_status("Finished a field fence section.")
+            return
         if site.is_deconstruct:
             self._complete_deconstruction(site)
             return
@@ -9919,6 +10071,8 @@ class Game:
                 BuildingKind.FISHER,
                 BuildingKind.FARM,
                 BuildingKind.KITCHEN,
+                BuildingKind.PANTRY,
+                BuildingKind.CELLAR,
             ):
                 return building
         return None
@@ -9935,6 +10089,8 @@ class Game:
                 BuildingKind.FISHER,
                 BuildingKind.FARM,
                 BuildingKind.KITCHEN,
+                BuildingKind.PANTRY,
+                BuildingKind.CELLAR,
             ) and self._food_count(building) > 0:
                 options.append(building.center_cell())
         return options
@@ -12423,21 +12579,30 @@ class Game:
             return got
 
         def remaining_cap() -> int:
-            return villager.inventory.capacity - villager.inventory.cargo_total
+            return villager.inventory.effective_capacity - villager.inventory.cargo_total
 
         storage = self.home_storage if kind == "home" else None
         if kind.startswith("b"):
             storage = self.buildings.get(int(kind[1:]))
         if storage is None:
             return
+        # Fill a trip for the outstanding construction queue, not just the one
+        # selected site. Delivery already continues to the next compatible site.
+        active = [s for s in self.construction_sites.values() if not s.is_deconstruct]
+        needs = {
+            "wood": sum(s.wood_needed for s in active),
+            "logs": sum(s.logs_needed for s in active),
+            "hardwood_logs": sum(s.hardwood_needed for s in active),
+            "rock": sum(s.rock_needed for s in active),
+        }
         if site.wood_needed > 0:
-            pull(storage, "wood", min(site.wood_needed, remaining_cap()))
+            pull(storage, "wood", min(needs["wood"], remaining_cap()))
         if site.logs_needed > 0:
-            pull(storage, "logs", min(site.logs_needed, remaining_cap()))
+            pull(storage, "logs", min(needs["logs"], remaining_cap()))
         if site.hardwood_needed > 0:
-            pull(storage, "hardwood_logs", min(site.hardwood_needed, remaining_cap()))
+            pull(storage, "hardwood_logs", min(needs["hardwood_logs"], remaining_cap()))
         if site.rock_needed > 0:
-            pull(storage, "rock", min(site.rock_needed, remaining_cap()))
+            pull(storage, "rock", min(needs["rock"], remaining_cap()))
 
     def _deposit_materials_at_site(self, villager: Villager, site: ConstructionSite) -> None:
         while site.wood_needed > 0 and villager.inventory.wood > 0:
@@ -19527,9 +19692,50 @@ class Game:
             if field_b.kind != BuildingKind.FIELD:
                 continue
             self._draw_field_building(field_b)
+            from icons import blit_icon
+
+            fence_icons = {
+                "N": "fence_top",
+                "E": "fence_right",
+                "S": "fence_bottom",
+                "W": "fence_left",
+            }
+            fence_size = self.camera.view_cell_px()
+            for edge in field_b.fence_edges:
+                x, y, side = edge
+                cx, cy = self._cell_center(x, y)
+                blit_icon(
+                    self.screen,
+                    fence_icons[side],
+                    cx,
+                    cy,
+                    fence_size,
+                    variant=1,
+                )
+        if self._fence_gate_field_id is not None:
+            field_b = self.buildings.get(self._fence_gate_field_id)
+            if field_b is not None:
+                hover_cell = self._fence_perimeter_cell_at_pos(pygame.mouse.get_pos())
+                for x, y in self._fence_perimeter_cells(field_b):
+                    colour = (100, 240, 130) if (x, y) == hover_cell else (245, 205, 70)
+                    pygame.draw.polygon(self.screen, colour, self._cell_quad_points(x, y), 3)
+                if hover_cell is not None:
+                    self._draw_height_quad(*hover_cell, (100, 240, 130), 70)
+                    label = self.ui.font.render("Place gate", True, (245, 245, 240))
+                    rect = self._cell_rect(*hover_cell)
+                    bg = label.get_rect(center=(rect.centerx, rect.top - 10)).inflate(10, 5)
+                    pygame.draw.rect(self.screen, (30, 34, 30), bg, border_radius=3)
+                    self.screen.blit(label, label.get_rect(center=bg.center))
         # Pending Field construction: full plot outline (no scaffold glyph).
         for site in self.construction_sites.values():
             if site.kind != BuildingKind.FIELD:
+                continue
+            if site.fence_field_id is not None:
+                for side in site.fence_edges:
+                    pygame.draw.line(
+                        self.screen, COLOUR_TASK_PREVIEW,
+                        *self._fence_segment_points((site.x, site.y, side)), 2
+                    )
                 continue
             left, top = site.x, site.y
             right = site.x + max(1, site.plot_w) - 1

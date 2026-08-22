@@ -128,6 +128,7 @@ BUILD_COSTS: dict[BuildingKind, BuildCost] = {
     BuildingKind.HOUSE: BuildCost(logs=4, rock=4, task=TaskType.FULL_FORAGE),
     BuildingKind.BARN: BuildCost(logs=2, rock=2, task=TaskType.FARM_FIELD),
     BuildingKind.PANTRY: BuildCost(logs=2, rock=2, task=TaskType.FULL_FORAGE),
+    BuildingKind.CELLAR: BuildCost(logs=4, rock=4, task=TaskType.FULL_FORAGE),
     BuildingKind.DRYING_RACK: BuildCost(wood=2, rock=1, task=TaskType.HUNT),
 }
 

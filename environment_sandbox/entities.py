@@ -249,6 +249,7 @@ class BuildingKind(Enum):
     # 1×1 extensions (must be built adjacent to their parent workplace).
     BARN = auto()  # Farm
     PANTRY = auto()  # Kitchen
+    CELLAR = auto()  # Kitchen
     DRYING_RACK = auto()  # Hunter
 
 
@@ -296,6 +297,7 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
     BuildingKind.HOUSE: "House",
     BuildingKind.BARN: "Barn",
     BuildingKind.PANTRY: "Pantry",
+    BuildingKind.CELLAR: "Cellar",
     BuildingKind.DRYING_RACK: "Drying rack",
 }
 
@@ -308,6 +310,7 @@ def default_building_plot(kind: BuildingKind) -> tuple[int, int]:
         BuildingKind.TENT,
         BuildingKind.BARN,
         BuildingKind.PANTRY,
+        BuildingKind.CELLAR,
         BuildingKind.DRYING_RACK,
     ):
         return 1, 1
@@ -1499,6 +1502,10 @@ class Building:
     crop_health: float = 1.0
     # Field only: additive pest-control boost from alchemist treatments.
     pest_boost: float = 0.0
+    # Field perimeter fencing.  Each entry is (cell_x, cell_y, N|E|S|W).
+    fence_edges: set[tuple[int, int, str]] = field(default_factory=set)
+    # Perimeter cells left open as gates (all outward edges on that square).
+    fence_gates: set[tuple[int, int]] = field(default_factory=set)
     # Market: seasonal buyer demand and player-committed sell quotas.
     market_demand: dict[str, int] = field(default_factory=dict)
     # Enabled supply goods → storehouse reserve (units kept; surplus may sell).
@@ -2086,6 +2093,14 @@ class Building:
                 if need > 0:
                     demand[key] = need
             return demand
+        if self.kind in (BuildingKind.PANTRY, BuildingKind.CELLAR):
+            # Keep drawing all available food and kitchen ingredients out of the
+            # storehouse/farms until the pantry's shared 1,000-unit store is full.
+            return {
+                key: min(20, room)
+                for key in self.pantry_storage_keys()
+                if (room := self.space_for_key(key)) > 0
+            }
 
         memo = self._supply_memo
         fp = self._supply_stock_fp()
@@ -2103,7 +2118,7 @@ class Building:
             target = self.reserve_amount(key)
             if target <= 0:
                 continue
-            have = int(getattr(self, key, 0))
+            have = self.recipe_storage_amount(key)
             if have >= target:
                 continue
             room = self.space_for_key(key)
@@ -2383,6 +2398,67 @@ class Building:
             return COBBLER_OUTPUT_KEYS
         return ()
 
+    @staticmethod
+    def pantry_storage_keys() -> tuple[str, ...]:
+        """Food ingredients and prepared food kept in kitchen cold storage."""
+        from resource_balance import VILLAGER_FOOD_KEYS
+
+        excluded = {"hemp", "flax", "wheat", "rye"}
+        return tuple(
+            key for key in dict.fromkeys(
+                (*VILLAGER_FOOD_KEYS, *PRODUCE_KEYS, *KITCHEN_INPUT_KEYS, *KITCHEN_OUTPUT_KEYS)
+            )
+            if key not in excluded
+        )
+
+    def linked_food_storages(self) -> tuple["Building", ...]:
+        return tuple(
+            b for b in getattr(self, "_food_storages", ())
+            if isinstance(b, Building)
+        )
+
+    def linked_pantry(self) -> "Building | None":
+        return next(iter(self.linked_food_storages()), None)
+
+    def recipe_storage_amount(self, key: str) -> int:
+        have = int(getattr(self, key, 0) or 0)
+        if self.kind == BuildingKind.KITCHEN and key in self.pantry_storage_keys():
+            have += sum(
+                int(getattr(store, key, 0) or 0)
+                for store in self.linked_food_storages()
+            )
+        return have
+
+    def consume_recipe_item(self, key: str, amount: int) -> None:
+        """Consume kitchen ingredients directly from its linked pantry first."""
+        from food_spoilage import on_food_removed
+
+        left = max(0, int(amount))
+        stores = self.linked_food_storages() if self.kind == BuildingKind.KITCHEN else ()
+        for storage in (*stores, self):
+            if storage is None or left <= 0:
+                continue
+            take = min(left, int(getattr(storage, key, 0) or 0))
+            if take <= 0:
+                continue
+            setattr(storage, key, int(getattr(storage, key, 0)) - take)
+            on_food_removed(storage, key)
+            left -= take
+
+    def add_recipe_output(self, key: str, amount: int) -> None:
+        """Place cooked food in the pantry when one is linked and has room."""
+        from food_spoilage import on_food_merged
+
+        target = self
+        if self.kind == BuildingKind.KITCHEN and key in self.pantry_storage_keys():
+            target = next(
+                (s for s in self.linked_food_storages() if s.space_for_key(key) >= amount),
+                self,
+            )
+        before = int(getattr(target, key, 0) or 0)
+        setattr(target, key, before + int(amount))
+        on_food_merged(target, key, amount_before=before, amount_added=int(amount), src_quality=1.0)
+
     def input_stored_total(self) -> int:
         from resources import stack_units
 
@@ -2394,7 +2470,7 @@ class Building:
                 for key in market_supply_resource_keys()
             )
         return sum(
-            stack_units(key, int(getattr(self, key, 0)))
+            stack_units(key, self.recipe_storage_amount(key))
             for key in self.processor_input_keys()
         )
 
@@ -2405,7 +2481,7 @@ class Building:
             # Coins are currency and do not fill the output pool.
             return 0
         return sum(
-            stack_units(key, int(getattr(self, key, 0)))
+            stack_units(key, self.recipe_storage_amount(key))
             for key in self.processor_output_keys()
         )
 
@@ -2432,6 +2508,11 @@ class Building:
             return max(0, room)
         if self.kind == BuildingKind.KITCHEN and key == KITCHEN_FUEL_KEY:
             return self.fuel_space_left()
+        if self.kind == BuildingKind.KITCHEN:
+            if key in self.pantry_storage_keys():
+                stores = self.linked_food_storages()
+                if stores:
+                    return sum(s.space_for_key(key) for s in stores)
         if self.is_seed_storage_key(key):
             room = self.seed_space_left()
         elif self.is_market() and (self.input_capacity > 0 or self.output_capacity > 0):
@@ -2588,6 +2669,17 @@ class Building:
     ) -> bool:
         from recipes import recipe_output_fits
 
+        stores = self.linked_food_storages() if self.kind == BuildingKind.KITCHEN else ()
+        if stores:
+            if any(
+                sum(s.space_for_key(str(key)) for s in stores) < int(amount)
+                for key, amount in recipe.outputs.items()
+            ):
+                return False
+            return recipe_output_fits(
+                self, recipe, capacity=None, stock_amounts=stock_amounts
+            )
+
         if self.output_capacity > 0:
             return recipe_output_fits(
                 self,
@@ -2669,7 +2761,7 @@ class Building:
         else:
             keys = ()
         return (
-            tuple(int(getattr(self, k, 0)) for k in keys),
+            tuple(self.recipe_storage_amount(k) for k in keys),
             int(self.fuel_wood),
             int(self.input_capacity),
             tuple(self.recipe_enabled.items()),
@@ -2940,6 +3032,10 @@ class Building:
             for key in self.market_supply_mins:
                 moved += self.deposit_key_from(inventory, key)
             return moved
+        if self.kind in (BuildingKind.PANTRY, BuildingKind.CELLAR):
+            for key in self.pantry_storage_keys():
+                moved += self.deposit_key_from(inventory, key)
+            return moved
         if self.is_processor():
             for key in self.processor_input_keys():
                 moved += self.deposit_key_from(inventory, key)
@@ -2979,6 +3075,9 @@ class Building:
             while self.deposit_one_from(inventory, key):
                 moved += 1
             return moved
+        if self.kind == BuildingKind.KITCHEN:
+            if key in self.pantry_storage_keys():
+                return sum(s.deposit_key_from(inventory, key) for s in self.linked_food_storages())
         if key not in self.depositable_keys():
             return 0
         before = int(getattr(inventory, key, 0))
@@ -2996,6 +3095,9 @@ class Building:
             inventory.wood -= 1
             self.fuel_wood += 1
             return True
+        if self.kind == BuildingKind.KITCHEN:
+            if key in self.pantry_storage_keys():
+                return any(s.deposit_one_from(inventory, key) for s in self.linked_food_storages())
         if key not in self.depositable_keys() or self.space_for_key(key) <= 0:
             return False
         if getattr(inventory, key, 0) <= 0:
@@ -3060,11 +3162,9 @@ class Building:
             from farm_pipeline import barn_sheaf_keys
 
             return barn_sheaf_keys()
-        if self.kind in (
-            BuildingKind.PANTRY,
-            BuildingKind.DRYING_RACK,
-            BuildingKind.FIELD,
-        ):
+        if self.kind in (BuildingKind.PANTRY, BuildingKind.CELLAR):
+            return self.pantry_storage_keys()
+        if self.kind in (BuildingKind.DRYING_RACK, BuildingKind.FIELD):
             return ()
         if self.kind == BuildingKind.MILL:
             return MILL_INPUT_KEYS + MILL_OUTPUT_KEYS
@@ -3089,6 +3189,10 @@ class Building:
 
     def haul_keys(self) -> tuple[str, ...]:
         """Items home haulers may remove. Plant stock is reserved while planting."""
+        if self.kind in (BuildingKind.PANTRY, BuildingKind.CELLAR):
+            # Pantry is the preferred final food store; recipes and eaters access
+            # it directly, so general haulers must not shuttle it back home.
+            return ()
         if self.kind == BuildingKind.FORESTER:
             # Always allow hauling logs / wood; mins keep a split buffer on-site.
             return ("logs", "hardwood_logs", "wood")
@@ -3168,7 +3272,13 @@ class Building:
         if self.is_processor() or self.is_splitter() or self.is_market():
             return True
         # Farm / forester plant stock — concrete demand is plan-aware in game code.
-        if self.kind in (BuildingKind.FARM, BuildingKind.FORESTER, BuildingKind.FISHER):
+        if self.kind in (
+            BuildingKind.FARM,
+            BuildingKind.FORESTER,
+            BuildingKind.FISHER,
+            BuildingKind.PANTRY,
+            BuildingKind.CELLAR,
+        ):
             return True
         # Hunter drying rack / farm barn craft inputs (e.g. hide, grain).
         if self.addon_craft_recipes() and self.active_supply_keys():
@@ -3446,6 +3556,9 @@ class ConstructionSite:
     source_building_id: int | None = None
     # Extension construction: parent workplace this annex attaches to.
     parent_building_id: int | None = None
+    # A perimeter-square site may construct one or two fence edge segments.
+    fence_field_id: int | None = None
+    fence_edges: tuple[str, ...] = ()
 
     def plot_bounds(self) -> tuple[int, int, int, int]:
         w = max(1, self.plot_w)

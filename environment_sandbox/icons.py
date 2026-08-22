@@ -1628,6 +1628,7 @@ ICON_HOUSE_SMALL = "house_small"
 ICON_HOUSE = "house"
 ICON_BARN = "barn"
 ICON_PANTRY = "pantry"
+ICON_CELLAR = "cellar"
 ICON_DRYING_RACK = "drying_rack"
 ICON_CONSTRUCTION = "construction_site"
 
@@ -1654,6 +1655,7 @@ BUILDING_ICON_NAMES: tuple[str, ...] = (
     ICON_HOUSE,
     ICON_BARN,
     ICON_PANTRY,
+    ICON_CELLAR,
     ICON_DRYING_RACK,
     ICON_CONSTRUCTION,
 )
@@ -1713,8 +1715,16 @@ ICON_BERRIES = "berries"
 ICON_BREAD = "bread"
 ICON_STEW = "stew"
 ICON_FISH_STEW = "fish_stew"
+ICON_FENCE_TOP = "fence_top"
+ICON_FENCE_RIGHT = "fence_right"
+ICON_FENCE_BOTTOM = "fence_bottom"
+ICON_FENCE_LEFT = "fence_left"
 
 ALL_ICON_NAMES: tuple[str, ...] = (
+    ICON_FENCE_TOP,
+    ICON_FENCE_RIGHT,
+    ICON_FENCE_BOTTOM,
+    ICON_FENCE_LEFT,
     ICON_TREE_ROUND,
     ICON_TREE_CONE,
     ICON_SAPLING_ROUND,
@@ -1749,6 +1759,7 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_HOUSE,
     ICON_BARN,
     ICON_PANTRY,
+    ICON_CELLAR,
     ICON_DRYING_RACK,
     ICON_CONSTRUCTION,
     ICON_DEER_MALE,
@@ -1878,6 +1889,7 @@ def icon_base_for_feature(
         FeatureType.HOUSE: ICON_HOUSE,
         FeatureType.BARN: ICON_BARN,
         FeatureType.PANTRY: ICON_PANTRY,
+        FeatureType.CELLAR: ICON_CELLAR,
         FeatureType.DRYING_RACK: ICON_DRYING_RACK,
         FeatureType.COMMUNITY: ICON_TENT,
         FeatureType.CONSTRUCTION_SITE: ICON_CONSTRUCTION,

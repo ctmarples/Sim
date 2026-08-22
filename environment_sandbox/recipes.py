@@ -530,7 +530,11 @@ def recipe_inputs_text(recipe: Recipe) -> str:
 
 
 def recipe_ready(storage: object, recipe: Recipe) -> bool:
-    return all(int(getattr(storage, key, 0)) >= n for key, n in recipe.inputs.items())
+    amount = getattr(storage, "recipe_storage_amount", None)
+    return all(
+        int(amount(key) if callable(amount) else getattr(storage, key, 0)) >= n
+        for key, n in recipe.inputs.items()
+    )
 
 
 def recipe_ready_with_extra(
@@ -539,8 +543,10 @@ def recipe_ready_with_extra(
     """True if storage + optional extra inventory cover recipe inputs."""
     if extra is None:
         return recipe_ready(storage, recipe)
+    amount = getattr(storage, "recipe_storage_amount", None)
     for key, n in recipe.inputs.items():
-        have = int(getattr(storage, key, 0)) + int(getattr(extra, key, 0))
+        stored = amount(key) if callable(amount) else getattr(storage, key, 0)
+        have = int(stored) + int(getattr(extra, key, 0))
         if have < int(n):
             return False
     return True
@@ -654,8 +660,12 @@ def apply_recipe(storage: object, recipe: Recipe) -> None:
     from food_spoilage import on_food_removed
 
     for key, n in recipe.inputs.items():
-        setattr(storage, key, int(getattr(storage, key, 0)) - n)
-        on_food_removed(storage, str(key))
+        consume = getattr(storage, "consume_recipe_item", None)
+        if callable(consume):
+            consume(str(key), int(n))
+        else:
+            setattr(storage, key, int(getattr(storage, key, 0)) - n)
+            on_food_removed(storage, str(key))
     apply_recipe_outputs(storage, recipe)
 
 
@@ -665,6 +675,10 @@ def apply_recipe_outputs(storage: object, recipe: Recipe) -> None:
     for key, n in recipe.outputs.items():
         key_s = str(key)
         amount = int(n)
+        recipe_add = getattr(storage, "add_recipe_output", None)
+        if callable(recipe_add):
+            recipe_add(key_s, amount)
+            continue
         add_item = getattr(storage, "add_item", None)
         if callable(add_item):
             add_item(key_s, amount)
@@ -707,7 +721,8 @@ def hunt_recipe_outputs(name: str) -> dict[str, int]:
 def missing_inputs(storage: object, recipe: Recipe) -> dict[str, int]:
     need: dict[str, int] = {}
     for key, n in recipe.inputs.items():
-        have = int(getattr(storage, key, 0))
+        amount = getattr(storage, "recipe_storage_amount", None)
+        have = int(amount(key) if callable(amount) else getattr(storage, key, 0))
         if have < n:
             need[key] = n - have
     return need

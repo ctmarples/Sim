@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 40 40" width="40" height="40" xmlns="http://www.w3.org/2000/svg">
+  <title>cellar</title>
+  <path d="M7 19 Q20 5 33 19 V34 H7 Z" fill="#8a745d" stroke="#493b31" stroke-width="1.4"/>
+  <path d="M11 19 Q20 10 29 19" fill="none" stroke="#b9a183" stroke-width="2"/>
+  <rect x="15" y="20" width="10" height="14" rx="5" fill="#3e332b"/>
+  <circle cx="22" cy="27" r="1" fill="#d8c2a0"/>
+</svg>

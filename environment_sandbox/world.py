@@ -197,6 +197,7 @@ class FeatureType(Enum):
     HOUSE = auto()
     BARN = auto()
     PANTRY = auto()
+    CELLAR = auto()
     DRYING_RACK = auto()
     CONSTRUCTION_SITE = auto()
     # Invisible reserved cells of a multi-cell building footprint (not the glyph cell).
@@ -235,6 +236,7 @@ STRUCTURE_FEATURES: frozenset[FeatureType] = frozenset(
         FeatureType.HOUSE,
         FeatureType.BARN,
         FeatureType.PANTRY,
+        FeatureType.CELLAR,
         FeatureType.DRYING_RACK,
         FeatureType.CONSTRUCTION_SITE,
         FeatureType.STRUCTURE_PAD,
@@ -1690,6 +1692,31 @@ class World:
             return False
         return not is_water_terrain(cell.terrain)
 
+    def set_blocked_edges(self, edges: set[tuple[int, int, int, int]]) -> None:
+        self.blocked_edges = set(edges)
+
+    @staticmethod
+    def _edge_key(ax: int, ay: int, bx: int, by: int) -> tuple[int, int, int, int]:
+        return (ax, ay, bx, by) if (ax, ay) <= (bx, by) else (bx, by, ax, ay)
+
+    def can_step(self, ax: int, ay: int, bx: int, by: int) -> bool:
+        """Whether movement may cross from one cell to the next."""
+        if not self.is_walkable(bx, by):
+            return False
+        dx, dy = bx - ax, by - ay
+        if abs(dx) > 1 or abs(dy) > 1:
+            return False
+        blocked = getattr(self, "blocked_edges", set())
+        if dx and dy:
+            # Do not allow diagonal corner-cutting around a fence.
+            return (
+                self._edge_key(ax, ay, bx, ay) not in blocked
+                and self._edge_key(ax, ay, ax, by) not in blocked
+                and self._edge_key(bx, ay, bx, by) not in blocked
+                and self._edge_key(ax, by, bx, by) not in blocked
+            )
+        return self._edge_key(ax, ay, bx, by) not in blocked
+
     def land_component_size(self, x: int, y: int, *, limit: int = 24) -> int:
         """How many walkable tiles are cardinally connected (capped). Isolates score 1."""
         if not self.is_walkable(x, y):
@@ -1834,7 +1861,7 @@ class World:
                 nx, ny = cx + dx, cy + dy
                 if (nx, ny) in came_from:
                     continue
-                if not self.is_walkable(nx, ny):
+                if not self.can_step(cx, cy, nx, ny):
                     continue
                 if dist is not None:
                     nd = dist[(cx, cy)] + 1

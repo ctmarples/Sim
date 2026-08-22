@@ -282,7 +282,7 @@ def _cell_to_dict(cell: Cell) -> dict[str, Any]:
     return data
 
 
-def _cell_from_save(c: dict[str, Any]) -> Cell:
+def _cell_from_save(c: dict[str, Any], *, migrate_legacy_fertility: bool = False) -> Cell:
     terrain = TerrainType[c["terrain"]]
     path_worn = bool(c.get("path_worn", False))
     # Legacy saves stored worn trails as PATH terrain — restore a soft base.
@@ -325,7 +325,7 @@ def _cell_from_save(c: dict[str, Any]) -> Cell:
         cell.fertility = clamp01(float(c["fertility"]))
         # Model A: healthy cultivated soil is 1.0. Shift legacy absolute values
         # that were authored against the old 0.8 soil baseline.
-        if cell.terrain == _TT.SOIL:
+        if migrate_legacy_fertility and cell.terrain == _TT.SOIL:
             new_base = fertility_base_for(_TT.SOIL)
             legacy = float(FERTILITY_SOIL_LEGACY)
             if new_base > legacy + 1e-6:
@@ -458,6 +458,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
         if b.kind.name == "FIELD":
             bdata["crop_health"] = float(getattr(b, "crop_health", 1.0))
             bdata["pest_boost"] = float(getattr(b, "pest_boost", 0.0))
+            bdata["fence_edges"] = [list(edge) for edge in sorted(b.fence_edges)]
+            bdata["fence_gates"] = [list(cell) for cell in sorted(b.fence_gates)]
         buildings.append(bdata)
     villagers = []
     for v in game.villagers:
@@ -574,6 +576,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "relocate_from_building_id": getattr(s, "relocate_from_building_id", None),
             "source_building_id": getattr(s, "source_building_id", None),
             "parent_building_id": getattr(s, "parent_building_id", None),
+            "fence_field_id": getattr(s, "fence_field_id", None),
+            "fence_edges": list(getattr(s, "fence_edges", ())),
         }
         for s in game.construction_sites.values()
     ]
@@ -597,6 +601,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "scare_from": list(a.scare_from) if a.scare_from else None,
             "scare_steps": a.scare_steps,
             "facing_right": bool(getattr(a, "facing_right", True)),
+            "crop_target": list(a.crop_target) if a.crop_target else None,
+            "crop_arrived_day": a.crop_arrived_day,
         }
         for a in game.wildlife.animals
         if a.kind in (AnimalKind.DEER, AnimalKind.BOAR, AnimalKind.OWL, AnimalKind.HAWK)
@@ -648,6 +654,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
     ]
     payload: dict[str, Any] = {
         "version": SAVE_VERSION,
+        "soil_fertility_model": 2,
         "grid": {"cols": world.cols, "rows": world.rows, "seed": world.seed},
         "display": {
             "grid_cols": cfg.GRID_COLS,
@@ -833,6 +840,7 @@ def _migrate_building_footprints(game: Game) -> None:
         BuildingKind.HOUSE: FeatureType.HOUSE,
         BuildingKind.BARN: FeatureType.BARN,
         BuildingKind.PANTRY: FeatureType.PANTRY,
+        BuildingKind.CELLAR: FeatureType.CELLAR,
         BuildingKind.DRYING_RACK: FeatureType.DRYING_RACK,
     }
 
@@ -946,8 +954,12 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     )
     # World.__init__ calls generate(); replace with saved cells.
     cells: list[list[Cell]] = []
+    migrate_legacy_fertility = int(data.get("soil_fertility_model", 1)) < 2
     for row in world_data["cells"]:
-        cells.append([_cell_from_save(c) for c in row])
+        cells.append([
+            _cell_from_save(c, migrate_legacy_fertility=migrate_legacy_fertility)
+            for c in row
+        ])
     world.cells = cells
     world.update_forest_floor()
     # Legacy saves lack subclusters — carve them so seasonal masks look right.
@@ -1185,6 +1197,20 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                 0.0,
                 min(FIELD_PEST_BOOST_MAX, float(bdata.get("pest_boost", 0.0))),
             )
+            building.fence_edges = {
+                (int(edge[0]), int(edge[1]), str(edge[2]))
+                for edge in bdata.get("fence_edges", [])
+                if isinstance(edge, (list, tuple)) and len(edge) == 3
+            }
+            building.fence_gates = {
+                (int(cell[0]), int(cell[1]))
+                for cell in bdata.get("fence_gates", [])
+                if isinstance(cell, (list, tuple)) and len(cell) >= 2
+            }
+            # Migrate the first fence format, where a gate was one edge.
+            old_gate = bdata.get("fence_gate")
+            if isinstance(old_gate, (list, tuple)) and len(old_gate) >= 2:
+                building.fence_gates.add((int(old_gate[0]), int(old_gate[1])))
             if kind == BuildingKind.FIELD and work_mode not in building.supported_work_modes():
                 building.work_mode = WorkMode.COLLECT
         building.sync_draw_task_from_mode()
@@ -1253,6 +1279,17 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     from extensions import apply_extension_storage_boosts
 
     apply_extension_storage_boosts(game.buildings)
+
+    # Cold storage is food-only. Recover disallowed legacy stock to the
+    # storehouse when loading older saves.
+    for building in game.buildings.values():
+        if building.kind not in (BuildingKind.KITCHEN, BuildingKind.PANTRY, BuildingKind.CELLAR):
+            continue
+        for key in ("hemp", "flax", "wheat", "rye"):
+            amount = int(getattr(building, key, 0) or 0)
+            if amount > 0:
+                setattr(building, key, 0)
+                setattr(game.home_storage, key, int(getattr(game.home_storage, key, 0) or 0) + amount)
 
     # Ensure new Field buildings from migration get unique ids.
     if game.buildings:
@@ -1465,6 +1502,11 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                 if sdata.get("parent_building_id") is not None
                 else None
             ),
+            fence_field_id=(
+                int(sdata["fence_field_id"])
+                if sdata.get("fence_field_id") is not None else None
+            ),
+            fence_edges=tuple(str(edge) for edge in sdata.get("fence_edges", [])),
         )
         game.construction_sites[site.id] = site
 
@@ -1506,6 +1548,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         migrate_target = (int(mt[0]), int(mt[1])) if mt else None
         sf = a.get("scare_from")
         scare_from = (int(sf[0]), int(sf[1])) if sf else None
+        ct = a.get("crop_target")
+        crop_target = (int(ct[0]), int(ct[1])) if ct else None
         # New field migrate_home_id; older saves used migrate_patch_id as dest — drop.
         home_raw = a.get("migrate_home_id")
         if home_raw is None and a.get("patch_id") is None and a.get("migrate_patch_id") is not None:
@@ -1527,6 +1571,11 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                 scare_from=scare_from,
                 scare_steps=int(a.get("scare_steps", 0)),
                 facing_right=bool(a.get("facing_right", True)),
+                crop_target=crop_target,
+                crop_arrived_day=(
+                    float(a["crop_arrived_day"])
+                    if a.get("crop_arrived_day") is not None else None
+                ),
             )
         )
     game.wildlife.next_id = int(wild.get("next_id", 1))
@@ -1817,6 +1866,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
 
     if hasattr(game, "_refresh_hardscape_terrain"):
         game._refresh_hardscape_terrain()
+    if hasattr(game, "_sync_field_fences"):
+        game._sync_field_fences()
 
     if hasattr(game, "_refresh_indicators"):
         game._refresh_indicators()
