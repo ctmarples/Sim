@@ -1629,6 +1629,7 @@ ICON_TENT = "tent"
 ICON_HOUSE_SMALL = "house_small"
 ICON_HOUSE = "house"
 ICON_BARN = "barn"
+ICON_COMPOST_HEAP = "compost"
 ICON_PANTRY = "pantry"
 ICON_CELLAR = "cellar"
 ICON_DRYING_RACK = "drying_rack"
@@ -1656,6 +1657,7 @@ BUILDING_ICON_NAMES: tuple[str, ...] = (
     ICON_HOUSE_SMALL,
     ICON_HOUSE,
     ICON_BARN,
+    ICON_COMPOST_HEAP,
     ICON_PANTRY,
     ICON_CELLAR,
     ICON_DRYING_RACK,
@@ -1762,6 +1764,7 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_HOUSE_SMALL,
     ICON_HOUSE,
     ICON_BARN,
+    ICON_COMPOST_HEAP,
     ICON_PANTRY,
     ICON_CELLAR,
     ICON_DRYING_RACK,
@@ -1897,6 +1900,7 @@ def icon_base_for_feature(
         FeatureType.HOUSE_SMALL: ICON_HOUSE_SMALL,
         FeatureType.HOUSE: ICON_HOUSE,
         FeatureType.BARN: ICON_BARN,
+        FeatureType.COMPOST_HEAP: ICON_COMPOST_HEAP,
         FeatureType.PANTRY: ICON_PANTRY,
         FeatureType.CELLAR: ICON_CELLAR,
         FeatureType.DRYING_RACK: ICON_DRYING_RACK,

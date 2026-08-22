@@ -22,6 +22,7 @@ class FarmJobKind(Enum):
     THRESH = auto()  # barn addon craft
     SEED_FETCH = auto()  # storehouse → farm seeds for unsown tiles
     WEED = auto()
+    TREAT = auto()
     PLOUGH = auto()
     EXPORT = auto()  # surplus / clear latch → storehouse
     SHEAF_FETCH = auto()  # storehouse → barn sheaf buffer
@@ -30,9 +31,10 @@ class FarmJobKind(Enum):
 # Lower index = higher priority when claiming.
 FARM_JOB_PRIORITY: tuple[FarmJobKind, ...] = (
     FarmJobKind.DELIVER,  # unload full harvest pack to barn / farm
+    FarmJobKind.WEED,
     FarmJobKind.SOW,
     FarmJobKind.HARVEST,
-    FarmJobKind.WEED,
+    FarmJobKind.TREAT,
     FarmJobKind.PLOUGH,
     FarmJobKind.THRESH,
     FarmJobKind.SHEAF_FETCH,  # only when field work is clear
@@ -87,6 +89,7 @@ def is_field_job(kind: FarmJobKind) -> bool:
         FarmJobKind.SOW,
         FarmJobKind.HARVEST,
         FarmJobKind.WEED,
+        FarmJobKind.TREAT,
         FarmJobKind.PLOUGH,
     )
 

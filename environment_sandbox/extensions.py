@@ -11,6 +11,7 @@ from settings import BuildingStorageSpec, building_storage_spec
 # Extension kind → required parent kind.
 EXTENSION_PARENT: dict[BuildingKind, BuildingKind] = {
     BuildingKind.BARN: BuildingKind.FARM,
+    BuildingKind.COMPOST_HEAP: BuildingKind.FARM,
     BuildingKind.PANTRY: BuildingKind.KITCHEN,
     BuildingKind.CELLAR: BuildingKind.KITCHEN,
     BuildingKind.DRYING_RACK: BuildingKind.HUNTER,
@@ -20,13 +21,14 @@ EXTENSION_KINDS: frozenset[BuildingKind] = frozenset(EXTENSION_PARENT)
 
 # Parent kind → available extension kinds (menu order).
 EXTENSIONS_FOR_PARENT: dict[BuildingKind, tuple[BuildingKind, ...]] = {
-    BuildingKind.FARM: (BuildingKind.BARN,),
+    BuildingKind.FARM: (BuildingKind.BARN, BuildingKind.COMPOST_HEAP),
     BuildingKind.KITCHEN: (BuildingKind.PANTRY, BuildingKind.CELLAR),
     BuildingKind.HUNTER: (BuildingKind.DRYING_RACK,),
 }
 
 EXTENSION_LABELS: dict[BuildingKind, str] = {
     BuildingKind.BARN: "Barn",
+    BuildingKind.COMPOST_HEAP: "Compost heap",
     BuildingKind.PANTRY: "Pantry",
     BuildingKind.CELLAR: "Cellar",
     BuildingKind.DRYING_RACK: "Drying rack",
@@ -115,8 +117,12 @@ def apply_extension_storage_boosts(buildings: dict[int, Building]) -> None:
         if not parent.linked_extensions:
             continue
         for ext_kind in parent.linked_extensions:
-            if ext_kind in (BuildingKind.PANTRY, BuildingKind.CELLAR):
-                # Pantry inventory is a real separate 1,000-unit store.
+            if ext_kind in (
+                BuildingKind.PANTRY,
+                BuildingKind.CELLAR,
+                BuildingKind.COMPOST_HEAP,
+            ):
+                # These extensions have real separate inventory stores.
                 continue
             bonus = building_storage_spec(ext_kind.name)
             parent.capacity += bonus.capacity

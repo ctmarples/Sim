@@ -277,6 +277,15 @@ def _cell_to_dict(cell: Cell) -> dict[str, Any]:
     appearances = int(getattr(cell, "weed_appearances", 0) or 0)
     if appearances > 0:
         data["weed_appearances"] = appearances
+    if getattr(cell, "compost_cycle_applied", False):
+        data["compost_cycle_applied"] = True
+    if getattr(cell, "mineral_cycle_applied", False):
+        data["mineral_cycle_applied"] = True
+    suppression = float(getattr(cell, "weed_suppression", 0.0) or 0.0)
+    if suppression > 0.0:
+        data["weed_suppression"] = suppression
+    if getattr(cell, "repellant_season", None) is not None:
+        data["repellant_season"] = str(cell.repellant_season)
     if getattr(cell, "path_worn", False):
         data["path_worn"] = True
     return data
@@ -334,6 +343,11 @@ def _cell_from_save(c: dict[str, Any], *, migrate_legacy_fertility: bool = False
         cell.fertility = fertility_base_for(cell.terrain)
     cell.weeds = clamp01(float(c.get("weeds", 0.0)))
     cell.weed_appearances = max(0, int(c.get("weed_appearances", 0) or 0))
+    cell.compost_cycle_applied = bool(c.get("compost_cycle_applied", False))
+    cell.mineral_cycle_applied = bool(c.get("mineral_cycle_applied", False))
+    cell.weed_suppression = clamp01(float(c.get("weed_suppression", 0.0) or 0.0))
+    raw_repellant_season = c.get("repellant_season")
+    cell.repellant_season = str(raw_repellant_season) if raw_repellant_season else None
     # Existing weed cover counts as this season's appearance so clearing
     # does not immediately restart another wave under the default cap of 1.
     if cell.weeds > 0.0 and cell.weed_appearances <= 0:
@@ -839,6 +853,7 @@ def _migrate_building_footprints(game: Game) -> None:
         BuildingKind.HOUSE_SMALL: FeatureType.HOUSE_SMALL,
         BuildingKind.HOUSE: FeatureType.HOUSE,
         BuildingKind.BARN: FeatureType.BARN,
+        BuildingKind.COMPOST_HEAP: FeatureType.COMPOST_HEAP,
         BuildingKind.PANTRY: FeatureType.PANTRY,
         BuildingKind.CELLAR: FeatureType.CELLAR,
         BuildingKind.DRYING_RACK: FeatureType.DRYING_RACK,

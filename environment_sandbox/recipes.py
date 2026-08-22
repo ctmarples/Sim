@@ -61,6 +61,7 @@ _BUILDING_RECIPE_ATTR: dict[str, str] = {
     "forager": "FORAGER_RECIPES",
     "fisher": "FISHER_RECIPES",
     "barn": "BARN_RECIPES",
+    "compost_heap": "COMPOST_HEAP_RECIPES",
     "drying_rack": "DRYING_RACK_RECIPES",
 }
 
@@ -120,6 +121,7 @@ HUNTER_RECIPES: tuple[Recipe, ...] = ()
 FORAGER_RECIPES: tuple[Recipe, ...] = ()
 FISHER_RECIPES: tuple[Recipe, ...] = ()
 BARN_RECIPES: tuple[Recipe, ...] = ()
+COMPOST_HEAP_RECIPES: tuple[Recipe, ...] = ()
 DRYING_RACK_RECIPES: tuple[Recipe, ...] = ()
 
 RECIPE_LABELS: dict[str, str] = {}
@@ -441,7 +443,7 @@ def _load_directory_recipes() -> None:
     global TAILOR_RECIPES, COBBLER_RECIPES
     global FORESTER_RECIPES, FORESTER_PLANT_RECIPES, FORESTER_SPLIT_RECIPES
     global HUNTER_RECIPES, FORAGER_RECIPES, FISHER_RECIPES
-    global BARN_RECIPES, DRYING_RACK_RECIPES
+    global BARN_RECIPES, COMPOST_HEAP_RECIPES, DRYING_RACK_RECIPES
 
     if not _RECIPES_DATA_DIR.is_dir():
         return
@@ -507,6 +509,7 @@ PROCESSED_KEYS: tuple[str, ...] = tuple(
             *TAILOR_OUTPUT_KEYS,
             *COBBLER_OUTPUT_KEYS,
             *output_keys_for_recipes(FISHER_RECIPES),
+            *output_keys_for_recipes(COMPOST_HEAP_RECIPES),
             "spoilage",
         )
     )

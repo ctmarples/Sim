@@ -139,7 +139,8 @@ def grow_weeds_on_cell(cell: Cell, ticks: int, *, season=None) -> None:
     rate = max(0.0, _bal("WEED_GROWTH_RATE", WEED_GROWTH_RATE))
     fert = clamp01(getattr(cell, "fertility", 0.0))
     day_frac = float(ticks) / float(max(1, TICKS_PER_DAY))
-    cell.weeds = clamp01(weeds + fert * rate * day_frac)
+    suppression = clamp01(float(getattr(cell, "weed_suppression", 0.0) or 0.0))
+    cell.weeds = clamp01(weeds + fert * rate * day_frac * (1.0 - suppression))
 
 
 def reset_seasonal_weed_appearances(world: World) -> None:

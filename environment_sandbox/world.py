@@ -196,6 +196,7 @@ class FeatureType(Enum):
     HOUSE_SMALL = auto()
     HOUSE = auto()
     BARN = auto()
+    COMPOST_HEAP = auto()
     PANTRY = auto()
     CELLAR = auto()
     DRYING_RACK = auto()
@@ -235,6 +236,7 @@ STRUCTURE_FEATURES: frozenset[FeatureType] = frozenset(
         FeatureType.HOUSE_SMALL,
         FeatureType.HOUSE,
         FeatureType.BARN,
+        FeatureType.COMPOST_HEAP,
         FeatureType.PANTRY,
         FeatureType.CELLAR,
         FeatureType.DRYING_RACK,
@@ -300,6 +302,10 @@ class Cell:
     fertility: float = 0.8  # 0–1 soil fertility (harvests deplete)
     weeds: float = 0.0  # 0–1 weed cover on farm crops
     weed_appearances: int = 0  # weed waves started this season
+    compost_cycle_applied: bool = False
+    mineral_cycle_applied: bool = False
+    weed_suppression: float = 0.0
+    repellant_season: str | None = None
     # Worn trail overlay — does not replace underlying terrain.
     path_worn: bool = False
 
@@ -2629,6 +2635,9 @@ class World:
         from soil import drop_fertility_on_harvest
 
         drop_fertility_on_harvest(cell)
+        cell.compost_cycle_applied = False
+        cell.mineral_cycle_applied = False
+        cell.weed_suppression = 0.0
         if crop is not None and crop.perennial:
             cell.growth_ticks = 0
             cell.deposit = -1  # harvested/dormant perennial sentinel

@@ -11,6 +11,7 @@ from recipes import (
     ALCHEMIST_OUTPUT_KEYS,
     ALCHEMIST_RECIPES,
     BARN_RECIPES,
+    COMPOST_HEAP_RECIPES,
     COBBLER_INPUT_KEYS,
     COBBLER_OUTPUT_KEYS,
     COBBLER_RECIPES,
@@ -248,6 +249,7 @@ class BuildingKind(Enum):
     HOUSE = auto()  # 2×2
     # 1×1 extensions (must be built adjacent to their parent workplace).
     BARN = auto()  # Farm
+    COMPOST_HEAP = auto()  # Farm
     PANTRY = auto()  # Kitchen
     CELLAR = auto()  # Kitchen
     DRYING_RACK = auto()  # Hunter
@@ -296,6 +298,7 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
     BuildingKind.HOUSE_SMALL: "Cottage",
     BuildingKind.HOUSE: "House",
     BuildingKind.BARN: "Barn",
+    BuildingKind.COMPOST_HEAP: "Compost heap",
     BuildingKind.PANTRY: "Pantry",
     BuildingKind.CELLAR: "Cellar",
     BuildingKind.DRYING_RACK: "Drying rack",
@@ -309,6 +312,7 @@ def default_building_plot(kind: BuildingKind) -> tuple[int, int]:
     if kind in (
         BuildingKind.TENT,
         BuildingKind.BARN,
+        BuildingKind.COMPOST_HEAP,
         BuildingKind.PANTRY,
         BuildingKind.CELLAR,
         BuildingKind.DRYING_RACK,
@@ -1913,8 +1917,13 @@ class Building:
 
     def addon_craft_recipes(self) -> tuple[Recipe, ...]:
         """Craft recipes unlocked by attached extensions (barn / drying rack)."""
-        if self.kind == BuildingKind.FARM and BuildingKind.BARN in self.linked_extensions:
-            return BARN_RECIPES
+        if self.kind == BuildingKind.FARM:
+            recipes: list[Recipe] = []
+            if BuildingKind.BARN in self.linked_extensions:
+                recipes.extend(BARN_RECIPES)
+            if BuildingKind.COMPOST_HEAP in self.linked_extensions:
+                recipes.extend(COMPOST_HEAP_RECIPES)
+            return tuple(recipes)
         if (
             self.kind == BuildingKind.HUNTER
             and BuildingKind.DRYING_RACK in self.linked_extensions
@@ -2062,6 +2071,8 @@ class Building:
         from recipes import input_keys_for_recipes
 
         recipes = list(self.enabled_recipes())
+        if self.kind == BuildingKind.FARM:
+            recipes = [r for r in recipes if "compost" not in r.outputs]
         if self.kind == BuildingKind.HUNTER:
             recipes.extend(
                 r for r in self.addon_craft_recipes() if r not in recipes
@@ -2125,6 +2136,9 @@ class Building:
                 for key in self.pantry_storage_keys()
                 if (room := self.space_for_key(key)) > 0
             }
+        if self.kind == BuildingKind.COMPOST_HEAP:
+            room = self.space_for_key("spoilage")
+            return {"spoilage": room} if room > 0 else {}
 
         memo = self._supply_memo
         fp = self._supply_stock_fp()
@@ -2808,7 +2822,12 @@ class Building:
     def _compute_supply_target_recipes(self) -> list[Recipe]:
         from recipes import missing_inputs
 
-        recipes = [r for r in self.enabled_recipes() if r.inputs]
+        recipes = [
+            r
+            for r in self.enabled_recipes()
+            if r.inputs
+            and not (self.kind == BuildingKind.FARM and "compost" in r.outputs)
+        ]
         if self.is_splitter():
             recipes.extend(r for r in self.enabled_split_recipes() if r.inputs)
         if not recipes:
@@ -3180,7 +3199,7 @@ class Building:
 
                 sheaves = set(barn_sheaf_keys())
                 keys = tuple(k for k in keys if k not in sheaves)
-            return (*keys, "spoilage")
+            return (*keys, "spoilage", "compost", "mineral_powder", "insect_repellant")
         if self.kind == BuildingKind.BARN:
             # Sheaves wait here until threshed; grain/straw outputs land on the farm.
             from farm_pipeline import barn_sheaf_keys
@@ -3188,6 +3207,8 @@ class Building:
             return barn_sheaf_keys()
         if self.kind in (BuildingKind.PANTRY, BuildingKind.CELLAR):
             return self.pantry_storage_keys()
+        if self.kind == BuildingKind.COMPOST_HEAP:
+            return ("spoilage", "compost")
         if self.kind in (BuildingKind.DRYING_RACK, BuildingKind.FIELD):
             return ()
         if self.kind == BuildingKind.MILL:
@@ -3213,6 +3234,10 @@ class Building:
 
     def haul_keys(self) -> tuple[str, ...]:
         """Items home haulers may remove. Plant stock is reserved while planting."""
+        if self.kind == BuildingKind.COMPOST_HEAP:
+            # Spoilage is an input: never pick it straight back up after delivery.
+            # Finished compost is an output and may be distributed normally.
+            return ("compost",)
         if self.kind in (BuildingKind.PANTRY, BuildingKind.CELLAR):
             # Pantry is the preferred final food store; recipes and eaters access
             # it directly, so general haulers must not shuttle it back home.
@@ -3302,6 +3327,7 @@ class Building:
             BuildingKind.FISHER,
             BuildingKind.PANTRY,
             BuildingKind.CELLAR,
+            BuildingKind.COMPOST_HEAP,
         ):
             return True
         # Hunter drying rack / farm barn craft inputs (e.g. hide, grain).

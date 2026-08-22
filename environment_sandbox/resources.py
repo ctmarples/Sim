@@ -79,6 +79,7 @@ RESOURCES: list[ResourceDef] = [
     ResourceDef("mineral_powder", "Mineral powder", "wares", "min"),
     ResourceDef("spices", "Spices", "wares", "spc"),
     ResourceDef("spoilage", "Spoilage", "wares", "spoil"),
+    ResourceDef("compost", "Compost", "agriculture", "comp"),
     ResourceDef("rock", "Rock", "wares", "rock"),
     ResourceDef("reeds", "Reeds", "wares", "reed"),
     ResourceDef("straw", "Straw", "wares", "strw"),

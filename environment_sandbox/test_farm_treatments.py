@@ -1,0 +1,86 @@
+"""Farm amendment lifecycle and compost-recipe regression tests."""
+
+from __future__ import annotations
+
+import unittest
+
+from entities import Building, BuildingKind, HomeStorage
+from game import Game
+from recipes import COMPOST_HEAP_RECIPES
+from save_load import _cell_from_save, _cell_to_dict
+from settings import building_storage_spec
+from world import Cell, FeatureType, TerrainType, World
+
+
+class FarmTreatmentTests(unittest.TestCase):
+    def test_compost_heap_recipe_uses_ten_spoilage(self) -> None:
+        recipe = next(r for r in COMPOST_HEAP_RECIPES if r.name == "compost")
+        self.assertEqual(recipe.inputs, {"spoilage": 10})
+        self.assertEqual(recipe.outputs, {"compost": 1})
+
+    def test_compost_heap_holds_500_and_demands_spoilage(self) -> None:
+        self.assertEqual(building_storage_spec("COMPOST_HEAP").capacity, 500)
+        heap = Building(2, BuildingKind.COMPOST_HEAP, 0, 0, capacity=500)
+        heap.spoilage = 480
+        self.assertEqual(heap.supply_demand(), {"spoilage": 20})
+        self.assertEqual(heap.haul_keys(), ("compost",))
+
+    def test_season_end_converts_complete_batches_when_enabled(self) -> None:
+        farm = Building(1, BuildingKind.FARM, 0, 0)
+        farm.linked_extensions = frozenset({BuildingKind.COMPOST_HEAP})
+        heap = Building(2, BuildingKind.COMPOST_HEAP, 1, 0, capacity=500)
+        heap.parent_building_id = farm.id
+        heap.spoilage = 45
+        game = Game.__new__(Game)
+        game.buildings = {farm.id: farm, heap.id: heap}
+        game.home_storage = HomeStorage()
+        game.home_storage.spoilage = 100
+        game.villagers = []
+        game.record_consumed = lambda *_args: None
+        game.record_produced = lambda *_args: None
+        self.assertEqual(game._convert_seasonal_compost(), 4)
+        self.assertEqual(heap.spoilage, 5)
+        self.assertEqual(heap.compost, 4)
+        self.assertEqual(game.home_storage.spoilage, 100)
+
+        farm.set_recipe_enabled("compost", False)
+        heap.spoilage = 25
+        self.assertEqual(game._convert_seasonal_compost(), 0)
+        self.assertEqual(heap.spoilage, 25)
+
+    def test_extension_interaction_keeps_the_extension_selected(self) -> None:
+        heap = Building(2, BuildingKind.COMPOST_HEAP, 1, 0)
+        game = Game.__new__(Game)
+        self.assertIs(game._player_interact_workplace(heap), heap)
+
+    def test_treatment_state_round_trips_in_cell_save(self) -> None:
+        cell = Cell(TerrainType.GRASS)
+        cell.compost_cycle_applied = True
+        cell.mineral_cycle_applied = True
+        cell.weed_suppression = 0.10
+        cell.repellant_season = "SUMMER"
+        loaded = _cell_from_save(_cell_to_dict(cell))
+        self.assertTrue(loaded.compost_cycle_applied)
+        self.assertTrue(loaded.mineral_cycle_applied)
+        self.assertAlmostEqual(loaded.weed_suppression, 0.10)
+        self.assertEqual(loaded.repellant_season, "SUMMER")
+
+    def test_harvest_resets_crop_cycle_treatments(self) -> None:
+        world = World(12, 12)
+        cell = world.get_cell(0, 0)
+        assert cell is not None
+        cell.terrain = TerrainType.SOIL
+        cell.feature = FeatureType.CROP_HERB
+        cell.crop_kind = "wheat"
+        cell.growth_ticks = 0
+        cell.compost_cycle_applied = True
+        cell.mineral_cycle_applied = True
+        cell.weed_suppression = 0.10
+        self.assertEqual(world.harvest_crop_herb(0, 0), "wheat")
+        self.assertFalse(cell.compost_cycle_applied)
+        self.assertFalse(cell.mineral_cycle_applied)
+        self.assertEqual(cell.weed_suppression, 0.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

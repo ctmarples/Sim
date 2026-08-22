@@ -47,7 +47,6 @@ from resource_balance import (
     POLLINATOR_RADIUS_PER_LEVEL,
     POLLINATOR_STRENGTH_PER_LEVEL,
     FIELD_PEST_BOOST_MAX,
-    MINERAL_POWDER_PEST_BOOST,
     REED_YIELD,
     SAPLING_DROP_CHANCE,
     STARTING_FOOD,
@@ -401,6 +400,7 @@ FEATURE_FOR_BUILDING = {
     BuildingKind.HOUSE_SMALL: FeatureType.HOUSE_SMALL,
     BuildingKind.HOUSE: FeatureType.HOUSE,
     BuildingKind.BARN: FeatureType.BARN,
+    BuildingKind.COMPOST_HEAP: FeatureType.COMPOST_HEAP,
     BuildingKind.PANTRY: FeatureType.PANTRY,
     BuildingKind.CELLAR: FeatureType.CELLAR,
     BuildingKind.DRYING_RACK: FeatureType.DRYING_RACK,
@@ -1353,6 +1353,30 @@ class Game:
         if villager.move_cooldown > 0 and villager.work_cooldown > 0:
             return False
         return True
+
+    @staticmethod
+    def _villager_has_active_action(villager: Villager) -> bool:
+        """Whether a workplace update actually started or continued useful work."""
+        return bool(
+            villager.target is not None
+            or villager.move_cooldown > 0
+            or villager.work_cooldown > 0
+            or villager.state
+            in (
+                VillagerState.HAULING,
+                VillagerState.DELIVERING,
+                VillagerState.BUILDING,
+                VillagerState.SLEEPING,
+            )
+            or villager.hunt_animal_id is not None
+            or villager.hunt_colony_id is not None
+            or villager.hunt_meat_pos is not None
+            or villager.fish_target_id is not None
+            or villager.fish_catch_pos is not None
+            or villager.forage_colony_id is not None
+            or villager.craft_recipe_name is not None
+            or villager.farm_job_kind is not None
+        )
 
     def _reset_tick_claims(self) -> None:
         self._tick_claim_stations = set()
@@ -4527,6 +4551,7 @@ class Game:
         self.resource_history.record_stock(self._village_stock_amounts())
         self.resource_history.advance_day()
         if self.season != prev:
+            self._convert_seasonal_compost()
             self._expire_unharvested_crops(prev)
             self._start_perennial_regrowth()
             self._ripen_crops_for_harvest_season()
@@ -5026,7 +5051,12 @@ class Game:
         if field_b is not None:
             base = self.env_maps.farm_pest_control(field_b.plot_cells())
             boost = max(0.0, float(getattr(field_b, "pest_boost", 0.0)))
-            return base + boost
+            cell = self.world.get_cell(x, y)
+            treated = (
+                cell is not None
+                and getattr(cell, "repellant_season", None) == self.season.name
+            )
+            return base + boost + (0.10 if treated else 0.0)
         return self.env_maps.value_at(EnvLayer.PEST_CONTROL, x, y)
 
     def _apply_field_pest_boost(self, field: Building, amount: float) -> float:
@@ -5037,55 +5067,45 @@ class Game:
         return after - before
 
     def _try_apply_alchemist_treatment(self, x: int, y: int) -> bool:
-        """Apply insect repellant / mineral powder from player inventory. True if used."""
-        from world import PLANTABLE_LAND, TerrainType
-
+        """Apply a carried field-square treatment. True if one was used."""
         inv = self.player.inventory
         cell = self.world.get_cell(x, y)
         if cell is None:
             return False
         field_b = self._field_building_at(x, y)
-
-        # Insect repellant: field tiles only.
-        if int(getattr(inv, "insect_repellant", 0)) > 0 and field_b is not None:
-            if not inv.consume_item("insect_repellant", 1):
+        pre_plough = (
+            field_b is not None
+            and cell.feature != FeatureType.CROP_HERB
+            and cell.terrain not in SOIL_LIKE
+        )
+        if pre_plough and not cell.compost_cycle_applied and inv.compost > 0:
+            if not inv.consume_item("compost", 1):
                 return False
-            added = self._apply_field_pest_boost(
-                field_b,
-                float(self.balance.get_float("INSECT_REPELLANT_PEST_BOOST")),
-            )
-            self.world.apply_disturbance(x, y)
-            self.record_consumed("insect_repellant", 1)
-            self._set_status(
-                f"Applied insect repellant (+{added:.2f} pest control, "
-                f"field now +{field_b.pest_boost:.2f})."
-            )
+            cell.fertility = min(1.0, float(cell.fertility) + 0.05)
+            cell.compost_cycle_applied = True
+            self.record_consumed("compost", 1)
+            self._set_status("Applied compost (+5% fertility for this crop cycle).")
             return True
-
-        # Mineral powder: convert grass/meadow → soil; small field pest boost.
-        if int(getattr(inv, "mineral_powder", 0)) > 0:
-            changed_soil = False
-            if cell.terrain in (TerrainType.GRASS, TerrainType.MEADOW):
-                cell.terrain = TerrainType.SOIL
-                self.world.mark_terrain_dirty(x, y)
-                changed_soil = True
-            elif cell.terrain not in PLANTABLE_LAND and field_b is None:
-                return False
+        if pre_plough and not cell.mineral_cycle_applied and inv.mineral_powder > 0:
             if not inv.consume_item("mineral_powder", 1):
                 return False
-            added = 0.0
-            if field_b is not None:
-                added = self._apply_field_pest_boost(field_b, MINERAL_POWDER_PEST_BOOST)
-            self.world.apply_disturbance(x, y)
+            cell.weed_suppression = max(float(cell.weed_suppression), 0.10)
+            cell.mineral_cycle_applied = True
             self.record_consumed("mineral_powder", 1)
-            bits = []
-            if changed_soil:
-                bits.append("soil amended")
-            if added > 0:
-                bits.append(f"+{added:.2f} pest control")
-            if not bits:
-                bits.append("minerals worked in")
-            self._set_status(f"Applied mineral powder ({', '.join(bits)}).")
+            self._set_status("Applied mineral powder (10% weed suppression this crop cycle).")
+            return True
+        if (
+            inv.insect_repellant > 0
+            and field_b is not None
+            and cell.feature == FeatureType.CROP_HERB
+            and cell.repellant_season != self.season.name
+        ):
+            if not inv.consume_item("insect_repellant", 1):
+                return False
+            cell.repellant_season = self.season.name
+            self.world.apply_disturbance(x, y)
+            self.record_consumed("insect_repellant", 1)
+            self._set_status("Applied insect repellant (10% pest reduction this season).")
             return True
 
         return False
@@ -6787,16 +6807,8 @@ class Game:
         return None
 
     def _player_interact_workplace(self, building: Building) -> Building:
-        """Map an extension tile (barn / drying rack / …) to its parent workplace."""
-        from extensions import is_extension_kind
-
-        if not is_extension_kind(building.kind):
-            return building
-        parent_id = getattr(building, "parent_building_id", None)
-        if parent_id is None:
-            return building
-        parent = self.buildings.get(parent_id)
-        return parent if parent is not None else building
+        """Return the exact structure under the player, including extensions."""
+        return building
 
     def _player_at_craft_site(self, building: Building) -> bool:
         """True when the player stands on the workplace or a linked extension."""
@@ -6963,6 +6975,7 @@ class Game:
             FeatureType.WORKSTATION,
             FeatureType.STRUCTURE_PAD,
             FeatureType.BARN,
+            FeatureType.COMPOST_HEAP,
             FeatureType.PANTRY,
             FeatureType.CELLAR,
             FeatureType.DRYING_RACK,
@@ -9277,8 +9290,9 @@ class Game:
                     bid = self._pick_workplace_building(villager)
                     if bid is not None:
                         self._update_workplace_worker(villager, bid)
-                        acted = True
-                        break
+                        acted = self._villager_has_active_action(villager)
+                        if acted:
+                            break
                 elif priority == WorkPriority.BUILD:
                     if self._construction_has_work(villager):
                         self._update_builder(villager)
@@ -9329,7 +9343,7 @@ class Game:
                     bid = self._pick_workplace_building(villager)
                     if bid is not None:
                         self._update_workplace_worker(villager, bid)
-                        acted = True
+                        acted = self._villager_has_active_action(villager)
                     else:
                         self._set_workplace_idle(villager)
                 elif villager.state not in (VillagerState.DELIVERING, VillagerState.HAULING, VillagerState.BUILDING):
@@ -9644,6 +9658,9 @@ class Game:
                     break
         if recipe is None:
             self._set_status("Unknown recipe.")
+            return
+        if building.kind == BuildingKind.FARM and "compost" in recipe.outputs:
+            self._set_status("Compost converts automatically at the end of each season.")
             return
 
         tool = WORKPLACE_TOOL.get(building.kind)
@@ -10961,6 +10978,43 @@ class Game:
                 return b
         return None
 
+    def _linked_compost_heap(self, farm: Building) -> Building | None:
+        """Completed compost-heap annex for this farm, if any."""
+        if farm.kind != BuildingKind.FARM:
+            return None
+        from extensions import linked_extensions
+
+        return next(
+            (b for b in linked_extensions(farm, self.buildings) if b.kind == BuildingKind.COMPOST_HEAP),
+            None,
+        )
+
+    def _convert_seasonal_compost(self) -> int:
+        """Convert complete batches physically stored in enabled compost heaps."""
+        made = 0
+        for farm in self.buildings.values():
+            if farm.kind != BuildingKind.FARM:
+                continue
+            recipe = next(
+                (r for r in farm.addon_craft_recipes() if "compost" in r.outputs),
+                None,
+            )
+            heap = self._linked_compost_heap(farm)
+            if recipe is None or heap is None or not farm.is_recipe_enabled(recipe.name):
+                continue
+            need = max(1, int(recipe.inputs.get("spoilage", 10)))
+            out = max(1, int(recipe.outputs.get("compost", 1)))
+            batches = int(getattr(heap, "spoilage", 0) or 0) // need
+            if batches <= 0:
+                continue
+            heap.spoilage -= batches * need
+            produced = batches * out
+            heap.compost += produced
+            self.record_consumed("spoilage", batches * need)
+            self.record_produced("compost", produced)
+            made += produced
+        return made
+
     def _migrate_sheaves_to_barn(self, farm: Building) -> None:
         """Move leftover farm sheaves into the barn (one-time drain)."""
         barn = self._linked_barn(farm)
@@ -11082,6 +11136,8 @@ class Game:
             return False
         self._migrate_sheaves_to_barn(building)
         for recipe in building.addon_craft_recipes():
+            if "compost" in recipe.outputs:
+                continue
             if self._barn_thresh_recipe_ready(building, villager, recipe):
                 return True
         return False
@@ -13254,6 +13310,17 @@ class Game:
                     for k in ("wheat_grain", "rye_grain", "wheat", "rye", "straw")
                 )
             )
+        if kind == FarmJobKind.TREAT:
+            cell = villager.target
+            if cell is None:
+                return False
+            tile = self.world.get_cell(*cell)
+            return bool(
+                tile is not None
+                and tile.feature == FeatureType.CROP_HERB
+                and getattr(tile, "repellant_season", None) != self.season.name
+                and self._farm_treatment_available(villager, building, "insect_repellant")
+            )
         if kind in (
             FarmJobKind.SOW,
             FarmJobKind.HARVEST,
@@ -13290,6 +13357,14 @@ class Game:
                 return FarmJob(FarmJobKind.DELIVER, bid)
 
         if self._fields_near_farm(building):
+            # Existing crops deteriorate while unsown soil can safely wait. This
+            # ordering is important on large saves such as lake.json, where a
+            # standing sow backlog otherwise starves weeding indefinitely.
+            if preview or self._ensure_work_tool(villager, "hoe"):
+                weed = self._find_farm_weed_work(villager, building)
+                if weed is not None:
+                    return FarmJob(FarmJobKind.WEED, bid, cell=weed)
+
             sow = self._find_farm_sow_work(villager, building)
             if sow is not None:
                 if not preview and not self._ensure_work_tool(villager, "hoe"):
@@ -13306,11 +13381,11 @@ class Game:
                 if harvest is not None:
                     return FarmJob(FarmJobKind.HARVEST, bid, cell=harvest)
 
+            treatment = self._find_farm_repellant_work(villager, building)
+            if treatment is not None:
+                return FarmJob(FarmJobKind.TREAT, bid, cell=treatment)
             hoe_ok = preview or self._ensure_work_tool(villager, "hoe")
             if hoe_ok:
-                weed = self._find_farm_weed_work(villager, building)
-                if weed is not None:
-                    return FarmJob(FarmJobKind.WEED, bid, cell=weed)
                 plough = self._find_farm_plough_work(villager, building)
                 if plough is not None:
                     return FarmJob(FarmJobKind.PLOUGH, bid, cell=plough)
@@ -13408,13 +13483,17 @@ class Game:
             villager.farm_job_kind = None
             return
 
-        if not self._ensure_work_tool(villager, "hoe"):
+        if kind != FarmJobKind.TREAT and not self._ensure_work_tool(villager, "hoe"):
             self._maybe_assigned_transport(villager, building)
             return
         target = villager.target
-        if target is None or not self._farm_target_still_valid(
-            villager, building, target
-        ):
+        target_valid = (
+            self._farm_job_still_valid(villager, building, kind)
+            if kind == FarmJobKind.TREAT
+            else target is not None
+            and self._farm_target_still_valid(villager, building, target)
+        )
+        if target is None or not target_valid:
             villager.farm_job_kind = None
             villager.target = None
             return
@@ -13427,7 +13506,10 @@ class Game:
         villager.state = VillagerState.WORKING
         if (villager.x, villager.y) == target:
             if villager.work_cooldown == 0:
-                self._villager_perform_farm(villager, building, target)
+                if kind == FarmJobKind.TREAT:
+                    self._farm_apply_repellant(villager, building, target)
+                else:
+                    self._villager_perform_farm(villager, building, target)
                 villager.work_cooldown = self._villager_work_interval(villager)
                 villager.target = None
                 villager.farm_job_kind = None
@@ -13572,6 +13654,8 @@ class Game:
     def _try_addon_craft(self, villager: Villager, building: Building) -> bool:
         """Farm barn / hunter drying-rack crafts on the parent workplace."""
         recipes = building.addon_craft_recipes()
+        if building.kind == BuildingKind.FARM:
+            recipes = tuple(r for r in recipes if "compost" not in r.outputs)
         if not recipes:
             return False
 
@@ -14013,7 +14097,85 @@ class Game:
             if cache is not None:
                 cache[cache_key] = tiles
         weedy = [pos for pos in tiles if pos not in claimed]
-        return self._closest_of((villager.x, villager.y), weedy)
+        if not weedy:
+            return None
+        # Field inputs and maintenance always go to the square with greatest need.
+        return min(
+            weedy,
+            key=lambda p: (
+                -float(getattr(self.world.get_cell(*p), "weeds", 0.0)),
+                max(abs(p[0] - villager.x), abs(p[1] - villager.y)),
+            ),
+        )
+
+    def _farm_treatment_available(
+        self, villager: Villager, building: Building, key: str
+    ) -> bool:
+        heap = self._linked_compost_heap(building)
+        stores = (villager.inventory, building, self.home_storage, heap)
+        return any(
+            int(getattr(store, key, 0) or 0) > 0
+            for store in stores
+            if store is not None
+        )
+
+    def _farm_take_treatment(
+        self, villager: Villager, building: Building, key: str
+    ) -> bool:
+        inv = villager.inventory
+        if int(getattr(inv, key, 0) or 0) > 0:
+            return True
+        if not inv.can_add(1, key=key):
+            return False
+        if building.give_item_to(inv, key):
+            return True
+        heap = self._linked_compost_heap(building)
+        if heap is not None and heap.give_item_to(inv, key):
+            return True
+        return self.home_storage.withdraw_one_to(inv, key)
+
+    def _find_farm_repellant_work(
+        self, villager: Villager, building: Building
+    ) -> tuple[int, int] | None:
+        if not self._farm_treatment_available(villager, building, "insect_repellant"):
+            return None
+        claimed = self._claimed_work_cells(villager.id)
+        candidates: list[tuple[float, float, int, tuple[int, int]]] = []
+        for field_b in self._fields_near_farm(building):
+            pest = self.env_maps.farm_pest_control(field_b.plot_cells())
+            health = float(getattr(field_b, "crop_health", 1.0))
+            for pos in field_b.plot_cells():
+                if pos in claimed:
+                    continue
+                cell = self.world.get_cell(*pos)
+                if (
+                    cell is None
+                    or cell.feature != FeatureType.CROP_HERB
+                    or getattr(cell, "repellant_season", None) == self.season.name
+                ):
+                    continue
+                distance = max(abs(pos[0] - villager.x), abs(pos[1] - villager.y))
+                candidates.append((health, pest, distance, pos))
+        return min(candidates)[-1] if candidates else None
+
+    def _farm_apply_repellant(
+        self, villager: Villager, building: Building, pos: tuple[int, int]
+    ) -> bool:
+        cell = self.world.get_cell(*pos)
+        if (
+            cell is None
+            or cell.feature != FeatureType.CROP_HERB
+            or getattr(cell, "repellant_season", None) == self.season.name
+            or not self._farm_take_treatment(villager, building, "insect_repellant")
+        ):
+            return False
+        villager.inventory.insect_repellant -= 1
+        self.record_consumed("insect_repellant", 1)
+        cell.repellant_season = self.season.name
+        self._spend_work_energy(villager)
+        self._gain_job_skill(villager, building.kind.name)
+        self._refresh_indicators()
+        return True
 
     def _farm_target_still_valid(
         self, villager: Villager, building: Building, pos: tuple[int, int]
@@ -14133,7 +14295,25 @@ class Game:
                         continue
                     if cell.feature not in blocked:
                         plough.append((x, y))
-        return self._closest_of((villager.x, villager.y), plough)
+        if not plough:
+            return None
+        have_compost = self._farm_treatment_available(villager, building, "compost")
+        have_mineral = self._farm_treatment_available(villager, building, "mineral_powder")
+        if not have_compost and not have_mineral:
+            return self._closest_of((villager.x, villager.y), plough)
+        # Pick the square which gains most from what is actually in stock. Low
+        # fertility needs compost; fertile ground has the highest weed pressure.
+        def treatment_need(pos: tuple[int, int]) -> tuple[float, int]:
+            cell = self.world.get_cell(*pos)
+            fertility = float(getattr(cell, "fertility", 0.0)) if cell else 0.0
+            need = 0.0
+            if have_compost and cell is not None and not cell.compost_cycle_applied:
+                need += 1.0 - fertility
+            if have_mineral and cell is not None and not cell.mineral_cycle_applied:
+                need += fertility
+            distance = max(abs(pos[0] - villager.x), abs(pos[1] - villager.y))
+            return (-need, distance)
+        return min(plough, key=treatment_need)
 
     def _farm_has_unsown_soil(self, villager: Villager, building: Building) -> bool:
         """True when a plan has ploughed soil ready to sow (seeds may be missing)."""
@@ -14574,6 +14754,22 @@ class Game:
             if not self._collect_herb(x, y, inv, status=False):
                 # Pack full — leave the plant and try another tile next tick.
                 return
+        # Carry available amendments with the ploughing trip. Each is consumed at
+        # most once for this crop cycle and remains effective through harvest.
+        if not getattr(cell, "compost_cycle_applied", False) and self._farm_take_treatment(
+            villager, building, "compost"
+        ):
+            inv.compost -= 1
+            self.record_consumed("compost", 1)
+            cell.fertility = min(1.0, float(cell.fertility) + 0.05)
+            cell.compost_cycle_applied = True
+        if not getattr(cell, "mineral_cycle_applied", False) and self._farm_take_treatment(
+            villager, building, "mineral_powder"
+        ):
+            inv.mineral_powder -= 1
+            self.record_consumed("mineral_powder", 1)
+            cell.weed_suppression = max(float(getattr(cell, "weed_suppression", 0.0)), 0.10)
+            cell.mineral_cycle_applied = True
         self.world.plough_tile(x, y)
         self.world.apply_extraction_disturbance(x, y)
         self._refresh_indicators()
@@ -15916,7 +16112,9 @@ class Game:
     def _supply_sink_sort_key(self, building: Building) -> tuple:
         """Lower is better: kitchen recipe gaps, then other gaps, then reserve top-ups."""
         gap = sum(building.recipe_gap_demand().values())
-        if building.kind == BuildingKind.KITCHEN and gap > 0:
+        if building.kind == BuildingKind.COMPOST_HEAP:
+            tier = -1
+        elif building.kind == BuildingKind.KITCHEN and gap > 0:
             tier = 0
         elif gap > 0:
             tier = 1
@@ -16036,7 +16234,9 @@ class Game:
             full = self._building_supply_demand(b)
             gap_hit = _useful_overlap(gap)
             full_hit = _useful_overlap(full)
-            if b.kind == BuildingKind.KITCHEN and gap_hit > 0:
+            if b.kind == BuildingKind.COMPOST_HEAP and full_hit > 0:
+                tier = -1
+            elif b.kind == BuildingKind.KITCHEN and gap_hit > 0:
                 tier = 0
             elif gap_hit > 0:
                 tier = 1
@@ -19334,7 +19534,18 @@ class Game:
                 cell.feature in BUILDING_FEATURES
                 and cell.feature != FeatureType.STRUCTURE_PAD
             ):
-                draw_size = vc * max(1, BUILDING_FOOTPRINT)
+                extension_features = (
+                    FeatureType.BARN,
+                    FeatureType.COMPOST_HEAP,
+                    FeatureType.PANTRY,
+                    FeatureType.CELLAR,
+                    FeatureType.DRYING_RACK,
+                )
+                draw_size = (
+                    vc
+                    if cell.feature in extension_features
+                    else vc * max(1, BUILDING_FOOTPRINT)
+                )
                 structure = self._building_at(x, y)
                 if structure is None:
                     structure = self._construction_at(x, y)

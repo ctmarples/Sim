@@ -1516,12 +1516,8 @@ class BuildingInspectDialog:
             if plant_tip:
                 tip_key = plant_tip
         if craft_recipes:
-            craft_title = (
-                "Barn"
-                if building.kind == BuildingKind.FARM
-                and BuildingKind.BARN in building.linked_extensions
-                else "Recipes"
-            )
+            farm_exts = building.kind == BuildingKind.FARM
+            craft_title = "Farm extensions" if farm_exts else "Recipes"
             block_h, craft_tip = self._draw_craft_recipes(
                 surface,
                 building=building,
