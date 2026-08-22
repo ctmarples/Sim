@@ -69,7 +69,7 @@ class RecipeProgressDisplayTests(unittest.TestCase):
         assert picked is not None
         self.assertEqual(picked.name, "grilled_meat")
 
-    def test_partial_recipe_waits_for_supply_without_starting_another(self) -> None:
+    def test_kitchen_partial_waiting_for_supply_does_not_block_ready_food(self) -> None:
         kitchen = Building(id=7, kind=BuildingKind.KITCHEN, x=0, y=0)
         apply_building_storage(kitchen)
         kitchen.ensure_recipe_state()
@@ -80,7 +80,11 @@ class RecipeProgressDisplayTests(unittest.TestCase):
         kitchen.carrot = 2
         kitchen.recipe_progress["grilled_meat"] = 1
 
-        self.assertIsNone(kitchen.craftable_recipe())
+        picked = kitchen.craftable_recipe()
+
+        self.assertIsNotNone(picked)
+        assert picked is not None
+        self.assertEqual(picked.name, "vegetable_soup")
 
     def test_partial_tailor_order_allows_upstream_thread_recipe(self) -> None:
         tailor = Building(id=23, kind=BuildingKind.TAILOR, x=0, y=0)
@@ -109,6 +113,36 @@ class RecipeProgressDisplayTests(unittest.TestCase):
         self.assertIsNotNone(picked)
         assert picked is not None
         self.assertEqual(picked.name, "twine")
+
+    def test_lower_priority_recipes_are_weighted_without_starving(self) -> None:
+        kitchen = Building(id=7, kind=BuildingKind.KITCHEN, x=0, y=0)
+        apply_building_storage(kitchen)
+        kitchen.ensure_recipe_state()
+        kitchen.fuel_wood = 20
+        kitchen.mushrooms = 20
+        kitchen.sage = 20
+        kitchen.wheat_flour = 20
+        kitchen.meat = 20
+        kitchen.set_recipe_priority("mushroom_stew", 1)
+        kitchen.set_recipe_priority("bread_wheat", 2)
+        kitchen.set_recipe_priority("grilled_meat", 3)
+        for name in kitchen.recipe_enabled:
+            kitchen.recipe_enabled[name] = name in {
+                "mushroom_stew",
+                "bread_wheat",
+                "grilled_meat",
+            }
+
+        picks: list[str] = []
+        for _ in range(3):
+            recipe = kitchen.craftable_recipe()
+            self.assertIsNotNone(recipe)
+            assert recipe is not None
+            picks.append(recipe.name)
+            for _step in range(recipe.work_steps()):
+                kitchen.advance_recipe_progress(recipe)
+
+        self.assertEqual(picks, ["mushroom_stew", "bread_wheat", "grilled_meat"])
 
 
 if __name__ == "__main__":

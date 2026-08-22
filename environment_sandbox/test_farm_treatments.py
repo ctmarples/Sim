@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from entities import Building, BuildingKind, HomeStorage
+from entities import Building, BuildingKind, CropPlan, HomeStorage, Player, Villager
 from game import Game
 from recipes import COMPOST_HEAP_RECIPES
 from save_load import _cell_from_save, _cell_to_dict
@@ -80,6 +80,51 @@ class FarmTreatmentTests(unittest.TestCase):
         self.assertFalse(cell.compost_cycle_applied)
         self.assertFalse(cell.mineral_cycle_applied)
         self.assertEqual(cell.weed_suppression, 0.0)
+
+    def test_bare_harvested_soil_gets_compost_before_direct_resowing(self) -> None:
+        farm = Building(1, BuildingKind.FARM, 0, 0)
+        farm.compost = 1
+        worker = Villager(1, 0, 0)
+        cell = Cell(TerrainType.SOIL)
+        cell.fertility = 0.40
+        game = Game.__new__(Game)
+        game.buildings = {farm.id: farm}
+        game.home_storage = HomeStorage()
+        consumed: list[tuple[str, int]] = []
+        game.record_consumed = lambda key, amount: consumed.append((key, amount))
+
+        game._farm_apply_preplant_treatments(worker, farm, cell)
+
+        self.assertTrue(cell.compost_cycle_applied)
+        self.assertAlmostEqual(cell.fertility, 0.45)
+        self.assertEqual(farm.compost, 0)
+        self.assertEqual(worker.inventory.compost, 0)
+        self.assertEqual(consumed, [("compost", 1)])
+
+    def test_player_can_sow_the_crop_planned_for_a_field_cell(self) -> None:
+        field = Building(2, BuildingKind.FIELD, 2, 2)
+        field.plot_w = field.plot_h = 1
+        field.plans = [CropPlan(1, 2, 2, 2, 2, "wheat", field.id)]
+        game = Game.__new__(Game)
+        game.world = World(12, 12)
+        cell = game.world.get_cell(2, 2)
+        assert cell is not None
+        cell.terrain = TerrainType.SOIL
+        cell.feature = FeatureType.NONE
+        game.buildings = {field.id: field}
+        game.player = Player(2, 2)
+        game.player.inventory.wheat_grain = 1
+        game.calendar_day = 56  # Autumn wheat planting season
+        game.ticks_per_day = 10
+        game.record_consumed = lambda *_args: None
+        game._refresh_indicators = lambda: None
+        game._finish_player_work = lambda: None
+        game._set_status = lambda _status: None
+
+        self.assertTrue(game._player_tend_field_cell(field, 2, 2))
+        self.assertEqual(cell.feature, FeatureType.CROP_HERB)
+        self.assertEqual(cell.crop_kind, "wheat")
+        self.assertEqual(game.player.inventory.wheat_grain, 0)
 
 
 if __name__ == "__main__":

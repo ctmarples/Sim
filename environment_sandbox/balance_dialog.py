@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pygame
 
-from balance_config import BALANCE_CATEGORIES, BALANCE_PRESETS, BalanceState
+from balance_config import BALANCE_CATEGORIES, BalanceState
 from settings import (
     COLOUR_MENU_BG,
     COLOUR_TEXT,
@@ -25,10 +25,8 @@ ROW_H = 26
 TAB_H = 24
 BTN_W = 22
 HINT_H = 58
-PRESET_BTN_H = 20
-PRESET_GAP = 4
-# Space under title for subtitle + Reset all + preset rows + tab strip.
-HEADER_BODY_H = 108
+# Space under title for subtitle + reset + a wrapping two-row tab strip.
+HEADER_BODY_H = 78
 
 
 def _wrap_hint(text: str, font: pygame.font.Font, max_w: int) -> list[str]:
@@ -58,7 +56,7 @@ class BalanceDialog:
         self._open = False
         self._panel_x = 48
         self._panel_y = MAP_OFFSET_Y + 36
-        self._panel_w = 520
+        self._panel_w = 620
         self._panel_h = 560
         self._moving = False
         self._move_offset = (0, 0)
@@ -68,7 +66,6 @@ class BalanceDialog:
         self._title_rect = pygame.Rect(0, 0, 0, 0)
         self._reset_all_rect = pygame.Rect(0, 0, 0, 0)
         self._hit_regions: list[tuple[pygame.Rect, str, str | None]] = []
-        self._active_preset: str = "default"
         self.pending_status: str | None = None
 
     @property
@@ -166,7 +163,6 @@ class BalanceDialog:
             return True
         if self._reset_all_rect.collidepoint(pos):
             balance.reset()
-            self._active_preset = "default"
             self.pending_status = "Balance reset to defaults"
             return True
         for rect, action, key in self._hit_regions:
@@ -174,21 +170,14 @@ class BalanceDialog:
                 continue
             if action == "dec" and key:
                 balance.adjust(key, -1)
-                self._active_preset = ""
             elif action == "inc" and key:
                 balance.adjust(key, 1)
-                self._active_preset = ""
             elif action == "tab" and key:
                 self._tab_id = key
                 self._scroll = 0
                 self._clamp_scroll()
             elif action == "reset_cat" and key:
                 balance.reset_category(key)
-                self._active_preset = ""
-            elif action == "preset" and key:
-                label = balance.apply_preset(key)
-                self._active_preset = key
-                self.pending_status = f"Preset: {label}"
             return True
         return self.panel_rect().collidepoint(pos)
 
@@ -225,26 +214,9 @@ class BalanceDialog:
             (rect.x + (rect.w - text.get_width()) // 2, rect.y + (rect.h - text.get_height()) // 2),
         )
 
-    def _layout_presets(self, panel: pygame.Rect) -> list[tuple[pygame.Rect, str, str]]:
-        x = panel.x + PAD
-        y = panel.y + TITLE_BAR_H + 22
-        max_x = panel.right - PAD
-        row_h = PRESET_BTN_H + PRESET_GAP
-        out: list[tuple[pygame.Rect, str, str]] = []
-        for preset in BALANCE_PRESETS:
-            label = preset.label
-            tw = self.font_small.size(label)[0] + 14
-            if x + tw > max_x and x > panel.x + PAD:
-                x = panel.x + PAD
-                y += row_h
-            rect = pygame.Rect(x, y, tw, PRESET_BTN_H)
-            out.append((rect, preset.id, preset.hint))
-            x += tw + PRESET_GAP
-        return out
-
     def _layout_tabs(self, panel: pygame.Rect) -> list[tuple[pygame.Rect, str]]:
         x = panel.x + PAD
-        y = panel.y + TITLE_BAR_H + HEADER_BODY_H - TAB_H - 6
+        y = panel.y + TITLE_BAR_H + 24
         max_x = panel.right - PAD
         out: list[tuple[pygame.Rect, str]] = []
         for cat in BALANCE_CATEGORIES:
@@ -256,12 +228,15 @@ class BalanceDialog:
                 "paths_urban": "Paths",
                 "disturbance": "Stress",
                 "overlays": "Overlay",
-                "wildlife": "Wildlife",
+                "wildlife_motion": "Movement",
+                "wildlife": "Habitats",
+                "predators": "Predators",
                 "food": "Food",
             }.get(cat.id, cat.title.split()[0])
             tw = self.font_small.size(label)[0] + 16
             if x + tw > max_x and out:
-                break
+                x = panel.x + PAD
+                y += TAB_H + 3
             out.append((pygame.Rect(x, y, tw, TAB_H), cat.id))
             x += tw + 4
         return out
@@ -306,20 +281,6 @@ class BalanceDialog:
         )
 
         hovered_hint = ""
-        for rect, preset_id, preset_hint in self._layout_presets(panel):
-            active = self._active_preset == preset_id
-            hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
-            if hovered:
-                hovered_hint = preset_hint
-            self._draw_button(
-                surface,
-                rect,
-                next(p.label for p in BALANCE_PRESETS if p.id == preset_id),
-                active=active,
-                hovered=hovered,
-            )
-            self._hit_regions.append((rect, "preset", preset_id))
-
         for rect, tab_id in self._layout_tabs(panel):
             active = self._tab_id == tab_id
             hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
@@ -330,7 +291,9 @@ class BalanceDialog:
                 "paths_urban": "Paths",
                 "disturbance": "Stress",
                 "overlays": "Overlay",
-                "wildlife": "Wildlife",
+                "wildlife_motion": "Movement",
+                "wildlife": "Habitats",
+                "predators": "Predators",
                 "food": "Food",
             }.get(tab_id, tab_id)
             self._draw_button(surface, rect, label, active=active, hovered=hovered)
@@ -426,7 +389,7 @@ class BalanceDialog:
                 surface, (140, 144, 160), pygame.Rect(track.x, thumb_y, 4, thumb_h)
             )
 
-        hint_text = hovered_hint or "Hover a row or preset for the effect."
+        hint_text = hovered_hint or "Hover a row for the effect. Changes save automatically."
         hint_y = view.bottom + 6
         for line in _wrap_hint(hint_text, self.font_small, panel.w - 2 * PAD):
             surface.blit(

@@ -16,7 +16,7 @@ from settings import (
 
 GRID_CELL = 52
 GRID_GAP = 4
-GRID_COLS = 4
+GRID_COLS = 6
 INV_PANEL_GAP = 10
 
 
@@ -154,6 +154,8 @@ def draw_inv_grid(
     hover_inv: tuple[str, str] | None = None,
     selected_key: str | None = None,
     item_caps: dict[str, int] | None = None,
+    item_mins: dict[str, int] | None = None,
+    inline_stock_controls: bool = False,
     scroll_y: int = 0,
     max_body_h: int | None = None,
     qualities: dict[str, float] | None = None,
@@ -185,8 +187,10 @@ def draw_inv_grid(
     tip_hits: list[tuple[pygame.Rect, str, str]] = []
     hovered: tuple[str, str] | None = None
     keys = present_keys(amounts, allowed)
-    if item_caps:
-        for k in item_caps:
+    configured_keys = {*item_caps} if item_caps else set()
+    configured_keys.update(item_mins or {})
+    if configured_keys:
+        for k in configured_keys:
             if (allowed is None or k in allowed) and k not in keys:
                 keys.append(k)
     if not keys:
@@ -197,6 +201,8 @@ def draw_inv_grid(
         return (y + 28) - y0, hits, tip_hits, None, 28, 28
 
     cols = max(1, min(GRID_COLS, max(1, width // (GRID_CELL + GRID_GAP))))
+    used_w = cols * GRID_CELL
+    col_gap = GRID_GAP if cols <= 1 else max(GRID_GAP, (width - used_w) // (cols - 1))
     rows = math.ceil(len(keys) / cols)
     content_h = rows * (GRID_CELL + GRID_GAP) - GRID_GAP
     view_h = content_h if max_body_h is None else min(content_h, max_body_h)
@@ -210,7 +216,7 @@ def draw_inv_grid(
     for i, key in enumerate(keys):
         col = i % cols
         row = i // cols
-        cx = x0 + col * (GRID_CELL + GRID_GAP)
+        cx = x0 + col * (GRID_CELL + col_gap)
         cy = y + row * (GRID_CELL + GRID_GAP) - scroll
         cell = pygame.Rect(cx, cy, GRID_CELL, GRID_CELL)
         if not cell.colliderect(body):
@@ -222,6 +228,10 @@ def draw_inv_grid(
         )
         if is_hov:
             hovered = (side, key)
+        if interactive:
+            # Added before the smaller inline controls so reverse hit-testing
+            # gives Cap / reserve precedence over the whole cell.
+            hits.append((cell, side, key))
         if is_sel:
             bg = (55, 70, 55) if is_hov else (48, 58, 48)
             border = COLOUR_SELECTED_ENTITY
@@ -291,7 +301,25 @@ def draw_inv_grid(
 
         count = int(amounts.get(key, 0))
         cap = item_caps.get(key) if item_caps else None
-        count_txt = f"{count}/{cap}" if cap is not None else str(count)
+        reserve = item_mins.get(key) if item_mins else None
+        if inline_stock_controls:
+            cap_txt = font_tiny.render(
+                f"Cap:{cap if cap is not None else '∞'}", True, COLOUR_TEXT
+            )
+            cap_bg = pygame.Rect(
+                cell.right - cap_txt.get_width() - 5,
+                cell.y + 2,
+                cap_txt.get_width() + 3,
+                cap_txt.get_height() + 2,
+            )
+            pygame.draw.rect(surface, (28, 30, 36), cap_bg, border_radius=2)
+            surface.blit(cap_txt, (cap_bg.x + 1, cap_bg.y + 1))
+            hits.append((cap_bg, "cap", key))
+        count_txt = (
+            f"{count}/{reserve if reserve is not None else 0}"
+            if inline_stock_controls
+            else (f"{count}/{cap}" if cap is not None else str(count))
+        )
         badge = font_tiny.render(count_txt, True, COLOUR_TEXT)
         bx = cell.right - badge.get_width() - 3
         by = cell.bottom - badge.get_height() - 2
@@ -302,9 +330,9 @@ def draw_inv_grid(
             border_radius=2,
         )
         surface.blit(badge, (bx, by))
+        if inline_stock_controls:
+            hits.append((pygame.Rect(bx - 2, by - 1, badge.get_width() + 4, badge.get_height() + 2), "min", key))
         tip_hits.append((cell, side, key))
-        if interactive:
-            hits.append((cell, side, key))
 
     surface.set_clip(old_clip)
     return (y + view_h) - y0, hits, tip_hits, hovered, content_h, view_h

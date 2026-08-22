@@ -451,6 +451,18 @@ WILDLIFE_RABBIT_FORAGE_PER_LEVEL: int = 10
 # Frogs use thin riparian strips — lower bar than rabbits.
 WILDLIFE_FROG_FORAGE_PER_LEVEL: int = 3
 WILDLIFE_VOLE_FORAGE_PER_LEVEL: int = 6
+# Habitat/population controls (also exposed in File → Balance).
+WILDLIFE_DEER_TILES_PER_CAP: int = 3
+WILDLIFE_BOAR_TILES_PER_CAP: int = 6
+WILDLIFE_FISH_WATER_PER_CAP: int = 4
+WILDLIFE_FISH_BREED_CHANCE: float = 1.0
+WILDLIFE_MIGRATION_CHANCE: float = 0.18
+WILDLIFE_DEER_GRAZE_CHANCE: float = 0.50
+WILDLIFE_BOAR_GRAZE_CHANCE: float = 0.25
+WILDLIFE_RABBIT_GRAZE_CHANCE: float = 0.30
+WILDLIFE_SEED_HABITATS: int = 4
+WILDLIFE_SEED_ANIMALS: int = 2
+WILDLIFE_COLONY_SEED_HABITATS: int = 3
 # Wolves — packs roam the whole map; total individuals capped.
 WOLF_MAX_POPULATION: int = 20
 WOLF_SEED_PACKS: int = 2

@@ -122,6 +122,24 @@ def _bal_weight(key: str, default: float) -> float:
         return max(0.0, float(default))
 
 
+def _bal_float(key: str, default: float) -> float:
+    from balance_config import active_balance
+
+    try:
+        return float(active_balance().get_float(key))
+    except Exception:
+        return float(default)
+
+
+def _bal_int(key: str, default: int, minimum: int = 0) -> int:
+    from balance_config import active_balance
+
+    try:
+        return max(minimum, active_balance().get_int(key))
+    except Exception:
+        return max(minimum, int(default))
+
+
 class AnimalKind(Enum):
     DEER = auto()
     BOAR = auto()
@@ -353,11 +371,13 @@ class ForestHabitat:
 
     @property
     def deer_cap(self) -> int:
-        return len(self.deer_breeding) // ANIMAL_TREES_PER_CAP
+        per_cap = _bal_int("WILDLIFE_DEER_TILES_PER_CAP", ANIMAL_TREES_PER_CAP, 1)
+        return len(self.deer_breeding) // per_cap
 
     @property
     def boar_cap(self) -> int:
-        return len(self.boar_breeding) // BOAR_CELLS_PER_CAP
+        per_cap = _bal_int("WILDLIFE_BOAR_TILES_PER_CAP", BOAR_CELLS_PER_CAP, 1)
+        return len(self.boar_breeding) // per_cap
 
 
 @dataclass
@@ -1137,8 +1157,10 @@ class WildlifeManager:
                 key=lambda h: len(self._breeding_for(kind, h)),
                 reverse=True,
             )
-            for hab in grounds[:WILDLIFE_SEED_GROUNDS]:
-                self._seed_patch(kind, hab, WILDLIFE_SEED_COUNT, occupied)
+            seed_habitats = _bal_int("WILDLIFE_SEED_HABITATS", WILDLIFE_SEED_GROUNDS)
+            seed_animals = _bal_int("WILDLIFE_SEED_ANIMALS", WILDLIFE_SEED_COUNT)
+            for hab in grounds[:seed_habitats]:
+                self._seed_patch(kind, hab, seed_animals, occupied)
         self._seed_colonies(world)
         self._seed_wolf_packs(world)
         self._seed_fox_packs(world)
@@ -1156,7 +1178,10 @@ class WildlifeManager:
                 continue
             sites = self._empty_colony_sites(kind)
             self.rng.shuffle(sites)
-            for hab in sites[:COLONY_SEED_GROUNDS]:
+            seed_habitats = _bal_int(
+                "WILDLIFE_COLONY_SEED_HABITATS", COLONY_SEED_GROUNDS
+            )
+            for hab in sites[:seed_habitats]:
                 self._spawn_colony(kind, hab, level=1)
         if self.pack_count(AnimalKind.WOLF) <= 0:
             self._seed_wolf_packs(world)
@@ -2473,8 +2498,12 @@ class WildlifeManager:
             if not crops:
                 continue
             chance = {
-                AnimalKind.DEER: DEER_CROP_EAT_CHANCE,
-                AnimalKind.BOAR: BOAR_CROP_EAT_CHANCE,
+                AnimalKind.DEER: _bal_float(
+                    "WILDLIFE_DEER_GRAZE_CHANCE", DEER_CROP_EAT_CHANCE
+                ),
+                AnimalKind.BOAR: _bal_float(
+                    "WILDLIFE_BOAR_GRAZE_CHANCE", BOAR_CROP_EAT_CHANCE
+                ),
             }.get(animal.kind, 0.0)
             if chance <= 0.0 or self.rng.random() >= chance:
                 continue
@@ -2565,7 +2594,9 @@ class WildlifeManager:
                 continue
             if animal.id > mate.id:
                 continue
-            if self.rng.random() >= ANIMAL_MIGRATION_CHANCE:
+            if self.rng.random() >= _bal_float(
+                "WILDLIFE_MIGRATION_CHANCE", ANIMAL_MIGRATION_CHANCE
+            ):
                 continue
             home_id = animal.patch_id
             # Only leave if some other patch could take the pair.
@@ -2830,7 +2861,9 @@ class WildlifeManager:
         for colony in self.colonies:
             if colony.kind != AnimalKind.RABBIT:
                 continue
-            if self.rng.random() >= COLONY_RABBIT_CROP_EAT_CHANCE:
+            if self.rng.random() >= _bal_float(
+                "WILDLIFE_RABBIT_GRAZE_CHANCE", COLONY_RABBIT_CROP_EAT_CHANCE
+            ):
                 continue
             crops = self._adjacent_wild_crops(world, colony.x, colony.y)
             if crops:
@@ -3623,7 +3656,7 @@ class WildlifeManager:
         from settings import BIRD_SEED_COUNT
 
         kinds = [kind] if kind is not None else list(BIRD_KINDS)
-        n_each = max(0, int(BIRD_SEED_COUNT))
+        n_each = _bal_int("BIRD_SEED_COUNT", BIRD_SEED_COUNT)
         if n_each <= 0:
             return
         nests = self._bird_nest_sites()
@@ -3780,7 +3813,7 @@ class WildlifeManager:
                 round(
                     animal_roam_interval()
                     * slow
-                    / max(1.0, float(BIRD_ROAM_SPEED_MULT))
+                    / max(0.5, _bal_float("BIRD_ROAM_SPEED_MULT", BIRD_ROAM_SPEED_MULT))
                 )
             ),
         )
@@ -3875,10 +3908,14 @@ class FishManager:
 
     def total_capacity(self, world: World) -> int:
         rev = getattr(world, "terrain_revision", 0)
-        if getattr(self, "_cap_rev", None) == rev and hasattr(self, "_cap_cache"):
+        water_per_cap = _bal_int(
+            "WILDLIFE_FISH_WATER_PER_CAP", FISH_WATER_PER_CAP, 1
+        )
+        cache_key = (rev, water_per_cap)
+        if getattr(self, "_cap_key", None) == cache_key and hasattr(self, "_cap_cache"):
             return self._cap_cache
-        self._cap_rev = rev
-        self._cap_cache = sum(len(p) // FISH_WATER_PER_CAP for p in world.water_patches())
+        self._cap_key = cache_key
+        self._cap_cache = sum(len(p) // water_per_cap for p in world.water_patches())
         return self._cap_cache
 
     def fish_at(self, x: int, y: int) -> Fish | None:
@@ -4007,7 +4044,10 @@ class FishManager:
         if not patches:
             self.fish.clear()
             return
-        caps = [len(p) // FISH_WATER_PER_CAP for p in patches]
+        water_per_cap = _bal_int(
+            "WILDLIFE_FISH_WATER_PER_CAP", FISH_WATER_PER_CAP, 1
+        )
+        caps = [len(p) // water_per_cap for p in patches]
         buckets = self._fish_per_patch(world)
         unassigned = getattr(self, "_unassigned", [])
 
@@ -4023,6 +4063,8 @@ class FishManager:
                     self.fish.remove(victim)
 
         buckets = self._fish_per_patch(world)
+        if self.rng.random() >= _bal_float("WILDLIFE_FISH_BREED_CHANCE", 1.0):
+            return
         for i, patch in enumerate(patches):
             cap = caps[i]
             group = buckets[i] if i < len(buckets) else []

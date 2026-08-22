@@ -1892,6 +1892,18 @@ class Game:
             tip = "∞" if cap is None else str(cap)
             self._set_status(f"{resource_label(key)} max: {tip}")
             return
+        if ctx.startswith("item_reserve:"):
+            key = ctx.split(":", 1)[1]
+            if key not in building.depositable_keys():
+                return
+            building.set_item_min(key, None if value <= 0 else value)
+            from resources import resource_label
+
+            reserve = building.item_min(key)
+            self._set_status(
+                f"{resource_label(key)} reserve: {reserve if reserve is not None else 0}"
+            )
+            return
 
     def _finish_file_dialog_if_needed(self) -> None:
         if self.file_dialog.open:
@@ -5686,6 +5698,37 @@ class Game:
                 anchor=self.building_inspect.panel_rect(),
             )
             return
+        if action.startswith("edit_item_cap:"):
+            building = self._inspect_building()
+            if building is None:
+                return
+            key = action.split(":", 1)[1]
+            from resources import resource_label
+
+            cap = building.item_cap(key)
+            self.number_input.begin(
+                title=f"Cap — {resource_label(key)} (0 = ∞)",
+                initial=0 if cap is None else cap,
+                context=f"recipe_max:{key}",
+                max_value=building.max_item_cap(key),
+                anchor=self.building_inspect.panel_rect(),
+            )
+            return
+        if action.startswith("edit_item_reserve:"):
+            building = self._inspect_building()
+            if building is None:
+                return
+            key = action.split(":", 1)[1]
+            from resources import resource_label
+
+            self.number_input.begin(
+                title=f"Reserve — {resource_label(key)} (0 = none)",
+                initial=building.item_min(key) or 0,
+                context=f"item_reserve:{key}",
+                max_value=building.max_item_cap(key),
+                anchor=self.building_inspect.panel_rect(),
+            )
+            return
         if action.startswith("cycle_recipe_priority:"):
             building = self._inspect_building()
             if building is None or not (
@@ -6955,6 +6998,14 @@ class Game:
             or site.contains_plot(x, y)
         ):
             self._player_work_construction(site)
+            return
+
+        field_b = self._field_building_at(x, y)
+        if (
+            field_b is not None
+            and cell.feature in (FeatureType.NONE, FeatureType.FIELD)
+            and self._player_tend_field_cell(field_b, x, y)
+        ):
             return
 
         if cell.feature in (
@@ -8228,6 +8279,70 @@ class Game:
             return self._plant_berry_seed(x, y, inventory, status=status)
         return self._plant(x, y, inventory, status=status)
 
+    def _player_tend_field_cell(
+        self, field: Building, x: int, y: int
+    ) -> bool:
+        """Plough or sow one planned Field cell. Returns whether Field handled it."""
+        plan = self._plan_at_cell(field, x, y)
+        if plan is None:
+            return False
+        if self.player.work_cooldown > 0:
+            self._set_status("Still working…")
+            return True
+        cell = self.world.get_cell(x, y)
+        if cell is None:
+            return True
+        crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
+        if not crop_allows_plant(crop, self.season):
+            self._set_status(f"{crop.label} cannot be planted this season.")
+            return True
+        if cell.terrain not in SOIL_LIKE:
+            if not self.player.inventory.has_equipped_tool("hoe"):
+                self._set_status("Equip a hoe (Q) to plough this field tile.")
+                return True
+            if self._try_apply_alchemist_treatment(x, y):
+                return True
+            if self.world.plough_tile(x, y):
+                self.world.apply_disturbance(x, y)
+                self._refresh_indicators()
+                self._finish_player_work()
+                self._set_status(f"Ploughed field for {crop.label.lower()}.")
+            else:
+                self._set_status("Cannot plough this field tile.")
+            return True
+
+        inv = self.player.inventory
+        seed_key = crop.seed_key
+        if int(getattr(inv, seed_key, 0)) <= 0:
+            from resources import resource_label
+
+            self._set_status(f"Need {resource_label(seed_key)} to plant here.")
+            return True
+
+        # Harvested soil skips ploughing, so apply carried amendments here too.
+        if not cell.compost_cycle_applied and inv.compost > 0:
+            inv.consume_item("compost", 1)
+            cell.fertility = min(1.0, float(cell.fertility) + 0.05)
+            cell.compost_cycle_applied = True
+            self.record_consumed("compost", 1)
+        if not cell.mineral_cycle_applied and inv.mineral_powder > 0:
+            inv.consume_item("mineral_powder", 1)
+            cell.weed_suppression = max(float(cell.weed_suppression), 0.10)
+            cell.mineral_cycle_applied = True
+            self.record_consumed("mineral_powder", 1)
+        if self.world.sow_crop(
+            x, y, crop.key, growth_ticks_for(crop, self.ticks_per_day)
+        ):
+            inv.consume_item(seed_key, 1)
+            self.record_consumed(seed_key, 1)
+            self.world.apply_disturbance(x, y)
+            self._refresh_indicators()
+            self._finish_player_work()
+            self._set_status(f"Planted {crop.label.lower()}.")
+        else:
+            self._set_status("Cannot plant on this field tile.")
+        return True
+
     def _plant_berry_seed(self, x: int, y: int, inventory: Inventory, status: bool = False) -> bool:
         if inventory.berry_seeds <= 0:
             if status:
@@ -9318,7 +9433,13 @@ class Game:
                             acted = True
                             break
                         # Workplace quiet (e.g. frozen lake): help village haul.
-                        if self._transport_has_work(villager):
+                        # Cooks are dedicated: outside transport must not pull them
+                        # away while kitchen ingredients can still make food.
+                        if (
+                            building is not None
+                            and building.kind != BuildingKind.KITCHEN
+                            and self._transport_has_work(villager)
+                        ):
                             self._update_hauler(villager)
                             acted = True
                             break
@@ -10461,6 +10582,9 @@ class Game:
             return True
         # Workplace helper hauling a foreign building (not own assigned transport).
         hid = villager.haul_building_id
+        assigned = self.buildings.get(villager.building_id)
+        if assigned is not None and assigned.kind == BuildingKind.KITCHEN:
+            return False
         return hid is not None and hid != villager.building_id
 
     def _building_can_produce(self, building: Building) -> bool:
@@ -14134,6 +14258,28 @@ class Game:
             return True
         return self.home_storage.withdraw_one_to(inv, key)
 
+    def _farm_apply_preplant_treatments(
+        self, villager: Villager, building: Building, cell
+    ) -> None:
+        """Apply available amendments before ploughing or direct re-sowing."""
+        inv = villager.inventory
+        if not getattr(cell, "compost_cycle_applied", False) and self._farm_take_treatment(
+            villager, building, "compost"
+        ):
+            inv.compost -= 1
+            self.record_consumed("compost", 1)
+            cell.fertility = min(1.0, float(cell.fertility) + 0.05)
+            cell.compost_cycle_applied = True
+        if not getattr(cell, "mineral_cycle_applied", False) and self._farm_take_treatment(
+            villager, building, "mineral_powder"
+        ):
+            inv.mineral_powder -= 1
+            self.record_consumed("mineral_powder", 1)
+            cell.weed_suppression = max(
+                float(getattr(cell, "weed_suppression", 0.0)), 0.10
+            )
+            cell.mineral_cycle_applied = True
+
     def _find_farm_repellant_work(
         self, villager: Villager, building: Building
     ) -> tuple[int, int] | None:
@@ -14739,6 +14885,8 @@ class Game:
             if getattr(inv, seed_key, 0) <= 0:
                 if not building.give_item_to(inv, seed_key):
                     self.home_storage.withdraw_keys_to(inv, (seed_key,))
+            if getattr(inv, seed_key, 0) > 0:
+                self._farm_apply_preplant_treatments(villager, building, cell)
             if getattr(inv, seed_key, 0) > 0 and self.world.sow_crop(
                 x, y, crop.key, growth_ticks_for(crop, self.ticks_per_day)
             ):
@@ -14756,20 +14904,7 @@ class Game:
                 return
         # Carry available amendments with the ploughing trip. Each is consumed at
         # most once for this crop cycle and remains effective through harvest.
-        if not getattr(cell, "compost_cycle_applied", False) and self._farm_take_treatment(
-            villager, building, "compost"
-        ):
-            inv.compost -= 1
-            self.record_consumed("compost", 1)
-            cell.fertility = min(1.0, float(cell.fertility) + 0.05)
-            cell.compost_cycle_applied = True
-        if not getattr(cell, "mineral_cycle_applied", False) and self._farm_take_treatment(
-            villager, building, "mineral_powder"
-        ):
-            inv.mineral_powder -= 1
-            self.record_consumed("mineral_powder", 1)
-            cell.weed_suppression = max(float(getattr(cell, "weed_suppression", 0.0)), 0.10)
-            cell.mineral_cycle_applied = True
+        self._farm_apply_preplant_treatments(villager, building, cell)
         self.world.plough_tile(x, y)
         self.world.apply_extraction_disturbance(x, y)
         self._refresh_indicators()

@@ -294,12 +294,12 @@ class BuildingInspectDialog:
             if rect.collidepoint(pos):
                 self._pending_action = f"select_worker:{vid}"
                 return True
-        for rect, side, key in self._inv_hits:
+        for rect, side, key in reversed(self._inv_hits):
             if rect.collidepoint(pos):
                 if side == "cap":
-                    self._pending_action = f"select_cap:{key}"
+                    self._pending_action = f"edit_item_cap:{key}"
                 elif side == "min":
-                    self._pending_action = f"select_min:{key}"
+                    self._pending_action = f"edit_item_reserve:{key}"
                 elif side == "storage":
                     if self.show_player:
                         self._pending_action = f"xfer_to_player:{key}"
@@ -951,6 +951,22 @@ class BuildingInspectDialog:
         has_storage = self._has_storage(building)
         dual = self.show_player and has_storage
         storage_keys = building.depositable_keys()
+        linked_food_storages = (
+            building.linked_food_storages()
+            if building.kind == BuildingKind.KITCHEN
+            else ()
+        )
+        if linked_food_storages and storage_amounts is None:
+            storage_keys = tuple(
+                dict.fromkeys(
+                    (*storage_keys, *(k for store in linked_food_storages for k in store.depositable_keys()))
+                )
+            )
+            storage_amounts = {
+                key: int(getattr(building, key, 0))
+                + sum(int(getattr(store, key, 0)) for store in linked_food_storages)
+                for key in storage_keys
+            }
         if storage_amounts is not None:
             storage_keys = tuple(dict.fromkeys((*storage_keys, *storage_amounts.keys())))
         if storage_keys:
@@ -963,6 +979,19 @@ class BuildingInspectDialog:
                 if building.kind == BuildingKind.HOME
                 else building.capacity_label()
             )
+            if linked_food_storages:
+                from resources import stack_units
+
+                storage_used = sum(store.cargo_stored_total for store in linked_food_storages)
+                storage_capacity = sum(store.capacity for store in linked_food_storages)
+                local_output_used = sum(
+                    stack_units(key, int(getattr(building, key, 0)))
+                    for key in building.processor_output_keys()
+                )
+                capacity_label = (
+                    f"{local_output_used + storage_used}/"
+                    f"{building.output_capacity + storage_capacity} output + storage"
+                )
         else:
             amounts = {}
             capacity_label = "—"
@@ -1079,18 +1108,7 @@ class BuildingInspectDialog:
                 key_count=max(1, supply_n),
                 inner_w=layout_w,
             )
-        if supports_caps and cap_keys:
-            caps_h = self._stock_limit_block_height(
-                expanded=self.caps_expanded,
-                key_count=len(cap_keys),
-                inner_w=layout_w,
-            )
-            min_key_count = len({*cap_keys, *building.item_mins.keys()})
-            mins_h = self._stock_limit_block_height(
-                expanded=self.mins_expanded,
-                key_count=min_key_count,
-                inner_w=layout_w,
-            )
+        # Caps and reserves are edited directly on storage cells.
 
         hire_row_h = ROW_H
         embed_w, embed_h = self._panel_w, self._panel_h
@@ -1866,6 +1884,8 @@ class BuildingInspectDialog:
                 hover_inv=self._hover_inv,
                 selected_key=self.selected_cap_key,
                 item_caps=building.item_caps,
+                item_mins=building.item_mins,
+                inline_stock_controls=supports_caps,
                 scroll_y=self._scroll.get("storage", 0),
                 max_body_h=MAX_STORAGE_BODY_H,
                 qualities=storage_qualities,
@@ -1946,6 +1966,8 @@ class BuildingInspectDialog:
                 hover_inv=self._hover_inv,
                 selected_key=self.selected_cap_key,
                 item_caps=building.item_caps,
+                item_mins=building.item_mins,
+                inline_stock_controls=supports_caps,
                 scroll_y=self._scroll.get("storage", 0),
                 max_body_h=MAX_STORAGE_BODY_H,
                 qualities=storage_qualities,
@@ -1969,7 +1991,7 @@ class BuildingInspectDialog:
                 (x, y),
             )
 
-        if self._supports_item_caps(building):
+        if False:  # Legacy separate cap/reserve sections replaced by cell controls.
             y += SECTION_GAP
             keys = list(building.depositable_keys())
             cols = max(1, inner_w // (GRID_CELL + GRID_GAP))

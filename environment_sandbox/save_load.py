@@ -740,7 +740,6 @@ def serialize_game(game: Game) -> dict[str, Any]:
         "hire_candidates": [c.to_dict() for c in getattr(game, "hire_candidates", [])],
         "next_community_id": int(getattr(game, "next_community_id", 1)),
         "next_hire_id": int(getattr(game, "next_hire_id", 1)),
-        "balance": game.balance.to_dict() if getattr(game, "balance", None) is not None else {},
     }
     if hasattr(game, "env_maps"):
         payload["env_maps"] = game.env_maps.to_save_dict()
@@ -1754,9 +1753,6 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             max((c.id for c in game.hire_candidates), default=0) + 1,
         )
     )
-    bal = data.get("balance")
-    if isinstance(bal, dict) and getattr(game, "balance", None) is not None:
-        game.balance.load_dict(bal)
     place = data.get("place_kind")
     game.place_kind = BuildingKind[place] if place else None
     game.sim_speed = int(data.get("sim_speed", 1))

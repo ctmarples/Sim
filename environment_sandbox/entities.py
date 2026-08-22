@@ -1520,6 +1520,9 @@ class Building:
     recipe_progress: dict[str, int] = field(default_factory=dict)
     # recipe name → priority 1 (highest) … 3 (lowest). Default 2.
     recipe_priority: dict[str, int] = field(default_factory=dict)
+    # Completed crafts per priority tier, used for weighted fair scheduling.
+    # Runtime-only: resetting this on load is harmless and avoids save churn.
+    _recipe_priority_runs: dict[int, int] = field(default_factory=dict, repr=False)
     areas: list[TaskArea] = field(default_factory=list)
     fields: list[FarmField] = field(default_factory=list)  # legacy; migrated away
     # Standalone Field plot size (origin at x,y) and crop plans.
@@ -2952,8 +2955,11 @@ class Building:
             upstream = [r for r in candidates if needed.intersection(r.outputs)]
             if upstream:
                 candidates = upstream
-            else:
+            elif self.kind != BuildingKind.KITCHEN:
                 return None
+            # A kitchen may have several cooks. Do not idle every cook behind one
+            # partial meal whose missing ingredient must be hauled in; ready food
+            # recipes can continue while that supply request remains outstanding.
 
         # Don't grill through a full meat tray while a higher-priority stew is
         # only missing vegetables that have no room to arrive.
@@ -2961,6 +2967,9 @@ class Building:
             self.is_processor()
             and self.input_capacity > 0
             and self.input_space_left() <= 0
+            and not (
+                self.kind == BuildingKind.KITCHEN and self.linked_food_storages()
+            )
         ):
             blocked = self._supply_target_recipes()
             if blocked:
@@ -2972,6 +2981,22 @@ class Building:
                 ]
                 if not candidates:
                     return None
+
+        # Priority is a weight, not an absolute starvation gate. A continuously
+        # ready priority-1 recipe should run most often, while priority 2/3 still
+        # receive turns. Ratios are 4:2:1 for tiers 1:2:3.
+        tier_weights = {1: 4, 2: 2, 3: 1}
+        ready_tiers = {self.get_recipe_priority(r.name) for r in candidates}
+        chosen_tier = min(
+            ready_tiers,
+            key=lambda p: (
+                int(self._recipe_priority_runs.get(p, 0)) / tier_weights[p],
+                p,
+            ),
+        )
+        candidates = [
+            r for r in candidates if self.get_recipe_priority(r.name) == chosen_tier
+        ]
 
         rank = self._recipe_craft_rank
         free = [r for r in candidates if r.name not in avoid]
@@ -3038,6 +3063,10 @@ class Building:
         self.recipe_progress[recipe.name] = int(self.recipe_progress.get(recipe.name, 0)) + 1
         if self.recipe_progress[recipe.name] >= steps:
             self.recipe_progress[recipe.name] = 0
+            priority = self.get_recipe_priority(recipe.name)
+            self._recipe_priority_runs[priority] = (
+                int(self._recipe_priority_runs.get(priority, 0)) + 1
+            )
             return True
         return False
 

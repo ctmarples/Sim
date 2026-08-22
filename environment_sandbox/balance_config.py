@@ -80,6 +80,19 @@ from settings import (
     WILDLIFE_RABBIT_FORAGE_PER_LEVEL,
     WILDLIFE_FROG_FORAGE_PER_LEVEL,
     WILDLIFE_VOLE_FORAGE_PER_LEVEL,
+    WILDLIFE_DEER_TILES_PER_CAP,
+    WILDLIFE_BOAR_TILES_PER_CAP,
+    WILDLIFE_FISH_WATER_PER_CAP,
+    WILDLIFE_FISH_BREED_CHANCE,
+    WILDLIFE_MIGRATION_CHANCE,
+    WILDLIFE_DEER_GRAZE_CHANCE,
+    WILDLIFE_BOAR_GRAZE_CHANCE,
+    WILDLIFE_RABBIT_GRAZE_CHANCE,
+    WILDLIFE_SEED_HABITATS,
+    WILDLIFE_SEED_ANIMALS,
+    WILDLIFE_COLONY_SEED_HABITATS,
+    BIRD_SEED_COUNT,
+    BIRD_ROAM_SPEED_MULT,
     WOLF_MAX_POPULATION,
     WOLF_SEED_PACKS,
     WOLF_BREED_CHANCE,
@@ -958,6 +971,71 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
                 "Vole colonies on grass, meadow, and riparian.",
             ),
             BalanceParam(
+                "WILDLIFE_DEER_TILES_PER_CAP", "Deer breeding tiles / animal", "int",
+                float(WILDLIFE_DEER_TILES_PER_CAP), 1, 30, 1,
+                "A habitat supports one deer per this many deer-breeding tiles. Lower means a larger capacity.",
+            ),
+            BalanceParam(
+                "WILDLIFE_BOAR_TILES_PER_CAP", "Boar forest tiles / animal", "int",
+                float(WILDLIFE_BOAR_TILES_PER_CAP), 1, 40, 1,
+                "A habitat supports one boar per this many usable forest tiles. Lower means a larger capacity.",
+            ),
+            BalanceParam(
+                "WILDLIFE_FISH_WATER_PER_CAP", "Fish water tiles / fish", "int",
+                float(WILDLIFE_FISH_WATER_PER_CAP), 1, 40, 1,
+                "A connected water patch supports one fish per this many water tiles. Lower means a larger capacity.",
+            ),
+            BalanceParam(
+                "WILDLIFE_FISH_BREED_CHANCE", "Fish breed chance", "float",
+                WILDLIFE_FISH_BREED_CHANCE, 0.0, 1.0, 0.05,
+                "Chance that an eligible fish growth tick adds one fish to an under-capacity water patch.",
+            ),
+            BalanceParam(
+                "WILDLIFE_MIGRATION_CHANCE", "Deer / boar migration chance", "float",
+                WILDLIFE_MIGRATION_CHANCE, 0.0, 1.0, 0.05,
+                "Chance per growth tick that a mating pair begins its annual migration.",
+            ),
+            BalanceParam(
+                "WILDLIFE_DEER_GRAZE_CHANCE", "Deer crop-graze chance", "float",
+                WILDLIFE_DEER_GRAZE_CHANCE, 0.0, 1.0, 0.05,
+                "Chance a deer eats an adjacent wild crop during a wildlife growth tick.",
+            ),
+            BalanceParam(
+                "WILDLIFE_BOAR_GRAZE_CHANCE", "Boar crop-graze chance", "float",
+                WILDLIFE_BOAR_GRAZE_CHANCE, 0.0, 1.0, 0.05,
+                "Chance a boar eats an adjacent wild crop during a wildlife growth tick.",
+            ),
+            BalanceParam(
+                "WILDLIFE_RABBIT_GRAZE_CHANCE", "Rabbit crop-graze chance", "float",
+                WILDLIFE_RABBIT_GRAZE_CHANCE, 0.0, 1.0, 0.05,
+                "Chance a rabbit colony eats a nearby wild crop during a wildlife growth tick.",
+            ),
+            BalanceParam(
+                "WILDLIFE_SEED_HABITATS", "Starting deer / boar habitats", "int",
+                float(WILDLIFE_SEED_HABITATS), 0, 20, 1,
+                "Number of the largest suitable habitats seeded for each species on a new map.",
+            ),
+            BalanceParam(
+                "WILDLIFE_SEED_ANIMALS", "Starting animals / habitat", "int",
+                float(WILDLIFE_SEED_ANIMALS), 0, 12, 1,
+                "Deer or boar placed in each starting habitat; 2 or more starts with a mating pair.",
+            ),
+            BalanceParam(
+                "WILDLIFE_COLONY_SEED_HABITATS", "Starting colony habitats", "int",
+                float(WILDLIFE_COLONY_SEED_HABITATS), 0, 20, 1,
+                "Starting nests seeded for each colony species on a new map.",
+            ),
+            BalanceParam(
+                "BIRD_SEED_COUNT", "Starting birds / species", "int",
+                float(BIRD_SEED_COUNT), 0, 20, 1,
+                "Owls and hawks seeded per species on a new map.",
+            ),
+            BalanceParam(
+                "BIRD_ROAM_SPEED_MULT", "Bird roam speed", "float",
+                BIRD_ROAM_SPEED_MULT, 0.5, 8.0, 0.25,
+                "Bird movement speed relative to the base animal roaming pace.", "×",
+            ),
+            BalanceParam(
                 "WOLF_MAX_POPULATION",
                 "Wolf population cap",
                 "int",
@@ -1134,6 +1212,39 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
             ),
         ),
     ),
+)
+
+
+# Keep the wildlife controls short and task-focused instead of presenting one
+# very long catch-all tab.  The source list above stays contiguous so related
+# defaults remain easy to audit.
+_wildlife = next(cat for cat in BALANCE_CATEGORIES if cat.id == "wildlife")
+_wildlife_params = {param.key: param for param in _wildlife.params}
+_movement_keys = (
+    "ANIMAL_MOVE_SECONDS_AT_X1", "ANIMAL_FLEE_SECONDS_AT_X1",
+    "FISH_MOVE_SECONDS_AT_X1", "RABBIT_MOVE_PAUSE_SECONDS_AT_X1",
+    "WOLF_SEEK_SPEED_MULT", "WOLF_CHASE_SPEED_MULT",
+    "ANIMAL_WEIGHT_BIODIVERSITY", "ANIMAL_WEIGHT_AWAY_DISTURBANCE",
+    "WOLF_WEIGHT_BIODIVERSITY", "WOLF_WEIGHT_AWAY_DISTURBANCE",
+    "WOLF_WEIGHT_TOWARD_PREY", "BIRD_ROAM_SPEED_MULT",
+)
+_predator_keys = tuple(
+    key for key in _wildlife_params if key.startswith(("WOLF_", "FOX_"))
+    and key not in _movement_keys
+)
+_ecology_keys = tuple(
+    key for key in _wildlife_params
+    if key not in _movement_keys and key not in _predator_keys
+)
+_split_wildlife = (
+    BalanceCategory("wildlife_motion", "Wildlife movement", tuple(_wildlife_params[k] for k in _movement_keys)),
+    BalanceCategory("wildlife", "Habitats & populations", tuple(_wildlife_params[k] for k in _ecology_keys)),
+    BalanceCategory("predators", "Predators", tuple(_wildlife_params[k] for k in _predator_keys)),
+)
+BALANCE_CATEGORIES = tuple(
+    category
+    for cat in BALANCE_CATEGORIES
+    for category in (_split_wildlife if cat.id == "wildlife" else (cat,))
 )
 
 _PARAM_BY_KEY: dict[str, BalanceParam] = {
