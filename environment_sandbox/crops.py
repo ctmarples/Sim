@@ -20,6 +20,7 @@ class SeasonPhase(Enum):
     FALLOW = auto()
     GROW = auto()
     HARVEST = auto()
+    DORMANT = auto()
     PLOUGH_PLANT = auto()  # plough then sow this season
     HARVEST_PLOUGH_PLANT = auto()  # harvest ripe crop, then plough & sow next
 
@@ -28,6 +29,7 @@ PHASE_LABELS: dict[SeasonPhase, str] = {
     SeasonPhase.FALLOW: "Fallow",
     SeasonPhase.GROW: "Grow",
     SeasonPhase.HARVEST: "Harvest",
+    SeasonPhase.DORMANT: "Dormant",
     SeasonPhase.PLOUGH_PLANT: "Plough/Plant",
     SeasonPhase.HARVEST_PLOUGH_PLANT: "Harvest/Plough/Plant",
 }
@@ -36,6 +38,7 @@ PHASE_SHORT: dict[SeasonPhase, str] = {
     SeasonPhase.FALLOW: "—",
     SeasonPhase.GROW: "G",
     SeasonPhase.HARVEST: "H",
+    SeasonPhase.DORMANT: "D",
     SeasonPhase.PLOUGH_PLANT: "P",
     SeasonPhase.HARVEST_PLOUGH_PLANT: "H/P",
 }
@@ -45,6 +48,7 @@ PHASE_COLOURS: dict[SeasonPhase, Colour] = {
     SeasonPhase.FALLOW: (90, 90, 90),
     SeasonPhase.GROW: (70, 140, 80),
     SeasonPhase.HARVEST: (210, 170, 50),
+    SeasonPhase.DORMANT: (85, 105, 85),
     SeasonPhase.PLOUGH_PLANT: (140, 100, 50),
     SeasonPhase.HARVEST_PLOUGH_PLANT: (180, 120, 40),
 }
@@ -75,12 +79,14 @@ class CropDef:
     year_phases: tuple[SeasonPhase, SeasonPhase, SeasonPhase, SeasonPhase]
     # Icon folder base: crop_plant / flower_plant (dense → ``{base}_dense``).
     icon_base: str = "crop_plant"
+    dense_icon_base: str | None = None
+    perennial: bool = False
     # Optional fertility delta applied on harvest/fallow once rotation effects exist.
     # None = not defined yet (UI shows projection only when set).
     fertility_effect: float | None = None
 
     def plant_icon(self, *, dense: bool = False) -> str:
-        return f"{self.icon_base}_dense" if dense else self.icon_base
+        return (self.dense_icon_base or f"{self.icon_base}_dense") if dense else self.icon_base
 
 
 # Seed drop defaults: imported from resource_balance (re-exported for callers).
@@ -105,17 +111,43 @@ CROPS: tuple[CropDef, ...] = (
         stem_colour=(200, 170, 55),
         flower_colour=None,
         plant_season=Season.AUTUMN,
-        harvest_seasons=(Season.AUTUMN,),
-        growth_days=112,  # autumn plant → next autumn harvest (full year)
+        harvest_seasons=(Season.SUMMER,),
+        growth_days=80,
         wild_seed_chance=WILD_SEED_CHANCE,
         farm_seed_amounts=FARM_SEED_AMOUNTS,
-        # S_S_A_W: Grow · Grow · Harvest/Plough/Plant · Grow
+        # S_S_A_W: Grow · Harvest · Plant · Grow
         year_phases=_phases(
             SeasonPhase.GROW,
-            SeasonPhase.GROW,
-            SeasonPhase.HARVEST_PLOUGH_PLANT,
+            SeasonPhase.HARVEST,
+            SeasonPhase.PLOUGH_PLANT,
             SeasonPhase.GROW,
         ),
+    ),
+    CropDef(
+        key="barley", label="Barley", produce_key="barley", seed_key="barley_grain",
+        short="bar", stem_colour=(190, 160, 65), flower_colour=None,
+        plant_season=Season.SPRING, harvest_seasons=(Season.SUMMER,), growth_days=32,
+        wild_seed_chance=WILD_SEED_CHANCE, farm_seed_amounts=FARM_SEED_AMOUNTS,
+        year_phases=_phases(SeasonPhase.PLOUGH_PLANT, SeasonPhase.HARVEST,
+                            SeasonPhase.FALLOW, SeasonPhase.FALLOW),
+    ),
+    CropDef(
+        key="peas", label="Peas", produce_key="peas", seed_key="pea_seeds",
+        short="pea", stem_colour=(70, 145, 65), flower_colour=(235, 235, 225),
+        plant_season=Season.SPRING, harvest_seasons=(Season.SUMMER,), growth_days=32,
+        wild_seed_chance=WILD_SEED_CHANCE, farm_seed_amounts=FARM_SEED_AMOUNTS,
+        year_phases=_phases(SeasonPhase.PLOUGH_PLANT, SeasonPhase.HARVEST,
+                            SeasonPhase.FALLOW, SeasonPhase.FALLOW),
+        icon_base="crop_vine", dense_icon_base="vine_plant_dense",
+    ),
+    CropDef(
+        key="beans", label="Beans", produce_key="beans", seed_key="bean_seeds",
+        short="bea", stem_colour=(55, 130, 55), flower_colour=(225, 150, 175),
+        plant_season=Season.SPRING, harvest_seasons=(Season.AUTUMN,), growth_days=56,
+        wild_seed_chance=WILD_SEED_CHANCE, farm_seed_amounts=FARM_SEED_AMOUNTS,
+        year_phases=_phases(SeasonPhase.PLOUGH_PLANT, SeasonPhase.GROW,
+                            SeasonPhase.HARVEST, SeasonPhase.FALLOW),
+        icon_base="crop_vine", dense_icon_base="vine_plant_dense",
     ),
     CropDef(
         key="flax",
@@ -153,12 +185,13 @@ CROPS: tuple[CropDef, ...] = (
         wild_seed_chance=WILD_SEED_CHANCE,
         farm_seed_amounts=FARM_SEED_AMOUNTS,
         year_phases=_phases(
-            SeasonPhase.PLOUGH_PLANT,
+            SeasonPhase.GROW,
             SeasonPhase.HARVEST,
-            SeasonPhase.FALLOW,
-            SeasonPhase.FALLOW,
+            SeasonPhase.GROW,
+            SeasonPhase.DORMANT,
         ),
         icon_base="flower_plant",
+        perennial=True,
     ),
     CropDef(
         key="mint",
@@ -174,12 +207,13 @@ CROPS: tuple[CropDef, ...] = (
         wild_seed_chance=WILD_SEED_CHANCE,
         farm_seed_amounts=FARM_SEED_AMOUNTS,
         year_phases=_phases(
-            SeasonPhase.PLOUGH_PLANT,
+            SeasonPhase.GROW,
             SeasonPhase.HARVEST,
-            SeasonPhase.FALLOW,
-            SeasonPhase.FALLOW,
+            SeasonPhase.GROW,
+            SeasonPhase.DORMANT,
         ),
         icon_base="flower_plant",
+        perennial=True,
     ),
     CropDef(
         key="hemp",
@@ -211,14 +245,14 @@ CROPS: tuple[CropDef, ...] = (
         stem_colour=(170, 140, 70),
         flower_colour=None,
         plant_season=Season.AUTUMN,
-        harvest_seasons=(Season.SPRING,),
-        growth_days=56,  # autumn plant → spring harvest (W grow)
+        harvest_seasons=(Season.SUMMER,),
+        growth_days=80,
         wild_seed_chance=WILD_SEED_CHANCE,
         farm_seed_amounts=FARM_SEED_AMOUNTS,
-        # S_S_A_W: Harvest · Fallow · Plough/Plant · Grow
+        # S_S_A_W: Grow · Harvest · Plant · Grow
         year_phases=_phases(
+            SeasonPhase.GROW,
             SeasonPhase.HARVEST,
-            SeasonPhase.FALLOW,
             SeasonPhase.PLOUGH_PLANT,
             SeasonPhase.GROW,
         ),
@@ -272,18 +306,26 @@ CROPS: tuple[CropDef, ...] = (
         short="crt",
         stem_colour=(80, 140, 55),
         flower_colour=(220, 120, 40),
-        plant_season=Season.WINTER,
-        harvest_seasons=(Season.SUMMER,),
+        plant_season=Season.SPRING,
+        harvest_seasons=(Season.AUTUMN,),
         growth_days=56,  # winter plant → summer harvest (Sp grow)
         wild_seed_chance=WILD_SEED_CHANCE,
         farm_seed_amounts=FARM_SEED_AMOUNTS,
-        # S_S_A_W: Grow · Harvest · Fallow · Plough/Plant
+        # S_S_A_W: Plant · Grow · Harvest · Fallow
         year_phases=_phases(
+            SeasonPhase.PLOUGH_PLANT,
             SeasonPhase.GROW,
             SeasonPhase.HARVEST,
             SeasonPhase.FALLOW,
-            SeasonPhase.PLOUGH_PLANT,
         ),
+    ),
+    CropDef(
+        key="turnip", label="Turnip", produce_key="turnip", seed_key="turnip_seeds",
+        short="trn", stem_colour=(85, 145, 65), flower_colour=(225, 210, 105),
+        plant_season=Season.SUMMER, harvest_seasons=(Season.AUTUMN,), growth_days=32,
+        wild_seed_chance=WILD_SEED_CHANCE, farm_seed_amounts=FARM_SEED_AMOUNTS,
+        year_phases=_phases(SeasonPhase.FALLOW, SeasonPhase.PLOUGH_PLANT,
+                            SeasonPhase.HARVEST, SeasonPhase.FALLOW),
     ),
     CropDef(
         key="garlic",
@@ -337,6 +379,13 @@ def phase_allows_harvest(phase: SeasonPhase) -> bool:
 
 def phase_allows_plough_plant(phase: SeasonPhase) -> bool:
     return phase in (SeasonPhase.PLOUGH_PLANT, SeasonPhase.HARVEST_PLOUGH_PLANT)
+
+
+def crop_allows_plant(crop: CropDef, season: Season) -> bool:
+    """Whether an empty planned tile may be planted this season."""
+    return phase_allows_plough_plant(phase_for_crop(crop, season)) or (
+        crop.perennial and season == crop.plant_season
+    )
 
 
 def grow_seasons(crop: CropDef) -> frozenset[Season]:

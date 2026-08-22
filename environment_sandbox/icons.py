@@ -1607,6 +1607,8 @@ ICON_CROP = "crop_plant"
 ICON_CROP_DENSE = "crop_plant_dense"
 ICON_FLOWER = "flower_plant"
 ICON_FLOWER_DENSE = "flower_plant_dense"
+ICON_CROP_VINE = "crop_vine"
+ICON_VINE_DENSE = "vine_plant_dense"
 ICON_HOME = "storehouse"
 ICON_WORKSTATION = "workstation"
 ICON_FORESTER = "forester"
@@ -1738,6 +1740,8 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_CROP_DENSE,
     ICON_FLOWER,
     ICON_FLOWER_DENSE,
+    ICON_CROP_VINE,
+    ICON_VINE_DENSE,
     ICON_HOME,
     ICON_WORKSTATION,
     ICON_FORESTER,
@@ -1862,6 +1866,11 @@ def icon_base_for_feature(
             return species.icon_base
         return crop_icon_base(crop_kind, dense=False)
     if feature == FeatureType.CROP_HERB:
+        from crops import CROP_BY_KEY
+
+        crop = CROP_BY_KEY.get(crop_kind or "sage")
+        if crop is not None and crop.perennial and deposit < 0:
+            return ICON_CROP
         return crop_icon_base(crop_kind, dense=growth_ticks <= 0)
     species = resolve_species(feature.name, crop_kind)
     if species is not None and species.icon_base:

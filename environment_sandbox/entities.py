@@ -556,6 +556,7 @@ class Inventory:
     leather: int = 0
     wheat_grain: int = 0
     rye_grain: int = 0
+    barley_grain: int = 0
     wheat: int = 0
     flax: int = 0
     sage: int = 0
@@ -566,6 +567,10 @@ class Inventory:
     cabbage: int = 0
     carrot: int = 0
     garlic: int = 0
+    barley: int = 0
+    peas: int = 0
+    beans: int = 0
+    turnip: int = 0
     wheat_seeds: int = 0
     flax_seeds: int = 0
     sage_seeds: int = 0
@@ -576,6 +581,9 @@ class Inventory:
     cabbage_seeds: int = 0
     carrot_seeds: int = 0
     garlic_seeds: int = 0
+    pea_seeds: int = 0
+    bean_seeds: int = 0
+    turnip_seeds: int = 0
     wheat_flour: int = 0
     rye_flour: int = 0
     bread: int = 0
@@ -1021,6 +1029,7 @@ class HomeStorage:
     leather: int = 0
     wheat_grain: int = 0
     rye_grain: int = 0
+    barley_grain: int = 0
     wheat: int = 0
     flax: int = 0
     sage: int = 0
@@ -1031,6 +1040,10 @@ class HomeStorage:
     cabbage: int = 0
     carrot: int = 0
     garlic: int = 0
+    barley: int = 0
+    peas: int = 0
+    beans: int = 0
+    turnip: int = 0
     wheat_seeds: int = 0
     flax_seeds: int = 0
     sage_seeds: int = 0
@@ -1041,6 +1054,9 @@ class HomeStorage:
     cabbage_seeds: int = 0
     carrot_seeds: int = 0
     garlic_seeds: int = 0
+    pea_seeds: int = 0
+    bean_seeds: int = 0
+    turnip_seeds: int = 0
     wheat_flour: int = 0
     rye_flour: int = 0
     bread: int = 0
@@ -1438,6 +1454,7 @@ class Building:
     leather: int = 0
     wheat_grain: int = 0
     rye_grain: int = 0
+    barley_grain: int = 0
     wheat: int = 0
     flax: int = 0
     sage: int = 0
@@ -1448,6 +1465,10 @@ class Building:
     cabbage: int = 0
     carrot: int = 0
     garlic: int = 0
+    barley: int = 0
+    peas: int = 0
+    beans: int = 0
+    turnip: int = 0
     wheat_seeds: int = 0
     flax_seeds: int = 0
     sage_seeds: int = 0
@@ -1458,6 +1479,9 @@ class Building:
     cabbage_seeds: int = 0
     carrot_seeds: int = 0
     garlic_seeds: int = 0
+    pea_seeds: int = 0
+    bean_seeds: int = 0
+    turnip_seeds: int = 0
     wheat_flour: int = 0
     rye_flour: int = 0
     bread: int = 0

@@ -21,9 +21,9 @@ from crops import (
     CROP_BY_KEY,
     SEED_KEYS,
     SeasonPhase,
+    crop_allows_plant,
     growth_ticks_for,
     phase_allows_harvest,
-    phase_allows_plough_plant,
     phase_for_crop,
 )
 from resource_balance import (
@@ -4528,6 +4528,7 @@ class Game:
         self.resource_history.advance_day()
         if self.season != prev:
             self._expire_unharvested_crops(prev)
+            self._start_perennial_regrowth()
             self._ripen_crops_for_harvest_season()
             from soil import reset_seasonal_weed_appearances
 
@@ -5201,6 +5202,8 @@ class Game:
                 crop = CROP_BY_KEY.get(cell.crop_kind or "sage")
                 if crop is None:
                     continue
+                if crop.perennial and cell.feature == FeatureType.CROP_HERB:
+                    continue
                 if ended_season not in crop.harvest_seasons:
                     continue
                 # Still growing — keep it; workers can pick once ripe.
@@ -5215,6 +5218,25 @@ class Game:
                 cleared = True
 
         if cleared:
+            self._wake_all_farm_workers()
+            self._refresh_indicators()
+
+    def _start_perennial_regrowth(self) -> None:
+        """Wake harvested mint and sage when their spring growth begins."""
+        if self.season != Season.SPRING:
+            return
+        changed = False
+        for row in self.world.cells:
+            for cell in row:
+                if cell.feature != FeatureType.CROP_HERB or cell.deposit >= 0:
+                    continue
+                crop = CROP_BY_KEY.get(cell.crop_kind or "sage")
+                if crop is None or not crop.perennial:
+                    continue
+                cell.deposit = 0
+                cell.growth_ticks = growth_ticks_for(crop, self.ticks_per_day)
+                changed = True
+        if changed:
             self._wake_all_farm_workers()
             self._refresh_indicators()
 
@@ -10723,7 +10745,7 @@ class Game:
         for field_b in self._fields_near_farm(farm):
             for plan in field_b.plans:
                 crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
-                if not phase_allows_plough_plant(phase_for_crop(crop, season)):
+                if not crop_allows_plant(crop, season):
                     continue
                 key = crop.seed_key
                 n = 0
@@ -14014,7 +14036,7 @@ class Game:
             return False
         crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
         phase = phase_for_crop(crop, self.season)
-        if not phase_allows_plough_plant(phase):
+        if not crop_allows_plant(crop, self.season):
             return False
         if cell.terrain in SOIL_LIKE and cell.feature == FeatureType.NONE:
             return True
@@ -14035,7 +14057,7 @@ class Game:
                 for plan in field_b.plans:
                     crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
                     phase = phase_for_crop(crop, season)
-                    if not phase_allows_plough_plant(phase):
+                    if not crop_allows_plant(crop, season):
                         continue
                     seed_key = crop.seed_key
                     for x, y in plan.cells():
@@ -14095,7 +14117,7 @@ class Game:
             for plan in field_b.plans:
                 crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
                 phase = phase_for_crop(crop, season)
-                if not phase_allows_plough_plant(phase):
+                if not crop_allows_plant(crop, season):
                     continue
                 for x, y in plan.cells():
                     if (x, y) in claimed:
@@ -14468,7 +14490,7 @@ class Game:
                 continue
             any_plan = plan
             crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
-            if phase_allows_plough_plant(phase_for_crop(crop, self.season)):
+            if crop_allows_plant(crop, self.season):
                 plant_plan = plan
         return plant_plan or any_plan
 
@@ -14530,7 +14552,7 @@ class Game:
             return
         crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
         phase = phase_for_crop(crop, self.season)
-        if not phase_allows_plough_plant(phase):
+        if not crop_allows_plant(crop, self.season):
             return
         if cell.terrain in SOIL_LIKE and cell.feature == FeatureType.NONE:
             seed_key = crop.seed_key

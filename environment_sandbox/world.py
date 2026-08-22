@@ -2612,12 +2612,12 @@ class World:
         cell = self.get_cell(x, y)
         if cell is None or cell.feature != FeatureType.CROP_HERB:
             return False
-        return cell.growth_ticks <= 0
+        return cell.growth_ticks <= 0 and cell.deposit >= 0
 
     def harvest_crop_herb(self, x: int, y: int) -> str | None:
         """Harvest a ready farm crop; returns crop_kind or None.
 
-        Clears the plant entirely (used when remaining produce is finished).
+        Clears annual plants. Perennials remain dormant for spring regrowth.
         """
         cell = self.get_cell(x, y)
         if cell is None or cell.feature != FeatureType.CROP_HERB:
@@ -2625,9 +2625,15 @@ class World:
         if cell.growth_ticks > 0:
             return None
         kind = cell.crop_kind or "sage"
+        crop = CROP_BY_KEY.get(kind)
         from soil import drop_fertility_on_harvest
 
         drop_fertility_on_harvest(cell)
+        if crop is not None and crop.perennial:
+            cell.growth_ticks = 0
+            cell.deposit = -1  # harvested/dormant perennial sentinel
+            cell.weeds = 0.0
+            return kind
         cell.feature = FeatureType.NONE
         cell.growth_ticks = 0
         cell.crop_kind = None
