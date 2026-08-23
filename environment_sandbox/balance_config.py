@@ -1285,6 +1285,7 @@ _movement_keys = (
 _predator_keys = tuple(
     key for key in _wildlife_params if key.startswith(("WOLF_", "FOX_"))
     and key not in _movement_keys
+    and key not in {"WOLF_MAX_POPULATION", "FOX_MAX_POPULATION"}
 )
 _lifecycle_keys = (
     "WILDLIFE_DEER_FORAGE_PER_ANIMAL", "WILDLIFE_BOAR_FORAGE_PER_ANIMAL",

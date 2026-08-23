@@ -2,3 +2,7 @@ name,label,inputs,outputs,steps,icon_key,extraction,farming,hunting,crafting,lab
 deer,Deer,,meat:3;hide:1,,deer,,,,,,,,,,,,,
 boar,Boar,,meat:5;fur:2,,boar,,,,,,,,,,,,,
 rabbit,Rabbit,,meat:3;fur:1,,rabbit,,,,,,,,,,,,,
+wolf,Wolf,,meat:1;fur:2,,wolf,,,,,,,,,,,,,
+fox,Fox,,meat:1;fur:1,,fox,,,,,,,,,,,,,
+owl,Owl,,meat:1;feathers:3,,owl,,,,,,,,,,,,,
+hawk,Hawk,,meat:1;feathers:3,,hawk,,,,,,,,,,,,,

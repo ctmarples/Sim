@@ -3348,11 +3348,9 @@ class Game:
         bio = self.env_maps.farm_biodiversity(sample)
         bal = active_balance()
         breed_key = "FOX_BREED_CHANCE" if is_fox else "WOLF_BREED_CHANCE"
-        cap_key = "FOX_MAX_POPULATION" if is_fox else "WOLF_MAX_POPULATION"
         base_breed = bal.get_float(breed_key)
-        pop_cap = max(1, bal.get_int(cap_key))
+        pop_cap = self.wildlife._pack_max_pop(pack.kind)
         landscape = self.wildlife.pack_count(pack.kind)
-        pop_factor = min(1.0, landscape / float(pop_cap))
         health = max(
             0.0,
             min(
@@ -3368,7 +3366,7 @@ class Game:
             ("Can hunt", hunt),
             ("Location", f"({pack.x}, {pack.y})"),
             ("Biodiversity", f"{bio * 100:.0f}%"),
-            (f"Landscape {unit}", f"{landscape}/{pop_cap}"),
+            (f"Landscape {unit}", f"{landscape}/{pop_cap} food-supported"),
             ("Disturbance", f"{avg_dist:.2f}"),
         ]
         return HabitatInspectView(
@@ -6517,6 +6515,8 @@ class Game:
             return ("Hide", cell.hide_deposit, "hide", "Ground deposit")
         if cell.fur_deposit > 0:
             return ("Fur", cell.fur_deposit, "fur", "Ground deposit")
+        if cell.feather_deposit > 0:
+            return ("Feathers", cell.feather_deposit, "feathers", "Ground deposit")
         if cell.fish_deposit > 0:
             return ("Fish", cell.fish_deposit, "fish", "Shore catch")
         if cell.feature == FeatureType.TREE:
@@ -8839,6 +8839,7 @@ class Game:
             cell.meat_deposit > 0
             or cell.hide_deposit > 0
             or cell.fur_deposit > 0
+            or cell.feather_deposit > 0
         )
 
     def _apply_hunt_recipe_to_inventory(
@@ -8901,6 +8902,8 @@ class Game:
                 self.world.add_hide_deposit(x, y, amount)
             elif key == "fur":
                 self.world.add_fur_deposit(x, y, amount)
+            elif key == "feathers":
+                self.world.add_feather_deposit(x, y, amount)
         return meat
 
     def _hunt_recipe_status_bits(
@@ -9153,6 +9156,7 @@ class Game:
         taken = self.world.harvest_meat(x, y, amount=1)
         hide_taken = 0
         fur_taken = 0
+        feathers_taken = 0
         if inventory.can_add(1, key="hide"):
             hide_taken = self.world.harvest_hide(x, y, amount=1)
             if hide_taken > 0:
@@ -9163,7 +9167,12 @@ class Game:
             if fur_taken > 0:
                 inventory.add_item("fur", fur_taken)
                 self.record_produced("fur", fur_taken)
-        if taken <= 0 and hide_taken <= 0 and fur_taken <= 0:
+        if inventory.can_add(3, key="feathers"):
+            feathers_taken = self.world.harvest_feathers(x, y, amount=3)
+            if feathers_taken > 0:
+                inventory.add_item("feathers", feathers_taken)
+                self.record_produced("feathers", feathers_taken)
+        if taken <= 0 and hide_taken <= 0 and fur_taken <= 0 and feathers_taken <= 0:
             if status:
                 self._set_status("No meat here.")
             return False
@@ -9180,11 +9189,13 @@ class Game:
                 bits.append(f"{hide_taken} hide")
             if fur_taken:
                 bits.append(f"{fur_taken} fur")
+            if feathers_taken:
+                bits.append(f"{feathers_taken} feathers")
             self._set_status("Collected " + ", ".join(bits) + ".")
         return True
 
     def _adjacent_animal(self, x: int, y: int):
-        """Animal on this cell or within Chebyshev distance 1."""
+        """Huntable animal on this cell or within Chebyshev distance 1."""
         best = None
         best_dist = 99
         for animal in self.wildlife.animals:
@@ -9283,7 +9294,7 @@ class Game:
             self.record_consumed("stone_arrows", 1)
         x, y, kind = result
         meat = self._drop_hunt_yields(x, y, kind, has_knife=has_knife)
-        label = "boar" if kind == AnimalKind.BOAR else "deer"
+        label = kind.name.lower()
         self.world.apply_extraction_disturbance(x, y)
         if kind in (AnimalKind.DEER, AnimalKind.BOAR):
             self.wildlife.scare_from_kill(x, y)
@@ -11753,7 +11764,7 @@ class Game:
                 building.allows_hunt_kind(a.kind.name)
                 and self._under_production_max(building, "meat")
                 and self._within_work_search(origin, (a.x, a.y))
-                for a in self.wildlife.animals
+                for a in self.wildlife.huntable_animals()
             ):
                 return True
             from wildlife import AnimalKind
@@ -15366,12 +15377,13 @@ class Game:
     def _find_hunt_target(self, villager: Villager, building: Building):
         animals = []
         if building.areas:
+            huntable = self.wildlife.huntable_animals()
             for area in building.areas:
                 if area.task_type != TaskType.HUNT:
                     continue
-                animals.extend(self.wildlife.animals_in_area(area.contains))
+                animals.extend(a for a in huntable if area.contains(a.x, a.y))
         else:
-            animals = list(self.wildlife.animals)
+            animals = list(self.wildlife.huntable_animals())
         taken = self._claimed_animal_ids(villager.id)
         origin = (villager.x, villager.y)
         animals = [
@@ -15392,13 +15404,13 @@ class Game:
 
     def _resolve_hunt_animal(self, villager: Villager, building: Building):
         if villager.hunt_animal_id is not None:
-            for animal in self.wildlife.animals:
-                if animal.id == villager.hunt_animal_id:
-                    if self.is_discovered(animal.x, animal.y) and self._within_work_search(
-                        (villager.x, villager.y), (animal.x, animal.y)
-                    ):
-                        return animal
-                    break
+            animal = self.wildlife.huntable_by_id(villager.hunt_animal_id)
+            if animal is not None and self.is_discovered(
+                animal.x, animal.y
+            ) and self._within_work_search(
+                (villager.x, villager.y), (animal.x, animal.y)
+            ):
+                return animal
             villager.hunt_animal_id = None
         animal = self._find_hunt_target(villager, building)
         if animal is not None:
@@ -20418,7 +20430,7 @@ class Game:
         x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
         pad = 1
         vx0, vy0, vx1, vy1 = x0 - pad, y0 - pad, x1 + pad, y1 + pad
-        for animal in self.wildlife.animals:
+        for animal in self.wildlife.huntable_animals():
             if animal.kind not in (AnimalKind.DEER, AnimalKind.BOAR):
                 continue
             if not (vx0 <= animal.x <= vx1 and vy0 <= animal.y <= vy1):

@@ -84,6 +84,7 @@ RESOURCES: list[ResourceDef] = [
     ResourceDef("reeds", "Reeds", "wares", "reed"),
     ResourceDef("straw", "Straw", "wares", "strw"),
     ResourceDef("fur", "Fur", "wares", "fur"),
+    ResourceDef("feathers", "Feathers", "wares", "fthr"),
     ResourceDef("hide", "Hide", "wares", "hide"),
     ResourceDef("leather", "Leather", "wares", "leth"),
     *_CROP_PRODUCE_WARES,

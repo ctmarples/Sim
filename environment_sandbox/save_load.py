@@ -55,6 +55,7 @@ _BASE_STORAGE_KEYS = (
     "reeds",
     "straw",
     "fur",
+    "feathers",
     "hide",
     "leather",
     "twine",
@@ -254,6 +255,7 @@ def _cell_to_dict(cell: Cell) -> dict[str, Any]:
         "meat_deposit": cell.meat_deposit,
         "hide_deposit": cell.hide_deposit,
         "fur_deposit": cell.fur_deposit,
+        "feather_deposit": cell.feather_deposit,
         "fish_deposit": cell.fish_deposit,
     }
     crop_kind = getattr(cell, "crop_kind", None)
@@ -309,6 +311,7 @@ def _cell_from_save(c: dict[str, Any], *, migrate_legacy_fertility: bool = False
         meat_deposit=int(c.get("meat_deposit", 0)),
         hide_deposit=int(c.get("hide_deposit", 0)),
         fur_deposit=int(c.get("fur_deposit", 0)),
+        feather_deposit=int(c.get("feather_deposit", 0)),
         fish_deposit=int(c.get("fish_deposit", 0)),
         path_worn=path_worn,
         tree_age_years=int(c.get("tree_age_years", 0)),

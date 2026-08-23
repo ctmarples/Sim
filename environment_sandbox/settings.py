@@ -472,7 +472,7 @@ WILDLIFE_ANNUAL_MORTALITY: float = 0.06
 WILDLIFE_STARVATION_MORTALITY: float = 0.45
 TREE_LIFESPAN_YEARS: int = 6
 TREE_OLD_AGE_DEATH_CHANCE: float = 0.20
-# Wolves — packs roam the whole map; total individuals capped.
+# Legacy save/balance key; predator capacity is now derived from available prey.
 WOLF_MAX_POPULATION: int = 20
 WOLF_SEED_PACKS: int = 2
 WOLF_BREED_CHANCE: float = 0.35
@@ -486,7 +486,7 @@ WOLF_FEED_DEER_DAYS: float = 3.0
 WOLF_FEED_RABBIT_DAYS: float = 3.0
 WOLF_HUNT_FOX_MIN: int = 2
 WOLF_FEED_FOX_DAYS: float = 2.0
-# Fox packs — same machinery as wolves; smaller cap and simpler prey.
+# Fox packs — same machinery as wolves; simpler prey.
 FOX_MAX_POPULATION: int = 40
 FOX_SEED_PACKS: int = 2
 FOX_BREED_CHANCE: float = 0.35

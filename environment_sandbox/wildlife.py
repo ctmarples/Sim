@@ -358,6 +358,16 @@ class WolfPack:
         return max(0.0, float(self.fed_days_remaining))
 
 
+@dataclass(frozen=True)
+class PredatorTarget:
+    """Hunting view of one member of a wolf or fox pack."""
+
+    id: int
+    x: int
+    y: int
+    kind: AnimalKind
+
+
 @dataclass
 class ForestHabitat:
     """Per-patch breeding / roaming areas for deer and boar."""
@@ -521,7 +531,39 @@ class WildlifeManager:
     def animals_in_area(self, contains) -> list[Animal]:
         return [a for a in self.animals if contains(a.x, a.y)]
 
+    def huntable_animals(self) -> list[Animal | PredatorTarget]:
+        targets: list[Animal | PredatorTarget] = list(self.animals)
+        for pack in self.wolf_packs:
+            if not pack.members:
+                continue
+            member = pack.members[0]
+            targets.append(
+                PredatorTarget(-pack.id, member.x, member.y, pack.kind)
+            )
+        return targets
+
+    def huntable_by_id(self, target_id: int) -> Animal | PredatorTarget | None:
+        if target_id >= 0:
+            self._index_animals()
+            return self._by_id.get(target_id)
+        pack_id = -target_id
+        for pack in self.wolf_packs:
+            if pack.id == pack_id and pack.members:
+                member = pack.members[0]
+                return PredatorTarget(target_id, member.x, member.y, pack.kind)
+        return None
+
     def kill_animal(self, animal_id: int) -> tuple[int, int, AnimalKind] | None:
+        if animal_id < 0:
+            pack_id = -animal_id
+            for pack in list(self.wolf_packs):
+                if pack.id != pack_id or not pack.members:
+                    continue
+                member = pack.members.pop(0)
+                if not pack.members:
+                    self.wolf_packs.remove(pack)
+                return member.x, member.y, pack.kind
+            return None
         self._index_animals()
         animal = self._by_id.get(animal_id)
         if animal is None:
@@ -1177,6 +1219,7 @@ class WildlifeManager:
         Habitats must be rebuilt first so bird nests / colony sites exist.
         """
         self.refresh_habitats(world)
+        self._reseed_extinct_forest_species(world)
         for kind in COLONY_KINDS:
             if self.count_kind(kind) > 0:
                 continue
@@ -1294,18 +1337,10 @@ class WildlifeManager:
         self._prev_season = season
 
     def _reseed_extinct_species(self, world: World) -> None:
-        """At new year, restore extinct forest pairs / empty colony kinds."""
+        """Restore extinct wildlife where suitable habitat still exists."""
         if not self.habitats and not self.open_habitats:
             self.refresh_habitats(world)
-        occupied = self._occupied()
-        for kind in FOREST_KINDS:
-            if self.count_kind(kind) > 0:
-                continue
-            grounds = self.breeding_grounds(kind)
-            if not grounds:
-                continue
-            hab = self.rng.choice(grounds)
-            self._seed_patch(kind, hab, WILDLIFE_RESEED_PAIR, occupied)
+        self._reseed_extinct_forest_species(world)
         for kind in COLONY_KINDS:
             if self.count_kind(kind) > 0:
                 continue
@@ -1319,6 +1354,20 @@ class WildlifeManager:
             if self.count_kind(kind) > 0:
                 continue
             self._seed_birds(world, kind=kind)
+
+    def _reseed_extinct_forest_species(self, world: World) -> None:
+        """Maintain one breeding pair of deer and boar after extinction."""
+        if not self.habitats:
+            self.refresh_habitats(world)
+        occupied = self._occupied()
+        for kind in FOREST_KINDS:
+            if self.count_kind(kind) > 0:
+                continue
+            grounds = self.breeding_grounds(kind)
+            if not grounds:
+                continue
+            hab = self.rng.choice(grounds)
+            self._seed_patch(kind, hab, WILDLIFE_RESEED_PAIR, occupied)
 
     def _kill_failed_migrants(self) -> None:
         """Animals still searching for a new breeding ground die when winter arrives."""
@@ -1425,6 +1474,9 @@ class WildlifeManager:
                 self._breed(world)
                 self._last_breed_year = year
             self._cull_excess()
+            # Predation can erase a species between annual spring reseeds. Keep
+            # minimum viable prey wherever suitable habitat remains.
+            self._reseed_extinct_species(world)
             self._migrate()
             self._tick_colonies(world)
             self._breed_wolves(world)
@@ -3041,14 +3093,49 @@ class WildlifeManager:
     # Wolf / fox packs
     # ------------------------------------------------------------------
     def _pack_max_pop(self, kind: AnimalKind) -> int:
-        from balance_config import active_balance
+        """Predator carrying capacity supplied by the prey currently on the map.
 
-        key = (
-            "WOLF_MAX_POPULATION"
-            if kind == AnimalKind.WOLF
-            else "FOX_MAX_POPULATION"
+        A prey unit contributes one predator-place per day that it would feed a
+        pack.  Unlike the old global wolf/fox caps this responds to both habitat
+        recovery and predation: abundant prey permits growth, while an exhausted
+        food web cannot keep producing predators.
+        """
+        if kind == AnimalKind.FOX:
+            from settings import (
+                FOX_FEED_FROG_DAYS,
+                FOX_FEED_RABBIT_DAYS,
+                FOX_FEED_VOLE_DAYS,
+            )
+
+            prey = (
+                (AnimalKind.RABBIT, FOX_FEED_RABBIT_DAYS),
+                (AnimalKind.FROG, FOX_FEED_FROG_DAYS),
+                (AnimalKind.VOLE, FOX_FEED_VOLE_DAYS),
+            )
+            return max(
+                0,
+                int(
+                    sum(
+                        c.level * feed_days
+                        for c in self.colonies
+                        for prey_kind, feed_days in prey
+                        if c.kind == prey_kind and c.can_harvest()
+                    )
+                ),
+            )
+
+        animal_food = sum(
+            self._wolf_feed_days("boar" if a.kind == AnimalKind.BOAR else "deer")
+            for a in self.animals
+            if a.kind in (AnimalKind.BOAR, AnimalKind.DEER)
         )
-        return max(0, active_balance().get_int(key))
+        rabbit_food = sum(
+            c.level * self._wolf_feed_days("rabbit")
+            for c in self.colonies
+            if c.kind == AnimalKind.RABBIT and c.can_harvest()
+        )
+        fox_food = self.fox_count() * self._wolf_feed_days("fox")
+        return max(0, int(animal_food + rabbit_food + fox_food))
 
     def _pack_room(self, kind: AnimalKind) -> int:
         return max(0, self._pack_max_pop(kind) - self.pack_count(kind))
@@ -3710,11 +3797,6 @@ class WildlifeManager:
 
         bal = active_balance()
         for pack_kind in PACK_KINDS:
-            cap_key = (
-                "WOLF_MAX_POPULATION"
-                if pack_kind == AnimalKind.WOLF
-                else "FOX_MAX_POPULATION"
-            )
             chance_key = (
                 "WOLF_BREED_CHANCE"
                 if pack_kind == AnimalKind.WOLF
@@ -3725,7 +3807,10 @@ class WildlifeManager:
                 if pack.kind != pack_kind:
                     continue
                 if self._pack_room(pack_kind) <= 0:
-                    return
+                    break
+                # A pair must have secured food before investing in offspring.
+                if not pack.is_fed(0.0):
+                    continue
                 if not pack.has_pair():
                     continue
                 if self.rng.random() >= chance:
@@ -3756,6 +3841,28 @@ class WildlifeManager:
                         sex=sex, x=mx, y=my, move_cooldown=animal_roam_interval()
                     )
                 )
+
+        self._cull_excess_predators()
+
+    def _cull_excess_predators(self) -> None:
+        """Apply starvation mortality above prey-supported carrying capacity."""
+        for kind in PACK_KINDS:
+            excess = max(0, self.pack_count(kind) - self._pack_max_pop(kind))
+            if excess <= 0:
+                continue
+            hungry = sorted(
+                (p for p in self.wolf_packs if p.kind == kind and not p.is_fed(0.0)),
+                key=lambda p: p.size(),
+                reverse=True,
+            )
+            for pack in hungry:
+                while pack.members and excess > 0:
+                    pack.members.pop()
+                    excess -= 1
+                if not pack.members and pack in self.wolf_packs:
+                    self.wolf_packs.remove(pack)
+                if excess <= 0:
+                    break
 
     # ------------------------------------------------------------------
     # Hawks / owls

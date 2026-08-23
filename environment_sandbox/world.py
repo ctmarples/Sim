@@ -291,6 +291,7 @@ class Cell:
     meat_deposit: int = 0
     hide_deposit: int = 0
     fur_deposit: int = 0
+    feather_deposit: int = 0
     fish_deposit: int = 0
     crop_kind: str | None = None  # CropDef / WildSpeciesDef key
     tree_species: str | None = None  # TreeDef key for TREE / SAPLING
@@ -2860,6 +2861,19 @@ class World:
         if cell is None:
             return
         cell.fur_deposit += amount
+
+    def harvest_feathers(self, x: int, y: int, amount: int = 1) -> int:
+        cell = self.get_cell(x, y)
+        if cell is None or cell.feather_deposit <= 0:
+            return 0
+        taken = min(amount, cell.feather_deposit)
+        cell.feather_deposit -= taken
+        return taken
+
+    def add_feather_deposit(self, x: int, y: int, amount: int) -> None:
+        cell = self.get_cell(x, y)
+        if cell is not None:
+            cell.feather_deposit += amount
 
     def harvest_fish(self, x: int, y: int, amount: int = 1) -> int:
         cell = self.get_cell(x, y)

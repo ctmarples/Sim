@@ -556,6 +556,7 @@ class Inventory:
     reeds: int = 0
     straw: int = 0
     fur: int = 0
+    feathers: int = 0
     hide: int = 0
     leather: int = 0
     wheat_grain: int = 0
@@ -696,6 +697,7 @@ class Inventory:
             + self.reeds
             + self.straw
             + self.fur
+            + self.feathers
             + self.hide
             + self.leather
             + self.twine
@@ -977,6 +979,7 @@ class Inventory:
             "reeds": self.reeds,
             "straw": self.straw,
             "fur": self.fur,
+            "feathers": self.feathers,
             "hide": self.hide,
             "leather": self.leather,
             "twine": self.twine,
@@ -999,7 +1002,7 @@ class Inventory:
     def reset(self) -> None:
         self.logs = self.hardwood_logs = self.wood = self.rock = self.meat = self.fish = 0
         self.mushrooms = self.honey = self.berries = self.berry_seeds = self.reeds = 0
-        self.straw = self.fur = self.hide = self.leather = 0
+        self.straw = self.fur = self.feathers = self.hide = self.leather = 0
         self.twine = self.coins = 0
         for key in TOOL_KEYS:
             setattr(self, key, 0)
@@ -1029,6 +1032,7 @@ class HomeStorage:
     reeds: int = 0
     straw: int = 0
     fur: int = 0
+    feathers: int = 0
     hide: int = 0
     leather: int = 0
     wheat_grain: int = 0
@@ -1124,7 +1128,7 @@ class HomeStorage:
     def reset(self) -> None:
         self.logs = self.hardwood_logs = self.wood = self.rock = self.meat = self.fish = 0
         self.mushrooms = self.honey = self.berries = self.berry_seeds = self.reeds = 0
-        self.straw = self.fur = self.hide = self.leather = 0
+        self.straw = self.fur = self.feathers = self.hide = self.leather = 0
         self.twine = self.coins = 0
         for key in TOOL_KEYS:
             setattr(self, key, 0)
@@ -1454,6 +1458,7 @@ class Building:
     reeds: int = 0
     straw: int = 0
     fur: int = 0
+    feathers: int = 0
     hide: int = 0
     leather: int = 0
     wheat_grain: int = 0
@@ -1775,6 +1780,7 @@ class Building:
             + self.reeds
             + self.straw
             + self.fur
+            + self.feathers
             + self.hide
             + self.leather
             + self.twine
@@ -3207,6 +3213,7 @@ class Building:
                 "reeds",
                 "straw",
                 "fur",
+                "feathers",
                 "hide",
                 "leather",
                 "twine",
@@ -3219,7 +3226,7 @@ class Building:
         if self.kind == BuildingKind.MASON:
             return ("rock",)
         if self.kind == BuildingKind.HUNTER:
-            return ("meat", "fur", "hide", "leather", "spoilage")
+            return ("meat", "fur", "feathers", "hide", "leather", "spoilage")
         if self.kind == BuildingKind.FISHER:
             return ("fish", "meat", "bait", "spoilage")
         if self.kind == BuildingKind.FORAGER:
@@ -3285,7 +3292,7 @@ class Building:
             return PRODUCE_KEYS + ("straw", "spoilage") + SEED_KEYS
         if self.kind == BuildingKind.HUNTER:
             # Hide stays at the hut for drying-rack tanning; haul meat/fur/leather only.
-            return ("meat", "fur", "leather", "spoilage")
+            return ("meat", "fur", "feathers", "leather", "spoilage")
         if self.kind == BuildingKind.FISHER:
             # Fish is exported; meat and bait remain as the bait-making buffer.
             return ("fish", "spoilage")
