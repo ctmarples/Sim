@@ -4,6 +4,7 @@ from unittest.mock import Mock
 from entities import Inventory
 from game import Game
 from wildlife import AnimalKind
+from wildlife import AnimalSex, WildlifeManager, WolfMember, WolfPack
 
 
 class HuntingToolTests(unittest.TestCase):
@@ -53,6 +54,25 @@ class HuntingToolTests(unittest.TestCase):
         self.assertTrue(self.game._ensure_hunter_tools(villager))
         self.game._ensure_hunter_weapon.assert_called_once_with(villager)
         self.game._ensure_work_tool.assert_not_called()
+
+    def test_player_finds_wolf_member_within_one_square(self) -> None:
+        wildlife = WildlifeManager(seed=1)
+        wildlife.wolf_packs = [
+            WolfPack(
+                3,
+                20,
+                20,
+                [WolfMember(AnimalSex.MALE, 6, 5)],
+                kind=AnimalKind.WOLF,
+            )
+        ]
+        self.game.wildlife = wildlife
+
+        target = self.game._adjacent_animal(5, 5)
+
+        self.assertIsNotNone(target)
+        self.assertEqual(target.kind, AnimalKind.WOLF)
+        self.assertEqual((target.x, target.y), (6, 5))
 
 
 if __name__ == "__main__":

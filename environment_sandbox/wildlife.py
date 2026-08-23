@@ -534,32 +534,45 @@ class WildlifeManager:
     def huntable_animals(self) -> list[Animal | PredatorTarget]:
         targets: list[Animal | PredatorTarget] = list(self.animals)
         for pack in self.wolf_packs:
-            if not pack.members:
-                continue
-            member = pack.members[0]
-            targets.append(
-                PredatorTarget(-pack.id, member.x, member.y, pack.kind)
-            )
+            for member_index, member in enumerate(pack.members):
+                targets.append(
+                    PredatorTarget(
+                        self._predator_target_id(pack.id, member_index),
+                        member.x,
+                        member.y,
+                        pack.kind,
+                    )
+                )
         return targets
+
+    @staticmethod
+    def _predator_target_id(pack_id: int, member_index: int) -> int:
+        """Stable-enough negative hunt ID for one member during a chase."""
+        return -(int(pack_id) * 1000 + int(member_index) + 1)
+
+    @staticmethod
+    def _predator_target_parts(target_id: int) -> tuple[int, int]:
+        encoded = -int(target_id) - 1
+        return encoded // 1000, encoded % 1000
 
     def huntable_by_id(self, target_id: int) -> Animal | PredatorTarget | None:
         if target_id >= 0:
             self._index_animals()
             return self._by_id.get(target_id)
-        pack_id = -target_id
+        pack_id, member_index = self._predator_target_parts(target_id)
         for pack in self.wolf_packs:
-            if pack.id == pack_id and pack.members:
-                member = pack.members[0]
+            if pack.id == pack_id and 0 <= member_index < len(pack.members):
+                member = pack.members[member_index]
                 return PredatorTarget(target_id, member.x, member.y, pack.kind)
         return None
 
     def kill_animal(self, animal_id: int) -> tuple[int, int, AnimalKind] | None:
         if animal_id < 0:
-            pack_id = -animal_id
+            pack_id, member_index = self._predator_target_parts(animal_id)
             for pack in list(self.wolf_packs):
-                if pack.id != pack_id or not pack.members:
+                if pack.id != pack_id or not (0 <= member_index < len(pack.members)):
                     continue
-                member = pack.members.pop(0)
+                member = pack.members.pop(member_index)
                 if not pack.members:
                     self.wolf_packs.remove(pack)
                 return member.x, member.y, pack.kind

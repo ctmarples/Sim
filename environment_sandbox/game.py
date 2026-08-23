@@ -9198,7 +9198,7 @@ class Game:
         """Huntable animal on this cell or within Chebyshev distance 1."""
         best = None
         best_dist = 99
-        for animal in self.wildlife.animals:
+        for animal in self.wildlife.huntable_animals():
             dist = max(abs(animal.x - x), abs(animal.y - y))
             if dist <= 1 and dist < best_dist:
                 best = animal

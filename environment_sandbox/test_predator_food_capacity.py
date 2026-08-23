@@ -34,6 +34,23 @@ class PredatorFoodCapacityTests(unittest.TestCase):
         self.assertEqual(pack.size(), 1)
         self.assertIn(pack, wildlife.wolf_packs)
 
+    def test_each_pack_member_is_huntable_at_its_own_position(self) -> None:
+        wildlife = WildlifeManager(seed=1)
+        near = WolfMember(AnimalSex.MALE, 4, 5)
+        far = WolfMember(AnimalSex.FEMALE, 20, 20)
+        pack = WolfPack(7, 20, 20, [far, near], kind=AnimalKind.WOLF)
+        wildlife.wolf_packs = [pack]
+
+        adjacent = next(
+            target
+            for target in wildlife.huntable_animals()
+            if (target.x, target.y) == (4, 5)
+        )
+        result = wildlife.kill_animal(adjacent.id)
+
+        self.assertEqual(result, (4, 5, AnimalKind.WOLF))
+        self.assertEqual(pack.members, [far])
+
     def test_extinct_forest_prey_get_a_new_breeding_pair(self) -> None:
         wildlife = WildlifeManager(seed=1)
         habitat = Mock()
