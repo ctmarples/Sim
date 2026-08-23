@@ -21,8 +21,10 @@ class ResourceDef:
 
 
 # Display order within each group follows this list order.
-# Onion / cabbage / carrot are edible produce (food); other crops stay wares.
-_FOOD_CROP_KEYS = frozenset({"onion", "cabbage", "carrot", "garlic"})
+# Edible vegetables and pulses are food; fibre and unprocessed sheaves stay wares.
+_FOOD_CROP_KEYS = frozenset(
+    {"onion", "cabbage", "carrot", "garlic", "peas", "beans","turnip"}
+)
 _CROP_PRODUCE_FOOD = tuple(
     ResourceDef(c.produce_key, c.label, "food", c.short)
     for c in CROPS

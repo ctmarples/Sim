@@ -50,6 +50,10 @@ class ResourceBar:
         self.font_small = pygame.font.SysFont("menlo", 12)
         self._chip_rects: dict[str, pygame.Rect] = {}
         self._hover_group: str | None = None
+        self._popup_rect = pygame.Rect(0, 0, 0, 0)
+        self._popup_group: str | None = None
+        self._popup_grace_until = 0
+        self._popup_entered = False
         self.view_mode = ResourceView.TOTAL
         self._toggle_rect = pygame.Rect(0, 0, 0, 0)
         self.layers_open = False
@@ -85,10 +89,30 @@ class ResourceBar:
 
     def update_hover(self, mouse_pos: tuple[int, int]) -> None:
         self._hover_group = None
+        now = pygame.time.get_ticks()
         for group, rect in self._chip_rects.items():
             if rect.collidepoint(mouse_pos):
                 self._hover_group = group
+                self._popup_group = group
+                self._popup_grace_until = now + 1000
+                self._popup_entered = False
                 return
+        if (
+            self._popup_group is not None
+            and self._popup_rect.collidepoint(mouse_pos)
+        ):
+            self._hover_group = self._popup_group
+            self._popup_entered = True
+            return
+        # Leave enough time to cross the small gap between the top-bar chip and
+        # its expanded grid. Once the grid has been entered, leaving it closes
+        # normally without this delay.
+        if (
+            self._popup_group is not None
+            and not self._popup_entered
+            and now <= self._popup_grace_until
+        ):
+            self._hover_group = self._popup_group
 
     def contains(self, pos: tuple[int, int]) -> bool:
         _, my = pos
@@ -259,7 +283,12 @@ class ResourceBar:
 
         self.update_hover(mouse_pos)
         if self._hover_group is not None:
-            self._draw_popup(surface, amounts, self._hover_group)
+            self._draw_popup(surface, amounts, self._hover_group, mouse_pos)
+        else:
+            self._popup_rect = pygame.Rect(0, 0, 0, 0)
+            self._popup_group = None
+            self._popup_grace_until = 0
+            self._popup_entered = False
         self._draw_layers(surface, mouse_pos, overlay_mode)
 
     def _draw_layers(
@@ -319,7 +348,11 @@ class ResourceBar:
             surface.blit(item, (rect.x + 7, rect.centery - item.get_height() // 2))
 
     def _draw_popup(
-        self, surface: pygame.Surface, amounts: dict[str, int], group: str
+        self,
+        surface: pygame.Surface,
+        amounts: dict[str, int],
+        group: str,
+        mouse_pos: tuple[int, int],
     ) -> None:
         chip = self._chip_rects.get(group)
         if chip is None:
@@ -330,8 +363,57 @@ class ResourceBar:
             return
         else:
             defs = dict(resources_by_group()).get(group, [])
-            lines = [f"{res.label}: {amounts.get(res.key, 0)}" for res in defs]
+            lines = []
+        self._popup_group = group
         if not lines:
+            if group in ("coins", "housing") or not defs:
+                return
+
+            from inventory_ui import draw_item_tooltip, draw_resource_cell
+
+            cell_size = 42
+            gap = 4
+            cols = min(8, max(1, len(defs)))
+            rows = (len(defs) + cols - 1) // cols
+            padding = 8
+            width = padding * 2 + cols * cell_size + (cols - 1) * gap
+            height = padding * 2 + rows * cell_size + (rows - 1) * gap
+            popup = pygame.Rect(chip.x, MAP_OFFSET_Y + 4, width, height)
+            if popup.right > WINDOW_WIDTH - 8:
+                popup.x = WINDOW_WIDTH - width - 8
+            self._popup_rect = popup
+
+            pygame.draw.rect(surface, COLOUR_MENU_BG, popup, border_radius=4)
+            pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, popup, 1, border_radius=4)
+            hovered_key: str | None = None
+            for index, res in enumerate(defs):
+                col = index % cols
+                row = index // cols
+                cell = pygame.Rect(
+                    popup.x + padding + col * (cell_size + gap),
+                    popup.y + padding + row * (cell_size + gap),
+                    cell_size,
+                    cell_size,
+                )
+                hovered = cell.collidepoint(mouse_pos)
+                draw_resource_cell(
+                    surface,
+                    cell=cell,
+                    key=res.key,
+                    count=int(amounts.get(res.key, 0)),
+                    fonts=(self.font, self.font_small, self.font_small),
+                    hovered=hovered,
+                    dimmed=int(amounts.get(res.key, 0)) <= 0,
+                )
+                if hovered:
+                    hovered_key = res.key
+            if hovered_key is not None:
+                draw_item_tooltip(
+                    surface,
+                    mouse_pos=mouse_pos,
+                    key=hovered_key,
+                    font=self.font_small,
+                )
             return
 
         padding = 8
@@ -341,6 +423,7 @@ class ResourceBar:
         popup = pygame.Rect(chip.x, MAP_OFFSET_Y + 4, width, height)
         if popup.right > WINDOW_WIDTH - 8:
             popup.x = WINDOW_WIDTH - width - 8
+        self._popup_rect = popup
 
         pygame.draw.rect(surface, COLOUR_MENU_BG, popup, border_radius=4)
         pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, popup, 1, border_radius=4)
