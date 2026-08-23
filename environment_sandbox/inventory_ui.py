@@ -209,6 +209,11 @@ def draw_inv_grid(
     scroll = max(0, min(int(scroll_y), max(0, content_h - view_h)))
     body = pygame.Rect(x0, y, width, view_h)
 
+    # A distinct plane separates paired inventories and clearly marks the
+    # portion of the inspector that can contain more items.
+    pygame.draw.rect(surface, (23, 26, 32), body, border_radius=4)
+    pygame.draw.rect(surface, (66, 70, 80), body, 1, border_radius=4)
+
     old_clip = surface.get_clip()
     clipped = body.clip(old_clip) if old_clip.width > 0 else body
     surface.set_clip(clipped)

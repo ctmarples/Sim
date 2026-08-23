@@ -10637,8 +10637,7 @@ class Game:
         villager.state = VillagerState.WORKING
         villager.target = dest
         if (villager.x, villager.y) == dest:
-            if villager.work_cooldown > 0:
-                return
+            # Eating is independent of the workplace production cooldown.
             if dest == home:
                 if self._inventory_needs_store_deposit(villager.inventory):
                     self._deposit_home(villager.inventory, status=False)
@@ -12258,7 +12257,9 @@ class Game:
                 villager.state = VillagerState.DELIVERING
                 villager.target = dest
                 if (villager.x, villager.y) == dest:
-                    if villager.work_cooldown == 0:
+                    # Hunger must not leave an arrived cook holding edible
+                    # supplies until an old crafting cooldown expires.
+                    if villager.work_cooldown == 0 or villager.seeking_food:
                         if building.is_processor():
                             building.deposit_supply_from(villager.inventory)
                         else:

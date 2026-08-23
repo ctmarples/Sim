@@ -134,6 +134,39 @@ class FoodSeekingTests(unittest.TestCase):
         game._find_nearest_food_store.assert_called_once_with(villager)
         game._step_villager_toward.assert_called_once_with(villager, (5, 5))
 
+    def test_arrived_hungry_worker_eats_during_work_cooldown(self):
+        game = Game.__new__(Game)
+        store = SimpleNamespace(fish=1)
+        game.world = SimpleNamespace(home_pos=(5, 5))
+        game._food_count = Mock(return_value=1)
+        game._find_nearest_food_store = Mock(return_value=(2, 3))
+        game._food_store_at = Mock(return_value=store)
+        game._inventory_needs_store_deposit = Mock(return_value=False)
+        game._villager_needs_home_restock = Mock(return_value=False)
+        game._eat_random_from = Mock(return_value=1)
+        game._villager_work_interval = Mock(return_value=12)
+
+        villager = SimpleNamespace(
+            x=2,
+            y=3,
+            inventory=SimpleNamespace(is_full=False),
+            favourite_foods=[],
+            required_foods=[],
+            satiation=0.2,
+            seeking_food=True,
+            target=(2, 3),
+            work_cooldown=143,
+            state=VillagerState.WORKING,
+            needs_food=Mock(return_value=True),
+        )
+
+        game._update_seek_food(villager)
+
+        game._eat_random_from.assert_called_once_with(store, villager)
+        self.assertFalse(villager.seeking_food)
+        self.assertIsNone(villager.target)
+        self.assertEqual(villager.work_cooldown, 12)
+
 
 if __name__ == "__main__":
     unittest.main()

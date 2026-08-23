@@ -72,7 +72,8 @@ PAD = 12
 BTN_H = 24
 ROW_H = 22
 SECTION_GAP = 10
-SCROLL_STEP = 28
+SCROLL_IMPULSE = 760.0
+SCROLL_FRICTION = 8.5
 ICON_BTN = 26
 BAR_W = 72
 BAR_H = 10
@@ -122,7 +123,10 @@ class VillagerInspectDialog:
         self._tooltip_text: str | None = None
         self.embedded = False
         self.detail_category = DetailCategory.SKILLS
-        self._scroll: dict[str, int] = {}
+        self._scroll: dict[str, float] = {}
+        self._scroll_velocity: dict[str, float] = {}
+        self._scroll_tick = pygame.time.get_ticks()
+        self._measured_body_h = 0
         self._scroll_areas: dict[str, tuple[pygame.Rect, int, int]] = {}
 
     @property
@@ -151,6 +155,9 @@ class VillagerInspectDialog:
         self._tooltip_key = None
         self._tooltip_text = None
         self._scroll = {}
+        self._scroll_velocity = {}
+        self._scroll_tick = pygame.time.get_ticks()
+        self._measured_body_h = 0
         self._scroll_areas = {}
         self._panel_w = 520 if show_player else 320
         self._panel_h = 420
@@ -176,6 +183,7 @@ class VillagerInspectDialog:
         self._hover_inv = None
         self._tooltip_key = None
         self._scroll = {}
+        self._scroll_velocity = {}
         self._scroll_areas = {}
 
     def take_action(self) -> str | None:
@@ -195,15 +203,33 @@ class VillagerInspectDialog:
             MAP_OFFSET_Y, min(self._panel_y, WINDOW_HEIGHT - self._panel_h - 4)
         )
 
-    def _scroll_value(self, name: str, content_h: int, view_h: int) -> int:
+    def _scroll_value(self, name: str, content_h: int, view_h: int) -> float:
         max_s = max(0, content_h - view_h)
-        value = max(0, min(int(self._scroll.get(name, 0)), max_s))
+        value = max(0.0, min(float(self._scroll.get(name, 0.0)), float(max_s)))
         self._scroll[name] = value
         return value
 
+    def _advance_scroll(self) -> None:
+        now = pygame.time.get_ticks()
+        dt = min(0.05, max(0.0, (now - self._scroll_tick) / 1000.0))
+        self._scroll_tick = now
+        decay = max(0.0, 1.0 - SCROLL_FRICTION * dt)
+        for name, velocity in list(self._scroll_velocity.items()):
+            area = self._scroll_areas.get(name)
+            if area is None:
+                continue
+            _rect, content_h, view_h = area
+            before = self._scroll_value(name, content_h, view_h)
+            self._scroll[name] = before + velocity * dt
+            after = self._scroll_value(name, content_h, view_h)
+            velocity *= decay
+            if after == before and (after <= 0 or after >= content_h - view_h):
+                velocity = 0.0
+            self._scroll_velocity[name] = 0.0 if abs(velocity) < 4.0 else velocity
+
     def _register_scroll(
         self, name: str, view: pygame.Rect, content_h: int, view_h: int
-    ) -> int:
+    ) -> float:
         scroll = self._scroll_value(name, content_h, view_h)
         self._scroll_areas[name] = (view, content_h, view_h)
         return scroll
@@ -238,10 +264,7 @@ class VillagerInspectDialog:
         if panel is not None:
             rect, content_h, view_h = panel
             if content_h > view_h:
-                self._scroll["panel_body"] = (
-                    self._scroll_value("panel_body", content_h, view_h) - dy * SCROLL_STEP
-                )
-                self._scroll_value("panel_body", content_h, view_h)
+                self._scroll_velocity["panel_body"] = self._scroll_velocity.get("panel_body", 0.0) - float(dy) * SCROLL_IMPULSE
         return True
 
     def handle_keydown(self, event: pygame.event.Event) -> bool:
@@ -435,6 +458,7 @@ class VillagerInspectDialog:
             return
         if villager.id != self.villager_id:
             return
+        self._advance_scroll()
 
         villager_amounts = amounts_from_obj(villager.inventory)
         player_amounts = (
@@ -464,10 +488,16 @@ class VillagerInspectDialog:
         v_items = len(present_keys(villager_amounts, None))
         p_items = len(present_keys(player_amounts, None))
         if dual:
+            dual_col_w = (520 - PAD * 2 - INV_PANEL_GAP) // 2
+            dual_cols = max(1, min(6, dual_col_w // (GRID_CELL + 4)))
             grid_h = (
                 18
                 + 16
-                + max(grid_height(v_items), grid_height(p_items), GRID_CELL)
+                + max(
+                    grid_height(v_items, cols=dual_cols),
+                    grid_height(p_items, cols=dual_cols),
+                    GRID_CELL,
+                )
                 + 22
             )
             self._panel_w = 520
@@ -501,6 +531,7 @@ class VillagerInspectDialog:
             + grid_h
             + PAD
         )
+        body_h = max(body_h, self._measured_body_h)
         if self.embedded:
             self._panel_w = embed_w
             self._panel_h = embed_h
@@ -522,6 +553,9 @@ class VillagerInspectDialog:
             surface.blit(sh, shadow.topleft)
             pygame.draw.rect(surface, COLOUR_MENU_BG, panel, border_radius=6)
             pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, panel, 2, border_radius=6)
+
+        if body_h > client_h:
+            pygame.draw.rect(surface, (43, 45, 53), client_rect)
 
         title_bar = pygame.Rect(panel.x, panel.y, panel.w, TITLE_BAR_H)
         pygame.draw.rect(
@@ -1035,6 +1069,16 @@ class VillagerInspectDialog:
 
         if dual:
             col_w = (inner_w - INV_PANEL_GAP) // 2
+            section_h = max(grid_h, 18 + 16 + GRID_CELL + 22)
+            pygame.draw.rect(
+                surface, (29, 33, 40), pygame.Rect(x - 4, y - 4, col_w + 8, section_h), border_radius=5
+            )
+            pygame.draw.rect(
+                surface,
+                (39, 35, 43),
+                pygame.Rect(x + col_w + INV_PANEL_GAP - 4, y - 4, col_w + 8, section_h),
+                border_radius=5,
+            )
             left_h, left_hits, left_tips, left_hov, *_ = draw_inv_grid(
                 surface,
                 origin=(x, y),
@@ -1082,6 +1126,7 @@ class VillagerInspectDialog:
                 ),
                 (x, y + 6),
             )
+            y += 22
         else:
             h, _hits, tips, hov, *_ = draw_inv_grid(
                 surface,
@@ -1103,8 +1148,13 @@ class VillagerInspectDialog:
                 tip_key = hov[1]
             y += h
 
+        content_top = panel.y + TITLE_BAR_H
+        measured_body_h = max(1, int(y + panel_scroll - content_top + PAD))
+        self._measured_body_h = measured_body_h
+        measured_scroll = self._scroll_value("panel_body", measured_body_h, client_h)
+        self._scroll_areas["panel_body"] = (client_rect, measured_body_h, client_h)
         surface.set_clip(old_clip)
-        self._draw_scrollbar(surface, client_rect, body_h, panel_scroll)
+        self._draw_scrollbar(surface, client_rect, measured_body_h, measured_scroll)
 
         if tip_key is not None:
             if tip_key == "_empty_tool_":

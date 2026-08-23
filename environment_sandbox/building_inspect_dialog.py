@@ -57,12 +57,12 @@ RECIPE_ROW_H = RECIPE_OUT_CELL + 14
 GATHER_PRIO_GAP = 18
 GATHER_CELL_STRIDE = RECIPE_OUT_CELL + GATHER_PRIO_GAP
 SECTION_GAP = 10
-SCROLL_STEP = 28
+SCROLL_IMPULSE = 760.0
+SCROLL_FRICTION = 8.5
 # Visible size before a section starts scrolling.
 MAX_RECIPE_VIEW_H = 3 * RECIPE_ROW_H
 MAX_GATHER_VIEW_H = 2 * (RECIPE_OUT_CELL + GRID_GAP) - GRID_GAP
 MAX_CAP_VIEW_H = 2 * (GRID_CELL + GRID_GAP) - GRID_GAP
-MAX_STORAGE_BODY_H = 3 * (GRID_CELL + GRID_GAP) - GRID_GAP
 MAX_WORKER_VIEW_H = 4 * (ROW_H + 2)
 
 
@@ -103,7 +103,10 @@ class BuildingInspectDialog:
         self.market_supply_group: str = "food"
         # Active category tab for craft recipes (kitchen stews/grill/…); None = auto.
         self.recipe_category_tab: str | None = None
-        self._scroll: dict[str, int] = {}
+        self._scroll: dict[str, float] = {}
+        self._scroll_velocity: dict[str, float] = {}
+        self._scroll_tick = pygame.time.get_ticks()
+        self._measured_body_h = 0
         # name → (view_rect, content_h, view_h) rebuilt each draw.
         self._scroll_areas: dict[str, tuple[pygame.Rect, int, int]] = {}
         self.embedded = False
@@ -141,6 +144,9 @@ class BuildingInspectDialog:
         self.selected_min_key = None
         self.selected_market_supply_key = None
         self._scroll = {}
+        self._scroll_velocity = {}
+        self._scroll_tick = pygame.time.get_ticks()
+        self._measured_body_h = 0
         self._scroll_areas = {}
         self._layout(building)
         map_w = map_view_width()
@@ -170,6 +176,7 @@ class BuildingInspectDialog:
         self.selected_min_key = None
         self.selected_market_supply_key = None
         self._scroll = {}
+        self._scroll_velocity = {}
         self._scroll_areas = {}
 
     def take_action(self) -> str | None:
@@ -198,15 +205,34 @@ class BuildingInspectDialog:
             and bool(building.depositable_keys())
         )
 
-    def _scroll_value(self, name: str, content_h: int, view_h: int) -> int:
+    def _scroll_value(self, name: str, content_h: int, view_h: int) -> float:
         max_s = max(0, content_h - view_h)
-        value = max(0, min(int(self._scroll.get(name, 0)), max_s))
+        value = max(0.0, min(float(self._scroll.get(name, 0.0)), float(max_s)))
         self._scroll[name] = value
         return value
 
+    def _advance_scroll(self) -> None:
+        """Integrate wheel velocity for smooth, pixel-based momentum."""
+        now = pygame.time.get_ticks()
+        dt = min(0.05, max(0.0, (now - self._scroll_tick) / 1000.0))
+        self._scroll_tick = now
+        decay = max(0.0, 1.0 - SCROLL_FRICTION * dt)
+        for name, velocity in list(self._scroll_velocity.items()):
+            area = self._scroll_areas.get(name)
+            if area is None:
+                continue
+            _rect, content_h, view_h = area
+            before = self._scroll_value(name, content_h, view_h)
+            self._scroll[name] = before + velocity * dt
+            after = self._scroll_value(name, content_h, view_h)
+            velocity *= decay
+            if after == before and (after <= 0 or after >= content_h - view_h):
+                velocity = 0.0
+            self._scroll_velocity[name] = 0.0 if abs(velocity) < 4.0 else velocity
+
     def _register_scroll(
         self, name: str, view: pygame.Rect, content_h: int, view_h: int
-    ) -> int:
+    ) -> float:
         scroll = self._scroll_value(name, content_h, view_h)
         self._scroll_areas[name] = (view, content_h, view_h)
         return scroll
@@ -242,17 +268,13 @@ class BuildingInspectDialog:
             if content_h <= view_h:
                 continue
             if rect.collidepoint(pos):
-                self._scroll[name] = self._scroll_value(name, content_h, view_h) - dy * SCROLL_STEP
-                self._scroll_value(name, content_h, view_h)
+                self._scroll_velocity[name] = self._scroll_velocity.get(name, 0.0) - float(dy) * SCROLL_IMPULSE
                 return True
         panel = self._scroll_areas.get("panel_body")
         if panel is not None:
             rect, content_h, view_h = panel
             if content_h > view_h:
-                self._scroll["panel_body"] = (
-                    self._scroll_value("panel_body", content_h, view_h) - dy * SCROLL_STEP
-                )
-                self._scroll_value("panel_body", content_h, view_h)
+                self._scroll_velocity["panel_body"] = self._scroll_velocity.get("panel_body", 0.0) - float(dy) * SCROLL_IMPULSE
         return True
 
     def _layout(self, building: Building | None = None) -> None:
@@ -579,6 +601,7 @@ class BuildingInspectDialog:
             return y - top_y + SECTION_GAP, tip_key
         view = pygame.Rect(x, y, inner_w, view_h)
         scroll = self._register_scroll(scroll_name, view, content_h, view_h)
+        pygame.draw.rect(surface, (27, 30, 37), view, border_radius=4)
         old_clip = surface.get_clip()
         surface.set_clip(view.clip(old_clip) if old_clip.width else view)
         for i, recipe in enumerate(visible):
@@ -945,6 +968,7 @@ class BuildingInspectDialog:
             return
         if building.id != self.building_id:
             return
+        self._advance_scroll()
 
         self._draw_player_inventory = player_inventory
         self._draw_storage_amounts = storage_amounts
@@ -1122,15 +1146,17 @@ class BuildingInspectDialog:
         workers_h = 18 + min(workers_content, MAX_WORKER_VIEW_H)
 
         if dual:
+            dual_col_w = (520 - PAD * 2 - INV_PANEL_GAP) // 2
+            dual_cols = max(1, min(6, dual_col_w // (GRID_CELL + GRID_GAP)))
             body = max(
-                min(grid_height(storage_items), MAX_STORAGE_BODY_H),
-                min(grid_height(player_items), MAX_STORAGE_BODY_H),
+                grid_height(storage_items, cols=dual_cols),
+                grid_height(player_items, cols=dual_cols),
                 GRID_CELL,
             )
             grid_h = 18 + 16 + body + 22
             self._panel_w = 520
         elif has_storage:
-            grid_h = 18 + 16 + min(grid_height(storage_items), MAX_STORAGE_BODY_H) + 8
+            grid_h = 18 + 16 + grid_height(storage_items) + 8
             self._panel_w = 380 if (
                 building.has_recipes() or supports_caps or building.kind == BuildingKind.MARKET
             ) else 300
@@ -1154,6 +1180,7 @@ class BuildingInspectDialog:
             + PAD
             + 8
         )
+        body_h = max(body_h, self._measured_body_h)
         max_panel = WINDOW_HEIGHT - MAP_OFFSET_Y - 8
         if self.embedded:
             self._panel_w = embed_w
@@ -1175,6 +1202,9 @@ class BuildingInspectDialog:
             surface.blit(sh, shadow.topleft)
             pygame.draw.rect(surface, COLOUR_MENU_BG, panel, border_radius=6)
             pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, panel, 2, border_radius=6)
+
+        if body_h > client_h:
+            pygame.draw.rect(surface, (43, 45, 53), client_rect)
 
         title_bar = pygame.Rect(panel.x, panel.y, panel.w, TITLE_BAR_H)
         pygame.draw.rect(
@@ -1597,6 +1627,7 @@ class BuildingInspectDialog:
             view_h = min(content_h, MAX_WORKER_VIEW_H)
             view = pygame.Rect(x - 2, y - 1, inner_w + 4, view_h)
             scroll = self._register_scroll("workers", view, content_h, view_h)
+            pygame.draw.rect(surface, (32, 35, 42), view, border_radius=4)
             old_clip = surface.get_clip()
             surface.set_clip(view.clip(old_clip) if old_clip.width else view)
             for i, villager in enumerate(workers):
@@ -1869,6 +1900,18 @@ class BuildingInspectDialog:
 
         if dual:
             col_w = (inner_w - INV_PANEL_GAP) // 2
+            # Paired inventories each own exactly half of the transfer area,
+            # including empty space beneath a short/empty item list.
+            section_h = max(grid_h, 18 + 16 + GRID_CELL + 22)
+            pygame.draw.rect(
+                surface, (29, 33, 40), pygame.Rect(x - 4, y - 4, col_w + 8, section_h), border_radius=5
+            )
+            pygame.draw.rect(
+                surface,
+                (39, 35, 43),
+                pygame.Rect(x + col_w + INV_PANEL_GAP - 4, y - 4, col_w + 8, section_h),
+                border_radius=5,
+            )
             left_h, left_hits, left_tips, left_hov, left_ch, left_vh = draw_inv_grid(
                 surface,
                 origin=(x, y),
@@ -1887,7 +1930,7 @@ class BuildingInspectDialog:
                 item_mins=building.item_mins,
                 inline_stock_controls=supports_caps,
                 scroll_y=self._scroll.get("storage", 0),
-                max_body_h=MAX_STORAGE_BODY_H,
+                max_body_h=None,
                 qualities=storage_qualities,
             )
             right_h, right_hits, right_tips, right_hov, right_ch, right_vh = draw_inv_grid(
@@ -1904,7 +1947,7 @@ class BuildingInspectDialog:
                 interactive=True,
                 hover_inv=self._hover_inv,
                 scroll_y=self._scroll.get("player", 0),
-                max_body_h=MAX_STORAGE_BODY_H,
+                max_body_h=None,
                 qualities=player_qualities,
             )
             # Register body viewports (below title+subtitle ≈ 34px).
@@ -1950,6 +1993,7 @@ class BuildingInspectDialog:
                 ),
                 (x, y + 6),
             )
+            y += 22
         elif has_storage:
             h, hits, tips, hov, ch, vh = draw_inv_grid(
                 surface,
@@ -1969,7 +2013,7 @@ class BuildingInspectDialog:
                 item_mins=building.item_mins,
                 inline_stock_controls=supports_caps,
                 scroll_y=self._scroll.get("storage", 0),
-                max_body_h=MAX_STORAGE_BODY_H,
+                max_body_h=None,
                 qualities=storage_qualities,
             )
             header = 34
@@ -2178,9 +2222,13 @@ class BuildingInspectDialog:
                     )
                     y += ROW_H + SECTION_GAP
 
+        measured_body_h = max(1, int(y + panel_scroll - content_top + PAD))
+        self._measured_body_h = measured_body_h
+        measured_scroll = self._scroll_value("panel_body", measured_body_h, client_h)
+        self._scroll_areas["panel_body"] = (client_rect, measured_body_h, client_h)
         surface.set_clip(old_body_clip)
-        if body_h > client_h:
-            self._draw_scrollbar(surface, client_rect, body_h, panel_scroll)
+        if measured_body_h > client_h:
+            self._draw_scrollbar(surface, client_rect, measured_body_h, measured_scroll)
 
         if tip_key is not None:
             self._tooltip_key = tip_key

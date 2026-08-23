@@ -3149,7 +3149,9 @@ class Building:
             return moved
         if self.kind == BuildingKind.KITCHEN:
             if key in self.pantry_storage_keys():
-                return sum(s.deposit_key_from(inventory, key) for s in self.linked_food_storages())
+                stores = self.linked_food_storages()
+                if stores:
+                    return sum(s.deposit_key_from(inventory, key) for s in stores)
         if key not in self.depositable_keys():
             return 0
         before = int(getattr(inventory, key, 0))
@@ -3169,7 +3171,9 @@ class Building:
             return True
         if self.kind == BuildingKind.KITCHEN:
             if key in self.pantry_storage_keys():
-                return any(s.deposit_one_from(inventory, key) for s in self.linked_food_storages())
+                stores = self.linked_food_storages()
+                if stores:
+                    return any(s.deposit_one_from(inventory, key) for s in stores)
         if key not in self.depositable_keys() or self.space_for_key(key) <= 0:
             return False
         if getattr(inventory, key, 0) <= 0:

@@ -26,6 +26,33 @@ def _kitchen(*enabled: str) -> Building:
 
 
 class KitchenTrayTests(unittest.TestCase):
+    def test_kitchen_without_pantry_uses_local_input_storage(self) -> None:
+        kitchen = _kitchen("fish_stew", "grilled_fish")
+        cargo = Inventory(fish=1, mushrooms=3)
+
+        moved = kitchen.deposit_supply_from(cargo)
+
+        self.assertEqual(moved, 4)
+        self.assertEqual(cargo.fish, 0)
+        self.assertEqual(cargo.mushrooms, 0)
+        self.assertEqual(kitchen.fish, 1)
+        self.assertEqual(kitchen.mushrooms, 3)
+
+    def test_kitchen_without_pantry_can_make_mushroom_stew(self) -> None:
+        kitchen = _kitchen("mushroom_stew")
+        kitchen.mushrooms = 2
+        kitchen.sage = 1
+
+        recipe = kitchen.craftable_recipe()
+
+        self.assertIsNotNone(recipe)
+        assert recipe is not None
+        self.assertEqual(recipe.name, "mushroom_stew")
+        kitchen.consume_recipe_item("mushrooms", 2)
+        kitchen.consume_recipe_item("sage", 1)
+        kitchen.add_recipe_output("mushroom_stew", 1)
+        self.assertEqual(kitchen.mushroom_stew, 1)
+
     def test_full_meat_leaves_no_room_and_is_haulable(self) -> None:
         kitchen = _kitchen("stew", "grilled_meat")
         kitchen.meat = kitchen.input_capacity
