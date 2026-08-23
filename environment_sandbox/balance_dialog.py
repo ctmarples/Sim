@@ -230,6 +230,7 @@ class BalanceDialog:
                 "overlays": "Overlay",
                 "wildlife_motion": "Movement",
                 "wildlife": "Habitats",
+                "wildlife_lifecycle": "Lifecycle",
                 "predators": "Predators",
                 "food": "Food",
             }.get(cat.id, cat.title.split()[0])
@@ -293,6 +294,7 @@ class BalanceDialog:
                 "overlays": "Overlay",
                 "wildlife_motion": "Movement",
                 "wildlife": "Habitats",
+                "wildlife_lifecycle": "Lifecycle",
                 "predators": "Predators",
                 "food": "Food",
             }.get(tab_id, tab_id)

@@ -457,6 +457,8 @@ class Game:
         self.selected_construction_id: int | None = None
         self._player_hud_tool_hits: list[tuple[pygame.Rect, str]] = []
         self.resource_inspect = ResourceInspectDialog()
+        self.inspected_animal_id: int | None = None
+        self.inspected_tree_cell: tuple[int, int] | None = None
         self.resource_tracker = ResourceTrackerDialog()
         self.balance_dialog = BalanceDialog()
         self.balance = BalanceState()
@@ -1052,6 +1054,7 @@ class Game:
                     seed=generated.options.seed,
                 )
                 generated.apply_to_world(world)
+                world.ensure_tree_ages()
             except Exception as exc:
                 self._set_status(f"Could not open map: {exc}")
                 return
@@ -1235,6 +1238,8 @@ class Game:
         self.building_inspect.close()
         self.villager_inspect.close()
         self.resource_inspect.close()
+        self.inspected_animal_id = None
+        self.inspected_tree_cell = None
         self.resource_tracker.close()
         self.balance_dialog.close()
         self.habitat_inspect.close()
@@ -1286,6 +1291,8 @@ class Game:
         self.building_inspect.close()
         self.villager_inspect.close()
         self.resource_inspect.close()
+        self.inspected_animal_id = None
+        self.inspected_tree_cell = None
         self.resource_tracker.close()
         self.habitat_inspect.close()
         self.management.close()
@@ -2736,6 +2743,11 @@ class Game:
                 self._select_habitat(kind, hid)
                 return
 
+        animal = self.wildlife.animal_at(x, y)
+        if animal is not None:
+            self._open_animal_inspect(animal)
+            return
+
         villager = self._villager_at(x, y)
         if villager is not None:
             self._open_villager_inspect(villager, detail_only=True)
@@ -2755,14 +2767,18 @@ class Game:
         if resource is not None:
             self.villager_inspect.close()
             title, quantity, unit, detail = resource
-            self.resource_inspect.open_for(
-                title=title,
-                quantity=quantity,
-                unit=unit,
-                detail=detail,
-                cell=(x, y),
-                screen_xy=self.camera.world_to_screen(x, y),
+            cell_obj = self.world.get_cell(x, y)
+            self.inspected_animal_id = None
+            self.inspected_tree_cell = (
+                (x, y) if cell_obj is not None and cell_obj.feature == FeatureType.TREE else None
             )
+            if self.inspected_tree_cell is not None:
+                self._refresh_tracking_inspect(force=True)
+            else:
+                self.resource_inspect.open_for(
+                    title=title, quantity=quantity, unit=unit, detail=detail,
+                    cell=(x, y), screen_xy=self.camera.world_to_screen(x, y),
+                )
             self._set_status(f"{title}: {quantity} {unit}".strip())
             return
 
@@ -2771,12 +2787,8 @@ class Game:
             selected = self.buildings.get(self.selected_building_id)
             if selected is not None and selected.kind in AREA_DRAW_KINDS:
                 area = TaskArea(
-                    x0=x,
-                    y0=y,
-                    x1=x,
-                    y1=y,
-                    task_type=self.area_draw_task,
-                    building_id=selected.id,
+                    x0=x, y0=y, x1=x, y1=y,
+                    task_type=self.area_draw_task, building_id=selected.id,
                 )
                 selected.areas.append(area)
                 self._set_status(
@@ -2786,6 +2798,96 @@ class Game:
                 return
 
         self._set_status("Click a villager or building to select.")
+
+    def _open_animal_inspect(self, animal) -> None:
+        self.inspected_tree_cell = None
+        self.inspected_animal_id = animal.id
+        self._refresh_tracking_inspect(force=True)
+
+    def _refresh_tracking_inspect(self, *, force: bool = False) -> None:
+        """Refresh live tree/animal details and keep animal popups screen-bound."""
+        from balance_config import active_balance
+        from seasons import YEAR_DAYS
+        from trees import resolve_tree
+        from world import effective_disturbance_at, wildlife_ecology_multiplier
+
+        if not force and not self.resource_inspect.open:
+            self.inspected_animal_id = None
+            self.inspected_tree_cell = None
+            return
+
+        if self.inspected_animal_id is not None:
+            animal = next(
+                (a for a in self.wildlife.animals if a.id == self.inspected_animal_id),
+                None,
+            )
+            if animal is None:
+                self.resource_inspect.close()
+                self.inspected_animal_id = None
+                return
+            x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
+            if not (x0 <= animal.x <= x1 and y0 <= animal.y <= y1):
+                self.resource_inspect.close()
+                self.inspected_animal_id = None
+                return
+            hab = self.wildlife.habitat(animal.patch_id, animal.kind)
+            if animal.kind in (AnimalKind.DEER, AnimalKind.BOAR):
+                food = self.wildlife._forage_sufficiency(self.world, animal.kind, hab) if hab else 0.0
+                quality = self.wildlife._habitat_quality(self.world, animal.kind, hab) if hab else 0.0
+            else:
+                food = 1.0
+                quality = wildlife_ecology_multiplier(
+                    effective_disturbance_at(self.world, animal.x, animal.y)
+                )
+            age_years = max(0.0, float(getattr(animal, "age_days", 0.0)) / YEAR_DAYS)
+            bal = active_balance()
+            max_age = bal.get_int(
+                "WILDLIFE_DEER_MAX_AGE_YEARS"
+                if animal.kind == AnimalKind.DEER else "WILDLIFE_BOAR_MAX_AGE_YEARS"
+            ) if animal.kind in (AnimalKind.DEER, AnimalKind.BOAR) else 12
+            age_health = max(0.0, min(1.0, (max_age + 1.0 - age_years) / max_age))
+            health = max(0.0, min(1.0, quality * (0.35 + 0.65 * food) * age_health))
+            sex = "Female" if animal.sex.name == "FEMALE" else "Male"
+            lines = [
+                f"Sex: {sex}",
+                f"Age: {age_years:.1f} years",
+                f"Health: {health * 100:.0f}%",
+                f"Habitat quality: {quality * 100:.0f}%",
+                f"Food sufficiency: {food * 100:.0f}%",
+                f"Habitat: #{animal.patch_id}" if animal.patch_id is not None else "Habitat: displaced",
+            ]
+            self.resource_inspect.open_details(
+                title=f"{animal.kind.name.title()} #{animal.id}", lines=lines,
+                cell=(animal.x, animal.y), screen_xy=self._cell_center(animal.x, animal.y),
+                track_anchor=True,
+            )
+            return
+
+        if self.inspected_tree_cell is not None:
+            x, y = self.inspected_tree_cell
+            cell = self.world.get_cell(x, y)
+            if cell is None or cell.feature != FeatureType.TREE:
+                self.resource_inspect.close()
+                self.inspected_tree_cell = None
+                return
+            tree = resolve_tree(cell.tree_species)
+            bal = active_balance()
+            lifespan = max(1, bal.get_int("TREE_LIFESPAN_YEARS"))
+            age = max(0, int(getattr(cell, "tree_age_years", 0)))
+            disturbance = effective_disturbance_at(self.world, x, y)
+            age_health = max(0.0, min(1.0, (lifespan * 1.5 - age) / max(1.0, lifespan * 0.5)))
+            health = max(0.0, min(1.0, age_health * (1.0 - disturbance * 0.6)))
+            self.resource_inspect.open_details(
+                title=tree.label,
+                lines=[
+                    f"Age: {age} years",
+                    f"Health: {health * 100:.0f}%",
+                    f"Expected old age: {lifespan} years",
+                    f"Local disturbance: {disturbance * 100:.0f}%",
+                    f"Wood: {max(0, cell.deposit)} {tree.yield_key}",
+                ],
+                cell=(x, y), screen_xy=self._cell_center(x, y),
+            )
 
     def _handle_panel_click(self, pos: tuple[int, int]) -> bool:
         action = self.ui.hit_action(pos)
@@ -3129,7 +3231,9 @@ class Game:
         elif isinstance(hab, OpenHabitat):
             benefits.append(("Forage tiles", str(len(hab.forage_tiles))))
         else:
+            forage = self.wildlife._habitat_forage(self.world, kind, hab)
             benefits.append(("Forest patch", f"{len(hab.forest_tiles)} cells"))
+            benefits.append(("Forage supply", f"{forage:.1f} units"))
 
         bal = active_balance()
         cap = self.wildlife._cap_for(kind, hab)
@@ -3160,10 +3264,15 @@ class Game:
             pop_factor = min(1.0, total / cap) if cap > 0 else 0.0
             base_breed = bal.get_float("WILDLIFE_BREED_CHANCE")
             subtitle = f"Ground #{patch_id} · forest patch"
+            food = self.wildlife._forage_sufficiency(self.world, kind, hab)
+            density = max(0.0, 1.0 - total / max(1, cap))
+            benefits.append(("Food sufficiency", f"{food * 100:.0f}%"))
 
         benefit_factor = 0.55 + 0.45 * min(1.0, bio)
         health = max(0.0, min(100.0, 100.0 * ecology * pop_factor * benefit_factor))
         breed_pct = base_breed * ecology * 100.0
+        if kind not in COLONY_KINDS:
+            breed_pct *= food * density
 
         return HabitatInspectView(
             title=label,
@@ -18428,6 +18537,7 @@ class Game:
             self.player_inventory.draw(
                 self.screen, self.player, mouse_pos=mouse
             )
+        self._refresh_tracking_inspect()
         self.resource_inspect.draw(self.screen, mouse_pos=mouse)
         self.resource_tracker.draw(
             self.screen,

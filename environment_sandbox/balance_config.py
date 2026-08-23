@@ -91,6 +91,15 @@ from settings import (
     WILDLIFE_SEED_HABITATS,
     WILDLIFE_SEED_ANIMALS,
     WILDLIFE_COLONY_SEED_HABITATS,
+    WILDLIFE_DEER_FORAGE_PER_ANIMAL,
+    WILDLIFE_BOAR_FORAGE_PER_ANIMAL,
+    WILDLIFE_DEER_SAPLING_BROWSE_CHANCE,
+    WILDLIFE_DEER_MAX_AGE_YEARS,
+    WILDLIFE_BOAR_MAX_AGE_YEARS,
+    WILDLIFE_ANNUAL_MORTALITY,
+    WILDLIFE_STARVATION_MORTALITY,
+    TREE_LIFESPAN_YEARS,
+    TREE_OLD_AGE_DEATH_CHANCE,
     BIRD_SEED_COUNT,
     BIRD_ROAM_SPEED_MULT,
     WOLF_MAX_POPULATION,
@@ -1036,6 +1045,51 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
                 "Bird movement speed relative to the base animal roaming pace.", "×",
             ),
             BalanceParam(
+                "WILDLIFE_DEER_FORAGE_PER_ANIMAL", "Deer forage tiles / animal", "int",
+                float(WILDLIFE_DEER_FORAGE_PER_ANIMAL), 1, 30, 1,
+                "Edible habitat tiles needed per deer for full breeding and winter survival.",
+            ),
+            BalanceParam(
+                "WILDLIFE_BOAR_FORAGE_PER_ANIMAL", "Boar forage tiles / animal", "int",
+                float(WILDLIFE_BOAR_FORAGE_PER_ANIMAL), 1, 30, 1,
+                "Wild plants and mushrooms needed per boar for full breeding and winter survival.",
+            ),
+            BalanceParam(
+                "WILDLIFE_DEER_SAPLING_BROWSE_CHANCE", "Deer sapling browse chance", "float",
+                WILDLIFE_DEER_SAPLING_BROWSE_CHANCE, 0.0, 1.0, 0.05,
+                "Chance a grazing deer consumes a nearby sapling when one is available.",
+            ),
+            BalanceParam(
+                "WILDLIFE_DEER_MAX_AGE_YEARS", "Deer old age", "int",
+                float(WILDLIFE_DEER_MAX_AGE_YEARS), 2, 30, 1,
+                "Age when annual mortality rises sharply for deer.", "y",
+            ),
+            BalanceParam(
+                "WILDLIFE_BOAR_MAX_AGE_YEARS", "Boar old age", "int",
+                float(WILDLIFE_BOAR_MAX_AGE_YEARS), 2, 30, 1,
+                "Age when annual mortality rises sharply for boar.", "y",
+            ),
+            BalanceParam(
+                "WILDLIFE_ANNUAL_MORTALITY", "Natural annual mortality", "float",
+                WILDLIFE_ANNUAL_MORTALITY, 0.0, 0.8, 0.02,
+                "Baseline annual death chance before old age, food pressure, and habitat quality.",
+            ),
+            BalanceParam(
+                "WILDLIFE_STARVATION_MORTALITY", "Food-shortage mortality", "float",
+                WILDLIFE_STARVATION_MORTALITY, 0.0, 1.0, 0.05,
+                "Additional annual death chance at zero habitat forage.",
+            ),
+            BalanceParam(
+                "TREE_LIFESPAN_YEARS", "Tree old age", "int",
+                float(TREE_LIFESPAN_YEARS), 3, 6, 1,
+                "Age when a mature tree begins risking natural death.", "y",
+            ),
+            BalanceParam(
+                "TREE_OLD_AGE_DEATH_CHANCE", "Old-tree annual death chance", "float",
+                TREE_OLD_AGE_DEATH_CHANCE, 0.0, 1.0, 0.05,
+                "Annual chance an old tree becomes fallen wood; disturbance increases the risk.",
+            ),
+            BalanceParam(
                 "WOLF_MAX_POPULATION",
                 "Wolf population cap",
                 "int",
@@ -1232,13 +1286,22 @@ _predator_keys = tuple(
     key for key in _wildlife_params if key.startswith(("WOLF_", "FOX_"))
     and key not in _movement_keys
 )
+_lifecycle_keys = (
+    "WILDLIFE_DEER_FORAGE_PER_ANIMAL", "WILDLIFE_BOAR_FORAGE_PER_ANIMAL",
+    "WILDLIFE_DEER_SAPLING_BROWSE_CHANCE", "WILDLIFE_DEER_GRAZE_CHANCE",
+    "WILDLIFE_BOAR_GRAZE_CHANCE", "WILDLIFE_RABBIT_GRAZE_CHANCE",
+    "WILDLIFE_DEER_MAX_AGE_YEARS", "WILDLIFE_BOAR_MAX_AGE_YEARS",
+    "WILDLIFE_ANNUAL_MORTALITY", "WILDLIFE_STARVATION_MORTALITY",
+    "TREE_LIFESPAN_YEARS", "TREE_OLD_AGE_DEATH_CHANCE",
+)
 _ecology_keys = tuple(
     key for key in _wildlife_params
-    if key not in _movement_keys and key not in _predator_keys
+    if key not in _movement_keys and key not in _predator_keys and key not in _lifecycle_keys
 )
 _split_wildlife = (
     BalanceCategory("wildlife_motion", "Wildlife movement", tuple(_wildlife_params[k] for k in _movement_keys)),
     BalanceCategory("wildlife", "Habitats & populations", tuple(_wildlife_params[k] for k in _ecology_keys)),
+    BalanceCategory("wildlife_lifecycle", "Forage & lifecycle", tuple(_wildlife_params[k] for k in _lifecycle_keys)),
     BalanceCategory("predators", "Predators", tuple(_wildlife_params[k] for k in _predator_keys)),
 )
 BALANCE_CATEGORIES = tuple(

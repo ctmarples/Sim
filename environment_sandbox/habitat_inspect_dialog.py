@@ -311,5 +311,5 @@ class HabitatInspectDialog:
             surface,
             y,
             "Breeding chance",
-            f"{view.breed_chance_pct:.0f}% / tick",
+            f"{view.breed_chance_pct:.0f}% / spring",
         )

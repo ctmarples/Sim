@@ -294,6 +294,7 @@ class Cell:
     fish_deposit: int = 0
     crop_kind: str | None = None  # CropDef / WildSpeciesDef key
     tree_species: str | None = None  # TreeDef key for TREE / SAPLING
+    tree_age_years: int = 0  # mature-tree age; saplings begin at zero
     # 1-based icon variant (e.g. tree_round_2); rolled on first draw.
     icon_variant: int | None = None
     # Visual sub-patch within a terrain biome (seasonal masking / speckles).
@@ -903,6 +904,7 @@ class World:
             self.cells[sy][sx].feature = FeatureType.NONE
             if is_water_terrain(self.cells[sy][sx].terrain):
                 self.cells[sy][sx].terrain = TerrainType.GRASS
+        self.ensure_tree_ages(rng=rng)
         self.update_forest_floor()
         self._paint_terrain_subclusters(rng)
         self._build_valley_heightfield()
@@ -1987,6 +1989,7 @@ class World:
                         tree = resolve_tree(cell.tree_species)
                         cell.feature = FeatureType.TREE
                         cell.tree_species = tree.key
+                        cell.tree_age_years = 0
                         cell.growth_ticks = 0
                         cell.deposit = tree.yield_amount
                     else:
@@ -2470,6 +2473,55 @@ class World:
                     break
             self.plant_sapling(sx, sy, species=species)
 
+    def age_trees_one_year(self) -> int:
+        """Age mature trees; old or heavily disturbed trees become fallen wood."""
+        from balance_config import active_balance
+
+        balance = active_balance()
+        lifespan = max(4, balance.get_int("TREE_LIFESPAN_YEARS"))
+        base_risk = balance.get_float("TREE_OLD_AGE_DEATH_CHANCE")
+        fallen = 0
+        for y, row in enumerate(self.cells):
+            for x, cell in enumerate(row):
+                if cell.feature != FeatureType.TREE:
+                    continue
+                cell.tree_age_years = max(0, int(cell.tree_age_years)) + 1
+                if cell.tree_age_years < lifespan:
+                    continue
+                disturbance = effective_disturbance_at(self, x, y)
+                age_factor = 1.0 + (cell.tree_age_years - lifespan) / max(1, lifespan)
+                risk = min(0.95, base_risk * age_factor + disturbance * 0.20)
+                if self._sprout_rng.random() >= risk:
+                    continue
+                cell.feature = FeatureType.WOOD_BUSH
+                cell.tree_species = None
+                cell.tree_age_years = 0
+                cell.deposit = 1
+                cell.growth_ticks = self._fallen_wood_lifetime_ticks()
+                cell.crop_kind = "wood_bush"
+                self.note_growth_cell(x, y)
+                fallen += 1
+        if fallen:
+            self.update_forest_floor()
+        return fallen
+
+    def ensure_tree_ages(self, *, rng: random.Random | None = None) -> int:
+        """Give pre-existing mature trees varied ages (generation/legacy saves)."""
+        from balance_config import active_balance
+
+        lifespan = max(3, active_balance().get_int("TREE_LIFESPAN_YEARS"))
+        age_rng = rng or random.Random(self.seed ^ 0x7AEE)
+        assigned = 0
+        for row in self.cells:
+            for cell in row:
+                if cell.feature != FeatureType.TREE or cell.tree_age_years > 0:
+                    continue
+                # Established forest spans young through near-old trees, while
+                # newly matured saplings retain age zero until the next year.
+                cell.tree_age_years = age_rng.randint(1, max(1, lifespan - 1))
+                assigned += 1
+        return assigned
+
     def plant_sapling(self, x: int, y: int, species: str | None = None) -> bool:
         cell = self.get_cell(x, y)
         if cell is None:
@@ -2481,6 +2533,7 @@ class World:
         tree = resolve_tree(species)
         cell.feature = FeatureType.SAPLING
         cell.tree_species = tree.key
+        cell.tree_age_years = 0
         cell.growth_ticks = growth_ticks_for(tree)
         cell.deposit = 0
         self.note_growth_cell(x, y)
@@ -2726,6 +2779,8 @@ class World:
         cell.growth_ticks = 0
         cell.deposit = 0
         cell.crop_kind = None
+        cell.tree_species = None
+        cell.tree_age_years = 0
         return removed
 
     def harvest_wood(self, x: int, y: int, amount: int = 1) -> int:
@@ -2740,6 +2795,7 @@ class World:
             cell.deposit = 0
             cell.growth_ticks = 0
             cell.tree_species = None
+            cell.tree_age_years = 0
             cell.icon_variant = None
         return taken
 

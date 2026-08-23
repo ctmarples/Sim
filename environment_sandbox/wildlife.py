@@ -28,6 +28,7 @@ from enum import Enum, auto
 
 from seasons import (
     Season,
+    YEAR_DAYS,
     animals_multiply,
     animals_slow,
     fish_breeding_allowed,
@@ -246,6 +247,7 @@ class Animal:
     sex: AnimalSex = AnimalSex.MALE
     patch_id: int | None = None
     mate_id: int | None = None
+    age_days: float = 0.0
     move_cooldown: int = 0
     # Autumn roost retreat (still affiliated with a patch).
     retreat_target: tuple[int, int] | None = None
@@ -432,6 +434,7 @@ class WildlifeManager:
         self._prev_season: Season | None = None
         self._by_id: dict[int, Animal] = {}
         self._wolf_food_day: float | None = None
+        self._last_breed_year: int = -1
 
     def reset(self) -> None:
         self.animals.clear()
@@ -448,6 +451,7 @@ class WildlifeManager:
         self._colonies_need_seed = False
         self._prev_season = None
         self._wolf_food_day = None
+        self._last_breed_year = -1
         self.rng.seed(RANDOM_SEED + 7)
 
     def _index_animals(self) -> None:
@@ -1257,6 +1261,7 @@ class WildlifeManager:
                     kind=kind,
                     sex=sexes[placed],
                     patch_id=hab.id,
+                    age_days=float(YEAR_DAYS * 2),
                     move_cooldown=animal_roam_interval(),
                 )
             )
@@ -1274,6 +1279,9 @@ class WildlifeManager:
     def on_season_change(self, world: World, season: Season) -> None:
         """Hook for calendar season changes (autumn retreat; winter migrant deaths)."""
         if season == Season.SPRING:
+            self._annual_mortality(world)
+            if hasattr(world, "age_trees_one_year"):
+                world.age_trees_one_year()
             for animal in self.animals:
                 # Only reset settled animals; mid-dispersal pairs already used this year's move.
                 if animal.patch_id is not None and animal.migrate_home_id is None:
@@ -1412,7 +1420,10 @@ class WildlifeManager:
             self.growth_timer = ANIMAL_GROWTH_INTERVAL
             self._graze(world)
             self._form_mating_pairs()
-            self._breed(world)
+            year = max(0, int(day) // YEAR_DAYS)
+            if season == Season.SPRING and year != self._last_breed_year:
+                self._breed(world)
+                self._last_breed_year = year
             self._cull_excess()
             self._migrate()
             self._tick_colonies(world)
@@ -2445,12 +2456,65 @@ class WildlifeManager:
                 found.append((nx, ny))
         return found
 
+    def _forage_features(self, kind: AnimalKind) -> tuple[FeatureType, ...]:
+        common = (FeatureType.WILD_CROP, FeatureType.HERB)
+        if kind == AnimalKind.DEER:
+            return (*common, FeatureType.SAPLING)
+        if kind == AnimalKind.BOAR:
+            return (*common, FeatureType.MUSHROOM)
+        return common
+
+    def _habitat_forage(self, world: World, kind: AnimalKind, hab: Habitat) -> float:
+        roam = self._cold_roaming_for(kind, hab)
+        total = 0.0
+        for x, y in roam:
+            cell = world.get_cell(x, y)
+            if cell is None:
+                continue
+            if cell.feature in (FeatureType.WILD_CROP, FeatureType.HERB):
+                total += 3.0
+            elif kind == AnimalKind.DEER and cell.feature == FeatureType.SAPLING:
+                total += 4.0
+            elif kind == AnimalKind.BOAR and cell.feature == FeatureType.MUSHROOM:
+                total += 5.0
+            elif kind == AnimalKind.DEER and cell.terrain in (TerrainType.GRASS, TerrainType.MEADOW):
+                total += 0.25
+            elif kind == AnimalKind.BOAR and cell.terrain == TerrainType.FOREST_FLOOR:
+                total += 0.35
+        return total
+
+    def _habitat_quality(self, world: World, kind: AnimalKind, hab: Habitat) -> float:
+        tiles = self._breeding_for(kind, hab)
+        if not tiles:
+            return 0.0
+        sample = tiles[::max(1, len(tiles) // 32)]
+        avg = sum(effective_disturbance_at(world, x, y) for x, y in sample) / len(sample)
+        return wildlife_ecology_multiplier(avg)
+
+    def _forage_sufficiency(self, world: World, kind: AnimalKind, hab: Habitat) -> float:
+        count = self._count_in_patch(kind, hab.id)
+        if count <= 0:
+            return 1.0
+        default = 6 if kind == AnimalKind.DEER else 5
+        key = (
+            "WILDLIFE_DEER_FORAGE_PER_ANIMAL"
+            if kind == AnimalKind.DEER
+            else "WILDLIFE_BOAR_FORAGE_PER_ANIMAL"
+        )
+        need = _bal_int(key, default, 1) * count
+        return max(0.0, min(1.0, self._habitat_forage(world, kind, hab) / need))
+
     def _eat_wild_crop(self, world: World, x: int, y: int) -> bool:
         cell = world.get_cell(x, y)
-        if cell is None or cell.feature not in (FeatureType.WILD_CROP, FeatureType.HERB):
+        if cell is None or cell.feature not in (
+            FeatureType.WILD_CROP, FeatureType.HERB, FeatureType.MUSHROOM,
+            FeatureType.SAPLING,
+        ):
             return False
         cell.feature = FeatureType.NONE
         cell.crop_kind = None
+        cell.tree_species = None
+        cell.tree_age_years = 0
         cell.deposit = 0
         cell.growth_ticks = 0
         return True
@@ -2494,8 +2558,14 @@ class WildlifeManager:
         for animal in list(self.animals):
             if animal.patch_id is None:
                 continue
-            crops = self._adjacent_wild_crops(world, animal.x, animal.y)
-            if not crops:
+            edible = self._forage_features(animal.kind)
+            forage = [
+                (nx, ny)
+                for ny, nx in world.neighbourhood(animal.x, animal.y, radius=1)
+                if (nx, ny) != (animal.x, animal.y)
+                and world.cells[ny][nx].feature in edible
+            ]
+            if not forage:
                 continue
             chance = {
                 AnimalKind.DEER: _bal_float(
@@ -2507,7 +2577,16 @@ class WildlifeManager:
             }.get(animal.kind, 0.0)
             if chance <= 0.0 or self.rng.random() >= chance:
                 continue
-            cx, cy = self.rng.choice(crops)
+            if animal.kind == AnimalKind.DEER:
+                saplings = [p for p in forage if world.cells[p[1]][p[0]].feature == FeatureType.SAPLING]
+                browse = _bal_float("WILDLIFE_DEER_SAPLING_BROWSE_CHANCE", 0.35)
+                pool = saplings if saplings and self.rng.random() < browse else [
+                    p for p in forage if p not in saplings
+                ] or forage
+            else:
+                mushrooms = [p for p in forage if world.cells[p[1]][p[0]].feature == FeatureType.MUSHROOM]
+                pool = mushrooms or forage
+            cx, cy = self.rng.choice(pool)
             self._eat_wild_crop(world, cx, cy)
 
     def _breed(self, world: World) -> None:
@@ -2525,6 +2604,8 @@ class WildlifeManager:
             # Process each pair once (from the lower id).
             if animal.id > mate.id:
                 continue
+            if animal.age_days < YEAR_DAYS or mate.age_days < YEAR_DAYS:
+                continue
             if animal.patch_id is None:
                 continue
             hab = self.habitat(animal.patch_id, animal.kind)
@@ -2533,16 +2614,13 @@ class WildlifeManager:
             cap = self._cap_for(animal.kind, hab)
             if self._count_in_patch(animal.kind, hab.id) >= cap:
                 continue
-            cell = world.get_cell(animal.x, animal.y)
-            ecology = (
-                wildlife_ecology_multiplier(effective_disturbance_at(world, animal.x, animal.y))
-                if cell is not None
-                else 1.0
-            )
+            ecology = self._habitat_quality(world, animal.kind, hab)
+            food = self._forage_sufficiency(world, animal.kind, hab)
+            density = max(0.0, 1.0 - self._count_in_patch(animal.kind, hab.id) / max(1, cap))
             from balance_config import active_balance
 
             breed_chance = active_balance().get_float("WILDLIFE_BREED_CHANCE")
-            if self.rng.random() >= breed_chance * ecology:
+            if self.rng.random() >= breed_chance * ecology * food * density:
                 continue
             self._try_spawn_in_patch(animal.kind, hab, occupied)
 
@@ -2556,6 +2634,42 @@ class WildlifeManager:
         for kind in FOREST_KINDS:
             for hab in self.habitats:
                 self._cull_kind_on_habitat(kind, hab)
+
+    def _annual_mortality(self, world: World) -> None:
+        """Age forest wildlife and apply food-, habitat-, and age-driven deaths."""
+        from seasons import YEAR_DAYS
+
+        self._index_animals()
+        survivors: list[Animal] = []
+        base = _bal_float("WILDLIFE_ANNUAL_MORTALITY", 0.06)
+        starvation = _bal_float("WILDLIFE_STARVATION_MORTALITY", 0.45)
+        for animal in self.animals:
+            animal.age_days += YEAR_DAYS
+            if animal.kind not in FOREST_KINDS:
+                survivors.append(animal)
+                continue
+            hab = self.habitat(animal.patch_id, animal.kind)
+            if hab is None:
+                food = 0.0
+                quality = 0.0
+            else:
+                food = self._forage_sufficiency(world, animal.kind, hab)
+                quality = self._habitat_quality(world, animal.kind, hab)
+            max_age = _bal_int(
+                "WILDLIFE_DEER_MAX_AGE_YEARS" if animal.kind == AnimalKind.DEER
+                else "WILDLIFE_BOAR_MAX_AGE_YEARS",
+                12 if animal.kind == AnimalKind.DEER else 10,
+                2,
+            )
+            age_years = animal.age_days / YEAR_DAYS
+            old_age = max(0.0, (age_years - max_age + 1.0) * 0.25)
+            risk = min(0.98, base + starvation * (1.0 - food) + base * (1.0 - quality) + old_age)
+            if self.rng.random() < risk:
+                self._clear_mate(animal)
+                continue
+            survivors.append(animal)
+        self.animals = survivors
+        self._index_animals()
 
     def _cull_kind_on_habitat(self, kind: AnimalKind, hab: Habitat) -> None:
         group = [

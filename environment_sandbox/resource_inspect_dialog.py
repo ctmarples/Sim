@@ -32,6 +32,7 @@ class ResourceInspectDialog:
         self.quantity: int = 0
         self.unit: str = ""
         self.detail: str = ""
+        self.detail_lines: list[str] = []
         self.cell: tuple[int, int] | None = None
         self._open = False
         self._panel_x = 80
@@ -61,6 +62,7 @@ class ResourceInspectDialog:
         self.quantity = int(quantity)
         self.unit = unit
         self.detail = detail
+        self.detail_lines = [detail] if detail else []
         self.cell = cell
         self._open = True
         self._moving = False
@@ -79,10 +81,41 @@ class ResourceInspectDialog:
         self._panel_y = prefer_y
         self._clamp_panel()
 
+    def open_details(
+        self,
+        *,
+        title: str,
+        lines: list[str],
+        cell: tuple[int, int] | None = None,
+        screen_xy: tuple[int, int] | None = None,
+        track_anchor: bool = False,
+    ) -> None:
+        """Open a structured resource/entity popup with live detail rows."""
+        was_open = self._open
+        self.title = title
+        self.quantity = 0
+        self.unit = ""
+        self.detail = ""
+        self.detail_lines = list(lines)
+        self.cell = cell
+        self._open = True
+        self._panel_w = 270
+        self._panel_h = TITLE_BAR_H + PAD * 2 + 18 * len(self.detail_lines)
+        if screen_xy is not None and (track_anchor or not was_open):
+            prefer_x = screen_xy[0] + 24
+            prefer_y = max(MAP_OFFSET_Y, screen_xy[1] - 8)
+            map_w = map_view_width()
+            if prefer_x + self._panel_w > map_w - 8:
+                prefer_x = max(8, screen_xy[0] - self._panel_w - 16)
+            self._panel_x = prefer_x
+            self._panel_y = prefer_y
+        self._clamp_panel()
+
     def close(self) -> None:
         self._open = False
         self._moving = False
         self.cell = None
+        self.detail_lines = []
 
     def panel_rect(self) -> pygame.Rect:
         return pygame.Rect(self._panel_x, self._panel_y, self._panel_w, self._panel_h)
@@ -180,6 +213,14 @@ class ResourceInspectDialog:
         )
 
         y = panel.y + TITLE_BAR_H + PAD
+        if self.detail_lines:
+            for line in self.detail_lines:
+                surface.blit(
+                    self.font_small.render(line, True, COLOUR_TEXT_DIM),
+                    (panel.x + PAD, y),
+                )
+                y += 18
+            return
         qty_line = f"Quantity: {self.quantity}"
         if self.unit:
             qty_line += f" {self.unit}"

@@ -262,6 +262,8 @@ def _cell_to_dict(cell: Cell) -> dict[str, Any]:
     tree_species = getattr(cell, "tree_species", None)
     if tree_species is not None:
         data["tree_species"] = tree_species
+    if getattr(cell, "tree_age_years", 0):
+        data["tree_age_years"] = int(cell.tree_age_years)
     icon_variant = getattr(cell, "icon_variant", None)
     if icon_variant is not None:
         data["icon_variant"] = int(icon_variant)
@@ -309,6 +311,7 @@ def _cell_from_save(c: dict[str, Any], *, migrate_legacy_fertility: bool = False
         fur_deposit=int(c.get("fur_deposit", 0)),
         fish_deposit=int(c.get("fish_deposit", 0)),
         path_worn=path_worn,
+        tree_age_years=int(c.get("tree_age_years", 0)),
     )
     crop_kind = c.get("crop_kind")
     if crop_kind is not None:
@@ -617,6 +620,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "facing_right": bool(getattr(a, "facing_right", True)),
             "crop_target": list(a.crop_target) if a.crop_target else None,
             "crop_arrived_day": a.crop_arrived_day,
+            "age_days": round(float(getattr(a, "age_days", 0.0)), 2),
         }
         for a in game.wildlife.animals
         if a.kind in (AnimalKind.DEER, AnimalKind.BOAR, AnimalKind.OWL, AnimalKind.HAWK)
@@ -725,6 +729,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "next_colony_id": game.wildlife.next_colony_id,
             "next_wolf_pack_id": game.wildlife.next_wolf_pack_id,
             "growth_timer": game.wildlife.growth_timer,
+            "last_breed_year": int(getattr(game.wildlife, "_last_breed_year", -1)),
         },
         "fish": {
             "fish": fish,
@@ -975,6 +980,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             for c in row
         ])
     world.cells = cells
+    world.ensure_tree_ages()
     world.update_forest_floor()
     # Legacy saves lack subclusters — carve them so seasonal masks look right.
     if not any(
@@ -1590,10 +1596,12 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                     float(a["crop_arrived_day"])
                     if a.get("crop_arrived_day") is not None else None
                 ),
+                age_days=float(a.get("age_days", 224.0)),
             )
         )
     game.wildlife.next_id = int(wild.get("next_id", 1))
     game.wildlife.growth_timer = int(wild.get("growth_timer", game.wildlife.growth_timer))
+    game.wildlife._last_breed_year = int(wild.get("last_breed_year", -1))
     game.wildlife._seeded = True
     game.wildlife._index_animals()
     game.wildlife._form_mating_pairs()
