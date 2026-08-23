@@ -54,6 +54,54 @@ class WildlifeEcologyTests(unittest.TestCase):
         self.wildlife._breed(self.world)
         self.assertEqual(len(self.wildlife.animals), 2)
 
+    def test_healthy_empty_habitat_produces_three_births(self):
+        tiles = [(x, y) for y in range(8) for x in range(8)]
+        habitat = ForestHabitat(
+            0, tiles, tiles, set(tiles), set(tiles),
+            tiles, set(tiles), set(tiles),
+        )
+        self.wildlife.habitats = [habitat]
+        self.wildlife.animals = [
+            Animal(
+                1, 2, 2, AnimalKind.BOAR, AnimalSex.MALE,
+                patch_id=0, mate_id=2, age_days=224,
+            ),
+            Animal(
+                2, 3, 2, AnimalKind.BOAR, AnimalSex.FEMALE,
+                patch_id=0, mate_id=1, age_days=224,
+            ),
+        ]
+        self.wildlife._index_animals()
+        self.balance.set("WILDLIFE_BREED_CHANCE", 1.0)
+
+        self.wildlife._breed(self.world)
+
+        self.assertEqual(len(self.wildlife.animals), 5)
+
+    def test_birth_count_uses_new_world_habitat_potential(self):
+        small_tiles = [(x, 1) for x in range(1, 7)]
+        large_tiles = [(x, y) for y in range(2, 8) for x in range(1, 8)]
+        occupied = ForestHabitat(
+            0, small_tiles, small_tiles, set(small_tiles), set(small_tiles),
+            small_tiles, set(small_tiles), set(small_tiles),
+        )
+        new_habitat = ForestHabitat(
+            1, large_tiles, large_tiles, set(large_tiles), set(large_tiles),
+            large_tiles, set(large_tiles), set(large_tiles),
+        )
+        self.wildlife.habitats = [occupied]
+        self.wildlife.animals = [
+            Animal(1, 1, 1, AnimalKind.BOAR, patch_id=0),
+            Animal(2, 2, 1, AnimalKind.BOAR, patch_id=0),
+        ]
+        self.assertEqual(self.wildlife._birth_count(AnimalKind.BOAR, occupied, 1.0, 1.0), 0)
+
+        self.wildlife.habitats.append(new_habitat)
+
+        # The new patch raises global potential, though the occupied patch's
+        # local cap still prevents births until the pair migrates or it expands.
+        self.assertEqual(self.wildlife._birth_count(AnimalKind.BOAR, new_habitat, 1.0, 1.0), 3)
+
     def test_old_tree_becomes_fallen_wood(self):
         self.balance.set("TREE_LIFESPAN_YEARS", 4)
         self.balance.set("TREE_OLD_AGE_DEATH_CHANCE", 1.0)

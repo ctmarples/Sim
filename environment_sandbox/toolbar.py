@@ -133,6 +133,11 @@ class Toolbar:
             )
             x += w + 4
 
+        x += 8
+        self._buttons.append(self._make_btn("control_dog", "Dog", x, y, 44, h, "control"))
+        x += 48
+        self._buttons.append(self._make_btn("control_god", "God", x, y, 44, h, "control"))
+
         speed_x = WINDOW_WIDTH - 8
         speed_btns: list[ToolbarButton] = []
         for speed in reversed(SIM_SPEEDS):
@@ -282,6 +287,7 @@ class Toolbar:
         selected_field_id: int | None = None,
         farm_draw_mode: str = "field",
         built_kinds: set[BuildingKind] | None = None,
+        control_mode: str = "dog",
     ) -> None:
         if built_kinds is not None:
             self.set_built_kinds(built_kinds)
@@ -307,6 +313,7 @@ class Toolbar:
             f"mode_{building.work_mode.name}" if building is not None else None
         )
         active_speed = f"speed_{sim_speed}"
+        active_control = f"control_{control_mode}"
 
         all_btns = list(self._buttons) + self.task_buttons_for(
             building,
@@ -325,6 +332,7 @@ class Toolbar:
                 btn.action == active_build
                 or btn.action == active_mode
                 or btn.action == active_speed
+                or btn.action == active_control
                 or (btn.action == "file_toggle" and self.file_menu_open)
             )
             self._draw_button(surface, btn, active=active, hovered=hovered)

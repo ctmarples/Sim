@@ -62,6 +62,9 @@ VILLAGER_FOOD_KEYS: list[str] = [
     "fish",
     "meat",
     "onion",
+    "peas",
+    "beans",
+    "turnip",
     "cabbage",
     "carrot",
     "garlic",
@@ -108,6 +111,9 @@ FOODS: list[FoodDef] = [
     FoodDef("mushrooms", satiation=1.0),
     FoodDef("honey", satiation=1.5, hunger_rate=0.8, walk_speed=1.5),
     FoodDef("onion", satiation=1.0),
+    FoodDef("peas", satiation=1.0),
+    FoodDef("beans", satiation=1.0),
+    FoodDef("turnip", satiation=1.0),
     FoodDef("cabbage", satiation=1.0),
     FoodDef("carrot", satiation=1.0),
     FoodDef("garlic", satiation=1.0),
@@ -210,7 +216,9 @@ def storage_meal_score(
 HIRE_STAPLE_FOODS_LOCAL: tuple[str, ...] = ("meat", "fish", "bread")
 
 # Raw produce keys that satisfy the ``vegetables`` hire requirement.
-VEGETABLE_KEYS: frozenset[str] = frozenset({"onion", "cabbage", "carrot", "garlic"})
+VEGETABLE_KEYS: frozenset[str] = frozenset(
+    {"onion", "peas", "beans", "turnip", "cabbage", "carrot", "garlic"}
+)
 
 # Composite hire requirement keys (OR groups and category labels).
 REQUIREMENT_OR_GROUPS: dict[str, frozenset[str]] = {
@@ -425,7 +433,8 @@ DEER_CROP_EAT_CHANCE: float = 0.50
 BOAR_CROP_EAT_CHANCE: float = 0.25
 # Chance per growth tick that a pair starts its once-per-year migration.
 ANIMAL_MIGRATION_CHANCE: float = 0.18
-# Chance a mating pair produces one offspring per growth tick (if under cap).
+# Chance a mating pair produces offspring per annual spring breeding event.
+# Healthy, underpopulated habitat yields up to three births per pair.
 ANIMAL_BREED_CHANCE: float = 0.55
 # Initial seed: how many deer / boar breeding grounds to populate, and animals each.
 WILDLIFE_SEED_GROUNDS: int = 4

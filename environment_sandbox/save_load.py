@@ -682,6 +682,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "grid_rows": cfg.GRID_ROWS,
         },
         "sim_speed": game.sim_speed,
+        "control_mode": str(getattr(game, "control_mode", "dog")),
         "ticks_per_day": getattr(game, "ticks_per_day", TICKS_PER_DAY),
         "season": game.season.name,
         "calendar_day": game.calendar_day,
@@ -1900,6 +1901,22 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
 
     if hasattr(game, "_invalidate_terrain_layer"):
         game._invalidate_terrain_layer()
+    if hasattr(game, "control_mode"):
+        saved_mode = str(data.get("control_mode", "dog")).lower()
+        dog = next(
+            (v for v in game.villagers if getattr(v, "template_id", "") == "player_dog"),
+            None,
+        )
+        game._god_dog_villager = dog
+        if saved_mode == "god" and dog is not None:
+            game.control_mode = "god"
+            game.player.inventory = dog.inventory
+            if hasattr(game, "_sync_player_from_god_dog"):
+                game._sync_player_from_god_dog()
+        else:
+            game.control_mode = "dog"
+            if dog is not None and dog in game.villagers:
+                game.villagers.remove(dog)
     if hasattr(game, "camera"):
         game.camera.center_on(
             game.player.x, game.player.y, game.world.cols, game.world.rows

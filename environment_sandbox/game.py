@@ -496,6 +496,8 @@ class Game:
             corners=self.world.height_corners,
         )
         self.player = Player(x=self.world.start_pos[0], y=self.world.start_pos[1])
+        self.control_mode: str = "dog"
+        self._god_dog_villager: Villager | None = None
         self.discovered_cells: set[tuple[int, int]] = set()
         self._reveal_around_player()
         self.player_craft_building_id: int | None = None
@@ -778,6 +780,8 @@ class Game:
             )
 
         self.villagers.clear()
+        self.control_mode = "dog"
+        self._god_dog_villager = None
         self.next_villager_id = 1
         if self.buildings:
             self.next_building_id = max(b.id for b in self.buildings.values()) + 1
@@ -1195,7 +1199,7 @@ class Game:
     def _update_player_move_input(self, dt: float) -> None:
         """Continuous arrow-key player movement (WASD is camera pan only)."""
         del dt
-        if self.headless or self._dialogs_block_world_input():
+        if getattr(self, "control_mode", "dog") != "dog" or self.headless or self._dialogs_block_world_input():
             return
         mods = pygame.key.get_mods()
         if mods & (pygame.KMOD_META | pygame.KMOD_CTRL | pygame.KMOD_ALT):
@@ -5408,6 +5412,12 @@ class Game:
         if action == "file_toggle":
             self.toolbar.file_menu_open = not self.toolbar.file_menu_open
             return
+        if action == "control_dog":
+            self._set_control_mode("dog")
+            return
+        if action == "control_god":
+            self._set_control_mode("god")
+            return
         if action.startswith("file_"):
             self.toolbar.file_menu_open = False
         if action == "file_save":
@@ -5450,6 +5460,61 @@ class Game:
             self._cycle_ticks_per_day(-1)
         elif action == "day_faster":
             self._cycle_ticks_per_day(1)
+
+    def _set_control_mode(self, mode: str) -> None:
+        mode = "god" if str(mode).lower() == "god" else "dog"
+        if mode == self.control_mode:
+            if mode == "dog":
+                self.camera.center_on(self.player.x, self.player.y, self.world.cols, self.world.rows)
+            return
+        if mode == "god":
+            dog = self._god_dog_villager
+            if dog is None:
+                dog = Villager(
+                    id=-1000, x=self.player.x, y=self.player.y,
+                    inventory=self.player.inventory, name="Player Dog",
+                    housed=True, housing_need=0, required_foods=[],
+                    happiness=1.0, template_id="player_dog",
+                )
+                dog.set_default_priorities()
+                self._god_dog_villager = dog
+            dog.x, dog.y = self.player.x, self.player.y
+            dog.inventory = self.player.inventory
+            dog.satiation = self.player.satiation
+            dog.energy = self.player.energy
+            dog.happiness = self.player.happiness
+            if dog not in self.villagers:
+                self.villagers.insert(0, dog)
+            self.control_mode = "god"
+            self._set_status("God mode — Player Dog is an assignable labourer.")
+            return
+
+        dog = self._god_dog_villager
+        if dog is not None:
+            self._sync_player_from_god_dog()
+            if dog in self.villagers:
+                self.villagers.remove(dog)
+        self.control_mode = "dog"
+        self.camera.center_on(self.player.x, self.player.y, self.world.cols, self.world.rows)
+        self._set_status("Dog mode — direct player control restored.")
+
+    def _sync_player_from_god_dog(self) -> None:
+        dog = self._god_dog_villager
+        if dog is None:
+            return
+        self.player.x, self.player.y = dog.x, dog.y
+        self.player.inventory = dog.inventory
+        self.player.satiation = dog.satiation
+        self.player.energy = dog.energy
+        self.player.happiness = dog.happiness
+        self.player.move_cooldown = dog.move_cooldown
+        self.player.work_cooldown = dog.work_cooldown
+        for attr in (
+            "_vis_from_x", "_vis_from_y", "_vis_duration", "_vis_pending",
+            "_vis_facing_right", "_vis_walk_frame",
+        ):
+            if hasattr(dog, attr):
+                setattr(self.player, attr, getattr(dog, attr))
 
     def _select_building(
         self, building: Building, *, show_player: bool = False, detail_only: bool = False
@@ -7078,6 +7143,9 @@ class Game:
     # Player interaction
     # ------------------------------------------------------------------
     def _interact_at_player(self) -> None:
+        if getattr(self, "control_mode", "dog") != "dog":
+            self._set_status("Switch to Dog mode to control the player dog.")
+            return
         if self.sim_speed <= 0:
             self._set_status("Unpause (Space) to act.")
             return
@@ -7101,6 +7169,17 @@ class Game:
 
         # Construction pads / centre glyph — deposit & build before other interacts.
         site = self._construction_at(x, y)
+        # Fence sections share perimeter cells with live field crops. Harvest a
+        # ripe crop first; the next interaction can then work on the fence.
+        if (
+            site is not None
+            and site.fence_field_id is not None
+            and cell.feature == FeatureType.CROP_HERB
+            and self.world.crop_herb_ready(x, y)
+        ):
+            if self._harvest_farm_herb(x, y, self.player.inventory, status=True):
+                self._finish_player_work()
+            return
         if site is not None and (
             cell.feature
             in (FeatureType.CONSTRUCTION_SITE, FeatureType.STRUCTURE_PAD)
@@ -9405,7 +9484,8 @@ class Game:
 
         for villager in list(self.villagers):
             day_frac = 1.0 / max(1, self.ticks_per_day)
-            self._update_villager_wellbeing(villager, day_frac)
+            if villager is not getattr(self, "_god_dog_villager", None):
+                self._update_villager_wellbeing(villager, day_frac)
             if villager.id not in {v.id for v in self.villagers}:
                 continue
             self._reconcile_seasonal_workplace(villager)
@@ -10146,6 +10226,9 @@ class Game:
     def _tick_player(self, ticks: int = 1) -> None:
         """Advance player cooldowns, hunger, and optional auto-eat."""
         if ticks <= 0:
+            return
+        if getattr(self, "control_mode", "dog") == "god":
+            self._sync_player_from_god_dog()
             return
         p = self.player
         p.move_cooldown = max(0, p.move_cooldown - ticks)
@@ -12692,8 +12775,10 @@ class Game:
 
         carrying = self._carrying_build_mats(villager)
 
-        # Deliver carried wood/rock/hardwood to a needing site.
-        if carrying:
+        # Once the current site has all its materials, finish constructing it
+        # before distributing leftover cargo to other sites. This matters for
+        # fence projects, which contain many one-material construction sites.
+        if carrying and not (site is not None and site.materials_ready):
             useful = self._find_site_needing_materials(villager)
             if useful is None:
                 # Leftover mats no site needs — send to workplace/home.
@@ -12708,6 +12793,7 @@ class Game:
             ):
                 site = useful
                 villager.construction_id = site.id
+            villager.target = site.center_cell()
             if (villager.x, villager.y) == site.center_cell():
                 if villager.work_cooldown == 0:
                     self._deposit_materials_at_site(villager, site)
@@ -12716,6 +12802,11 @@ class Game:
                         self._complete_construction(site)
                         villager.construction_id = None
                         villager.state = VillagerState.IDLE
+                        villager.target = None
+                        return
+                    if site.materials_ready:
+                        villager.state = VillagerState.BUILDING
+                        villager.target = site.center_cell()
                         return
                 # After a partial drop, keep going (fetch remainder / other site)
                 # instead of parking on the scaffold with useless leftover cargo.
@@ -12752,6 +12843,7 @@ class Game:
                 villager.state = VillagerState.IDLE
                 return
             villager.construction_id = site.id
+        villager.target = site.center_cell()
 
         # Build when materials ready.
         if site.materials_ready:
@@ -12769,6 +12861,7 @@ class Game:
                 self._complete_construction(site)
                 villager.construction_id = None
                 villager.state = VillagerState.IDLE
+                villager.target = None
             return
 
         # Fetch materials from storage.
@@ -12784,6 +12877,7 @@ class Game:
             villager.state = VillagerState.IDLE
             return
         sx, sy, _kind = source
+        villager.target = (sx, sy)
         if (villager.x, villager.y) != (sx, sy):
             self._step_villager_toward(villager, (sx, sy))
             villager.state = VillagerState.BUILDING
@@ -18327,6 +18421,10 @@ class Game:
             height_delta_step=self.height_delta_step,
             height_brush_radius=self.height_brush_radius,
         )
+        residents = [
+            v for v in self.villagers
+            if v is not getattr(self, "_god_dog_villager", None)
+        ]
         self.resource_bar.draw(
             self.screen,
             self.home_storage,
@@ -18334,8 +18432,8 @@ class Game:
             self.buildings,
             self.villagers,
             mouse,
-            housed=housed_count(self.villagers),
-            needing=len(self.villagers),
+            housed=housed_count(residents),
+            needing=len(residents),
             regional_wealth=self.regional_wealth,
             overlay_mode=self.overlay_mode,
         )
@@ -18356,6 +18454,7 @@ class Game:
             ),
             field_crop=self.field_crop_kind,
             built_kinds=unlock_built_kinds(self.buildings),
+            control_mode=self.control_mode,
         )
         field_b = self._field_plan_building()
         field_overview = (
@@ -20525,6 +20624,8 @@ class Game:
 
         size = self.camera.view_cell_px()
         for villager in self.villagers:
+            if villager is getattr(self, "_god_dog_villager", None):
+                continue
             vx, vy = entity_draw_xy(villager)
             cx, cy = self._cell_center(vx, vy)
             job_colour = self._villager_job_colour(villager)

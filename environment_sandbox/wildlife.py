@@ -2569,6 +2569,36 @@ class WildlifeManager:
         need = _bal_int(key, default, 1) * count
         return max(0.0, min(1.0, self._habitat_forage(world, kind, hab) / need))
 
+    def _birth_count(
+        self,
+        kind: AnimalKind,
+        hab: Habitat,
+        ecology: float,
+        food: float,
+    ) -> int:
+        """Return a density- and habitat-sensitive litter size from one to three.
+
+        Total capacity is deliberately recalculated from every current habitat.
+        Consequently, restoring or creating habitat raises reproductive potential
+        immediately, while a population near the world's supported capacity falls
+        back to single births. Local patch capacity remains a hard safety limit.
+        """
+        local_room = max(
+            0,
+            self._cap_for(kind, hab) - self._count_in_patch(kind, hab.id),
+        )
+        if local_room <= 0:
+            return 0
+        total_cap = sum(self._cap_for(kind, candidate) for candidate in self._habitats_for(kind))
+        if total_cap <= 0:
+            return 0
+        world_room = max(0, total_cap - self.count_kind(kind))
+        vacancy = min(1.0, world_room / total_cap)
+        health = max(0.0, min(1.0, min(ecology, food)))
+        potential = health * vacancy
+        births = max(1, min(3, int(potential * 3.0 + 0.999999)))
+        return min(births, local_room)
+
     def _eat_wild_crop(self, world: World, x: int, y: int) -> bool:
         cell = world.get_cell(x, y)
         if cell is None or cell.feature not in (
@@ -2655,7 +2685,7 @@ class WildlifeManager:
             self._eat_wild_crop(world, cx, cy)
 
     def _breed(self, world: World) -> None:
-        """Mating pairs may produce one offspring in their current patch only."""
+        """Mating pairs produce up to three offspring in their current patch."""
         occupied = self._occupied()
         seen: set[frozenset[int]] = set()
         for animal in list(self.animals):
@@ -2687,7 +2717,10 @@ class WildlifeManager:
             breed_chance = active_balance().get_float("WILDLIFE_BREED_CHANCE")
             if self.rng.random() >= breed_chance * ecology * food * density:
                 continue
-            self._try_spawn_in_patch(animal.kind, hab, occupied)
+            births = self._birth_count(animal.kind, hab, ecology, food)
+            for _ in range(births):
+                if not self._try_spawn_in_patch(animal.kind, hab, occupied):
+                    break
 
     def _cull_excess(self) -> None:
         self._index_animals()

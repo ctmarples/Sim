@@ -902,8 +902,9 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
                 0.05,
                 1.0,
                 0.05,
-                "Base chance a mating pair breeds each wildlife tick, "
-                "then scaled down by local disturbance.",
+                "Base chance a mating pair breeds during the annual spring event. "
+                "Habitat health, forage, and unused world habitat potential scale "
+                "the chance and litter size (up to three).",
             ),
             BalanceParam(
                 "WILDLIFE_COLONY_GROW_CHANCE",
