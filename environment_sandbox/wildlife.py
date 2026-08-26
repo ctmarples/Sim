@@ -1382,6 +1382,83 @@ class WildlifeManager:
             hab = self.rng.choice(grounds)
             self._seed_patch(kind, hab, WILDLIFE_RESEED_PAIR, occupied)
 
+    def ensure_lone_animals_have_mates(self, world: World) -> int:
+        """Maintain a settled, mixed-sex deer/boar breeding population."""
+        if not self.habitats:
+            self.refresh_habitats(world)
+        occupied = self._occupied()
+        spawned = 0
+        for kind in FOREST_KINDS:
+            settled = [
+                animal
+                for animal in self.animals
+                if animal.kind == kind and animal.patch_id is not None
+            ]
+            if not settled and self.count_kind(kind) > 0:
+                grounds = self.breeding_grounds(kind)
+                if grounds:
+                    before = self.next_id
+                    self._seed_patch(
+                        kind,
+                        self.rng.choice(grounds),
+                        WILDLIFE_RESEED_PAIR,
+                        occupied,
+                    )
+                    spawned += self.next_id - before
+                continue
+            if not settled:
+                continue
+            candidates: list[tuple[Habitat, AnimalSex]] = []
+            for hab in self._habitats_for(kind):
+                residents = [
+                    a for a in self.animals
+                    if a.kind == kind and a.patch_id == hab.id
+                ]
+                sexes = {animal.sex for animal in residents}
+                if (
+                    residents
+                    and len(sexes) == 1
+                    and len(residents) < self._cap_for(kind, hab)
+                ):
+                    candidates.append((hab, residents[0].sex))
+            if not candidates:
+                continue
+            hab, resident_sex = self.rng.choice(candidates)
+            before = self.next_id
+            self._seed_patch(kind, hab, 1, occupied)
+            if self.next_id == before:
+                continue
+            mate = self.animals[-1]
+            mate.sex = (
+                AnimalSex.FEMALE
+                if resident_sex == AnimalSex.MALE
+                else AnimalSex.MALE
+            )
+            spawned += 1
+        for kind in PACK_KINDS:
+            lone_packs = [
+                pack for pack in self.wolf_packs
+                if pack.kind == kind and len(pack.members) == 1
+            ]
+            if not lone_packs:
+                continue
+            pack = self.rng.choice(lone_packs)
+            lone = pack.members[0]
+            pack.members.append(
+                WolfMember(
+                    sex=(AnimalSex.FEMALE
+                         if lone.sex == AnimalSex.MALE else AnimalSex.MALE),
+                    x=pack.x,
+                    y=pack.y,
+                    move_cooldown=animal_roam_interval(),
+                )
+            )
+            spawned += 1
+        if spawned:
+            self._index_animals()
+            self._form_mating_pairs()
+        return spawned
+
     def _kill_failed_migrants(self) -> None:
         """Animals still searching for a new breeding ground die when winter arrives."""
         survivors: list[Animal] = []

@@ -88,6 +88,7 @@ def refresh_parent_extension_links(buildings: dict[int, Building]) -> None:
         b.linked_extensions = frozenset()
         b._pantry_storage = None
         b._food_storages = ()
+        b._linked_kitchen = None
     for b in buildings.values():
         if not is_extension_kind(b.kind) or b.parent_building_id is None:
             continue
@@ -97,6 +98,7 @@ def refresh_parent_extension_links(buildings: dict[int, Building]) -> None:
         parent.linked_extensions = frozenset(parent.linked_extensions | {b.kind})
         if b.kind in (BuildingKind.PANTRY, BuildingKind.CELLAR):
             parent._food_storages = (*parent._food_storages, b)
+            b._linked_kitchen = parent
             if parent._pantry_storage is None:
                 parent._pantry_storage = b
         parent._recipe_state_ready = False

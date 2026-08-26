@@ -11,6 +11,7 @@ Edit amounts and consumption here. Related catalogues (not duplicated):
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum, auto
 
 from settings import (
     BUFF_STRENGTH_HUNGER,
@@ -163,7 +164,59 @@ def satiation_from_points(points: float) -> float:
     return max(0.0, float(points) / MEAL_POINTS_FULL)
 
 
-def food_preference_key(key: str, required_foods: list[str] | None = None) -> tuple:
+class FoodSatisfaction(Enum):
+    """The single preference result owned by one meal-selection event."""
+
+    FAVOURITE = auto()
+    ACCEPTABLE = auto()
+    UNWANTED = auto()
+    NONE = auto()
+
+
+FOOD_HAPPINESS_FAVOURITE = 2
+FOOD_HAPPINESS_UNWANTED = -2
+
+
+def is_favourite_food(villager: object, item_key: str) -> bool:
+    return str(item_key) in (getattr(villager, "favourite_foods", None) or [])
+
+
+def food_satisfies_any_required_food(villager: object, item_key: str) -> bool:
+    return food_covers_any_requirement(
+        str(item_key), list(getattr(villager, "required_foods", None) or [])
+    )
+
+
+def classify_food_satisfaction(villager: object, eaten_keys: list[str]) -> FoodSatisfaction:
+    if not eaten_keys:
+        return FoodSatisfaction.NONE
+    if any(is_favourite_food(villager, key) for key in eaten_keys):
+        return FoodSatisfaction.FAVOURITE
+    required = list(getattr(villager, "required_foods", None) or [])
+    if not required or any(food_covers_any_requirement(key, required) for key in eaten_keys):
+        return FoodSatisfaction.ACCEPTABLE
+    return FoodSatisfaction.UNWANTED
+
+
+def food_satisfaction_points(villager: object, result: FoodSatisfaction) -> int:
+    if result is FoodSatisfaction.FAVOURITE:
+        points = FOOD_HAPPINESS_FAVOURITE
+        return points + (1 if "Picky" in (getattr(villager, "vices", None) or []) else 0)
+    if result is FoodSatisfaction.UNWANTED:
+        points = FOOD_HAPPINESS_UNWANTED
+        if "Picky" in (getattr(villager, "vices", None) or []):
+            points -= 1
+        if "Cheerful" in (getattr(villager, "virtues", None) or []):
+            points += 1
+        return points
+    return 0
+
+
+def food_preference_key(
+    key: str,
+    required_foods: list[str] | None = None,
+    favourite_foods: list[str] | None = None,
+) -> tuple:
     """Sort key for meal picking: required staples first, then buffs, then satiation."""
     fx = food_def(key)
     req_miss = 0
@@ -172,6 +225,7 @@ def food_preference_key(key: str, required_foods: list[str] | None = None) -> tu
         req_miss = 0 if food_covers_any_requirement(key, required_foods) else 1
     debuff = 1 if (fx.walk_speed < 1.0 or fx.work_efficiency < 1.0) else 0
     return (
+        0 if key in (favourite_foods or []) else 1,
         req_miss,
         debuff,
         -(fx.walk_speed * fx.work_efficiency),
@@ -309,7 +363,10 @@ def requirement_met_in_stock(amounts: dict[str, int], requirement: str) -> bool:
             int(qty) > 0 and food_covers_requirement(key, req)
             for key, qty in amounts.items()
         )
-    return int(amounts.get(req, 0)) > 0
+    return int(amounts.get(req, 0)) > 0 or any(
+        int(qty) > 0 and food_covers_requirement(key, req)
+        for key, qty in amounts.items()
+    )
 
 
 def food_covers_any_requirement(food_key: str, required: list[str] | None) -> bool:

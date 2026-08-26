@@ -248,7 +248,12 @@ def entry_from_candidate(
         housed=False,
         portrait_seed=int(getattr(c, "portrait_seed", 0) or c.id),
         job="traveller",
-        status="camp",
+        status=(
+            "Required food: "
+            + (", ".join(getattr(c, "required_foods", []) or []) or "None")
+            + " · Favourite: "
+            + (", ".join(getattr(c, "favourite_foods", []) or []) or "None")
+        ),
         kind="traveller",
         season_pay=int(season_pay),
         coins_paid=0,

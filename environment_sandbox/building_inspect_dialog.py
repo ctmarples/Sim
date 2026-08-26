@@ -975,20 +975,20 @@ class BuildingInspectDialog:
         has_storage = self._has_storage(building)
         dual = self.show_player and has_storage
         storage_keys = building.depositable_keys()
-        linked_food_storages = (
-            building.linked_food_storages()
-            if building.kind == BuildingKind.KITCHEN
+        linked_food_inventory = (
+            building.linked_food_inventory()
+            if building.kind in (BuildingKind.KITCHEN, BuildingKind.PANTRY, BuildingKind.CELLAR)
             else ()
         )
-        if linked_food_storages and storage_amounts is None:
+        linked_food_storages = tuple(b for b in linked_food_inventory if b is not building)
+        if linked_food_inventory and len(linked_food_inventory) > 1 and storage_amounts is None:
             storage_keys = tuple(
                 dict.fromkeys(
-                    (*storage_keys, *(k for store in linked_food_storages for k in store.depositable_keys()))
+                    (*storage_keys, *(k for store in linked_food_inventory for k in store.depositable_keys()))
                 )
             )
             storage_amounts = {
-                key: int(getattr(building, key, 0))
-                + sum(int(getattr(store, key, 0)) for store in linked_food_storages)
+                key: sum(int(getattr(store, key, 0)) for store in linked_food_inventory)
                 for key in storage_keys
             }
         if storage_amounts is not None:
@@ -1004,17 +1004,11 @@ class BuildingInspectDialog:
                 else building.capacity_label()
             )
             if linked_food_storages:
-                from resources import stack_units
-
-                storage_used = sum(store.cargo_stored_total for store in linked_food_storages)
-                storage_capacity = sum(store.capacity for store in linked_food_storages)
-                local_output_used = sum(
-                    stack_units(key, int(getattr(building, key, 0)))
-                    for key in building.processor_output_keys()
-                )
+                storage_used = sum(store.cargo_stored_total for store in linked_food_inventory)
+                storage_capacity = sum(store.capacity for store in linked_food_inventory)
                 capacity_label = (
-                    f"{local_output_used + storage_used}/"
-                    f"{building.output_capacity + storage_capacity} output + storage"
+                    f"{storage_used}/"
+                    f"{storage_capacity} linked storage"
                 )
         else:
             amounts = {}

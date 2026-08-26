@@ -543,6 +543,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
                 "required_foods": list(v.required_foods),
                 "favourite_foods": list(v.favourite_foods),
                 "favourite_is_junk": v.favourite_is_junk,
+                "required_workplace": str(getattr(v, "required_workplace", "") or ""),
+                "signing_fee": int(getattr(v, "signing_fee", 0) or 0),
                 "join_fee_paid": v.join_fee_paid,
                 "seasons_without_reqs": v.seasons_without_reqs,
                 "coins_paid_total": int(getattr(v, "coins_paid_total", 0) or 0),
@@ -1461,6 +1463,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         villager.required_foods = list(vdata.get("required_foods") or ["meat"])
         villager.favourite_foods = list(vdata.get("favourite_foods") or [])
         villager.favourite_is_junk = bool(vdata.get("favourite_is_junk", False))
+        villager.required_workplace = str(vdata.get("required_workplace", "") or "")
+        villager.signing_fee = max(0, int(vdata.get("signing_fee", 0) or 0))
         villager.join_fee_paid = bool(vdata.get("join_fee_paid", False))
         villager.seasons_without_reqs = int(vdata.get("seasons_without_reqs", 0))
         villager.coins_paid_total = int(vdata.get("coins_paid_total", 0) or 0)

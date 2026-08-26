@@ -810,20 +810,21 @@ class World:
         berry_terrains = tuple(
             TerrainType[n] for n in berry.terrains if n in TerrainType.__members__
         )
-        placed_bushes = 0
-        attempts = 0
         target_bushes = max(0, int(BERRY_INITIAL_COUNT))
-        while placed_bushes < target_bushes and attempts < 200:
-            attempts += 1
-            x = rng.randint(0, self.cols - 1)
-            y = rng.randint(0, self.rows - 1)
+        berry_sites = [
+            (x, y)
+            for y in range(self.rows)
+            for x in range(self.cols)
+            if self.cells[y][x].feature == FeatureType.NONE
+            and self.cells[y][x].terrain in berry_terrains
+        ]
+        rng.shuffle(berry_sites)
+        for x, y in berry_sites[:target_bushes]:
             cell = self.cells[y][x]
-            if cell.feature == FeatureType.NONE and cell.terrain in berry_terrains:
-                cell.feature = FeatureType.BERRY_BUSH
-                cell.crop_kind = berry.key
-                cell.deposit = 0
-                cell.growth_ticks = 0
-                placed_bushes += 1
+            cell.feature = FeatureType.BERRY_BUSH
+            cell.crop_kind = berry.key
+            cell.deposit = 0
+            cell.growth_ticks = 0
 
         # Home near the centre-left so the starting area is clear.
         # Buildings occupy a square footprint; home_pos is the centre (glyph) cell.

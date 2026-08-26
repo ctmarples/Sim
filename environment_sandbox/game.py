@@ -55,6 +55,9 @@ from resource_balance import (
     WILD_PRODUCE_YIELD,
     combine_meal_buffs,
     food_def,
+    FoodSatisfaction,
+    classify_food_satisfaction,
+    food_satisfaction_points,
     food_is_sweet,
     food_preference_key,
     format_buff_mult,
@@ -242,6 +245,7 @@ from height_sample import (
 )
 from balance_config import BalanceState, set_active_balance
 from balance_dialog import BalanceDialog
+from wildlife_repopulate_dialog import WildlifeRepopulateDialog
 from camera import Camera
 from dialogs import FileDialog
 from number_input_dialog import NumberInputDialog
@@ -294,7 +298,6 @@ from society import (
     ENERGY_SLEEP_GAIN,
     ENERGY_SLEEP_THRESHOLD,
     ENERGY_WORK_DRAIN,
-    HAPPINESS_FAVOURITE_MISS_PENALTY,
     HAPPINESS_FOOD_VARIETY_BONUS,
     HAPPINESS_HOUSING_BONUS_PER_LEVEL,
     HAPPINESS_LEAVE_SEASONS,
@@ -461,6 +464,7 @@ class Game:
         self.inspected_tree_cell: tuple[int, int] | None = None
         self.resource_tracker = ResourceTrackerDialog()
         self.balance_dialog = BalanceDialog()
+        self.wildlife_repopulate_dialog = WildlifeRepopulateDialog()
         self.balance = BalanceState()
         set_active_balance(self.balance)
         from save_load import saves_dir
@@ -1134,6 +1138,78 @@ class Game:
         if len(self.fish.fish) > target:
             self.fish.fish = self.fish.fish[:target]
 
+    def _repopulate_wildlife(self, levels: dict[str, int]) -> None:
+        """Clear every wild population and reseed the current map by species."""
+        self.wildlife.reset()
+        self.wildlife.refresh_habitats(self.world)
+        self.wildlife.seed_breeding_grounds(self.world)
+
+        kind_keys = {
+            AnimalKind.DEER: "deer", AnimalKind.BOAR: "boar",
+            AnimalKind.OWL: "owl", AnimalKind.HAWK: "hawk",
+        }
+        rng = random.Random(self.world.seed ^ self.calendar_day ^ 0x5245504F)
+
+        kept_animals = []
+        for kind, key in kind_keys.items():
+            group = [a for a in self.wildlife.animals if a.kind == kind]
+            fraction = max(0, min(100, levels.get(key, 100))) / 100
+            if kind in (AnimalKind.DEER, AnimalKind.BOAR):
+                by_patch: dict[int | None, list] = {}
+                for animal in group:
+                    by_patch.setdefault(animal.patch_id, []).append(animal)
+                patches = list(by_patch)
+                rng.shuffle(patches)
+                for patch_id in patches[:round(len(patches) * fraction)]:
+                    kept_animals.extend(by_patch[patch_id])
+            else:
+                rng.shuffle(group)
+                kept_animals.extend(group[:round(len(group) * fraction)])
+        self.wildlife.animals = kept_animals
+
+        colony_keys = {
+            AnimalKind.RABBIT: "rabbit", AnimalKind.BEE: "bee",
+            AnimalKind.FROG: "frog", AnimalKind.VOLE: "vole",
+        }
+        kept_colonies = []
+        for kind, key in colony_keys.items():
+            group = [c for c in self.wildlife.colonies if c.kind == kind]
+            rng.shuffle(group)
+            target = round(len(group) * max(0, min(100, levels.get(key, 100))) / 100)
+            kept_colonies.extend(group[:target])
+        self.wildlife.colonies = kept_colonies
+
+        pack_keys = {AnimalKind.WOLF: "wolf", AnimalKind.FOX: "fox"}
+        kept_packs = []
+        for kind, key in pack_keys.items():
+            group = [p for p in self.wildlife.wolf_packs if p.kind == kind]
+            rng.shuffle(group)
+            target = round(len(group) * max(0, min(100, levels.get(key, 100))) / 100)
+            kept_packs.extend(group[:target])
+        self.wildlife.wolf_packs = kept_packs
+        self.wildlife._index_animals()
+        self.wildlife._form_mating_pairs()
+
+        self.fish.reset()
+        fish_target = round(
+            self.fish.total_capacity(self.world)
+            * max(0, min(100, levels.get("fish", 100))) / 100
+        )
+        while len(self.fish.fish) < fish_target:
+            before = len(self.fish.fish)
+            self.fish._update_population(self.world)
+            if len(self.fish.fish) <= before:
+                break
+        self.fish.fish = self.fish.fish[:fish_target]
+
+        self.selected_habitat_kind = None
+        self.selected_habitat_id = None
+        self.habitat_inspect.close()
+        self._refresh_indicators()
+        total = len(self.wildlife.animals) + sum(c.level for c in self.wildlife.colonies)
+        total += sum(p.size() for p in self.wildlife.wolf_packs) + len(self.fish.fish)
+        self._set_status(f"Wildlife repopulated: {total} animals.")
+
     def _generate_launch_preview(self, *, randomise: bool = False) -> None:
         """Build terrain for inspection without populating or starting the game."""
         from random_map_generator import MapOptions, generate_map
@@ -1577,6 +1653,11 @@ class Game:
                     event
                 ):
                     continue
+                if (
+                    self.wildlife_repopulate_dialog.open
+                    and self.wildlife_repopulate_dialog.handle_keydown(event)
+                ):
+                    continue
                 if self.habitat_inspect.open and self.habitat_inspect.handle_keydown(
                     event
                 ):
@@ -1590,6 +1671,13 @@ class Game:
                 if self.file_dialog.open:
                     self.file_dialog.handle_click(event.pos)
                     self._finish_file_dialog_if_needed()
+                    continue
+                if self.wildlife_repopulate_dialog.open:
+                    self.wildlife_repopulate_dialog.handle_mousedown(event.pos)
+                    pending = self.wildlife_repopulate_dialog.pending_apply
+                    if pending is not None:
+                        self.wildlife_repopulate_dialog.pending_apply = None
+                        self._repopulate_wildlife(pending)
                     continue
                 if self.assign_picker.open:
                     if self.assign_picker.contains(event.pos):
@@ -1707,6 +1795,9 @@ class Game:
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 if self.file_dialog.open:
                     continue
+                if self.wildlife_repopulate_dialog.open:
+                    self.wildlife_repopulate_dialog.handle_mouseup(event.pos)
+                    continue
                 if self.assign_picker.open and self.assign_picker._moving:
                     self.assign_picker.handle_mouseup(event.pos)
                     continue
@@ -1753,6 +1844,9 @@ class Game:
                 self._on_mouse_up(event.pos)
             elif event.type == pygame.MOUSEMOTION:
                 if self.file_dialog.open:
+                    continue
+                if self.wildlife_repopulate_dialog.open:
+                    self.wildlife_repopulate_dialog.handle_mousemotion(event.pos)
                     continue
                 if self.assign_picker.open and self.assign_picker._moving:
                     self.assign_picker.handle_mousemotion(event.pos)
@@ -3730,17 +3824,35 @@ class Game:
                 free_beds=beds,
                 max_housing_level=lvl,
             )
+            rows = candidate_requirement_rows(
+                housing_need=c.housing_need,
+                required_foods=list(c.required_foods),
+                foods=foods,
+                free_beds=beds,
+                max_housing_level=lvl,
+            )
+            workplace = str(getattr(c, "required_workplace", "") or "").lower()
+            if workplace:
+                workplace_met = any(
+                    b.kind.name.lower() == workplace for b in self.buildings.values()
+                )
+                rows.append({
+                    "key": "workplace", "icon": workplace,
+                    "met": workplace_met,
+                    "label": f"Workplace: {workplace.replace('_', ' ').title()}",
+                    "coins": 0,
+                })
+            fee = max(0, int(getattr(c, "signing_fee", 0) or 0))
+            rows.append({
+                "key": "signing_fee", "icon": "coins",
+                "met": int(self.regional_wealth) >= fee,
+                "label": f"Signing fee: {fee} coins", "coins": 0,
+            })
             entries.append(
                 entry_from_candidate(
                     c,
                     season_pay=season_pay_coins(unmet),
-                    requirement_rows=candidate_requirement_rows(
-                        housing_need=c.housing_need,
-                        required_foods=list(c.required_foods),
-                        foods=foods,
-                        free_beds=beds,
-                        max_housing_level=lvl,
-                    ),
+                    requirement_rows=rows,
                 )
             )
         return entries
@@ -4673,7 +4785,8 @@ class Game:
         self._bump_work_gen()
         self.resource_history.record_stock(self._village_stock_amounts())
         self.resource_history.advance_day()
-        if self.season != prev:
+        season_changed = self.season != prev
+        if season_changed:
             self._convert_seasonal_compost()
             self._expire_unharvested_crops(prev)
             self._start_perennial_regrowth()
@@ -4709,6 +4822,8 @@ class Game:
         if self.overlay_mode in (OverlayMode.TEMPERATURE, OverlayMode.RAINFALL,
                                  OverlayMode.SOIL_MOISTURE):
             self._refresh_indicators()
+        if season_changed:
+            self._autosave_season_start()
 
     def _apply_path_fertility_drain(self) -> None:
         """Each season a path remains, drain fertility on soft land (floor 0.3)."""
@@ -4736,6 +4851,7 @@ class Game:
         from wildlife import AnimalKind
 
         self.wildlife.refresh_habitats(self.world)
+        self.wildlife.ensure_lone_animals_have_mates(self.world)
         self.world.update_forest_floor()
         self._refresh_hardscape_terrain(decay_traffic=True)
         # Seasonal overlays follow the same ≤8/year cadence (not daily).
@@ -4780,6 +4896,15 @@ class Game:
             OverlayMode.RAINFALL,
         ):
             self._refresh_indicators()
+
+    def _autosave_season_start(self) -> None:
+        """Overwrite only the dedicated autosave, preserving the manual save target."""
+        from save_load import save_to_path, saves_dir
+
+        try:
+            save_to_path(self, saves_dir() / "autosave.json")
+        except Exception as exc:
+            self._set_status(f"Autosave failed: {exc}")
 
     def _update_field_crop_health(self) -> None:
         """Ratchet each Field's crop_health down toward the pest-control target.
@@ -5435,6 +5560,8 @@ class Game:
                     "DAY_SECONDS_AT_X1",
                     ticks_to_seconds(self.ticks_per_day, self._playback_ticks()),
                 )
+        elif action == "file_repopulate":
+            self.wildlife_repopulate_dialog.open_dialog()
         elif action == "file_map_generator":
             self._open_map_generator()
         elif action == "file_reset":
@@ -6116,6 +6243,20 @@ class Game:
                 self._set_status(f"No {label} in barn storage.")
                 return
             ok = barn.give_item_to(inv, key)
+        elif building.kind in (
+            BuildingKind.KITCHEN,
+            BuildingKind.PANTRY,
+            BuildingKind.CELLAR,
+        ):
+            source = next(
+                (store for store in building.linked_food_inventory()
+                 if int(getattr(store, key, 0) or 0) > 0),
+                None,
+            )
+            if source is None:
+                self._set_status(f"No {label} in linked kitchen storage.")
+                return
+            ok = source.give_item_to(inv, key)
         else:
             if int(getattr(building, key, 0)) <= 0:
                 self._set_status(f"No {label} in storage.")
@@ -6159,6 +6300,20 @@ class Game:
                 self._set_status("Barn storage is full.")
                 return
             ok = barn.deposit_one_from(inv, key)
+        elif building.kind in (
+            BuildingKind.KITCHEN,
+            BuildingKind.PANTRY,
+            BuildingKind.CELLAR,
+        ) and key in building.pantry_storage_keys():
+            target = next(
+                (store for store in building.linked_food_inventory()
+                 if key in store.depositable_keys() and store.space_for_key(key) > 0),
+                None,
+            )
+            if target is None:
+                self._set_status("Linked kitchen storage is full.")
+                return
+            ok = target.deposit_one_from(inv, key)
         else:
             if building.space_for_key(key) <= 0:
                 cap = building.item_cap(key)
@@ -7870,14 +8025,26 @@ class Game:
             housing_need=cand.housing_need,
             required_foods=list(cand.required_foods),
             foods=self._village_food_amounts(),
-            free_beds=free_housing_beds(self.buildings, self.villagers),
+            # A free bed is a hard gate; housing quality remains compensable.
+            free_beds=1,
             max_housing_level=max_housing_level(self.buildings),
         )
 
     def _hire_requirements_met(
         self, cand: HireCandidate, *, allow_pay: bool = False
     ) -> tuple[bool, str]:
+        if free_housing_beds(self.buildings, self.villagers) <= 0:
+            return False, "Needs a free bed"
+        workplace = str(getattr(cand, "required_workplace", "") or "").lower()
+        if workplace and not any(
+            b.kind.name.lower() == workplace for b in self.buildings.values()
+        ):
+            return False, f"Needs completed workplace {workplace.replace('_', ' ').title()}"
         missing = self._candidate_unmet_requirements(cand)
+        fee = max(0, int(getattr(cand, "signing_fee", 0) or 0))
+        soft_cost = season_pay_coins(missing) if allow_pay else 0
+        if int(self.regional_wealth) < fee + soft_cost:
+            return False, f"Needs {fee + soft_cost} regional coins"
         if not missing:
             return True, "ok"
         labels = [requirement_label(k) for k in missing]
@@ -8042,6 +8209,8 @@ class Game:
             required_foods=list(cand.required_foods),
             favourite_foods=list(cand.favourite_foods),
             favourite_is_junk=cand.favourite_is_junk,
+            required_workplace=str(getattr(cand, "required_workplace", "") or ""),
+            signing_fee=int(getattr(cand, "signing_fee", 0) or 0),
             community_id=cand.community_id,
             virtues=list(cand.virtues),
             vices=list(cand.vices),
@@ -8059,10 +8228,14 @@ class Game:
         self._assign_housing(villager)
         self._refresh_villager_season_pay(villager)
         note = ""
+        signing_fee = max(0, int(getattr(cand, "signing_fee", 0) or 0))
+        if signing_fee:
+            self.regional_wealth = int(self.regional_wealth) - signing_fee
+            note = f" Signing fee paid ({signing_fee} coins)."
         if unmet and pay:
             self.regional_wealth = int(self.regional_wealth) - first_wage
             villager.coins_paid_total = int(villager.coins_paid_total) + first_wage
-            note = (
+            note += (
                 f" First season wage paid ({first_wage} coins); "
                 f"{villager.season_pay_due} coins/season until requirements are met."
             )
@@ -8141,12 +8314,6 @@ class Game:
         foods = getattr(self, "_tick_village_food", None)
         if foods is None:
             foods = self._village_food_amounts()
-        if not staple_food_available(foods, villager.required_foods):
-            target -= HAPPINESS_MISSING_REQ_PENALTY
-        if villager.favourite_foods and not any(
-            f in villager.last_meal for f in villager.favourite_foods
-        ):
-            target -= HAPPINESS_FAVOURITE_MISS_PENALTY
         villager.happiness += (target - villager.happiness) * min(1.0, day_frac * 3.0)
         villager.happiness = max(0.0, min(1.0, villager.happiness))
         unmet = villager_unmet_requirements(villager, self.buildings, foods)
@@ -8182,6 +8349,8 @@ class Game:
                 required_foods=list(villager.required_foods),
                 favourite_foods=list(villager.favourite_foods),
                 favourite_is_junk=bool(villager.favourite_is_junk),
+                required_workplace=str(getattr(villager, "required_workplace", "") or ""),
+                signing_fee=int(getattr(villager, "signing_fee", 0) or 0),
                 virtues=list(getattr(villager, "virtues", []) or []),
                 vices=list(getattr(villager, "vices", []) or []),
                 energy=max(0.4, float(villager.energy)),
@@ -10550,7 +10719,8 @@ class Game:
             if isinstance(eater, Villager)
             else None
         )
-        available.sort(key=lambda k: food_preference_key(k, required))
+        favourites = list(eater.favourite_foods) if isinstance(eater, Villager) else None
+        available.sort(key=lambda k: food_preference_key(k, required, favourites))
         eaten_keys: list[str] = []
         points = 0.0
 
@@ -10611,60 +10781,28 @@ class Game:
             eater.last_meal = list(eaten_keys)
             walk, work, hunger = self._combine_eater_meal_buffs(eater, eaten_keys)
             if isinstance(eater, Villager):
-                # Missing hire staple in this meal lowers happiness immediately.
-                if eater.required_foods and not meal_covers_any_requirement(
-                    eaten_keys, eater.required_foods
-                ):
-                    from resources import resource_icon
+                from resources import resource_icon
 
-                    miss = next(
-                        (
-                            f
-                            for f in eater.required_foods
-                            if not any(
-                                meal_covers_any_requirement([k], [f])
-                                for k in eaten_keys
-                            )
-                        ),
-                        eater.required_foods[0],
+                satisfaction = classify_food_satisfaction(eater, eaten_keys)
+                hap_pts = food_satisfaction_points(eater, satisfaction)
+                if hap_pts:
+                    chosen = next(
+                        (k for k in eaten_keys if k in eater.favourite_foods),
+                        eaten_keys[0],
                     )
-                    hap_pts = -4
                     apply_happiness_points(eater, hap_pts)
+                    label = (
+                        f"Ate favourite food: {requirement_label(chosen)}"
+                        if satisfaction is FoodSatisfaction.FAVOURITE
+                        else f"Ate unwanted food: {requirement_label(chosen)}"
+                    )
                     push_happiness_event(
                         eater,
-                        icon=resource_icon(miss) if miss else "meat",
-                        label=f"Meal missing {requirement_label(miss)}",
+                        icon=resource_icon(chosen),
+                        label=label,
                         delta=hap_pts,
                         day=int(self.calendar_day),
                     )
-                else:
-                    variety = min(3, len(eaten_keys))
-                    if variety > 0:
-                        from resources import resource_icon
-
-                        push_happiness_event(
-                            eater,
-                            icon=resource_icon(eaten_keys[0]),
-                            label=f"Food variety (+{variety})",
-                            delta=variety,
-                            day=int(self.calendar_day),
-                        )
-                    if eater.favourite_foods and any(
-                        f in eaten_keys for f in eater.favourite_foods
-                    ):
-                        from resources import resource_icon
-
-                        fav = next(
-                            f for f in eater.favourite_foods if f in eaten_keys
-                        )
-                        apply_happiness_points(eater, 1)
-                        push_happiness_event(
-                            eater,
-                            icon=resource_icon(fav),
-                            label=f"Favourite {requirement_label(fav)}",
-                            delta=1,
-                            day=int(self.calendar_day),
-                        )
             eater.apply_food_buffs(walk, work, hunger)
         return len(eaten_keys)
 
@@ -18600,11 +18738,8 @@ class Game:
             hire_entries = self._hire_roster_entries()
 
             def can_hire_fn(entry):
-                return (
-                    beds > 0
-                    and lvl >= entry.housing_need
-                    and staple_food_available(foods, entry.required_foods)
-                )
+                cand = next((c for c in self.hire_candidates if c.id == entry.id), None)
+                return cand is not None and self._hire_requirements_met(cand)[0]
 
         if self.management.open:
             if self.management.selected_habitat is not None:
@@ -18658,6 +18793,7 @@ class Game:
             mouse_pos=mouse,
         )
         self.balance_dialog.draw(self.screen, self.balance, mouse_pos=mouse)
+        self.wildlife_repopulate_dialog.draw(self.screen, mouse)
         if self.villager_roster.open:
             if self.villager_roster.mode == "hire":
                 foods = self._village_food_amounts()
@@ -18665,11 +18801,8 @@ class Game:
                 lvl = max_housing_level(self.buildings)
 
                 def _can_hire(entry) -> bool:
-                    return (
-                        beds > 0
-                        and lvl >= entry.housing_need
-                        and staple_food_available(foods, entry.required_foods)
-                    )
+                    cand = next((c for c in self.hire_candidates if c.id == entry.id), None)
+                    return cand is not None and self._hire_requirements_met(cand)[0]
 
                 self.villager_roster.draw(
                     self.screen,

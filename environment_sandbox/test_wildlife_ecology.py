@@ -78,6 +78,58 @@ class WildlifeEcologyTests(unittest.TestCase):
 
         self.assertEqual(len(self.wildlife.animals), 5)
 
+    def test_habitat_refresh_adds_mate_when_residents_are_same_sex(self):
+        tiles = [(x, y) for y in range(8) for x in range(8)]
+        habitat = ForestHabitat(
+            0, tiles, tiles, set(tiles), set(tiles),
+            tiles, set(tiles), set(tiles),
+        )
+        self.wildlife.habitats = [habitat]
+        self.wildlife.animals = [
+            Animal(1, 2, 2, AnimalKind.BOAR, AnimalSex.MALE, patch_id=0),
+            Animal(2, 3, 2, AnimalKind.BOAR, AnimalSex.MALE, patch_id=0),
+        ]
+        self.wildlife.next_id = 3
+
+        spawned = self.wildlife.ensure_lone_animals_have_mates(self.world)
+
+        boars = [a for a in self.wildlife.animals if a.kind == AnimalKind.BOAR]
+        self.assertEqual(spawned, 1)
+        self.assertEqual(len(boars), 3)
+        self.assertEqual({a.sex for a in boars}, {AnimalSex.MALE, AnimalSex.FEMALE})
+
+    def test_habitat_refresh_repopulates_when_all_deer_are_migrating(self):
+        tiles = [(x, y) for y in range(8) for x in range(8)]
+        habitat = ForestHabitat(
+            0, tiles, tiles, set(tiles), set(tiles),
+            tiles, set(tiles), set(tiles),
+        )
+        self.wildlife.habitats = [habitat]
+        self.wildlife.animals = [
+            Animal(
+                1, 2, 2, AnimalKind.DEER, AnimalSex.MALE,
+                patch_id=None, mate_id=2, migrate_home_id=4,
+            ),
+            Animal(
+                2, 3, 2, AnimalKind.DEER, AnimalSex.FEMALE,
+                patch_id=None, mate_id=1, migrate_home_id=4,
+            ),
+        ]
+        self.wildlife.next_id = 3
+
+        spawned = self.wildlife.ensure_lone_animals_have_mates(self.world)
+
+        settled = [
+            a for a in self.wildlife.animals
+            if a.kind == AnimalKind.DEER and a.patch_id == habitat.id
+        ]
+        self.assertEqual(spawned, 2)
+        self.assertEqual(len(settled), 2)
+        self.assertEqual(
+            {a.sex for a in settled},
+            {AnimalSex.MALE, AnimalSex.FEMALE},
+        )
+
     def test_birth_count_uses_new_world_habitat_potential(self):
         small_tiles = [(x, 1) for x in range(1, 7)]
         large_tiles = [(x, y) for y in range(2, 8) for x in range(1, 8)]

@@ -406,6 +406,8 @@ class HireCandidate:
     required_foods: list[str] = field(default_factory=lambda: ["meat"])
     favourite_foods: list[str] = field(default_factory=list)
     favourite_is_junk: bool = False
+    required_workplace: str = ""
+    signing_fee: int = 0
     virtues: list[str] = field(default_factory=list)
     vices: list[str] = field(default_factory=list)
     energy: float = 1.0
@@ -439,6 +441,8 @@ class HireCandidate:
             "required_foods": list(self.required_foods),
             "favourite_foods": list(self.favourite_foods),
             "favourite_is_junk": self.favourite_is_junk,
+            "required_workplace": self.required_workplace,
+            "signing_fee": self.signing_fee,
             "virtues": list(self.virtues),
             "vices": list(self.vices),
             "energy": round(self.energy, 4),
@@ -464,6 +468,8 @@ class HireCandidate:
             required_foods=list(data.get("required_foods") or ["meat"]),
             favourite_foods=list(data.get("favourite_foods") or []),
             favourite_is_junk=bool(data.get("favourite_is_junk", False)),
+            required_workplace=str(data.get("required_workplace", "") or ""),
+            signing_fee=max(0, int(data.get("signing_fee", 0) or 0)),
             virtues=list(data.get("virtues") or []),
             vices=list(data.get("vices") or []),
             energy=float(data.get("energy", 1.0)),
@@ -490,6 +496,8 @@ class TravellerTemplate:
     required_foods: list[str]
     favourite_foods: list[str]
     favourite_is_junk: bool
+    required_workplace: str
+    signing_fee: int
     virtues: list[str]
     vices: list[str]
     skill_levels: dict[SkillType, int]
@@ -536,6 +544,8 @@ def load_traveller_templates(path: str | None = None) -> list[TravellerTemplate]
                     favourite_foods=_split_csv_list(row.get("favourite_foods", "")),
                     favourite_is_junk=str(row.get("favourite_is_junk", "0")).strip()
                     in ("1", "true", "True", "yes"),
+                    required_workplace=str(row.get("required_workplace", "") or "").strip().lower(),
+                    signing_fee=max(0, int(row.get("signing_fee", 0) or 0)),
                     virtues=_split_csv_list(row.get("virtues", "")),
                     vices=_split_csv_list(row.get("vices", "")),
                     skill_levels=levels,
@@ -576,6 +586,8 @@ def hire_candidate_from_template(
         required_foods=list(template.required_foods) or ["meat"],
         favourite_foods=list(template.favourite_foods),
         favourite_is_junk=template.favourite_is_junk,
+        required_workplace=template.required_workplace,
+        signing_fee=template.signing_fee,
         virtues=list(template.virtues),
         vices=list(template.vices),
         portrait_seed=cand_id * 9973 + hash(display_name) % 10000,
@@ -923,8 +935,16 @@ def candidate_requirement_rows(
     from resource_balance import requirement_met_in_stock
 
     need = int(housing_need)
-    housing_met = int(free_beds) > 0 and int(max_housing_level) >= need
+    bed_met = int(free_beds) > 0
+    housing_met = int(max_housing_level) >= need
     rows: list[dict] = [
+        {
+            "key": "bed",
+            "icon": "tent",
+            "met": bed_met,
+            "label": "Free bed" if bed_met else "Free bed missing",
+            "coins": 0,
+        },
         {
             "key": "housing",
             "icon": housing_icon if housing_met else "tent",
@@ -932,7 +952,7 @@ def candidate_requirement_rows(
             "label": (
                 f"Housing ready (need ≥{need})"
                 if housing_met
-                else f"Needs bed + housing level ≥{need}"
+                else f"Needs housing level ≥{need}"
             ),
             "coins": 0 if housing_met else SEASON_MISSING_REQ_PAY_COINS,
         }

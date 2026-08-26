@@ -1280,12 +1280,26 @@ class ManagementWindow:
             )
 
             if entry.requirement_rows:
+                req_x = cols["house"] + 2
+                req_y = row_y + (ROW_H - REQ_ICON) // 2
                 draw_requirement_icons(
                     surface,
-                    cols["house"] + 2,
-                    row_y + (ROW_H - REQ_ICON) // 2,
+                    req_x,
+                    req_y,
                     entry.requirement_rows,
                 )
+                if mouse_pos is not None:
+                    for req_i, requirement in enumerate(entry.requirement_rows[:4]):
+                        icon_rect = pygame.Rect(
+                            req_x + req_i * (REQ_ICON + 2), req_y, REQ_ICON, REQ_ICON
+                        )
+                        if icon_rect.collidepoint(mouse_pos):
+                            detail = str(requirement.get("label") or "Requirement")
+                            coins = int(requirement.get("coins", 0) or 0)
+                            if coins > 0:
+                                detail += f" · {coins} coins/season if unmet"
+                            self._tooltip = (detail, (icon_rect.centerx, icon_rect.top))
+                            break
             else:
                 house_txt = "bed" if entry.housed else f"≥{entry.housing_need}"
                 ht = self.font_tiny.render(house_txt, True, COLOUR_TEXT_DIM)

@@ -2467,6 +2467,16 @@ class Building:
     def linked_pantry(self) -> "Building | None":
         return next(iter(self.linked_food_storages()), None)
 
+    def linked_food_inventory(self) -> tuple["Building", ...]:
+        """Kitchen and food annexes exposed as one logical inventory."""
+        if self.kind == BuildingKind.KITCHEN:
+            return (self, *self.linked_food_storages())
+        if self.kind in (BuildingKind.PANTRY, BuildingKind.CELLAR):
+            kitchen = getattr(self, "_linked_kitchen", None)
+            if isinstance(kitchen, Building):
+                return (kitchen, *kitchen.linked_food_storages())
+        return (self,)
+
     def recipe_storage_amount(self, key: str) -> int:
         have = int(getattr(self, key, 0) or 0)
         if self.kind == BuildingKind.KITCHEN and key in self.pantry_storage_keys():
@@ -3812,6 +3822,8 @@ class Villager:
     required_foods: list[str] = field(default_factory=lambda: ["meat"])
     favourite_foods: list[str] = field(default_factory=list)
     favourite_is_junk: bool = False
+    required_workplace: str = ""
+    signing_fee: int = 0
     join_fee_paid: bool = False  # legacy save field; no longer used for fees
     seasons_without_reqs: int = 0
     coins_paid_total: int = 0
