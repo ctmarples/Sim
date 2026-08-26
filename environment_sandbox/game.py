@@ -1274,6 +1274,7 @@ class Game:
 
     def _update_player_move_input(self, dt: float) -> None:
         """Continuous arrow-key player movement (WASD is camera pan only)."""
+        self.player._continuous_moving = False
         if getattr(self, "control_mode", "dog") != "dog" or self.headless or self._dialogs_block_world_input():
             return
         mods = pygame.key.get_mods()
@@ -1303,6 +1304,10 @@ class Game:
             min(0.1, float(dt))
             * max(1, self.sim_speed)
             / max(0.05, self._walk_seconds())
+            * (
+                self._walk_interval_ticks()
+                / max(1, self._player_move_interval())
+            )
         )
         ux, uy = dx / length, dy / length
         steps = max(1, int(math.ceil(distance / 0.2)))
@@ -1321,6 +1326,7 @@ class Game:
             wx, wy = nx, ny
             moved += step_distance
         if moved <= 0.0:
+            self.player._continuous_moving = False
             return
         self.player.world_x, self.player.world_y = wx, wy
         self.player.x = int(math.floor(wx + 0.5))
@@ -1329,6 +1335,12 @@ class Game:
         self.player._vis_duration = 0
         self.player._vis_from_x, self.player._vis_from_y = wx, wy
         self.player._vis_to_x, self.player._vis_to_y = wx, wy
+        self.player._continuous_moving = True
+        if abs(dx) > 1e-6:
+            self.player._vis_facing_right = dx > 0.0
+        phase = float(getattr(self.player, "_continuous_walk_phase", 0.0)) + moved
+        self.player._continuous_walk_phase = phase % 0.5
+        self.player._vis_walk_frame = 1 if self.player._continuous_walk_phase < 0.25 else 2
         if (self.player.x, self.player.y) != old_cell:
             self._reveal_around_player()
         self.player.energy = max(
@@ -20845,8 +20857,11 @@ class Game:
         cx, cy = self._cell_center(vx, vy)
         facing_right = bool(getattr(self.player, "_vis_facing_right", True))
         moving = (
-            int(getattr(self.player, "_vis_duration", 0) or 0) > 0
-            and int(getattr(self.player, "move_cooldown", 0) or 0) > 0
+            bool(getattr(self.player, "_continuous_moving", False))
+            or (
+                int(getattr(self.player, "_vis_duration", 0) or 0) > 0
+                and int(getattr(self.player, "move_cooldown", 0) or 0) > 0
+            )
         )
         frame = int(getattr(self.player, "_vis_walk_frame", 1) or 1) if moving else 1
         if facing_right:

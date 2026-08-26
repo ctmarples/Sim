@@ -1718,9 +1718,11 @@ class World:
             return False
         blocked = getattr(self, "blocked_edges", set())
         if dx and dy:
-            # Do not allow diagonal corner-cutting around a fence.
+            # Do not squeeze diagonally between water or across fence corners.
             return (
-                self._edge_key(ax, ay, bx, ay) not in blocked
+                self.is_walkable(bx, ay)
+                and self.is_walkable(ax, by)
+                and self._edge_key(ax, ay, bx, ay) not in blocked
                 and self._edge_key(ax, ay, ax, by) not in blocked
                 and self._edge_key(bx, ay, bx, by) not in blocked
                 and self._edge_key(ax, by, bx, by) not in blocked
@@ -1835,7 +1837,7 @@ class World:
         max_nodes: int | None = None,
         max_len: int | None = None,
     ) -> list[tuple[int, int]] | None:
-        """Shortest cardinal path from start→goal as cells after start (includes goal)."""
+        """Shortest eight-direction path after start, including the goal."""
         if start == goal:
             return []
         if not self.is_walkable(*goal):
@@ -1860,14 +1862,20 @@ class World:
             if (cx, cy) == (gx, gy):
                 found = True
                 break
-            local: list[tuple[int, int]] = []
-            rest: list[tuple[int, int]] = []
-            for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
-                if abs(gx - cx) >= abs(gy - cy):
-                    (local if dx != 0 else rest).append((dx, dy))
-                else:
-                    (local if dy != 0 else rest).append((dx, dy))
-            for dx, dy in local + rest:
+            directions = [
+                (-1, -1), (0, -1), (1, -1),
+                (-1, 0),             (1, 0),
+                (-1, 1),  (0, 1),   (1, 1),
+            ]
+            # Among equally short BFS routes, prefer steps closest to the
+            # destination vector. This yields diagonal-first direct paths.
+            directions.sort(
+                key=lambda d: (
+                    max(abs(gx - (cx + d[0])), abs(gy - (cy + d[1]))),
+                    (gx - (cx + d[0])) ** 2 + (gy - (cy + d[1])) ** 2,
+                )
+            )
+            for dx, dy in directions:
                 nx, ny = cx + dx, cy + dy
                 if (nx, ny) in came_from:
                     continue
