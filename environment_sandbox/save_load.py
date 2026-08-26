@@ -612,6 +612,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "id": a.id,
             "x": a.x,
             "y": a.y,
+            "world_x": round(float(a.world_x if a.world_x is not None else a.x), 4),
+            "world_y": round(float(a.world_y if a.world_y is not None else a.y), 4),
             "kind": a.kind.name,
             "sex": a.sex.name,
             "patch_id": a.patch_id,
@@ -647,6 +649,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "id": f.id,
             "x": f.x,
             "y": f.y,
+            "world_x": round(float(f.world_x if f.world_x is not None else f.x), 4),
+            "world_y": round(float(f.world_y if f.world_y is not None else f.y), 4),
             "kind": f.kind.name,
             "move_cooldown": f.move_cooldown,
         }
@@ -658,6 +662,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "kind": p.kind.name,
             "x": p.x,
             "y": p.y,
+            "world_x": round(float(p.world_x if p.world_x is not None else p.x), 4),
+            "world_y": round(float(p.world_y if p.world_y is not None else p.y), 4),
             "fed_days_remaining": p.fed_days_remaining,
             "move_cooldown": p.move_cooldown,
             "last_prey": p.last_prey,
@@ -668,6 +674,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
                     "sex": m.sex.name,
                     "x": m.x,
                     "y": m.y,
+                    "world_x": round(float(m.world_x if m.world_x is not None else m.x), 4),
+                    "world_y": round(float(m.world_y if m.world_y is not None else m.y), 4),
                     "move_cooldown": m.move_cooldown,
                 }
                 for m in p.members
@@ -703,6 +711,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
         "player": {
             "x": game.player.x,
             "y": game.player.y,
+            "world_x": round(float(game.player.world_x), 4),
+            "world_y": round(float(game.player.world_y), 4),
             "discovered_cells": [
                 [x, y]
                 for x, y in sorted(
@@ -1025,6 +1035,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     player_data = data["player"]
     game.player.x = int(player_data["x"])
     game.player.y = int(player_data["y"])
+    game.player.world_x = float(player_data.get("world_x", game.player.x))
+    game.player.world_y = float(player_data.get("world_y", game.player.y))
     saved_discovery = player_data.get("discovered_cells")
     game.discovered_cells = {
         (int(pos[0]), int(pos[1]))
@@ -1605,6 +1617,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                     if a.get("crop_arrived_day") is not None else None
                 ),
                 age_days=float(a.get("age_days", 224.0)),
+                world_x=float(a.get("world_x", a["x"])),
+                world_y=float(a.get("world_y", a["y"])),
             )
         )
     game.wildlife.next_id = int(wild.get("next_id", 1))
@@ -1662,6 +1676,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                     x=int(m["x"]),
                     y=int(m["y"]),
                     move_cooldown=int(m.get("move_cooldown", 0)),
+                    world_x=float(m.get("world_x", m["x"])),
+                    world_y=float(m.get("world_y", m["y"])),
                 )
             )
         if not members:
@@ -1704,6 +1720,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                 last_prey=str(p.get("last_prey", "") or ""),
                 last_meal_day=float(p.get("last_meal_day", -1)),
                 activity=str(p.get("activity", "Roaming") or "Roaming"),
+                world_x=float(p.get("world_x", p["x"])),
+                world_y=float(p.get("world_y", p["y"])),
             )
         )
     game.wildlife.next_wolf_pack_id = int(
@@ -1735,6 +1753,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             y=int(f["y"]),
             kind=_load_fish_kind(f.get("kind")),
             move_cooldown=int(f.get("move_cooldown", 0)),
+            world_x=float(f.get("world_x", f["x"])),
+            world_y=float(f.get("world_y", f["y"])),
         )
         for f in fish_data.get("fish", [])
     ]

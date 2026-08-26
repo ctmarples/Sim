@@ -271,6 +271,8 @@ class Animal:
     # Crop raid state. The animal must remain on the crop for a full day.
     crop_target: tuple[int, int] | None = None
     crop_arrived_day: float | None = None
+    world_x: float | None = None
+    world_y: float | None = None
     # Runtime-only path cache for migration / blocked steps (not saved).
     _path_cache: list[tuple[int, int]] | None = field(
         default=None, repr=False, compare=False
@@ -278,6 +280,10 @@ class Animal:
     _path_goal: tuple[int, int] | None = field(
         default=None, repr=False, compare=False
     )
+
+    def __post_init__(self) -> None:
+        self.world_x = float(self.x) if self.world_x is None else float(self.world_x)
+        self.world_y = float(self.y) if self.world_y is None else float(self.world_y)
 
 
 @dataclass
@@ -287,6 +293,12 @@ class ColonyMember:
     x: int
     y: int
     move_cooldown: int = 0
+    world_x: float | None = None
+    world_y: float | None = None
+
+    def __post_init__(self) -> None:
+        self.world_x = float(self.x) if self.world_x is None else float(self.world_x)
+        self.world_y = float(self.y) if self.world_y is None else float(self.world_y)
 
 
 @dataclass
@@ -322,6 +334,12 @@ class WolfMember:
     x: int
     y: int
     move_cooldown: int = 0
+    world_x: float | None = None
+    world_y: float | None = None
+
+    def __post_init__(self) -> None:
+        self.world_x = float(self.x) if self.world_x is None else float(self.world_x)
+        self.world_y = float(self.y) if self.world_y is None else float(self.world_y)
 
 
 @dataclass
@@ -341,6 +359,12 @@ class WolfPack:
     last_meal_day: float = -1.0
     # Live activity label refreshed each tick (Fleeing / Hunting / …).
     activity: str = "Roaming"
+    world_x: float | None = None
+    world_y: float | None = None
+
+    def __post_init__(self) -> None:
+        self.world_x = float(self.x) if self.world_x is None else float(self.world_x)
+        self.world_y = float(self.y) if self.world_y is None else float(self.world_y)
 
     def size(self) -> int:
         return len(self.members)
@@ -1732,9 +1756,19 @@ class WildlifeManager:
             self._clear_animal_path(animal)
             return False
         occupied.discard((animal.x, animal.y))
-        note_cell_step(animal, nx, ny)
+        # Logical occupancy remains cell-based, but animals need not stand on
+        # the cell centre. Keep a margin so their derived cell stays stable.
+        target = self._subcell_target(nx, ny)
+        note_cell_step(animal, nx, ny, world_target=target)
         occupied.add((nx, ny))
         return True
+
+    def _subcell_target(self, x: int, y: int) -> tuple[float, float]:
+        """A free position inside a logical habitat/resource cell."""
+        return (
+            float(x) + self.rng.uniform(-0.36, 0.36),
+            float(y) + self.rng.uniform(-0.36, 0.36),
+        )
 
     @staticmethod
     def _arm_move(animal: Animal, move_interval: int) -> None:
@@ -2019,7 +2053,10 @@ class WildlifeManager:
             # Prefer axes toward the goal (same idea as world.find_path).
             local: list[tuple[int, int]] = []
             rest: list[tuple[int, int]] = []
-            for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+            for dx, dy in (
+                (0, -1), (0, 1), (-1, 0), (1, 0),
+                (-1, -1), (1, -1), (-1, 1), (1, 1),
+            ):
                 if abs(tx - cx) >= abs(ty - cy):
                     (local if dx != 0 else rest).append((dx, dy))
                 else:
@@ -3073,7 +3110,9 @@ class WildlifeManager:
                         )
                         step_pause = pause
                     if world.can_step(member.x, member.y, nx, ny):
-                        note_cell_step(member, nx, ny)
+                        note_cell_step(
+                            member, nx, ny, world_target=self._subcell_target(nx, ny)
+                        )
                         occupied.add((nx, ny))
                 else:
                     step_pause = pause
@@ -3370,14 +3409,14 @@ class WildlifeManager:
         if not world.can_step(ox, oy, nx, ny):
             return
         dx, dy = nx - ox, ny - oy
-        note_cell_step(pack, nx, ny)
+        note_cell_step(pack, nx, ny, world_target=self._subcell_target(nx, ny))
         for member in pack.members:
             mx, my = member.x + dx, member.y + dy
             if world.can_step(member.x, member.y, mx, my):
-                note_cell_step(member, mx, my)
+                note_cell_step(member, mx, my, world_target=self._subcell_target(mx, my))
             else:
                 px, py = self._place_wolf_near(world, pack, pack.x, pack.y)
-                note_cell_step(member, px, py)
+                note_cell_step(member, px, py, world_target=self._subcell_target(px, py))
 
     def _wolf_member_step_toward(
         self,
@@ -3420,7 +3459,7 @@ class WildlifeManager:
         )
         if not world.can_step(member.x, member.y, nx, ny):
             return False
-        note_cell_step(member, nx, ny)
+        note_cell_step(member, nx, ny, world_target=self._subcell_target(nx, ny))
         return True
 
     def _wolf_step_toward(
@@ -3486,7 +3525,12 @@ class WildlifeManager:
         self._wolf_member_step_toward(
             world, hunter, px, py, biodiversity=biodiversity, hunting=True
         )
-        note_cell_step(pack, hunter.x, hunter.y)
+        note_cell_step(
+            pack,
+            hunter.x,
+            hunter.y,
+            world_target=self._subcell_target(hunter.x, hunter.y),
+        )
         for member in pack.members:
             if member is hunter:
                 continue
@@ -4073,7 +4117,7 @@ class WildlifeManager:
         del world
         if nx != bird.x:
             bird.facing_right = nx > bird.x
-        note_cell_step(bird, nx, ny)
+        note_cell_step(bird, nx, ny, world_target=self._subcell_target(nx, ny))
 
     def _bird_pick_heading(self) -> tuple[int, int, int]:
         """Return (dx, dy, leg_length) for a long straight soar."""
@@ -4233,6 +4277,12 @@ class Fish:
     y: int
     kind: FishKind = FishKind.ROACH
     move_cooldown: int = 0
+    world_x: float | None = None
+    world_y: float | None = None
+
+    def __post_init__(self) -> None:
+        self.world_x = float(self.x) if self.world_x is None else float(self.world_x)
+        self.world_y = float(self.y) if self.world_y is None else float(self.world_y)
 
 
 class FishManager:
@@ -4249,6 +4299,12 @@ class FishManager:
         self.next_id = 1
         self.growth_timer = FISH_GROWTH_INTERVAL
         self.rng.seed(RANDOM_SEED + 17)
+
+    def _subcell_target(self, x: int, y: int) -> tuple[float, float]:
+        return (
+            float(x) + self.rng.uniform(-0.36, 0.36),
+            float(y) + self.rng.uniform(-0.36, 0.36),
+        )
 
     def total_capacity(self, world: World) -> int:
         rev = getattr(world, "terrain_revision", 0)
@@ -4359,10 +4415,10 @@ class FishManager:
                     nx, ny = self.rng.choice(closer or neighbours)
                 else:
                     nx, ny = self.rng.choice(neighbours)
-                note_cell_step(item, nx, ny)
+                note_cell_step(item, nx, ny, world_target=self._subcell_target(nx, ny))
             elif (item.x, item.y) not in water:
                 nx, ny = self.rng.choice(list(water))
-                note_cell_step(item, nx, ny)
+                note_cell_step(item, nx, ny, world_target=self._subcell_target(nx, ny))
             item.move_cooldown = fish_move_interval()
             arm_cell_step_visual(item, fish_move_interval())
 

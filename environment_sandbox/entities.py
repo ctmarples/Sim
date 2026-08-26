@@ -4223,18 +4223,29 @@ class Player:
     food_hunger_mult: float = 1.0
     ration_mode: RationMode = RationMode.NORMAL
     auto_eat: bool = False
+    # Continuous world position; x/y remain the logical resource-grid cell.
+    world_x: float | None = None
+    world_y: float | None = None
 
     def __post_init__(self) -> None:
+        if self.world_x is None:
+            self.world_x = float(self.x)
+        if self.world_y is None:
+            self.world_y = float(self.y)
         snap_entity_visual(self)
 
     def move_to(self, x: int, y: int) -> None:
         self.x = x
         self.y = y
+        self.world_x = float(x)
+        self.world_y = float(y)
         snap_entity_visual(self)
 
     def reset(self, x: int, y: int) -> None:
         self.x = x
         self.y = y
+        self.world_x = float(x)
+        self.world_y = float(y)
         self.move_cooldown = 0
         self.work_cooldown = 0
         self.satiation = 0.75
@@ -4269,14 +4280,25 @@ class Player:
         self.food_hunger_mult = 1.0
 
 
-def note_cell_step(entity: object, nx: int, ny: int) -> None:
+def note_cell_step(
+    entity: object,
+    nx: int,
+    ny: int,
+    *,
+    world_target: tuple[float, float] | None = None,
+) -> None:
     """Record a logical cell change so drawing can interpolate from the prior cell."""
     x = int(getattr(entity, "x"))
     y = int(getattr(entity, "y"))
     if (x, y) == (nx, ny):
         return
-    setattr(entity, "_vis_from_x", float(x))
-    setattr(entity, "_vis_from_y", float(y))
+    world_x = float(getattr(entity, "world_x", x))
+    world_y = float(getattr(entity, "world_y", y))
+    setattr(entity, "_vis_from_x", world_x)
+    setattr(entity, "_vis_from_y", world_y)
+    target_x, target_y = world_target or (float(nx), float(ny))
+    setattr(entity, "_vis_to_x", float(target_x))
+    setattr(entity, "_vis_to_y", float(target_y))
     if nx != x:
         setattr(entity, "_vis_facing_right", nx > x)
     setattr(
@@ -4298,28 +4320,57 @@ def arm_cell_step_visual(entity: object, duration: int) -> None:
 
 def snap_entity_visual(entity: object) -> None:
     """Snap draw position to the logical cell (spawn, load, teleport)."""
-    setattr(entity, "_vis_from_x", float(getattr(entity, "x")))
-    setattr(entity, "_vis_from_y", float(getattr(entity, "y")))
+    x = float(getattr(entity, "world_x", getattr(entity, "x")))
+    y = float(getattr(entity, "world_y", getattr(entity, "y")))
+    setattr(entity, "world_x", x)
+    setattr(entity, "world_y", y)
+    setattr(entity, "_vis_from_x", x)
+    setattr(entity, "_vis_from_y", y)
+    setattr(entity, "_vis_to_x", x)
+    setattr(entity, "_vis_to_y", y)
     setattr(entity, "_vis_duration", 0)
     setattr(entity, "_vis_pending", False)
 
 
 def entity_draw_xy(entity: object) -> tuple[float, float]:
-    """Fractional cell indices for drawing (lerp between cell centres)."""
+    """Advance and return the actor's continuous world coordinates."""
     x = float(getattr(entity, "x"))
     y = float(getattr(entity, "y"))
     duration = int(getattr(entity, "_vis_duration", 0) or 0)
     cooldown = int(getattr(entity, "move_cooldown", 0) or 0)
     fx = getattr(entity, "_vis_from_x", None)
     fy = getattr(entity, "_vis_from_y", None)
-    if fx is None or fy is None or duration <= 0 or cooldown <= 0:
-        return x, y
+    tx = float(getattr(entity, "_vis_to_x", x))
+    ty = float(getattr(entity, "_vis_to_y", y))
+    if cooldown <= 0:
+        if duration > 0:
+            setattr(entity, "world_x", tx)
+            setattr(entity, "world_y", ty)
+            setattr(entity, "_vis_duration", 0)
+            return tx, ty
+        return (
+            float(getattr(entity, "world_x", x)),
+            float(getattr(entity, "world_y", y)),
+        )
+    if fx is None or fy is None or duration <= 0:
+        # A freshly loaded actor may have a saved fractional position but no
+        # runtime interpolation bookkeeping yet. Resume toward its logical cell.
+        fx = float(getattr(entity, "world_x", x))
+        fy = float(getattr(entity, "world_y", y))
+        duration = cooldown
+        setattr(entity, "_vis_from_x", fx)
+        setattr(entity, "_vis_from_y", fy)
+        setattr(entity, "_vis_duration", duration)
     progress = 1.0 - (cooldown / duration)
     if progress < 0.0:
         progress = 0.0
     elif progress > 1.0:
         progress = 1.0
-    return float(fx) + (x - float(fx)) * progress, float(fy) + (y - float(fy)) * progress
+    world_x = float(fx) + (tx - float(fx)) * progress
+    world_y = float(fy) + (ty - float(fy)) * progress
+    setattr(entity, "world_x", world_x)
+    setattr(entity, "world_y", world_y)
+    return world_x, world_y
 
 
 def ensure_storage_item_fields() -> None:

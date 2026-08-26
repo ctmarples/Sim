@@ -1,6 +1,7 @@
 import unittest
 
 from balance_config import BalanceState, set_active_balance
+from entities import arm_cell_step_visual, entity_draw_xy, note_cell_step
 from wildlife import Animal, AnimalKind, AnimalSex, ForestHabitat, WildlifeManager
 from world import FeatureType, TerrainType, World
 
@@ -28,6 +29,37 @@ class WildlifeEcologyTests(unittest.TestCase):
         self.wildlife._graze(self.world)
         self.assertEqual(self.world.cells[3][4].feature, FeatureType.NONE)
         self.assertIsNone(self.world.cells[3][4].tree_species)
+
+    def test_wildlife_tracks_fractional_world_position_between_cells(self):
+        deer = Animal(1, 2, 3, AnimalKind.DEER)
+        note_cell_step(deer, 3, 3)
+        deer.move_cooldown = 10
+        arm_cell_step_visual(deer, 10)
+        deer.move_cooldown = 5
+
+        self.assertEqual(entity_draw_xy(deer), (2.5, 3.0))
+        self.assertEqual((deer.x, deer.y), (3, 3))
+        self.assertEqual((deer.world_x, deer.world_y), (2.5, 3.0))
+
+    def test_wildlife_pathfinder_uses_direct_diagonal_route(self):
+        path = self.wildlife._bfs_path(
+            self.world, 1, 1, 5, 5, occupied=set()
+        )
+
+        self.assertEqual(path, [(2, 2), (3, 3), (4, 4), (5, 5)])
+
+    def test_wildlife_step_can_end_away_from_cell_centre(self):
+        deer = Animal(1, 2, 3, AnimalKind.DEER)
+        occupied = {(2, 3)}
+
+        self.assertTrue(self.wildlife._place_animal(self.world, deer, 3, 3, occupied))
+        deer.move_cooldown = 10
+        arm_cell_step_visual(deer, 10)
+        deer.move_cooldown = 0
+        wx, wy = entity_draw_xy(deer)
+
+        self.assertEqual((deer.x, deer.y), (3, 3))
+        self.assertTrue(abs(wx - 3.0) > 1e-6 or abs(wy - 3.0) > 1e-6)
 
     def test_boar_prefers_and_removes_mushroom(self):
         self.balance.set("WILDLIFE_BOAR_GRAZE_CHANCE", 1.0)

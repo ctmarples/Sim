@@ -1274,30 +1274,72 @@ class Game:
 
     def _update_player_move_input(self, dt: float) -> None:
         """Continuous arrow-key player movement (WASD is camera pan only)."""
-        del dt
         if getattr(self, "control_mode", "dog") != "dog" or self.headless or self._dialogs_block_world_input():
             return
         mods = pygame.key.get_mods()
         if mods & (pygame.KMOD_META | pygame.KMOD_CTRL | pygame.KMOD_ALT):
             return
         keys = pygame.key.get_pressed()
-        dx = int(keys[pygame.K_RIGHT]) - int(keys[pygame.K_LEFT])
-        dy = int(keys[pygame.K_DOWN]) - int(keys[pygame.K_UP])
+        dx = float(keys[pygame.K_RIGHT]) - float(keys[pygame.K_LEFT])
+        dy = float(keys[pygame.K_DOWN]) - float(keys[pygame.K_UP])
         if not dx and not dy:
             return
         # While WASD is panning, skip edge-follow so pan and walk can coexist.
         panning = bool(
             keys[pygame.K_w] or keys[pygame.K_a] or keys[pygame.K_s] or keys[pygame.K_d]
         )
-        if dx and dy:
-            if self.world.can_step(self.player.x, self.player.y, self.player.x + dx, self.player.y + dy):
-                self._try_move(dx, dy, follow_camera=not panning)
-            elif self.world.can_step(self.player.x, self.player.y, self.player.x + dx, self.player.y):
-                self._try_move(dx, 0, follow_camera=not panning)
-            elif self.world.can_step(self.player.x, self.player.y, self.player.x, self.player.y + dy):
-                self._try_move(0, dy, follow_camera=not panning)
-        else:
-            self._try_move(dx, dy, follow_camera=not panning)
+        self._move_player_continuous(dx, dy, dt, follow_camera=not panning)
+
+    def _move_player_continuous(
+        self, dx: float, dy: float, dt: float, *, follow_camera: bool
+    ) -> None:
+        """Move freely in world space while using grid cells for collision/resources."""
+        if self.sim_speed <= 0 or dt <= 0.0:
+            return
+        length = math.hypot(dx, dy)
+        if length <= 1e-6:
+            return
+        distance = (
+            min(0.1, float(dt))
+            * max(1, self.sim_speed)
+            / max(0.05, self._walk_seconds())
+        )
+        ux, uy = dx / length, dy / length
+        steps = max(1, int(math.ceil(distance / 0.2)))
+        step_distance = distance / steps
+        moved = 0.0
+        wx = float(self.player.world_x)
+        wy = float(self.player.world_y)
+        old_cell = (self.player.x, self.player.y)
+        for _ in range(steps):
+            nx = max(-0.49, min(self.world.cols - 0.51, wx + ux * step_distance))
+            ny = max(-0.49, min(self.world.rows - 0.51, wy + uy * step_distance))
+            cell = (int(math.floor(nx + 0.5)), int(math.floor(ny + 0.5)))
+            current = (int(math.floor(wx + 0.5)), int(math.floor(wy + 0.5)))
+            if cell != current and not self.world.can_step(*current, *cell):
+                break
+            wx, wy = nx, ny
+            moved += step_distance
+        if moved <= 0.0:
+            return
+        self.player.world_x, self.player.world_y = wx, wy
+        self.player.x = int(math.floor(wx + 0.5))
+        self.player.y = int(math.floor(wy + 0.5))
+        self.player.move_cooldown = 0
+        self.player._vis_duration = 0
+        self.player._vis_from_x, self.player._vis_from_y = wx, wy
+        self.player._vis_to_x, self.player._vis_to_y = wx, wy
+        if (self.player.x, self.player.y) != old_cell:
+            self._reveal_around_player()
+        self.player.energy = max(
+            0.0,
+            self.player.energy
+            - ENERGY_MOVE_DRAIN
+            * moved
+            * self._temp_energy_mult(self.player.inventory),
+        )
+        if follow_camera:
+            self._ensure_player_in_view()
 
     def _update_camera_input(self, dt: float) -> None:
         """Continuous WASD camera panning (arrows move the player separately)."""
@@ -5630,6 +5672,7 @@ class Game:
         if dog is None:
             return
         self.player.x, self.player.y = dog.x, dog.y
+        self.player.world_x, self.player.world_y = entity_draw_xy(dog)
         self.player.inventory = dog.inventory
         self.player.satiation = dog.satiation
         self.player.energy = dog.energy
@@ -7134,8 +7177,8 @@ class Game:
     def _ensure_player_in_view(self, *, margin: float = 2.5) -> None:
         """Pan the camera when the player reaches the edge of the viewport."""
         vis_w, vis_h = self.camera.visible_cells()
-        px = self.player.x + 0.5
-        py = self.player.y + 0.5
+        px = float(self.player.world_x) + 0.5
+        py = float(self.player.world_y) + 0.5
         m = max(1.0, float(margin))
         if px < self.camera.x + m:
             self.camera.x = px - m
