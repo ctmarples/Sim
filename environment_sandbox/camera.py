@@ -8,6 +8,7 @@ from settings import (
     CAMERA_PAN_CELLS,
     CAMERA_PAN_SPEED,
     CELL_SIZE,
+    DEFAULT_CAMERA_ZOOM,
     MAP_OFFSET_Y,
     ZOOM_MAX,
     ZOOM_MIN,
@@ -23,8 +24,8 @@ class Camera:
     def __init__(self) -> None:
         self.x: float = 0.0
         self.y: float = 0.0
-        self.zoom: float = 1.0
-        self.zoom_target: float = 1.0
+        self.zoom: float = DEFAULT_CAMERA_ZOOM
+        self.zoom_target: float = DEFAULT_CAMERA_ZOOM
         self._zoom_focus: tuple[float, float] | None = None
         self._zoom_screen: tuple[int, int] | None = None
         # Extra north scroll (cells) so height-lifted peaks stay in view.

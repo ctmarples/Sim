@@ -150,6 +150,9 @@ ICON_BUILDING_STIPPLE: bool = True
 ZOOM_MIN: float = 0.35
 ZOOM_MAX: float = 2.5
 ZOOM_STEP: float = 0.12
+# Start with every logical map cell displayed at twice its authored width/height.
+# This preserves the resource grid while avoiding a 4x larger terrain cache.
+DEFAULT_CAMERA_ZOOM: float = 2.0
 # Legacy discrete pan step (kept for compatibility); continuous WASD uses speed.
 CAMERA_PAN_CELLS: float = 0.55
 CAMERA_PAN_SPEED: float = 14.0  # world cells / second at zoom 1
