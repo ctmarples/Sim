@@ -1495,6 +1495,7 @@ def blit_icon(
     omit_classes: Iterable[str] | None = None,
     prefer_png: bool | None = None,
     stipple: bool = False,
+    feet_anchor: bool = False,
 ) -> pygame.Rect:
     """Blit icon so its anchor lands on (cx, cy).
 
@@ -1514,12 +1515,20 @@ def blit_icon(
         )
     except (FileNotFoundError, OSError):
         return pygame.Rect(cx, cy, 0, 0)
-    dest = pygame.Rect(
-        cx - icon.anchor_x,
-        cy - icon.anchor_y,
-        icon.surface.get_width(),
-        icon.surface.get_height(),
-    )
+    if feet_anchor:
+        dest = pygame.Rect(
+            cx - icon.surface.get_width() // 2,
+            cy - icon.surface.get_height(),
+            icon.surface.get_width(),
+            icon.surface.get_height(),
+        )
+    else:
+        dest = pygame.Rect(
+            cx - icon.anchor_x,
+            cy - icon.anchor_y,
+            icon.surface.get_width(),
+            icon.surface.get_height(),
+        )
     surface.blit(icon.surface, dest.topleft)
     return dest
 

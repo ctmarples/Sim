@@ -18752,14 +18752,13 @@ class Game:
         self._draw_task_areas()
         self._draw_animals()
         self._draw_fish()
-        self._draw_villagers()
+        self._draw_people_depth_sorted()
         self._draw_arrow_shots()
         self._draw_rain_effect()
         self._draw_overlay_hud()
         self._draw_selection_highlights()
         self._draw_object_footprints()
         self._draw_map_shroud()
-        self._draw_player()
         self._draw_player_status_hud()
         self._draw_minimap()
         self._draw_autotile_diag_overlay()
@@ -20232,34 +20231,19 @@ class Game:
                         )
         # Tall / overhanging icons (trees, buildings) must paint after ground
         # features and in north→south order, or neighbour cells square-cut them.
-        overhang = BUILDING_FEATURES | {
-            FeatureType.TREE,
-            FeatureType.SAPLING,
-        }
-        ground_cells: list[tuple[int, int]] = []
-        tall_cells: list[tuple[int, int]] = []
-        for y in range(y0, y1 + 1):
-            for x in range(x0, x1 + 1):
-                if not self.world.in_bounds(x, y):
-                    continue
+        # Include a one-cell halo because large footprints may overhang the
+        # viewport. Every object is depth-sorted later by its ground Y anchor.
+        primary_cells: list[tuple[int, int]] = []
+        for y in range(max(0, y0 - 1), min(self.world.rows, y1 + 2)):
+            for x in range(max(0, x0 - 1), min(self.world.cols, x1 + 2)):
                 cell = self.world.cells[y][x]
-                if cell.feature in overhang and cell.feature != FeatureType.STRUCTURE_PAD:
-                    tall_cells.append((x, y))
-                elif (
+                if (
                     cell.feature != FeatureType.NONE
                     or cell.meat_deposit > 0
                     or cell.fish_deposit > 0
+                    or cell.extra_objects
                 ):
-                    ground_cells.append((x, y))
-        # Include one-cell halo so off-screen tree canopies still overhang in.
-        for y in range(max(0, y0 - 1), min(self.world.rows, y1 + 2)):
-            for x in range(max(0, x0 - 1), min(self.world.cols, x1 + 2)):
-                if y0 <= y <= y1 and x0 <= x <= x1:
-                    continue
-                cell = self.world.cells[y][x]
-                if cell.feature in overhang and cell.feature != FeatureType.STRUCTURE_PAD:
-                    tall_cells.append((x, y))
-        tall_cells.sort(key=lambda p: (p[1], p[0]))
+                    primary_cells.append((x, y))
 
         def _draw_cell_feature(x: int, y: int) -> None:
             cell = self.world.cells[y][x]
@@ -20351,10 +20335,9 @@ class Game:
                     )
                     self._draw_construction_progress(site, footprint)
 
-        for x, y in ground_cells:
+        def _draw_loose_deposits(x: int, y: int) -> None:
             cell = self.world.cells[y][x]
             cx, cy = self._cell_center(x, y)
-            _draw_cell_feature(x, y)
             if cell.meat_deposit > 0:
                 from icons import ICON_MEAT_MARKER, blit_icon
 
@@ -20377,38 +20360,92 @@ class Game:
                     max(10, vc // 2),
                     recolour={"body": COLOUR_FISH},
                 )
-        for x, y in tall_cells:
-            _draw_cell_feature(x, y)
 
-        # Secondary natural objects share their ecology cell with the primary
-        # feature. Their visible footprints may overlap and overhang cell edges;
-        # only their distinct 1/3-cell anchors affect collision.
-        extra_draw: list[tuple[float, int, int, object]] = []
-        for y in range(max(0, y0 - 1), min(self.world.rows, y1 + 2)):
-            for x in range(max(0, x0 - 1), min(self.world.cols, x1 + 2)):
-                for obj in self.world.cells[y][x].extra_objects:
-                    extra_draw.append((y + obj.anchor_slot // 3 / 3.0, x, y, obj))
-        extra_draw.sort(key=lambda item: (item[0], item[1]))
-        if extra_draw:
+        def _draw_extra_feature(x: int, y: int, obj: object) -> None:
             from icons import ensure_icon_variant, icon_base_for_feature
             from subtile_layout import feature_subtile_layout, footprint_scale
 
-            for _depth, x, y, obj in extra_draw:
-                base = icon_base_for_feature(
-                    obj.feature,
-                    tree_species=obj.tree_species,
-                    crop_kind=obj.crop_kind,
-                    deposit=obj.deposit,
-                    growth_ticks=obj.growth_ticks,
+            base = icon_base_for_feature(
+                obj.feature,
+                tree_species=obj.tree_species,
+                crop_kind=obj.crop_kind,
+                deposit=obj.deposit,
+                growth_ticks=obj.growth_ticks,
+            )
+            if base is not None:
+                obj.icon_variant = ensure_icon_variant(
+                    base, obj.icon_variant, self._drop_rng
                 )
-                if base is not None:
-                    obj.icon_variant = ensure_icon_variant(
-                        base, obj.icon_variant, self._drop_rng
-                    )
-                cx, cy = self._cell_center(x, y)
-                draw_size = vc
-                if not self.use_original_resource_grid:
-                    slots, u, v = feature_subtile_layout(
+            cx, cy = self._cell_center(x, y)
+            draw_size = vc
+            if not self.use_original_resource_grid:
+                slots, u, v = feature_subtile_layout(
+                    obj.feature.name,
+                    x,
+                    y,
+                    tree_age_years=obj.tree_age_years,
+                    variant=int(obj.icon_variant or 1),
+                    deposit=obj.deposit,
+                    anchor_slot=obj.anchor_slot,
+                )
+                cx, cy = self._cell_center(x + u - 0.5, y + v - 0.5)
+                draw_size = max(8, int(round(vc * footprint_scale(slots))))
+            draw_feature(
+                self.screen,
+                obj.feature,
+                cx,
+                cy,
+                draw_size,
+                vibrancy=vibrancy,
+                crop_kind=obj.crop_kind,
+                tree_species=obj.tree_species,
+                icon_variant=obj.icon_variant,
+                deposit=obj.deposit,
+                growth_ticks=obj.growth_ticks,
+            )
+
+        from subtile_layout import feature_subtile_layout
+
+        # (ground-y, ground-x, kind, cell-x, cell-y, object). Primary and
+        # secondary objects share one queue, so overlap follows Y position.
+        draw_queue: list[tuple[float, float, int, int, int, object | None]] = []
+        for x, y in primary_cells:
+            cell = self.world.cells[y][x]
+            depth_x, depth_y = x + 0.5, y + 0.5
+            if (
+                cell.feature in BUILDING_FEATURES
+                and cell.feature != FeatureType.STRUCTURE_PAD
+            ):
+                # Building art is anchored in its bottom-middle ecology cell.
+                # Sort at the inner face of the front wall: rear/top halo feet
+                # remain behind the roof, while front/bottom halo feet pass in
+                # front of it.
+                depth_y = y + 1.0 / 6.0
+            elif (
+                not self.use_original_resource_grid
+                and cell.feature != FeatureType.NONE
+                and cell.feature not in BUILDING_FEATURES
+                and cell.feature != FeatureType.CROP_HERB
+            ):
+                _slots, u, v = feature_subtile_layout(
+                    cell.feature.name,
+                    x,
+                    y,
+                    tree_age_years=int(getattr(cell, "tree_age_years", 0)),
+                    variant=int(cell.icon_variant or 1),
+                    deposit=int(getattr(cell, "deposit", 0)),
+                    anchor_slot=self.world._primary_anchor_slot(x, y, cell),
+                )
+                depth_x, depth_y = x + u, y + v
+            if cell.feature != FeatureType.NONE:
+                draw_queue.append((depth_y, depth_x, 0, x, y, None))
+            if cell.meat_deposit > 0 or cell.fish_deposit > 0:
+                draw_queue.append((y + 0.5, x + 0.5, 1, x, y, None))
+            for obj in cell.extra_objects:
+                if self.use_original_resource_grid:
+                    u, v = 0.5, 0.5
+                else:
+                    _slots, u, v = feature_subtile_layout(
                         obj.feature.name,
                         x,
                         y,
@@ -20417,21 +20454,20 @@ class Game:
                         deposit=obj.deposit,
                         anchor_slot=obj.anchor_slot,
                     )
-                    cx, cy = self._cell_center(x + u - 0.5, y + v - 0.5)
-                    draw_size = max(8, int(round(vc * footprint_scale(slots))))
-                draw_feature(
-                    self.screen,
-                    obj.feature,
-                    cx,
-                    cy,
-                    draw_size,
-                    vibrancy=vibrancy,
-                    crop_kind=obj.crop_kind,
-                    tree_species=obj.tree_species,
-                    icon_variant=obj.icon_variant,
-                    deposit=obj.deposit,
-                    growth_ticks=obj.growth_ticks,
-                )
+                draw_queue.append((y + v, x + u, 0, x, y, obj))
+
+        draw_queue.sort(key=lambda item: (item[0], item[1], item[2]))
+        depth_commands: list[tuple[float, float, object]] = []
+        for _depth_y, _depth_x, kind, x, y, obj in draw_queue:
+            if kind == 1:
+                command = lambda x=x, y=y: _draw_loose_deposits(x, y)
+            elif obj is None:
+                command = lambda x=x, y=y: _draw_cell_feature(x, y)
+            else:
+                command = lambda x=x, y=y, obj=obj: _draw_extra_feature(x, y, obj)
+            command()
+            depth_commands.append((_depth_y, _depth_x, command))
+        self._world_depth_draw_commands = depth_commands
 
         self.screen.set_clip(None)
         self._store_opaque_world_layer(map_clip, layer_key)
@@ -21152,6 +21188,16 @@ class Game:
             blit_icon(self.screen, fish_icon_for(item.kind), cx, cy, size)
 
     def _draw_villagers(self) -> None:
+        villagers_by_depth: list[tuple[float, float, object]] = []
+        for villager in self.villagers:
+            if villager is getattr(self, "_god_dog_villager", None):
+                continue
+            vx, vy = entity_draw_xy(villager)
+            villagers_by_depth.append((vy, vx, villager))
+        for vy, vx, villager in sorted(villagers_by_depth, key=lambda item: item[:2]):
+            self._draw_villager_at(villager, vx, vy)
+
+    def _draw_villager_at(self, villager: object, vx: float, vy: float) -> None:
         from icons import (
             ICON_VILLAGER_DOG_LEFT_1,
             ICON_VILLAGER_DOG_LEFT_2,
@@ -21161,40 +21207,78 @@ class Game:
         )
 
         size = self.camera.view_cell_px()
+        cx, cy = self._cell_center(vx, vy)
+        job_colour = self._villager_job_colour(villager)
+        facing_right = bool(getattr(villager, "_vis_facing_right", True))
+        moving = (
+            int(getattr(villager, "_vis_duration", 0) or 0) > 0
+            and int(getattr(villager, "move_cooldown", 0) or 0) > 0
+        )
+        frame = int(getattr(villager, "_vis_walk_frame", 1) or 1) if moving else 1
+        if facing_right:
+            icon = (
+                ICON_VILLAGER_DOG_RIGHT_2
+                if frame == 2
+                else ICON_VILLAGER_DOG_RIGHT_1
+            )
+        else:
+            icon = (
+                ICON_VILLAGER_DOG_LEFT_2
+                if frame == 2
+                else ICON_VILLAGER_DOG_LEFT_1
+            )
+        blit_icon(
+            self.screen,
+            icon,
+            cx,
+            cy,
+            size,
+            recolour={"shirt": job_colour, "hat": job_colour},
+            feet_anchor=True,
+        )
+
+    def _draw_people_depth_sorted(self) -> None:
+        """Interleave people with cached world objects using feet/ground Y."""
+        people: list[tuple[float, float, str, object]] = []
         for villager in self.villagers:
             if villager is getattr(self, "_god_dog_villager", None):
                 continue
             vx, vy = entity_draw_xy(villager)
-            cx, cy = self._cell_center(vx, vy)
-            job_colour = self._villager_job_colour(villager)
-            facing_right = bool(getattr(villager, "_vis_facing_right", True))
-            moving = (
-                int(getattr(villager, "_vis_duration", 0) or 0) > 0
-                and int(getattr(villager, "move_cooldown", 0) or 0) > 0
-            )
-            frame = int(getattr(villager, "_vis_walk_frame", 1) or 1) if moving else 1
-            if facing_right:
-                icon = (
-                    ICON_VILLAGER_DOG_RIGHT_2
-                    if frame == 2
-                    else ICON_VILLAGER_DOG_RIGHT_1
-                )
-            else:
-                icon = (
-                    ICON_VILLAGER_DOG_LEFT_2
-                    if frame == 2
-                    else ICON_VILLAGER_DOG_LEFT_1
-                )
-            blit_icon(
-                self.screen,
-                icon,
-                cx,
-                cy,
-                size,
-                recolour={"shirt": job_colour, "hat": job_colour},
-            )
+            people.append((vy, vx, "villager", villager))
+        px, py = entity_draw_xy(self.player)
+        people.append((py, px, "player", self.player))
+        people.sort(key=lambda item: (item[0], item[1], item[2]))
 
-    def _draw_player(self) -> None:
+        commands = sorted(
+            getattr(self, "_world_depth_draw_commands", []),
+            key=lambda item: (item[0], item[1]),
+        )
+        command_i = 0
+        previous_y = float("-inf")
+        old_clip = self.screen.get_clip()
+        self.screen.set_clip(
+            pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())
+        )
+        for depth_y, depth_x, kind, actor in people:
+            # The base layer already contains all objects. Redraw only objects
+            # that must sit in front of the preceding person but behind this one.
+            while command_i < len(commands) and commands[command_i][0] <= depth_y:
+                object_y, _object_x, command = commands[command_i]
+                if object_y > previous_y:
+                    command()
+                command_i += 1
+            if kind == "player":
+                self._draw_player((depth_x, depth_y))
+            else:
+                self._draw_villager_at(actor, depth_x, depth_y)
+            previous_y = depth_y
+        while command_i < len(commands):
+            _object_y, _object_x, command = commands[command_i]
+            command()
+            command_i += 1
+        self.screen.set_clip(old_clip)
+
+    def _draw_player(self, position: tuple[float, float] | None = None) -> None:
         from icons import (
             ICON_PLAYER_DOG_LEFT_1,
             ICON_PLAYER_DOG_LEFT_2,
@@ -21203,7 +21287,7 @@ class Game:
             blit_icon,
         )
 
-        vx, vy = entity_draw_xy(self.player)
+        vx, vy = position if position is not None else entity_draw_xy(self.player)
         cx, cy = self._cell_center(vx, vy)
         facing_right = bool(getattr(self.player, "_vis_facing_right", True))
         moving = (
@@ -21225,6 +21309,7 @@ class Game:
             cy,
             self.camera.view_cell_px(),
             recolour={"body": COLOUR_PLAYER},
+            feet_anchor=True,
         )
 
     def _draw_player_status_hud(self) -> None:
