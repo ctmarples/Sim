@@ -1956,6 +1956,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         game._refresh_hardscape_terrain()
     if hasattr(game, "_sync_field_fences"):
         game._sync_field_fences()
+    if hasattr(game, "_sync_building_collision"):
+        game._sync_building_collision()
 
     if hasattr(game, "_refresh_indicators"):
         game._refresh_indicators()

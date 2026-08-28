@@ -1125,6 +1125,7 @@ class Game:
         self._give_starting_resources()
         self._ensure_core_buildings()
         self._spawn_starting_villagers(int(self._launch_gen["starting_villagers"]))
+        self._sync_building_collision()
         self._reveal_around_player()
         self.env_maps.resize(world.rows, world.cols)
         world.env_maps = self.env_maps
@@ -1343,6 +1344,7 @@ class Game:
         length = math.hypot(dx, dy)
         if length <= 1e-6:
             return
+        self._sync_building_collision()
         distance = (
             min(0.1, float(dt))
             * max(1, self.sim_speed)
@@ -1503,6 +1505,7 @@ class Game:
             day=day,
         )
         if woke:
+            self.world.invalidate_movement_cache()
             self._bump_work_gen()
 
     def _decision_slot_ticks(self) -> int:
@@ -7329,26 +7332,75 @@ class Game:
                 return building
         return None
 
+    def _sync_building_collision(self) -> None:
+        """Publish completed building walls and doorway cells to pathfinding."""
+        footprints = [
+            (b.x, b.y, max(1, b.plot_w), max(1, b.plot_h))
+            for b in self.buildings.values()
+            if b.kind != BuildingKind.FIELD
+        ]
+        stamp = (id(self.world), tuple(sorted(footprints)))
+        changed = stamp != getattr(self, "_building_collision_stamp", None)
+        self._building_collision_stamp = stamp
+        if changed:
+            self.world.set_building_footprints(footprints)
+        home = next((b for b in self.buildings.values() if b.kind == BuildingKind.HOME), None)
+        if home is not None:
+            self.world.home_pos = home.center_cell()
+        hall = next(
+            (b for b in self.buildings.values() if b.kind == BuildingKind.WORKSTATION),
+            None,
+        )
+        if hall is not None:
+            self.world.workstation_pos = hall.center_cell()
+        if changed:
+            # Upgrade actors from older saves (or a just-completed structure)
+            # that left them inside what is now a hard wall.
+            for villager in self.villagers:
+                footprint = self.world._building_at_cell(villager.x, villager.y)
+                if footprint is None:
+                    continue
+                entrance = self.world.building_entrance_cell(footprint)
+                if (villager.x, villager.y) != entrance:
+                    villager.x, villager.y = entrance
+                    villager.world_x, villager.world_y = self.world.building_entrance_position(
+                        footprint
+                    )
+                self._clear_villager_path(villager)
+            footprint = self.world._building_at_cell(self.player.x, self.player.y)
+            if footprint is not None and not self.world.is_position_walkable(
+                float(self.player.world_x), float(self.player.world_y)
+            ):
+                self.player.x, self.player.y = self.world.building_entrance_cell(footprint)
+                self.player.world_x, self.player.world_y = self.world.building_entrance_position(
+                    footprint
+                )
+
+    def _at_building_entrance(self, building: Building, wx: float, wy: float) -> bool:
+        footprint = (building.x, building.y, max(1, building.plot_w), max(1, building.plot_h))
+        door_x, door_y = self.world.building_entrance_position(footprint)
+        return abs(wx - door_x) <= 1.0 / 6.0 and abs(wy - door_y) <= 1.0 / 6.0
+
     def _player_interact_workplace(self, building: Building) -> Building:
         """Return the exact structure under the player, including extensions."""
         return building
 
     def _player_at_craft_site(self, building: Building) -> bool:
-        """True when the player stands on the workplace or a linked extension."""
+        """True when the player stands in a workplace's bottom-middle doorway."""
         from extensions import is_extension_kind, linked_extensions
 
-        px, py = self.player.x, self.player.y
-        if building.contains_plot(px, py):
+        px, py = float(self.player.world_x), float(self.player.world_y)
+        if self._at_building_entrance(building, px, py):
             return True
         # Standing on barn / drying rack / pantry counts for parent crafts.
         if not is_extension_kind(building.kind):
             for ext in linked_extensions(building, self.buildings):
-                if ext.contains_plot(px, py):
+                if self._at_building_entrance(ext, px, py):
                     return True
         else:
             # If somehow crafting against an extension id, accept its tile.
             parent = self._player_interact_workplace(building)
-            if parent is not building and parent.contains_plot(px, py):
+            if parent is not building and self._at_building_entrance(parent, px, py):
                 return True
         return False
 
@@ -7466,12 +7518,22 @@ class Game:
         if cell.feature == FeatureType.WORKSTATION:
             building = self._building_at(x, y)
             if building is not None:
+                if not self._at_building_entrance(
+                    building, float(self.player.world_x), float(self.player.world_y)
+                ):
+                    self._set_status("Use the bottom-middle doorway to enter this building.")
+                    return
                 self._select_building(building, show_player=True, detail_only=True)
             return
 
         if cell.feature == FeatureType.HOME:
             building = self._building_at(x, y)
             if building is not None:
+                if not self._at_building_entrance(
+                    building, float(self.player.world_x), float(self.player.world_y)
+                ):
+                    self._set_status("Use the bottom-middle doorway to enter this building.")
+                    return
                 self._select_building(building, show_player=True, detail_only=True)
             return
 
@@ -7535,6 +7597,13 @@ class Game:
                 return
             building = self._building_at(x, y)
             if building is not None:
+                if not self._at_building_entrance(
+                    building,
+                    float(self.player.world_x),
+                    float(self.player.world_y),
+                ):
+                    self._set_status("Use the bottom-middle doorway to enter this building.")
+                    return
                 building = self._player_interact_workplace(building)
                 self._select_building(building, show_player=True, detail_only=True)
             return
@@ -8118,6 +8187,7 @@ class Game:
                 building.plot_h,
                 FEATURE_FOR_BUILDING[site.kind],
             )
+            self._sync_building_collision()
         del self.construction_sites[site.id]
         self._bump_work_gen()
         for villager in self.villagers:
@@ -18081,6 +18151,7 @@ class Game:
 
     def _step_villager_toward(self, villager: Villager, goal: tuple[int, int]) -> bool:
         """Step along a path toward goal. Returns False if the goal is unreachable."""
+        self._sync_building_collision()
         if villager.move_cooldown > 0:
             return True
         if (villager.x, villager.y) == goal:
@@ -18104,7 +18175,13 @@ class Game:
             return False
         step = cache.pop(0)
         interval = self._villager_move_interval(villager)
-        note_cell_step(villager, step[0], step[1])
+        footprint = self.world._building_at_cell(*step)
+        world_target = (
+            self.world.building_navigation_position(footprint, *step)
+            if footprint is not None
+            else None
+        )
+        note_cell_step(villager, step[0], step[1], world_target=world_target)
         self._record_path_traffic(step[0], step[1])
         villager.move_cooldown = interval
         arm_cell_step_visual(villager, interval)

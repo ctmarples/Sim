@@ -87,6 +87,48 @@ class HabitatTestMapTests(unittest.TestCase):
         world.add_natural_object(5, 5, FeatureType.CROP_HERB, anchor_slot=5)
         self.assertTrue(world.is_position_walkable(5.0, 5.0))
 
+    def test_villager_steps_respect_off_centre_hard_anchors(self):
+        world = World(cols=10, rows=10, seed=11)
+        cell = world.cells[5][5]
+        cell.terrain = TerrainType.GRASS
+        cell.feature = FeatureType.TREE
+        cell.object_anchor_slot = 3  # west-middle subcell
+        # The destination centre is open, but the travel segment crosses trunk.
+        self.assertTrue(world.is_walkable(5, 5))
+        self.assertFalse(world.can_step(4, 5, 5, 5))
+
+    def test_building_walls_halo_and_bottom_door(self):
+        world = World(cols=12, rows=12, seed=13)
+        footprint = (3, 3, 3, 2)
+        for y in range(3, 5):
+            for x in range(3, 6):
+                world.cells[y][x].terrain = TerrainType.GRASS
+                world.cells[y][x].feature = FeatureType.NONE
+        world.set_building_footprints([footprint])
+
+        self.assertFalse(world.is_position_walkable(4.0, 3.0))  # wall/core
+        self.assertTrue(world.is_position_walkable(2.7, 3.0))  # 1/3-cell halo
+        self.assertTrue(world.is_position_walkable(4.0, 4.0 + 1.0 / 3.0))
+        self.assertEqual(world.building_entrance_cell(footprint), (4, 4))
+        self.assertTrue(world.is_walkable(4, 4))
+        self.assertTrue(world.is_walkable(3, 4))
+        self.assertEqual(
+            world.building_navigation_position(footprint, 3, 4),
+            (3.0 - 1.0 / 3.0, 4.0 + 1.0 / 3.0),
+        )
+        self.assertTrue(world.can_step(4, 5, 4, 4))
+        self.assertTrue(world.can_step(3, 4, 4, 4))
+
+    def test_single_cell_building_has_only_doorway_open(self):
+        world = World(cols=8, rows=8, seed=15)
+        footprint = (3, 3, 1, 1)
+        world.cells[3][3].terrain = TerrainType.GRASS
+        world.cells[3][3].feature = FeatureType.NONE
+        world.set_building_footprints([footprint])
+        self.assertFalse(world.is_position_walkable(3.0, 3.0))
+        self.assertTrue(world.is_position_walkable(3.0, 3.0 + 1.0 / 3.0))
+        self.assertFalse(world.is_position_walkable(2.84, 3.0))
+
 
 if __name__ == "__main__":
     unittest.main()

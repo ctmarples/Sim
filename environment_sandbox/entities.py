@@ -1582,6 +1582,12 @@ class Building:
         return [(x, y) for y in range(top, bottom + 1) for x in range(left, right + 1)]
 
     def center_cell(self) -> tuple[int, int]:
+        """Operational access cell: the middle square on the bottom wall."""
+        left, _top, right, bottom = self.plot_bounds()
+        return (left + right + 1) // 2, bottom
+
+    def visual_center_cell(self) -> tuple[int, int]:
+        """Geometric centre, when a caller needs layout rather than access."""
         left, top, right, bottom = self.plot_bounds()
         return (left + right) // 2, (top + bottom) // 2
 
@@ -3674,8 +3680,9 @@ class ConstructionSite:
         return [(x, y) for y in range(top, bottom + 1) for x in range(left, right + 1)]
 
     def center_cell(self) -> tuple[int, int]:
-        left, top, right, bottom = self.plot_bounds()
-        return (left + right) // 2, (top + bottom) // 2
+        """Construction access cell: middle square on the bottom edge."""
+        left, _top, right, bottom = self.plot_bounds()
+        return (left + right + 1) // 2, bottom
 
     @property
     def is_deconstruct(self) -> bool:

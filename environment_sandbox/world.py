@@ -406,6 +406,18 @@ class World:
     def __init__(self, cols: int | None = None, rows: int | None = None, seed: int = RANDOM_SEED) -> None:
         # Bound by Game after EnvMaps construction; worlds remain usable standalone.
         self.env_maps = None
+        # (origin_x, origin_y, width, height) for completed non-field buildings.
+        self.building_footprints: list[tuple[int, int, int, int]] = []
+        self._building_by_cell: dict[
+            tuple[int, int], tuple[int, int, int, int]
+        ] = {}
+        self._building_by_entrance: dict[
+            tuple[int, int], tuple[int, int, int, int]
+        ] = {}
+        self._can_step_cache: dict[tuple[int, int, int, int], bool] = {}
+        self._path_miss_cache: set[
+            tuple[tuple[int, int], tuple[int, int], int | None, int | None]
+        ] = set()
         # Resolve at construction time so configure_for_display() can resize the grid.
         import settings as cfg
 
@@ -678,6 +690,13 @@ class World:
         self.terrain_revision += 1
         self.terrain_dirty.clear()
         self._water_patches_cache = None
+        self._can_step_cache.clear()
+        self._path_miss_cache.clear()
+
+    def invalidate_movement_cache(self) -> None:
+        """Discard cached edges after a hard obstacle changes."""
+        self._can_step_cache.clear()
+        self._path_miss_cache.clear()
 
     def mark_terrain_dirty(self, x: int, y: int, radius: int = 1) -> None:
         """Mark a cell and neighbours for incremental tile re-stitch."""
@@ -1726,7 +1745,105 @@ class World:
             return False
         if is_water_terrain(cell.terrain):
             return False
+        building = self._building_at_cell(x, y)
+        if building is not None:
+            return (building[2], building[3]) == (3, 2) or (
+                (x, y) == self.building_entrance_cell(building)
+            )
         return self.is_position_walkable(float(x), float(y))
+
+    def set_building_footprints(
+        self, footprints: list[tuple[int, int, int, int]]
+    ) -> None:
+        self.building_footprints = [
+            (int(x), int(y), max(1, int(w)), max(1, int(h)))
+            for x, y, w, h in footprints
+        ]
+        self._building_by_cell = {}
+        self._building_by_entrance = {}
+        for footprint in self.building_footprints:
+            bx, by, bw, bh = footprint
+            for cy in range(by, by + bh):
+                for cx in range(bx, bx + bw):
+                    self._building_by_cell[(cx, cy)] = footprint
+            self._building_by_entrance[self.building_entrance_cell(footprint)] = footprint
+        self._can_step_cache.clear()
+        self._path_miss_cache.clear()
+
+    @staticmethod
+    def building_entrance_cell(
+        footprint: tuple[int, int, int, int]
+    ) -> tuple[int, int]:
+        x, y, w, h = footprint
+        return x + w // 2, y + h - 1
+
+    @staticmethod
+    def building_entrance_position(
+        footprint: tuple[int, int, int, int]
+    ) -> tuple[float, float]:
+        ex, ey = World.building_entrance_cell(footprint)
+        # Centre of the bottom-middle subcell within the doorway ecology cell.
+        return float(ex), float(ey) + 1.0 / 3.0
+
+    @staticmethod
+    def building_navigation_position(
+        footprint: tuple[int, int, int, int], cell_x: int, cell_y: int
+    ) -> tuple[float, float]:
+        """Precise halo/door point represented by a building footprint cell."""
+        bx, by, bw, bh = footprint
+        if (cell_x, cell_y) == World.building_entrance_cell(footprint):
+            return World.building_entrance_position(footprint)
+        if (bw, bh) != (3, 2):
+            return float(cell_x), float(cell_y)
+        px = float(cell_x)
+        py = float(cell_y)
+        if cell_x == bx:
+            px -= 1.0 / 3.0
+        elif cell_x == bx + bw - 1:
+            px += 1.0 / 3.0
+        if cell_y == by:
+            py -= 1.0 / 3.0
+        elif cell_y == by + bh - 1:
+            py += 1.0 / 3.0
+        return px, py
+
+    def _building_at_cell(
+        self, x: int, y: int
+    ) -> tuple[int, int, int, int] | None:
+        return self._building_by_cell.get((x, y))
+
+    def building_footprint_for_entrance(
+        self, x: int, y: int
+    ) -> tuple[int, int, int, int] | None:
+        return self._building_by_entrance.get((x, y))
+
+    def _building_position_open(self, world_x: float, world_y: float) -> bool:
+        """Subcell building collision: 3x2 halo or bottom-middle doorway."""
+        cell_x = int(math.floor(float(world_x) + 0.5))
+        cell_y = int(math.floor(float(world_y) + 0.5))
+        footprint = self._building_at_cell(cell_x, cell_y)
+        if footprint is None:
+            return True
+        bx, by, bw, bh = footprint
+        left, top = bx - 0.5, by - 0.5
+        right, bottom = bx + bw - 0.5, by + bh - 0.5
+        door_x, door_y = self.building_entrance_position(footprint)
+        in_door = (
+            abs(world_x - door_x) < 1.0 / 6.0
+            and abs(world_y - door_y) < 1.0 / 6.0
+        )
+        if in_door:
+            return True
+        if (bw, bh) == (3, 2):
+            halo = 1.0 / 3.0
+            return (
+                world_x <= left + halo
+                or world_x >= right - halo
+                or world_y <= top + halo
+                or world_y >= bottom - halo
+            )
+        # Single-square and other compact buildings have no walkable halo.
+        return False
 
     @staticmethod
     def _object_has_hard_anchor(
@@ -1760,12 +1877,33 @@ class World:
             cell.object_anchor_slot = stable_anchor_slot(x, y, int(cell.icon_variant or 1))
         return cell.object_anchor_slot
 
+    def _cell_has_hard_anchor(self, x: int, y: int) -> bool:
+        cell = self.get_cell(x, y)
+        if cell is None:
+            return False
+        if self._object_has_hard_anchor(
+            cell.feature,
+            tree_age_years=cell.tree_age_years,
+            deposit=cell.deposit,
+        ):
+            return True
+        return any(
+            self._object_has_hard_anchor(
+                obj.feature,
+                tree_age_years=obj.tree_age_years,
+                deposit=obj.deposit,
+            )
+            for obj in cell.extra_objects
+        )
+
     def is_position_walkable(self, world_x: float, world_y: float) -> bool:
         """Point-accurate terrain and natural-object collision in the 3x3 grid."""
         x = int(math.floor(float(world_x) + 0.5))
         y = int(math.floor(float(world_y) + 0.5))
         cell = self.get_cell(x, y)
         if cell is None or is_water_terrain(cell.terrain):
+            return False
+        if not self._building_position_open(world_x, world_y):
             return False
         if self._object_has_hard_anchor(
             cell.feature,
@@ -1832,19 +1970,71 @@ class World:
 
     def set_blocked_edges(self, edges: set[tuple[int, int, int, int]]) -> None:
         self.blocked_edges = set(edges)
+        self._can_step_cache.clear()
+        self._path_miss_cache.clear()
 
     @staticmethod
     def _edge_key(ax: int, ay: int, bx: int, by: int) -> tuple[int, int, int, int]:
         return (ax, ay, bx, by) if (ax, ay) <= (bx, by) else (bx, by, ax, ay)
 
     def can_step(self, ax: int, ay: int, bx: int, by: int) -> bool:
+        """Cached movement-edge query used heavily by breadth-first searches."""
+        key = (ax, ay, bx, by)
+        cached = self._can_step_cache.get(key)
+        if cached is not None:
+            return cached
+        result = self._can_step_uncached(ax, ay, bx, by)
+        self._can_step_cache[key] = result
+        return result
+
+    def _can_step_uncached(self, ax: int, ay: int, bx: int, by: int) -> bool:
         """Whether movement may cross from one cell to the next."""
         if not self.is_walkable(bx, by):
             return False
         dx, dy = bx - ax, by - ay
         if abs(dx) > 1 or abs(dy) > 1:
             return False
+        entering = self._building_at_cell(bx, by)
+        leaving = self._building_at_cell(ax, ay)
+        compact_door_transition = (
+            entering is not None
+            and (entering[2], entering[3]) != (3, 2)
+            and (bx, by) == self.building_entrance_cell(entering)
+        ) or (
+            leaving is not None
+            and (leaving[2], leaving[3]) != (3, 2)
+            and (ax, ay) == self.building_entrance_cell(leaving)
+        )
+        start_x, start_y = (
+            self.building_navigation_position(leaving, ax, ay)
+            if leaving is not None
+            else (float(ax), float(ay))
+        )
+        end_x, end_y = (
+            self.building_navigation_position(entering, bx, by)
+            if entering is not None
+            else (float(bx), float(by))
+        )
+        # Most edges cross empty terrain and need no subcell work. Sample only
+        # when the segment touches a hard natural anchor or a building doorway.
+        if not compact_door_transition and (
+            entering is not None
+            or leaving is not None
+            or self._cell_has_hard_anchor(ax, ay)
+            or self._cell_has_hard_anchor(bx, by)
+        ):
+            for index in range(1, 7):
+                t = index / 6.0
+                px = start_x + (end_x - start_x) * t
+                py = start_y + (end_y - start_y) * t
+                if not self.is_position_walkable(px, py):
+                    return False
         blocked = getattr(self, "blocked_edges", set())
+        if compact_door_transition:
+            # A compact doorway occupies only one subcell while the logical
+            # path graph is cell-sized. Treat the final edge as the precise
+            # doorway approach so tightly packed legacy towns remain usable.
+            return self._edge_key(ax, ay, bx, by) not in blocked
         if dx and dy:
             # Do not squeeze diagonally between water or across fence corners.
             return (
@@ -1970,6 +2160,9 @@ class World:
             return []
         if not self.is_walkable(*goal):
             return None
+        miss_key = (start, goal, max_nodes, max_len)
+        if miss_key in self._path_miss_cache:
+            return None
 
         sx, sy = start
         gx, gy = goal
@@ -2018,6 +2211,7 @@ class World:
                 queue.append((nx, ny))
 
         if not found:
+            self._path_miss_cache.add(miss_key)
             return None
 
         path: list[tuple[int, int]] = []
@@ -2919,6 +3113,7 @@ class World:
         cell.crop_kind = None
         cell.tree_species = None
         cell.tree_age_years = 0
+        self.invalidate_movement_cache()
         return removed
 
     def harvest_wood(self, x: int, y: int, amount: int = 1) -> int:
@@ -2935,6 +3130,7 @@ class World:
             cell.tree_species = None
             cell.tree_age_years = 0
             cell.icon_variant = None
+            self.invalidate_movement_cache()
         return taken
 
     def tree_yield_key(self, x: int, y: int) -> str:
@@ -2950,6 +3146,7 @@ class World:
             return 0
         taken = min(amount, cell.deposit)
         cell.deposit -= taken
+        self.invalidate_movement_cache()
         if cell.deposit <= 0:
             cell.feature = FeatureType.NONE
             cell.deposit = 0
