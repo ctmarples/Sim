@@ -381,12 +381,11 @@ def bake_height_sample_surface(
         opaque = pygame.Surface(patch.get_size(), depth=24)
         opaque.blit(patch, (0, 0))
         patch = opaque
-    if patch.get_width() >= w and patch.get_height() >= sample.height * cell_size:
-        surf.blit(patch, (0, pad))
-        top_row = pygame.Surface((w, 1), depth=24)
-        top_row.blit(patch, (0, 0), pygame.Rect(0, 0, w, 1))
-        for yy in range(pad):
-            surf.blit(top_row, (0, yy))
+    # Do not paint the unwarped patch underneath the relief.  Every cell is
+    # painted by the column-warp pass below, including cells at height zero.
+    # Keeping a flat copy here made steep terrain expose a second, zero-height
+    # map below the lifted cells (especially obvious when a small world is
+    # centred with a negative camera origin).
 
     for ly in range(sample.height):
         for lx in range(sample.width):

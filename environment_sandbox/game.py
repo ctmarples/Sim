@@ -425,8 +425,16 @@ AREA_DRAW_KINDS = {
 
 
 class Game:
-    def __init__(self, *, headless: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        headless: bool = False,
+        use_original_resource_grid: bool = False,
+    ) -> None:
         self.headless = headless
+        # Normal launches use 3x3 subcell footprints for natural resources.
+        # The launch flag keeps the former full-cell presentation available.
+        self.use_original_resource_grid = bool(use_original_resource_grid)
         try:
             from terrain_settings import load_settings
 
@@ -488,8 +496,13 @@ class Game:
         self._height_painting = False
         self._height_paint_last: tuple[int, int] | None = None
         self._edit_paint_rng = random.Random(0xED17)
+        self._show_subtile_grid = False
+        self._show_object_footprints = False
 
-        self.world = World()
+        # The live launch menu does not need a generated production world behind
+        # it.  Keep only a tiny valid placeholder until New/Continue/Load supplies
+        # the real world; headless runs retain their historical automatic boot.
+        self.world = World() if headless else World(cols=8, rows=8)
         self._fishing_shore_cache: set[tuple[int, int]] | None = None
         self._fishing_shore_revision: int = -1
         self.camera = Camera()
@@ -508,7 +521,10 @@ class Game:
         self.player_craft_recipe: str | None = None
         self.player_craft_split: bool = False
         self.player_build_site_id: int | None = None
-        self.camera.center_on(self.player.x, self.player.y, self.world.cols, self.world.rows)
+        player_camera_x, player_camera_y = self._player_camera_point()
+        self.camera.center_on(
+            player_camera_x, player_camera_y, self.world.cols, self.world.rows
+        )
         self.home_storage = HomeStorage()
         self.regional_wealth: int = 0
         self.villagers: list[Villager] = []
@@ -805,8 +821,9 @@ class Game:
         self.player.reset(self.world.start_pos[0], self.world.start_pos[1])
         self.discovered_cells = set()
         self._reveal_around_player()
+        player_camera_x, player_camera_y = self._player_camera_point()
         self.camera.center_on(
-            self.player.x, self.player.y, self.world.cols, self.world.rows
+            player_camera_x, player_camera_y, self.world.cols, self.world.rows
         )
         self._refresh_hardscape_terrain()
         self._invalidate_height_sample_cache()
@@ -870,10 +887,15 @@ class Game:
         panel = self._launch_panel()
         x, w, h = panel.x + 70, panel.w - 140, 42
         if self._launch_menu == "main":
+            recent = self._most_recent_save_path()
+            continue_label = (
+                f"Continue — {recent.stem}" if recent is not None else "Continue — no saves"
+            )
             return [
-                (pygame.Rect(x, panel.y + 145, w, h), "new", "New game"),
-                (pygame.Rect(x, panel.y + 199, w, h), "load", "Load game"),
-                (pygame.Rect(x, panel.y + 253, w, h), "quit", "Quit"),
+                (pygame.Rect(x, panel.y + 125, w, h), "continue", continue_label),
+                (pygame.Rect(x, panel.y + 179, w, h), "new", "New game"),
+                (pygame.Rect(x, panel.y + 233, w, h), "load", "Load game"),
+                (pygame.Rect(x, panel.y + 287, w, h), "quit", "Quit"),
             ]
         if self._launch_menu == "new":
             return [
@@ -978,7 +1000,24 @@ class Game:
             (action for rect, action, _label in self._launch_buttons() if rect.collidepoint(event.pos)),
             None,
         )
-        if action == "new":
+        if action == "continue":
+            path = self._most_recent_save_path()
+            if path is None:
+                self._set_status("No saved game is available to continue.")
+                return
+            try:
+                load_from_path(self, path)
+                self._last_save_path = path
+                self._loaded_save_name = path.name
+                self._sync_time_knobs_from_clock()
+                self._invalidate_forage_index()
+                self._minimap_terrain = None
+                self._minimap_terrain_key = None
+                self._launch_menu = None
+                self._set_status(f"Continued {path.name} (speed x{self.sim_speed})")
+            except Exception as exc:
+                self._set_status(f"Could not continue {path.name}: {exc}")
+        elif action == "new":
             self._launch_menu = "new"
         elif action == "load":
             self._launch_menu = "load"
@@ -1047,6 +1086,9 @@ class Game:
         """Initialize a clean playable game from the default or an exported map."""
         from world import World
 
+        self._show_subtile_grid = False
+        self._show_object_footprints = False
+
         if map_path is None and generated is None:
             world = World()
             label = "default valley"
@@ -1096,7 +1138,8 @@ class Game:
         self.wildlife.refresh_habitats(world)
         self.wildlife.seed_breeding_grounds(world)
         self._apply_launch_wildlife_density()
-        self.camera.center_on(self.player.x, self.player.y, world.cols, world.rows)
+        player_camera_x, player_camera_y = self._player_camera_point()
+        self.camera.center_on(player_camera_x, player_camera_y, world.cols, world.rows)
         self._clear_selection()
         self._seed_map_communities()
         self._invalidate_height_sample_cache()
@@ -1321,6 +1364,8 @@ class Game:
             ny = max(-0.49, min(self.world.rows - 0.51, wy + uy * step_distance))
             cell = (int(math.floor(nx + 0.5)), int(math.floor(ny + 0.5)))
             current = (int(math.floor(wx + 0.5)), int(math.floor(wy + 0.5)))
+            if not self.world.is_position_walkable(nx, ny):
+                break
             if cell != current and not self.world.can_step(*current, *cell):
                 break
             wx, wy = nx, ny
@@ -2276,6 +2321,13 @@ class Game:
             self.bug_log.enabled = not self.bug_log.enabled
             state = "ON" if self.bug_log.enabled else "OFF"
             self._set_status(f"Bug log {state} (writes saves/bug_log.jsonl)")
+        elif key == pygame.K_o:
+            if not getattr(self, "_show_subtile_grid", False):
+                self._set_status("Object footprints are available on the habitat test map.")
+            else:
+                self._show_object_footprints = not self._show_object_footprints
+                state = "ON" if self._show_object_footprints else "OFF"
+                self._set_status(f"Subtile object footprints {state} (O to toggle).")
         elif key == pygame.K_TAB:
             collapsed = toggle_panel_collapsed()
             self._set_status(
@@ -4448,6 +4500,31 @@ class Game:
             return
         self._set_status("Opened random map generator.")
 
+    def _open_subtile_test(self) -> None:
+        """Start a small scenario through the production game systems."""
+        try:
+            from subtile_test_map import build_test_map
+
+            generated = build_test_map()
+            old_density = {
+                key: self._launch_gen[key]
+                for key in ("large_game", "small_game", "predators", "fish")
+            }
+            self._launch_gen.update(
+                large_game=1.0,
+                small_game=1.0,
+                predators=1.0,
+                fish=1.0,
+            )
+            self._begin_new_game(generated=generated)
+            self._show_subtile_grid = True
+            self._show_object_footprints = True
+            self._launch_gen.update(old_density)
+        except Exception as exc:
+            self._set_status(f"Could not start habitat test: {exc}")
+            return
+        self._set_status("Habitat test started with normal game simulation.")
+
     def _set_sim_speed(self, speed: int) -> None:
         if speed not in SIM_SPEEDS:
             return
@@ -5618,6 +5695,8 @@ class Game:
             self.wildlife_repopulate_dialog.open_dialog()
         elif action == "file_map_generator":
             self._open_map_generator()
+        elif action == "file_subtile_test":
+            self._open_subtile_test()
         elif action == "file_reset":
             self.reset()
         elif action == "file_time_demo":
@@ -5646,7 +5725,13 @@ class Game:
         mode = "god" if str(mode).lower() == "god" else "dog"
         if mode == self.control_mode:
             if mode == "dog":
-                self.camera.center_on(self.player.x, self.player.y, self.world.cols, self.world.rows)
+                player_camera_x, player_camera_y = self._player_camera_point()
+                self.camera.center_on(
+                    player_camera_x,
+                    player_camera_y,
+                    self.world.cols,
+                    self.world.rows,
+                )
             return
         if mode == "god":
             dog = self._god_dog_villager
@@ -5676,7 +5761,10 @@ class Game:
             if dog in self.villagers:
                 self.villagers.remove(dog)
         self.control_mode = "dog"
-        self.camera.center_on(self.player.x, self.player.y, self.world.cols, self.world.rows)
+        player_camera_x, player_camera_y = self._player_camera_point()
+        self.camera.center_on(
+            player_camera_x, player_camera_y, self.world.cols, self.world.rows
+        )
         self._set_status("Dog mode — direct player control restored.")
 
     def _sync_player_from_god_dog(self) -> None:
@@ -7189,8 +7277,7 @@ class Game:
     def _ensure_player_in_view(self, *, margin: float = 2.5) -> None:
         """Pan the camera when the player reaches the edge of the viewport."""
         vis_w, vis_h = self.camera.visible_cells()
-        px = float(self.player.world_x) + 0.5
-        py = float(self.player.world_y) + 0.5
+        px, py = self._player_camera_point()
         m = max(1.0, float(margin))
         if px < self.camera.x + m:
             self.camera.x = px - m
@@ -7201,6 +7288,15 @@ class Game:
         elif py > self.camera.y + vis_h - m:
             self.camera.y = py - (vis_h - m)
         self.camera.clamp(self.world.cols, self.world.rows)
+
+    def _player_camera_point(self) -> tuple[float, float]:
+        """Player centre in the camera's height-projected world plane."""
+        px = float(self.player.world_x) + 0.5
+        py = float(self.player.world_y) + 0.5
+        if self.height_sample_enabled and self.height_sample is not None:
+            height = self.height_sample.height_world(px, py)
+            py -= height * HEIGHT_LIFT_PX / float(CELL_SIZE)
+        return px, py
 
     def _set_overlay(self, mode: OverlayMode) -> None:
         self.overlay_mode = mode
@@ -7280,6 +7376,8 @@ class Game:
                 return "Build on soil, grass, meadow, bare rock, urban, or path."
             if cell.feature != FeatureType.NONE and cell.feature not in clearable:
                 return "Cannot place construction site here."
+            if any(obj.feature not in clearable for obj in cell.extra_objects):
+                return "Cannot place construction site over a tree or large resource."
             for building in self.buildings.values():
                 if building.contains_plot(x, y):
                     return "Overlaps an existing building."
@@ -18562,6 +18660,13 @@ class Game:
     def _draw(self) -> None:
         self._center_cache = {}
         self.screen.fill(COLOUR_BG)
+        if self._launch_menu is not None:
+            # Avoid building terrain, height, seasonal, minimap, UI, and entity
+            # caches for the disposable launch placeholder every frame.
+            self._draw_launch_menu()
+            self.file_dialog.draw(self.screen)
+            pygame.display.flip()
+            return
         self._draw_world()
         if self.height_edit_mode:
             self._draw_height_edit_overlay()
@@ -18575,6 +18680,7 @@ class Game:
         self._draw_rain_effect()
         self._draw_overlay_hud()
         self._draw_selection_highlights()
+        self._draw_object_footprints()
         self._draw_map_shroud()
         self._draw_player()
         self._draw_player_status_hud()
@@ -20026,6 +20132,27 @@ class Game:
 
         x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
         vc = self.camera.view_cell_px()
+        if getattr(self, "_show_subtile_grid", False):
+            grid_colour = (78, 101, 78)
+            for gy in range(y0, y1 + 1):
+                for gx in range(x0, x1 + 1):
+                    if not self.world.in_bounds(gx, gy):
+                        continue
+                    for third in (1.0 / 3.0, 2.0 / 3.0):
+                        pygame.draw.line(
+                            self.screen,
+                            grid_colour,
+                            self._screen_world_point(gx + third, gy),
+                            self._screen_world_point(gx + third, gy + 1),
+                            1,
+                        )
+                        pygame.draw.line(
+                            self.screen,
+                            grid_colour,
+                            self._screen_world_point(gx, gy + third),
+                            self._screen_world_point(gx + 1, gy + third),
+                            1,
+                        )
         # Tall / overhanging icons (trees, buildings) must paint after ground
         # features and in north→south order, or neighbour cells square-cut them.
         overhang = BUILDING_FEATURES | {
@@ -20075,6 +20202,25 @@ class Game:
                         base, cell.icon_variant, self._drop_rng
                     )
             draw_size = vc
+            if (
+                not self.use_original_resource_grid
+                and cell.feature != FeatureType.NONE
+                and cell.feature not in BUILDING_FEATURES
+                and cell.feature != FeatureType.CROP_HERB
+            ):
+                from subtile_layout import feature_subtile_layout, footprint_scale
+
+                slots, u, v = feature_subtile_layout(
+                    cell.feature.name,
+                    x,
+                    y,
+                    tree_age_years=int(getattr(cell, "tree_age_years", 0)),
+                    variant=int(cell.icon_variant or 1),
+                    deposit=int(getattr(cell, "deposit", 0)),
+                    anchor_slot=self.world._primary_anchor_slot(x, y, cell),
+                )
+                cx, cy = self._cell_center(x + u - 0.5, y + v - 0.5)
+                draw_size = max(8, int(round(vc * footprint_scale(slots))))
             if (
                 cell.feature in BUILDING_FEATURES
                 and cell.feature != FeatureType.STRUCTURE_PAD
@@ -20156,6 +20302,59 @@ class Game:
                 )
         for x, y in tall_cells:
             _draw_cell_feature(x, y)
+
+        # Secondary natural objects share their ecology cell with the primary
+        # feature. Their visible footprints may overlap and overhang cell edges;
+        # only their distinct 1/3-cell anchors affect collision.
+        extra_draw: list[tuple[float, int, int, object]] = []
+        for y in range(max(0, y0 - 1), min(self.world.rows, y1 + 2)):
+            for x in range(max(0, x0 - 1), min(self.world.cols, x1 + 2)):
+                for obj in self.world.cells[y][x].extra_objects:
+                    extra_draw.append((y + obj.anchor_slot // 3 / 3.0, x, y, obj))
+        extra_draw.sort(key=lambda item: (item[0], item[1]))
+        if extra_draw:
+            from icons import ensure_icon_variant, icon_base_for_feature
+            from subtile_layout import feature_subtile_layout, footprint_scale
+
+            for _depth, x, y, obj in extra_draw:
+                base = icon_base_for_feature(
+                    obj.feature,
+                    tree_species=obj.tree_species,
+                    crop_kind=obj.crop_kind,
+                    deposit=obj.deposit,
+                    growth_ticks=obj.growth_ticks,
+                )
+                if base is not None:
+                    obj.icon_variant = ensure_icon_variant(
+                        base, obj.icon_variant, self._drop_rng
+                    )
+                cx, cy = self._cell_center(x, y)
+                draw_size = vc
+                if not self.use_original_resource_grid:
+                    slots, u, v = feature_subtile_layout(
+                        obj.feature.name,
+                        x,
+                        y,
+                        tree_age_years=obj.tree_age_years,
+                        variant=int(obj.icon_variant or 1),
+                        deposit=obj.deposit,
+                        anchor_slot=obj.anchor_slot,
+                    )
+                    cx, cy = self._cell_center(x + u - 0.5, y + v - 0.5)
+                    draw_size = max(8, int(round(vc * footprint_scale(slots))))
+                draw_feature(
+                    self.screen,
+                    obj.feature,
+                    cx,
+                    cy,
+                    draw_size,
+                    vibrancy=vibrancy,
+                    crop_kind=obj.crop_kind,
+                    tree_species=obj.tree_species,
+                    icon_variant=obj.icon_variant,
+                    deposit=obj.deposit,
+                    growth_ticks=obj.growth_ticks,
+                )
 
         self.screen.set_clip(None)
         self._store_opaque_world_layer(map_clip, layer_key)
@@ -20700,6 +20899,80 @@ class Game:
             width=3 if selected else 2,
             fill_alpha=0,
         )
+
+    def _draw_object_footprints(self) -> None:
+        """Draw height-projected 3x3 occupancy diagnostics for the test map."""
+        if not getattr(self, "_show_object_footprints", False):
+            return
+        from subtile_layout import feature_subtile_layout, footprint_scale
+
+        overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+        map_clip = pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())
+
+        def footprint(
+            centre_x: float,
+            centre_y: float,
+            scale: float,
+            colour: tuple[int, int, int],
+        ) -> None:
+            half = max(1.0 / 6.0, float(scale) * 0.5)
+            points = [
+                self._screen_world_point(centre_x - half, centre_y - half),
+                self._screen_world_point(centre_x + half, centre_y - half),
+                self._screen_world_point(centre_x + half, centre_y + half),
+                self._screen_world_point(centre_x - half, centre_y + half),
+            ]
+            pygame.draw.polygon(overlay, (*colour, 82), points)
+            pygame.draw.lines(overlay, (*colour, 190), True, points, 2)
+
+        x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
+        for y in range(y0, y1 + 1):
+            for x in range(x0, x1 + 1):
+                cell = self.world.cells[y][x]
+                has_loose_deposit = cell.meat_deposit > 0 or cell.fish_deposit > 0
+                if cell.feature == FeatureType.STRUCTURE_PAD:
+                    continue
+                if cell.feature != FeatureType.NONE:
+                    slots, u, v = feature_subtile_layout(
+                        cell.feature.name,
+                        x,
+                        y,
+                        tree_age_years=int(getattr(cell, "tree_age_years", 0)),
+                        variant=int(cell.icon_variant or 1),
+                        deposit=int(getattr(cell, "deposit", 0)),
+                    )
+                    footprint(x + u, y + v, footprint_scale(slots), (80, 225, 115))
+                elif has_loose_deposit:
+                    footprint(x + 0.5, y + 0.5, 1.0 / 3.0, (80, 225, 115))
+
+        actor_scale = 1.0 / 3.0
+        for villager in self.villagers:
+            if villager is getattr(self, "_god_dog_villager", None):
+                continue
+            vx, vy = entity_draw_xy(villager)
+            footprint(vx + 0.5, vy + 0.5, actor_scale, (65, 220, 235))
+
+        wildlife_entities: list[object] = list(self.wildlife.animals)
+        for colony in self.wildlife.colonies:
+            wildlife_entities.append(colony)
+            wildlife_entities.extend(colony.members)
+        for pack in self.wildlife.wolf_packs:
+            wildlife_entities.extend(pack.members)
+        for animal in wildlife_entities:
+            ax, ay = entity_draw_xy(animal)
+            footprint(ax + 0.5, ay + 0.5, actor_scale, (235, 95, 185))
+
+        for fish in self.fish.fish:
+            fx, fy = entity_draw_xy(fish)
+            footprint(fx + 0.5, fy + 0.5, actor_scale, (65, 145, 245))
+
+        px, py = entity_draw_xy(self.player)
+        footprint(px + 0.5, py + 0.5, actor_scale, (255, 205, 55))
+
+        old_clip = self.screen.get_clip()
+        self.screen.set_clip(map_clip)
+        self.screen.blit(overlay, (0, 0))
+        self.screen.set_clip(old_clip)
 
     def _draw_animals(self) -> None:
         from wildlife import AnimalKind, AnimalSex

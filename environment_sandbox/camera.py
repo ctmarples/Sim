@@ -45,10 +45,21 @@ class Camera:
 
     def clamp(self, world_cols: int, world_rows: int) -> None:
         vis_w, vis_h = self.visible_cells()
-        max_x = max(0.0, world_cols - vis_w)
-        max_y = max(0.0, world_rows - vis_h)
-        self.x = max(0.0, min(self.x, max_x))
-        self.y = max(-max(0.0, self.y_overscan), min(self.y, max_y))
+        if world_cols <= vis_w:
+            self.x = (world_cols - vis_w) / 2.0
+        else:
+            self.x = max(0.0, min(self.x, world_cols - vis_w))
+        projected_top = -max(0.0, self.y_overscan)
+        projected_h = world_rows - projected_top
+        if projected_h <= vis_h:
+            # Centre the projected relief bounds, not the zero-height footprint.
+            # A map with tall terrain extends north of world row zero.
+            self.y = projected_top + (projected_h - vis_h) / 2.0
+        else:
+            self.y = max(
+                projected_top,
+                min(self.y, world_rows - vis_h),
+            )
 
     def pan(self, dx_cells: float, dy_cells: float, world_cols: int, world_rows: int) -> None:
         # Pan distance scales inversely with zoom so motion feels similar on screen.
@@ -151,5 +162,8 @@ class Camera:
         x0 = max(0, int(self.x) - 1)
         y0 = max(0, int(self.y) - 1)
         x1 = min(world_cols - 1, int(self.x + vis_w) + 1)
-        y1 = min(world_rows - 1, int(self.y + vis_h) + 1)
+        # A cell south of the flat viewport can project upward into view. Keep
+        # the full height-lift halo in all terrain/entity visibility passes.
+        lift_halo = int(math.ceil(max(0.0, self.y_overscan)))
+        y1 = min(world_rows - 1, int(self.y + vis_h) + 1 + lift_halo)
         return x0, y0, x1, y1

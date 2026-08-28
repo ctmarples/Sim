@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import os
 
-import pygame
-
 # Centre the window before the display surface is created.
 os.environ.setdefault("SDL_VIDEO_CENTERED", "1")
 
 
-def main() -> None:
-    pygame.init()
+def build_parser():
     import argparse
 
     parser = argparse.ArgumentParser(description="Environmental farming sandbox")
@@ -20,7 +17,23 @@ def main() -> None:
         action="store_true",
         help="Open the ticks/cooldown demo window instead of the full game",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--original-resource-grid",
+        "--original-grid",
+        "--original",
+        dest="original_resource_grid",
+        action="store_true",
+        help="Draw natural resources at their original full-cell size",
+    )
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+
+    import pygame
+
+    pygame.init()
     if args.time_demo:
         from time_demo import TimeDemo
 
@@ -35,7 +48,7 @@ def main() -> None:
     # Import Game after display metrics are applied so CELL_SIZE / grid bind correctly.
     from game import Game
 
-    game = Game()
+    game = Game(use_original_resource_grid=args.original_resource_grid)
     game.run()
 
 

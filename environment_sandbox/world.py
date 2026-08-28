@@ -20,7 +20,7 @@ from __future__ import annotations
 import math
 import random
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Iterator
 
@@ -298,6 +298,12 @@ class Cell:
     tree_age_years: int = 0  # mature-tree age; saplings begin at zero
     # 1-based icon variant (e.g. tree_round_2); rolled on first draw.
     icon_variant: int | None = None
+    # Stable hard-anchor in the visual 3x3 subgrid. The object's visible
+    # footprint grows around this slot and may overhang neighbouring cells.
+    object_anchor_slot: int | None = None
+    # Additional natural objects anchored in this ecology cell. The legacy
+    # fields above remain the primary object for simulation compatibility.
+    extra_objects: list["NaturalObject"] = field(default_factory=list)
     # Visual sub-patch within a terrain biome (seasonal masking / speckles).
     terrain_cluster: int = 0
     terrain_shade: float = 0.55  # 0..1 seasonal wash strength for this subcluster
@@ -319,6 +325,20 @@ class Cell:
         if self.feature != FeatureType.NONE:
             return self.feature.name.lower()
         return self.terrain.name.lower()
+
+
+@dataclass
+class NaturalObject:
+    """A second or later natural object sharing an ecology cell."""
+
+    feature: FeatureType
+    anchor_slot: int
+    deposit: int = 0
+    growth_ticks: int = 0
+    crop_kind: str | None = None
+    tree_species: str | None = None
+    tree_age_years: int = 0
+    icon_variant: int | None = None
 
 
 def cell_has_path(cell: Cell) -> bool:
@@ -1662,6 +1682,8 @@ class World:
                 cell.crop_kind = None
                 cell.tree_species = None
                 cell.icon_variant = None
+                cell.object_anchor_slot = None
+                cell.extra_objects.clear()
                 self.mark_terrain_dirty(x, y)
         return cx, cy
 
@@ -1682,6 +1704,8 @@ class World:
                 cell.crop_kind = None
                 cell.tree_species = None
                 cell.icon_variant = None
+                cell.object_anchor_slot = None
+                cell.extra_objects.clear()
                 self.mark_terrain_dirty(x, y)
 
     def neighbourhood(self, x: int, y: int, radius: int) -> Iterator[tuple[int, int]]:
@@ -1696,11 +1720,115 @@ class World:
         return max(abs(ax - bx), abs(ay - by)) <= radius
 
     def is_walkable(self, x: int, y: int) -> bool:
-        """Water/river is impassable; features never block movement in this prototype."""
+        """Whether an actor standing at the ecology-cell centre fits."""
         cell = self.get_cell(x, y)
         if cell is None:
             return False
-        return not is_water_terrain(cell.terrain)
+        if is_water_terrain(cell.terrain):
+            return False
+        return self.is_position_walkable(float(x), float(y))
+
+    @staticmethod
+    def _object_has_hard_anchor(
+        feature: FeatureType, *, tree_age_years: int = 0, deposit: int = 0
+    ) -> bool:
+        """Only trunks and large rock cores create hard movement boundaries."""
+        if feature == FeatureType.TREE:
+            return True
+        if feature == FeatureType.ROCK:
+            return int(deposit) >= 20
+        return False
+
+    @staticmethod
+    def _point_in_anchor(
+        world_x: float, world_y: float, cell_x: int, cell_y: int, slot: int
+    ) -> bool:
+        """Test a world point against one hard 1/3-cell anchor square."""
+        slot = max(0, min(8, int(slot)))
+        left = cell_x - 0.5 + (slot % 3) / 3.0
+        top = cell_y - 0.5 + (slot // 3) / 3.0
+        eps = 1e-9
+        return (
+            left + eps < world_x < left + 1.0 / 3.0 - eps
+            and top + eps < world_y < top + 1.0 / 3.0 - eps
+        )
+
+    def _primary_anchor_slot(self, x: int, y: int, cell: Cell) -> int:
+        from subtile_layout import stable_anchor_slot
+
+        if cell.object_anchor_slot is None:
+            cell.object_anchor_slot = stable_anchor_slot(x, y, int(cell.icon_variant or 1))
+        return cell.object_anchor_slot
+
+    def is_position_walkable(self, world_x: float, world_y: float) -> bool:
+        """Point-accurate terrain and natural-object collision in the 3x3 grid."""
+        x = int(math.floor(float(world_x) + 0.5))
+        y = int(math.floor(float(world_y) + 0.5))
+        cell = self.get_cell(x, y)
+        if cell is None or is_water_terrain(cell.terrain):
+            return False
+        if self._object_has_hard_anchor(
+            cell.feature,
+            tree_age_years=cell.tree_age_years,
+            deposit=cell.deposit,
+        ) and self._point_in_anchor(
+            world_x, world_y, x, y, self._primary_anchor_slot(x, y, cell)
+        ):
+            return False
+        for obj in cell.extra_objects:
+            if self._object_has_hard_anchor(
+                obj.feature,
+                tree_age_years=obj.tree_age_years,
+                deposit=obj.deposit,
+            ) and self._point_in_anchor(world_x, world_y, x, y, obj.anchor_slot):
+                return False
+        return True
+
+    def add_natural_object(
+        self,
+        x: int,
+        y: int,
+        feature: FeatureType,
+        *,
+        anchor_slot: int | None = None,
+        deposit: int = 0,
+        growth_ticks: int = 0,
+        crop_kind: str | None = None,
+        tree_species: str | None = None,
+        tree_age_years: int = 0,
+        icon_variant: int | None = None,
+    ) -> NaturalObject | None:
+        """Add an overlapping secondary object, keeping hard anchors distinct."""
+        from subtile_layout import stable_anchor_slot
+
+        cell = self.get_cell(x, y)
+        if cell is None or feature in STRUCTURE_FEATURES or feature == FeatureType.NONE:
+            return None
+        occupied = {obj.anchor_slot for obj in cell.extra_objects}
+        if cell.feature != FeatureType.NONE:
+            occupied.add(self._primary_anchor_slot(x, y, cell))
+        preferred = (
+            stable_anchor_slot(x, y, int(icon_variant or 1))
+            if anchor_slot is None
+            else max(0, min(8, int(anchor_slot)))
+        )
+        free = [slot for slot in range(9) if slot not in occupied]
+        if not free:
+            return None
+        slot = preferred if preferred in free else min(free, key=lambda s: abs(s - preferred))
+        obj = NaturalObject(
+            feature=feature,
+            anchor_slot=slot,
+            deposit=int(deposit),
+            growth_ticks=int(growth_ticks),
+            crop_kind=crop_kind,
+            tree_species=tree_species,
+            tree_age_years=int(tree_age_years),
+            icon_variant=icon_variant,
+        )
+        cell.extra_objects.append(obj)
+        self.bump_terrain()
+        return obj
 
     def set_blocked_edges(self, edges: set[tuple[int, int, int, int]]) -> None:
         self.blocked_edges = set(edges)

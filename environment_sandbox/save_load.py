@@ -33,7 +33,7 @@ from society import (
     skills_from_dict,
     skills_to_dict,
 )
-from world import Cell, FeatureType, TerrainType, World
+from world import Cell, FeatureType, NaturalObject, TerrainType, World
 
 if TYPE_CHECKING:
     from game import Game
@@ -292,6 +292,22 @@ def _cell_to_dict(cell: Cell) -> dict[str, Any]:
         data["repellant_season"] = str(cell.repellant_season)
     if getattr(cell, "path_worn", False):
         data["path_worn"] = True
+    if cell.object_anchor_slot is not None:
+        data["object_anchor_slot"] = int(cell.object_anchor_slot)
+    if cell.extra_objects:
+        data["extra_objects"] = [
+            {
+                "feature": obj.feature.name,
+                "anchor_slot": int(obj.anchor_slot),
+                "deposit": int(obj.deposit),
+                "growth_ticks": int(obj.growth_ticks),
+                "crop_kind": obj.crop_kind,
+                "tree_species": obj.tree_species,
+                "tree_age_years": int(obj.tree_age_years),
+                "icon_variant": obj.icon_variant,
+            }
+            for obj in cell.extra_objects
+        ]
     return data
 
 
@@ -354,6 +370,31 @@ def _cell_from_save(c: dict[str, Any], *, migrate_legacy_fertility: bool = False
     cell.weed_suppression = clamp01(float(c.get("weed_suppression", 0.0) or 0.0))
     raw_repellant_season = c.get("repellant_season")
     cell.repellant_season = str(raw_repellant_season) if raw_repellant_season else None
+    raw_anchor = c.get("object_anchor_slot")
+    if raw_anchor is not None:
+        cell.object_anchor_slot = max(0, min(8, int(raw_anchor)))
+    for raw_obj in c.get("extra_objects", []):
+        if not isinstance(raw_obj, dict):
+            continue
+        feature = _feature_from_save(str(raw_obj.get("feature", "NONE")))
+        if feature == FeatureType.NONE:
+            continue
+        cell.extra_objects.append(
+            NaturalObject(
+                feature=feature,
+                anchor_slot=max(0, min(8, int(raw_obj.get("anchor_slot", 4)))),
+                deposit=int(raw_obj.get("deposit", 0)),
+                growth_ticks=int(raw_obj.get("growth_ticks", 0)),
+                crop_kind=raw_obj.get("crop_kind"),
+                tree_species=raw_obj.get("tree_species"),
+                tree_age_years=int(raw_obj.get("tree_age_years", 0)),
+                icon_variant=(
+                    int(raw_obj["icon_variant"])
+                    if raw_obj.get("icon_variant") is not None
+                    else None
+                ),
+            )
+        )
     # Existing weed cover counts as this season's appearance so clearing
     # does not immediately restart another wave under the default cap of 1.
     if cell.weeds > 0.0 and cell.weed_appearances <= 0:
