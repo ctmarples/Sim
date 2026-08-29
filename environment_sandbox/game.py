@@ -988,6 +988,12 @@ class Game:
 
                 session = ContentLabSession(self)
                 session.start()
+                pending = getattr(self.developer_tools, "pending_lab_recipe", None)
+                if pending:
+                    session.select_recipe(pending[0], pending[1])
+                    session.prepare()
+                    self.sim_speed = 0
+                    self.developer_tools.pending_lab_recipe = None
                 self._launch_menu = None
             return
         if self.file_dialog.open:
@@ -10645,6 +10651,9 @@ class Game:
             if building is not None:
                 skill, _ = skill_for_building(building.kind.name)
                 skill_mult = skill_efficiency(villager, skill)
+                from resources import tool_effectiveness
+                for tool_key in getattr(villager.inventory, "equipped_tools", ()):
+                    skill_mult *= tool_effectiveness(tool_key, building.kind.name.lower())
         elif villager.assigned_to_home:
             skill_mult = skill_efficiency(villager, SkillType.TRANSPORT)
         elif villager.state == VillagerState.BUILDING:

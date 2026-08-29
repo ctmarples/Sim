@@ -114,6 +114,18 @@ def reload_recipes(data_dir: Path | None = None) -> ReloadResult:
         for folder, attr in recipes._BUILDING_RECIPE_ATTR.items():
             setattr(recipes, attr, catalogue.by_workstation[folder])
         recipes.rebuild_recipe_derived_keys()
+        # entities historically imported these tuples by value. Keep active
+        # buildings' capacity, pantry and transfer rules on the new registry.
+        import entities
+        for name in (
+            "MILL_INPUT_KEYS", "MILL_OUTPUT_KEYS", "CRAFT_BENCH_INPUT_KEYS",
+            "CRAFT_BENCH_OUTPUT_KEYS", "ALCHEMIST_INPUT_KEYS", "ALCHEMIST_OUTPUT_KEYS",
+            "TAILOR_INPUT_KEYS", "TAILOR_OUTPUT_KEYS", "COBBLER_INPUT_KEYS",
+            "COBBLER_OUTPUT_KEYS", "KITCHEN_INPUT_KEYS", "KITCHEN_OUTPUT_KEYS",
+            "PROCESSED_KEYS",
+        ):
+            setattr(entities, name, getattr(recipes, name))
+        entities.ensure_storage_item_fields()
         RECIPE_REGISTRY_REVISION += 1
         recipes.RECIPE_REGISTRY_REVISION = RECIPE_REGISTRY_REVISION
         log.info("Recipe reload succeeded: %s recipes, revision %s", catalogue.count, RECIPE_REGISTRY_REVISION)

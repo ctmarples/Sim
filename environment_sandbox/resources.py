@@ -7,6 +7,8 @@ Yields, drops, and food effects: ``resource_balance.py``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import csv
+from pathlib import Path
 
 from crops import CROPS
 from trees import TREES
@@ -18,6 +20,11 @@ class ResourceDef:
     label: str
     group: str
     short: str
+    icon_key: str = ""
+    usage: str = "resource"
+    stack_size: int = 1
+    tool_effectiveness: float = 1.0
+    tool_targets: str = ""
 
 
 # Display order within each group follows this list order.
@@ -106,7 +113,38 @@ GROUP_LABELS: dict[str, str] = {
     "construction": "Wares",
 }
 
-RESOURCE_KEYS: tuple[str, ...] = tuple(r.key for r in RESOURCES)
+_BUILTIN_RESOURCES: tuple[ResourceDef, ...] = tuple(RESOURCES)
+AUTHORED_RESOURCE_PATH = Path(__file__).resolve().parent / "resources_data" / "resources.csv"
+AUTHORED_RESOURCE_HEADER = ("key", "label", "group", "short", "icon_key", "usage", "stack_size", "tool_effectiveness", "tool_targets")
+
+
+def reload_authored_resources(path: Path | None = None) -> int:
+    """Rebuild the runtime catalogue from built-ins plus editable CSV overrides."""
+    global RESOURCE_KEYS
+    RESOURCES[:] = list(_BUILTIN_RESOURCES)
+    source = Path(path or AUTHORED_RESOURCE_PATH)
+    if source.is_file():
+        with source.open(encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh):
+                key = str(row.get("key") or "").strip()
+                if not key: continue
+                entry = ResourceDef(key, str(row.get("label") or key.replace("_", " ").title()), str(row.get("group") or "wares"), str(row.get("short") or key[:4]), str(row.get("icon_key") or ""), str(row.get("usage") or "resource"), max(1, int(row.get("stack_size") or 1)), max(0.01, float(row.get("tool_effectiveness") or 1.0)), str(row.get("tool_targets") or ""))
+                index = next((i for i, item in enumerate(RESOURCES) if item.key == key), None)
+                if index is None: RESOURCES.append(entry)
+                else: RESOURCES[index] = entry
+    RESOURCE_KEYS = tuple(r.key for r in RESOURCES)
+    # Modules historically imported the tuple by value. Refresh those live
+    # bindings so newly authored resources appear without restarting.
+    import sys
+    for module_name in ("game", "inventory_ui", "resource_tracker_dialog", "developer_tools.authoring_ui", "developer_tools.content_lab"):
+        module = sys.modules.get(module_name)
+        if module is not None and hasattr(module, "RESOURCE_KEYS"):
+            setattr(module, "RESOURCE_KEYS", RESOURCE_KEYS)
+    return len(RESOURCES)
+
+
+RESOURCE_KEYS: tuple[str, ...] = ()
+reload_authored_resources()
 
 # Cargo / building capacity: these keys occupy ceil(count / size) slots.
 # Count stays the real amount (e.g. arrows left); UI shows that number on the icon.
@@ -116,7 +154,8 @@ STACK_SIZES: dict[str, int] = {
 
 
 def stack_size(key: str) -> int | None:
-    size = STACK_SIZES.get(key)
+    authored = next((r.stack_size for r in RESOURCES if r.key == key and r.stack_size > 1), None)
+    size = authored or STACK_SIZES.get(key)
     return int(size) if size else None
 
 
@@ -166,7 +205,13 @@ def register_resource(
     entry = ResourceDef(key, label, group, short_label)
     for i, existing in enumerate(RESOURCES):
         if existing.key == key:
-            RESOURCES[i] = entry
+            # Recipe metadata may update legacy label/group fields, but the
+            # Resource catalogue owns icon, usage, stacking and tool behavior.
+            RESOURCES[i] = ResourceDef(
+                key, label, group, short_label, existing.icon_key,
+                existing.usage, existing.stack_size,
+                existing.tool_effectiveness, existing.tool_targets,
+            )
             RESOURCE_KEYS = tuple(r.key for r in RESOURCES)
             return
     # Insert foods before wares when possible.
@@ -211,6 +256,13 @@ def resource_label(key: str) -> str:
     return key
 
 
+def tool_effectiveness(key: str, target: str = "") -> float:
+    item = next((r for r in RESOURCES if r.key == key and r.usage == "tool"), None)
+    if item is None: return 1.0
+    targets = {v.strip().lower() for v in item.tool_targets.replace(",", ";").split(";") if v.strip()}
+    return item.tool_effectiveness if not targets or not target or target.lower() in targets else 1.0
+
+
 def resource_icon(key: str) -> str:
     """Map an inventory resource key to an ``icons`` base name for UI grids."""
     return resource_icon_style(key).name
@@ -248,6 +300,9 @@ def _crop_plant_style(crop, *, dense: bool) -> ResourceIconStyle:
 
 def resource_icon_style(key: str) -> ResourceIconStyle:
     """Return icon style matching map feature colours (and seed composites)."""
+    authored = next((r for r in RESOURCES if r.key == key and r.icon_key), None)
+    if authored is not None:
+        return ResourceIconStyle(authored.icon_key, {})
     from icons import (
         ICON_AXE,
         ICON_BERRIES,

@@ -12,5 +12,5 @@ bread_rye,Bread (rye),rye_flour:2,bread:1,,bakery,bread,,,,,,,food,bread,2.5,1.0
 berry_jam,Berry jam,berries:2,berry_jam:1,,sweet,berry_jam,,,,,,,food,jam,1.0,1.5,1.0,1.0,
 berry_tart,Berry tart,berries:2;honey:3;wheat_flour:1,berry_tart:1,,sweet,berry_tart,,,,,,,food,b.tart,1.0,3.0,1.0,1.0,
 lebkuchen,Lebkuchen,honey:2;wheat_flour:1,lebkuchen:1,,sweet,lebkuchen,,,,,,,food,leb.k,1.0,2.5,1.5,1.1,
-pea_s,Pea Soup,peas:3;mint:1,pea_soup:1,,stews,,,,,,,,food,p.sp,3.0,1.1,1.1,1.0,
+pea_s,Pea Soup,peas:3;mint:1;sage:1,pea_soup:1,,stews,vegetable_soup,,,,,,,food,p.sp,3.0,1.1,1.1,1.0,
 bean_stew,Bean stew,beans:3;sage:1,bean_stew:1,,stews,,,,,,,,food,b.stw,3.0,1.1,1.1,1.0,

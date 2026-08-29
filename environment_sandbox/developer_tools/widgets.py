@@ -38,6 +38,11 @@ class TextField:
             return False
         if event.key == pygame.K_ESCAPE:
             self.focused = False
+        elif event.key == pygame.K_a and getattr(event, "mod", 0) & (pygame.KMOD_CTRL | pygame.KMOD_META):
+            # Compact fields do not render selection ranges; clearing here gives
+            # the expected Cmd/Ctrl+A then type-to-replace workflow.
+            self.text = ""
+            self.cursor = 0
         elif event.key == pygame.K_BACKSPACE:
             if self.cursor > 0:
                 self.text = self.text[:self.cursor - 1] + self.text[self.cursor:]
@@ -120,7 +125,11 @@ class Dropdown(Generic[T]):
     def __init__(self, rect: pygame.Rect, options: list[tuple[T, str]], value: T | None = None):
         self.rect = pygame.Rect(rect)
         self.options = list(options)
-        self.value = value if any(k == value for k, _ in options) else (options[0][0] if options else None)
+        if value is not None and not any(k == value for k, _ in self.options):
+            # Never silently substitute the first option for persisted content.
+            # Keep the value visible so validation can explain a stale reference.
+            self.options.insert(0, (value, f"{value} (unavailable)"))
+        self.value = value if value is not None else (self.options[0][0] if self.options else None)
         self.open = False
         self.disabled = False
         self.scroll = 0

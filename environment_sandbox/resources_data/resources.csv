@@ -1,0 +1,4 @@
+key,label,group,short,icon_key,usage,stack_size,tool_effectiveness,tool_targets
+bread_wheat,Bread (wheat),food,bread.w,bread_wheat,resource,1,1.0,
+pea_soup,Pea Soup,food,p.sp,vegetable_soup,resource,1,1.0,
+bean_stew,Bean Stew,food,b.st,vegetable_soup,resource,1,1.0,

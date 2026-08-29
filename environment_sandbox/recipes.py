@@ -84,10 +84,11 @@ class Recipe:
     steps: int = 0
 
     def display_icon_key(self) -> str:
+        if self.outputs:
+            from resources import resource_icon
+            return resource_icon(next(iter(self.outputs)))
         if self.icon_key:
             return self.icon_key
-        if self.outputs:
-            return next(iter(self.outputs))
         return self.name
 
     def skill_req_map(self) -> dict[SkillType, int]:

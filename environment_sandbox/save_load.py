@@ -70,8 +70,9 @@ _CROP_STORAGE_KEYS = PRODUCE_KEYS + SEED_KEYS
 def _storage_keys() -> tuple[str, ...]:
     """Resolve reloadable recipe outputs when serializing future state."""
     from recipes import PROCESSED_KEYS
+    from resources import RESOURCE_KEYS
 
-    return tuple(dict.fromkeys((*_BASE_STORAGE_KEYS, *_CROP_STORAGE_KEYS, *PROCESSED_KEYS)))
+    return tuple(dict.fromkeys((*_BASE_STORAGE_KEYS, *_CROP_STORAGE_KEYS, *PROCESSED_KEYS, *RESOURCE_KEYS)))
 
 # Pre-rename gather recipe keys → current recipe names.
 _LEGACY_RECIPE_KEYS: dict[str, str] = {

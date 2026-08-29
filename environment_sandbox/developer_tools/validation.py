@@ -86,6 +86,19 @@ def validate_recipe_catalogue(data_dir: Path | None = None) -> ValidationReport:
     report = ValidationReport()
     known_resources = set(RESOURCE_KEYS)
     declared_outputs: set[str] = set()
+    # Outputs are valid resource declarations regardless of workstation folder
+    # order. Discover all of them before checking any recipe input.
+    for folder in _BUILDING_RECIPE_ATTR:
+        path = base / folder / "recipes.csv"
+        if not path.is_file(): continue
+        try:
+            with path.open(encoding="utf-8", newline="") as fh:
+                for row in csv.DictReader(fh):
+                    for token in str(row.get("outputs") or "").split(";"):
+                        key = token.split(":", 1)[0].strip()
+                        if key: declared_outputs.add(key)
+        except (OSError, csv.Error, UnicodeError):
+            pass
     seen: dict[str, tuple[Path, int]] = {}
     for folder, _attr in _BUILDING_RECIPE_ATTR.items():
         directory = base / folder

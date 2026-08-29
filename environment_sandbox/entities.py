@@ -58,7 +58,8 @@ from trees import SAPLING_ITEM_KEYS, sapling_item_key
 SEED_ITEM_KEYS: tuple[str, ...] = ("berry_seeds", *SEED_KEYS)
 
 # Tools carried in dedicated tool slots (not general cargo stacks).
-TOOL_KEYS: tuple[str, ...] = ("axe", "spear", "fishing_rod", "hoe", "knife", "bow")
+from resources import RESOURCES
+TOOL_KEYS: tuple[str, ...] = tuple(dict.fromkeys(("axe", "spear", "fishing_rod", "hoe", "knife", "bow", *(r.key for r in RESOURCES if r.usage == "tool"))))
 TOOL_SLOT_MAX: int = 3
 
 # Clothing: one item per slot; cannot equip two of the same slot type.
@@ -4398,8 +4399,9 @@ def ensure_storage_item_fields() -> None:
     Directory-loaded recipes may introduce new output keys; class attrs are
     created so ``hasattr`` / ``add_item`` / ``PROCESSED_KEYS`` totals work.
     """
+    from resources import RESOURCE_KEYS
     for cls in (Inventory, HomeStorage, Building):
-        for key in PROCESSED_KEYS:
+        for key in tuple(dict.fromkeys((*PROCESSED_KEYS, *RESOURCE_KEYS))):
             if not hasattr(cls, key):
                 setattr(cls, key, 0)
 

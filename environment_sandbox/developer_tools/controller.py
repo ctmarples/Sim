@@ -1,4 +1,4 @@
-"""Developer Tools launcher shell and read-only smoke-test pages."""
+"""Developer Tools launcher and interactive content-authoring pages."""
 
 from __future__ import annotations
 
@@ -14,7 +14,8 @@ from .validation import ValidationReport, ValidationSeverity, validate_all, vali
 from .widgets import ScrollableList, ValidationSummary
 from .editors import RecipeEditorService, TravellerEditorService
 from .icons_browser import IconBrowserService
-from .resources_browser import resource_entries
+from .resources_browser import ResourceEditorService, resource_entries
+from .authoring_ui import IconImportPage, RecipeAuthoringPage, ResourceAuthoringPage, TravellerAuthoringPage
 
 
 class DeveloperToolsController:
@@ -35,7 +36,20 @@ class DeveloperToolsController:
         self.recipe_editor = RecipeEditorService()
         self.traveller_editor = TravellerEditorService()
         self.icon_browser = IconBrowserService()
+        self.recipe_page = RecipeAuthoringPage(self.recipe_editor, self.icon_browser)
+        self.traveller_page = TravellerAuthoringPage(self.traveller_editor)
+        self.icon_page = IconImportPage(self.icon_browser)
+        self.resource_editor = ResourceEditorService()
+        self.resource_page = ResourceAuthoringPage(self.resource_editor, self.icon_browser, self._resources_saved)
+        self.pending_lab_recipe: tuple[str, str] | None = None
         self.refresh_page()
+
+    def _resources_saved(self) -> None:
+        import resources
+        from . import authoring_ui
+        authoring_ui.RESOURCE_KEYS = resources.RESOURCE_KEYS
+        self.recipe_page = RecipeAuthoringPage(self.recipe_editor, self.icon_browser)
+        self.traveller_page = TravellerAuthoringPage(self.traveller_editor)
 
     def refresh_page(self) -> None:
         if self.page == "recipes":
@@ -48,7 +62,7 @@ class DeveloperToolsController:
             self.items.set_items(resource_entries())
 
     def _panel(self) -> pygame.Rect:
-        return pygame.Rect(max(15, (WINDOW_WIDTH - 760) // 2), max(15, (WINDOW_HEIGHT - 650) // 2), min(760, WINDOW_WIDTH - 30), min(650, WINDOW_HEIGHT - 30))
+        return pygame.Rect(15, 15, WINDOW_WIDTH - 30, WINDOW_HEIGHT - 30)
 
     def _layout_buttons(self, panel: pygame.Rect) -> None:
         self._buttons = []
@@ -56,16 +70,32 @@ class DeveloperToolsController:
             self._buttons.append((pygame.Rect(x if x is not None else panel.x + 40, y, w, 36), action, label, enabled))
         if self.page == "home":
             y = panel.y + 175
-            for action, label in (("recipes", "Recipes"), ("travellers", "Travellers"), ("icons", "Icons"), ("resources", "Resources — read only"), ("content_lab", "Content Lab")):
+            for action, label in (("recipes", "Recipes"), ("travellers", "Travellers"), ("icons", "Icons"), ("resources", "Resources"), ("content_lab", "Content Lab")):
                 add(y, action, label); y += 46
             add(y + 4, "validate_all", "Validate All")
             add(panel.bottom - 55, "launcher", "Back")
+        elif self.page in ("recipes", "travellers", "icons", "resources"):
+            add(panel.y + 27, "home", "Back", x=panel.right - 150, w=110)
         else:
             add(panel.y + 105, f"reload_{self.page}", "Refresh Icons" if self.page == "icons" else f"Reload {self.page.title()}", self.page != "resources")
             add(panel.y + 105, f"validate_{self.page}", f"Validate {self.page.title()}", self.page != "resources", x=panel.x + 285)
             add(panel.bottom - 55, "home", "Back")
 
     def handle_event(self, event: pygame.event.Event) -> str | None:
+        if self.page == "recipes":
+            consumed, result = self.recipe_page.handle_event(event)
+            if result and result[0] == "save_test":
+                self.pending_lab_recipe = (result[1], result[2])
+                return "content_lab"
+            if consumed:
+                self.message = self.recipe_page.message
+                return None
+        elif self.page == "travellers" and self.traveller_page.handle_event(event):
+            self.message = self.traveller_page.message; return None
+        elif self.page == "icons" and self.icon_page.handle_event(event):
+            self.message = self.icon_page.message; return None
+        elif self.page == "resources" and self.resource_page.handle_event(event):
+            self.message = self.resource_page.message; return None
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
             if self.page == "home":
                 return "launcher"
@@ -112,6 +142,11 @@ class DeveloperToolsController:
             status = "YES" if self.write_enabled else "NO — Developer Tools is read-only."
             surface.blit(self.font.render(f"Writable source tree: {status}", True, (115, 190, 125) if self.write_enabled else (225, 105, 95)), (panel.x + 40, panel.y + 105))
             surface.blit(self.small.render(f"Source root: {get_content_root()}", True, COLOUR_TEXT_DIM), (panel.x + 40, panel.y + 130))
+        elif self.page in ("recipes", "travellers", "icons", "resources"):
+            if self.page == "recipes": self.recipe_page.draw(surface, panel, self.font, self.small)
+            elif self.page == "travellers": self.traveller_page.draw(surface, panel, self.font, self.small)
+            elif self.page == "icons": self.icon_page.draw(surface, panel, self.font, self.small)
+            else: self.resource_page.draw(surface, panel, self.font, self.small)
         else:
             revisions = {"recipes": self.recipe_revision, "travellers": self.traveller_revision, "icons": self.icon_revision}
             surface.blit(self.font.render(f"Loaded entries: {len(self.items.items)}   Registry revision: {revisions.get(self.page, 0)}", True, COLOUR_TEXT_DIM), (panel.x + 40, panel.y + 72))
@@ -124,13 +159,26 @@ class DeveloperToolsController:
                 self.items.draw(surface, self.small, lambda i: f"{i.key}  ({'/'.join(i.formats)})")
             elif self.page == "resources":
                 self.items.draw(surface, self.small, lambda r: f"{r.key} — {r.label}  [{r.group}]")
+                note_y = panel.y + 408
+                surface.blit(self.font.render("Resources are currently read-only.", True, (226, 183, 80)), (panel.x + 40, note_y))
+                surface.blit(self.small.render("New arbitrary resource types require the planned dynamic storage/resource refactor.", True, COLOUR_TEXT_DIM), (panel.x + 40, note_y + 24))
+                selected = self.items.selected
+                if selected:
+                    details = (
+                        f"Key: {selected.key}", f"Label: {selected.label}", f"Group: {selected.group}",
+                        f"Food: {'yes' if selected.food else 'no'}  Edible: {'yes' if selected.edible else 'no'}",
+                        f"Icon: {selected.icon}", f"Definition source: {selected.source}",
+                    )
+                    for index, line in enumerate(details):
+                        surface.blit(self.small.render(line, True, COLOUR_TEXT), (panel.x + 40, note_y + 58 + index * 19))
             else:
                 self.items.draw(surface, self.small)
         self.summary.list.rect = pygame.Rect(panel.x + 40, panel.bottom - 190, panel.w - 80, 115)
         counts = self.summary.severity_counts()
         count_text = f"Errors {counts.get(ValidationSeverity.ERROR, 0)} · Warnings {len(self.report.warnings)} · Info {len(self.report.infos)}"
-        surface.blit(self.small.render((self.message + "  " + count_text).strip(), True, COLOUR_TEXT_DIM), (panel.x + 40, panel.bottom - 215))
-        if self.report.issues:
+        footer = self.message if self.page in ("recipes", "travellers", "icons") else (self.message + "  " + count_text).strip()
+        surface.blit(self.small.render(footer, True, COLOUR_TEXT_DIM), (panel.x + 40, panel.bottom - 30))
+        if self.report.issues and self.page in ("home", "resources"):
             self.summary.draw(surface, self.font, self.small)
         mouse = pygame.mouse.get_pos()
         for rect, _action, label, enabled in self._buttons:

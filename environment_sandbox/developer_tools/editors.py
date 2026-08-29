@@ -165,7 +165,13 @@ class RecipeEditorService:
         if self.state.candidate is None:
             raise ValueError("Select a recipe first")
         source = deepcopy(self.state.candidate)
-        source.row["name"] = ""; source.row["label"] = f"{source.label} Copy"
+        base = f"{source.key}_copy"
+        suggested = base
+        suffix = 2
+        existing = {r.key for r in self.records}
+        while suggested in existing:
+            suggested = f"{base}_{suffix}"; suffix += 1
+        source.row["name"] = suggested; source.row["label"] = f"{source.label} Copy"
         doc = self.documents[source.workstation]
         source.row_index = len(doc.rows)
         self.state.begin_new(source, source_file=doc.path, snapshot=doc.snapshot, duplicate=True)
@@ -195,6 +201,20 @@ class RecipeEditorService:
                 if int(qty) < 1:
                     report.add(ValidationSeverity.ERROR, "invalid_recipe_amount", "Quantities must be at least 1", field=field_name)
                 seen.add(resource)
+        if not candidate.outputs:
+            report.add(ValidationSeverity.ERROR, "missing_recipe_output", "At least one output is required", field="outputs")
+        numeric_fields = ("steps", "extraction", "farming", "hunting", "crafting", "labour", "transport", "food_satiation", "food_walk_speed", "food_work_efficiency", "food_hunger_rate", "walk_speed", "capacity_bonus", "heat_protection", "cold_protection")
+        for field_name in numeric_fields:
+            raw = str(candidate.row.get(field_name) or "").strip()
+            if not raw:
+                continue
+            try:
+                value = float(raw)
+            except ValueError:
+                report.add(ValidationSeverity.ERROR, "malformed_numeric_field", f"{field_name.replace('_', ' ').title()} must be numeric", field=field_name)
+                continue
+            if value < 0:
+                report.add(ValidationSeverity.ERROR, "negative_recipe_value", f"{field_name.replace('_', ' ').title()} cannot be negative", field=field_name)
         return report
 
     def _candidate_documents(self, *, delete: bool = False) -> dict[str, CsvDocument]:
@@ -228,6 +248,10 @@ class RecipeEditorService:
         candidate = self.state.candidate
         if candidate is None:
             raise ValueError("No active recipe")
+        # Resource Editor is the sole owner of inventory/resource icons.
+        # Recipe presentation derives from its primary output resource.
+        if "icon_key" in candidate.row:
+            candidate.row["icon_key"] = ""
         report = self.validate_full_candidate(); self.state.validation = report
         if not report.ok:
             return ReloadResult(False, 0, len(self.records), report, "Recipe save blocked by validation errors.")
@@ -306,6 +330,11 @@ class TravellerEditorService:
         if not key or not ID_RE.fullmatch(key): report.add(ValidationSeverity.ERROR, "invalid_template_id", "Template ID must be snake_case", field="template_id")
         if not self.state.is_new and self.state.original and key != self.state.original.key: report.add(ValidationSeverity.ERROR, "immutable_template_id", "Existing template IDs cannot be renamed", field="template_id")
         if any(r.key == key and r.row_index != candidate.row_index for r in self.records): report.add(ValidationSeverity.ERROR, "duplicate_template_id", f"Template {key!r} already exists", field="template_id")
+        for field_name, low, high in (("tier", 1, 3), ("housing_need", 1, 3), ("signing_fee", 0, 10**9)):
+            try: value = int(candidate.row.get(field_name, ""))
+            except ValueError:
+                report.add(ValidationSeverity.ERROR, "invalid_traveller_numeric", f"{field_name} must be an integer", field=field_name); continue
+            if not low <= value <= high: report.add(ValidationSeverity.ERROR, f"invalid_{field_name}", f"{field_name} must be {low}–{high}", field=field_name)
         from society import SKILL_ORDER
         for skill in SKILL_ORDER:
             name = skill.name.lower()

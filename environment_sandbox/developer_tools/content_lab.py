@@ -14,6 +14,8 @@ from entities import (
 )
 from recipes import Recipe, recipe_ready
 from society import SkillState, recipe_skill_gate
+from resources import RESOURCE_KEYS, resource_label
+from .widgets import Dropdown, IntegerField
 
 
 WORKSTATION_KINDS = {
@@ -72,6 +74,18 @@ class ContentLabSession:
         self.selected: LabRecipe | None = None
         self.building: Building | None = None
         self.worker: Villager | None = None
+        self.recipe_dropdown = Dropdown(__import__("pygame").Rect(0, 0, 1, 1), [])
+        self.resource_dropdown = Dropdown(__import__("pygame").Rect(0, 0, 1, 1), [(k, resource_label(k)) for k in RESOURCE_KEYS])
+        self.resource_qty = IntegerField(__import__("pygame").Rect(0, 0, 1, 1), "10", minimum=1)
+        self.skill_fields = {skill.name.lower(): IntegerField(__import__("pygame").Rect(0, 0, 1, 1), "1", minimum=1, maximum=10) for skill in __import__("society").SKILL_ORDER}
+        self._buttons = []
+        self.message = "Choose a recipe, then set up the scenario."
+
+    def _refresh_recipe_dropdown(self) -> None:
+        catalogue = recipe_catalogue()
+        self.recipe_dropdown.options = [((item.workstation, item.recipe.name), f"{item.workstation}: {item.recipe.name.replace('_', ' ').title()}") for item in catalogue]
+        if self.selected:
+            self.recipe_dropdown.value = (self.selected.workstation, self.selected.recipe.name)
 
     def start(self) -> None:
         self.game._open_subtile_test()
@@ -80,6 +94,7 @@ class ContentLabSession:
         catalogue = recipe_catalogue()
         if catalogue:
             self.selected = catalogue[0]
+        self._refresh_recipe_dropdown()
 
     def reset(self) -> None:
         self.start()
@@ -97,6 +112,7 @@ class ContentLabSession:
         self.selected = matches[0]
         self.building = None
         self.worker = None
+        self._refresh_recipe_dropdown()
         return self.selected
 
     def create_workstation(self) -> Building:
@@ -147,6 +163,34 @@ class ContentLabSession:
             self.spawn_worker()
         return self.diagnostics()
 
+    def add_resource(self) -> None:
+        if self.building is None:
+            self.create_workstation()
+        amount = self.resource_qty.parse()
+        if self.resource_dropdown.value and amount:
+            self.building.add_recipe_output(self.resource_dropdown.value, int(amount))
+            self.message = f"Added {int(amount)} {resource_label(self.resource_dropdown.value)} to workstation storage."
+
+    def apply_skill_preset(self, preset: str) -> None:
+        if self.building is None: self.create_workstation()
+        if self.worker is None: self.spawn_worker()
+        from society import SKILL_ORDER
+        required = {skill.name.lower(): int(level) for skill, level in (self.selected.recipe.skill_reqs if self.selected else ())}
+        for skill in SKILL_ORDER:
+            key = skill.name.lower()
+            level = required.get(key, 1) if preset == "qualified" else (10 if preset == "all_10" else 1)
+            self.skill_fields[key].text = str(level)
+        self.apply_skills()
+
+    def apply_skills(self) -> None:
+        if self.worker is None: return
+        from society import SKILL_ORDER
+        for skill in SKILL_ORDER:
+            value = self.skill_fields[skill.name.lower()].parse()
+            if value is not None:
+                self.worker.skills[skill] = SkillState(level=int(value), potential=max(5, int(value)), peak=int(value))
+        self.message = "Worker skills applied."
+
     def diagnostics(self) -> LabDiagnostics:
         if self.selected is None:
             return LabDiagnostics(None, None, None, None, False, False, 0, "Select a recipe")
@@ -169,6 +213,30 @@ class ContentLabSession:
         """Compact lab controls; all simulation events not consumed continue normally."""
         import pygame
 
+        old_recipe = self.recipe_dropdown.value
+        if self.recipe_dropdown.handle_event(event):
+            if self.recipe_dropdown.value != old_recipe and self.recipe_dropdown.value:
+                workstation, name = self.recipe_dropdown.value; self.select_recipe(name, workstation)
+            return True
+        for control in (self.resource_dropdown, self.resource_qty, *self.skill_fields.values()):
+            if control.handle_event(event): return True
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            action = next((a for rect, a in self._buttons if rect.collidepoint(event.pos)), None)
+            if action is None:
+                return False
+            if action == "setup": self.prepare(); self.game.sim_speed = 0; self.message = "Recipe test prepared and paused. Press a simulation speed to run."
+            elif action == "workstation": self.create_workstation(); self.message = "Workstation created."
+            elif action == "worker":
+                if self.building is None: self.create_workstation()
+                self.spawn_worker(); self.apply_skill_preset("qualified"); self.message = "Qualified worker spawned."
+            elif action == "inputs": self.supply_inputs(); self.message = "Recipe inputs supplied."
+            elif action == "add_resource": self.add_resource()
+            elif action in ("qualified", "all_10", "all_1"): self.apply_skill_preset(action)
+            elif action == "apply_skills": self.apply_skills()
+            elif action.startswith("speed_"): self.game.sim_speed = int(action.split("_", 1)[1]); self.message = f"Simulation speed set to {self.game.sim_speed}x."
+            elif action == "reset": self.reset(); self.game.sim_speed = 0; self.message = "Lab reset."
+            elif action == "back": self.leave()
+            return True
         if event.type != pygame.KEYDOWN:
             return False
         if event.key == pygame.K_ESCAPE:
@@ -189,13 +257,33 @@ class ContentLabSession:
         import pygame
 
         diag = self.diagnostics()
-        panel = pygame.Rect(12, 92, 500, 116)
+        panel = pygame.Rect(12, 92, 570, 650)
         pygame.draw.rect(surface, (24, 31, 35), panel, border_radius=6)
         pygame.draw.rect(surface, (108, 132, 120), panel, 1, border_radius=6)
         title = pygame.font.SysFont("menlo", 16, bold=True)
         body = pygame.font.SysFont("menlo", 12)
         surface.blit(title.render("CONTENT LAB — disposable, saving disabled", True, (235, 235, 225)), (panel.x + 12, panel.y + 9))
-        recipe = f"{diag.workstation or '—'} / {diag.recipe or '—'}"
-        surface.blit(body.render(recipe, True, (205, 215, 205)), (panel.x + 12, panel.y + 38))
-        surface.blit(body.render(diag.status, True, (135, 195, 145)), (panel.x + 12, panel.y + 59))
-        surface.blit(body.render("[ / ] recipe   P prepare & run   R reset   Esc return", True, (165, 170, 170)), (panel.x + 12, panel.y + 87))
+        self._buttons = []
+        def button(x, y, w, label, action):
+            rect = pygame.Rect(x, y, w, 27); self._buttons.append((rect, action)); pygame.draw.rect(surface, (58, 70, 70), rect, border_radius=3); pygame.draw.rect(surface, (108, 132, 120), rect, 1, border_radius=3); text=body.render(label, True, (230,235,228)); surface.blit(text,(rect.centerx-text.get_width()//2,rect.centery-text.get_height()//2))
+        y = panel.y + 42
+        surface.blit(body.render("Selected recipe", True, (165,170,170)), (panel.x+12,y+6)); self.recipe_dropdown.rect=pygame.Rect(panel.x+135,y,410,28); self.recipe_dropdown.draw(surface,body); y+=38
+        button(panel.x+12,y,170,"Setup Selected Recipe","setup"); button(panel.x+190,y,112,"Workstation","workstation"); button(panel.x+310,y,105,"Worker","worker"); button(panel.x+423,y,122,"Supply Inputs","inputs"); y+=40
+        surface.blit(body.render("Inventory injection", True, (150,190,165)), (panel.x+12,y)); y+=23
+        self.resource_dropdown.rect=pygame.Rect(panel.x+12,y,250,27);self.resource_dropdown.draw(surface,body);self.resource_qty.rect=pygame.Rect(panel.x+270,y,70,27);self.resource_qty.draw(surface,body);button(panel.x+348,y,90,"Add","add_resource");y+=40
+        surface.blit(body.render("Worker skill presets", True, (150,190,165)), (panel.x+12,y));y+=22
+        button(panel.x+12,y,150,"Qualified","qualified");button(panel.x+170,y,100,"All 10","all_10");button(panel.x+278,y,100,"All 1","all_1");y+=36
+        for i,(key,field) in enumerate(self.skill_fields.items()):
+            col=i%2;row=i//2;xx=panel.x+12+col*210;yy=y+row*31;surface.blit(body.render(key.title(),True,(205,215,205)),(xx,yy+5));field.rect=pygame.Rect(xx+105,yy,62,25);field.draw(surface,body)
+        y+=96;button(panel.x+12,y,130,"Apply Skills","apply_skills");y+=39
+        surface.blit(body.render("Simulation",True,(150,190,165)),(panel.x+12,y+5))
+        for i,speed in enumerate((0,1,5,20)):button(panel.x+115+i*72,y,65,"Pause" if speed==0 else f"{speed}x",f"speed_{speed}")
+        y+=42
+        surface.blit(body.render("RECIPE STATUS",True,(150,190,165)),(panel.x+12,y));y+=23
+        lines=(f"Workstation  {'✓ '+str(diag.workstation) if diag.building_id else '✕ missing'}",f"Worker       {'✓ #'+str(diag.worker_id) if diag.worker_id else '✕ missing'}",f"Inputs       {'✓' if diag.inputs_ready else '✕'}",f"Skills       {'✓' if diag.skill_ready else '✕'}",f"Progress     {diag.progress}",f"State: {diag.status}")
+        for line in lines:surface.blit(body.render(line,True,(135,195,145) if '✕' not in line else (225,115,100)),(panel.x+20,y));y+=19
+        surface.blit(body.render(self.message,True,(190,195,190)),(panel.x+12,panel.bottom-65))
+        button(panel.x+12,panel.bottom-37,105,"Reset Lab","reset");button(panel.x+125,panel.bottom-37,190,"Back to Developer Tools","back")
+        # Draw open dropdowns last so their popup menus remain above the panel.
+        if self.resource_dropdown.open:self.resource_dropdown.draw(surface,body)
+        if self.recipe_dropdown.open:self.recipe_dropdown.draw(surface,body)
