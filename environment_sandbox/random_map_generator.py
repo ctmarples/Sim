@@ -148,6 +148,8 @@ class GeneratedMap:
                 cell.feature = FeatureType.NONE
                 cell.deposit = 0
                 cell.tree_species = None
+                cell.object_anchor_slot = None
+                cell.extra_objects.clear()
                 if name == "forest" and rng.random() < 0.68:
                     species = pick_tree_species(rng)
                     cell.feature = FeatureType.TREE
@@ -166,6 +168,7 @@ class GeneratedMap:
                 cell.deposit = 0
                 cell.tree_species = None
         _seed_starter_deposits(world, rng)
+        _seed_subcell_companions(world, rng)
         # Convert cell-centre elevation to the corner grid expected by the game.
         world.height_corners = _centres_to_corners(self.elevation)
         world.bump_terrain()
@@ -375,6 +378,64 @@ def _seed_starter_deposits(world: Any, rng: random.Random) -> None:
         cell = world.cells[y][x]
         cell.feature = FeatureType.ROCK
         cell.deposit = rng.randint(ROCK_SMALL_MIN, ROCK_SMALL_MAX)
+
+
+def _seed_subcell_companions(world: Any, rng: random.Random) -> None:
+    """Populate eligible ecology cells using centralized subcell placement rules."""
+    from resource_balance import WOOD_BUSH_YIELD
+    from trees import growth_ticks_for, pick_tree_species, resolve_tree
+    from world import FeatureType, TerrainType
+
+    tree_cells = [
+        (x, y)
+        for y in range(world.rows)
+        for x in range(world.cols)
+        if world.cells[y][x].feature == FeatureType.TREE
+    ]
+    for x, y in tree_cells:
+        # Dense regeneration: zero to two saplings can share a tree cell when
+        # their individual subcells remain outside trunks/canopy occupancy.
+        for _ in range(rng.randint(0, 2)):
+            species = pick_tree_species(rng)
+            world.add_natural_object(
+                x,
+                y,
+                FeatureType.SAPLING,
+                tree_species=species,
+                growth_ticks=growth_ticks_for(resolve_tree(species)),
+                icon_variant=rng.randint(1, 2),
+            )
+        if rng.random() < 0.32:
+            feature = FeatureType.MUSHROOM if rng.random() < 0.65 else FeatureType.WOOD_BUSH
+            world.add_natural_object(
+                x,
+                y,
+                feature,
+                crop_kind="mushroom" if feature == FeatureType.MUSHROOM else "wood_bush",
+                deposit=0 if feature == FeatureType.MUSHROOM else WOOD_BUSH_YIELD,
+                icon_variant=rng.randint(1, 2),
+            )
+
+    # Forest-floor litter may also occupy a free subcell in cells adjacent to
+    # forest floor, even when another soft natural object is already present.
+    for y in range(world.rows):
+        for x in range(world.cols):
+            cell = world.cells[y][x]
+            near_floor = cell.terrain == TerrainType.FOREST_FLOOR or any(
+                world.cells[ny][nx].terrain == TerrainType.FOREST_FLOOR
+                for ny, nx in world.neighbourhood(x, y, radius=1)
+                if (nx, ny) != (x, y)
+            )
+            if near_floor and rng.random() < 0.08:
+                feature = FeatureType.MUSHROOM if rng.random() < 0.7 else FeatureType.WOOD_BUSH
+                world.add_natural_object(
+                    x,
+                    y,
+                    feature,
+                    crop_kind="mushroom" if feature == FeatureType.MUSHROOM else "wood_bush",
+                    deposit=0 if feature == FeatureType.MUSHROOM else WOOD_BUSH_YIELD,
+                    icon_variant=rng.randint(1, 2),
+                )
 
 
 def _structure_field(opt: MapOptions, rng: random.Random) -> list[list[float]]:

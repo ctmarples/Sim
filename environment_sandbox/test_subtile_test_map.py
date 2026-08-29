@@ -43,6 +43,10 @@ class HabitatTestMapTests(unittest.TestCase):
         self.assertGreater(wildlife.count_kind(AnimalKind.DEER), 0)
         self.assertGreater(wildlife.count_kind(AnimalKind.BOAR), 0)
         self.assertGreater(len(wildlife.colonies), 0)
+        self.assertGreater(
+            sum(len(cell.extra_objects) for row in world.cells for cell in row),
+            0,
+        )
 
     def test_tree_anchor_stays_fixed_while_footprint_grows(self):
         young = feature_subtile_layout("TREE", 4, 6, tree_age_years=3, anchor_slot=2)
@@ -70,11 +74,44 @@ class HabitatTestMapTests(unittest.TestCase):
         plant = world.add_natural_object(
             5, 5, FeatureType.WILD_CROP, anchor_slot=7
         )
-        self.assertIsNotNone(rock)
-        self.assertIsNotNone(plant)
-        self.assertEqual(len(cell.extra_objects), 2)
-        self.assertFalse(world.is_position_walkable(5.34, 5.34))
+        # A centred 3x3 canopy leaves no parent subcell for another object;
+        # hard rock cannot silently overlap it.
+        self.assertIsNone(rock)
+        self.assertIsNone(plant)
+        self.assertEqual(len(cell.extra_objects), 0)
         self.assertTrue(world.is_position_walkable(5.0, 5.34))
+
+    def test_shared_tree_and_wild_plant_capacity_rules(self):
+        world = World(cols=10, rows=10, seed=8)
+        cell = world.cells[5][5]
+        cell.terrain = TerrainType.GRASS
+        cell.feature = FeatureType.SAPLING
+        cell.object_anchor_slot = 0
+
+        self.assertIsNotNone(world.add_natural_object(5, 5, FeatureType.SAPLING))
+        self.assertIsNotNone(world.add_natural_object(5, 5, FeatureType.SAPLING))
+        self.assertIsNone(world.add_natural_object(5, 5, FeatureType.SAPLING))
+
+        plants = World(cols=10, rows=10, seed=9)
+        plant_cell = plants.cells[5][5]
+        plant_cell.terrain = TerrainType.GRASS
+        plant_cell.feature = FeatureType.WILD_CROP
+        plant_cell.object_anchor_slot = 0
+        self.assertIsNotNone(plants.add_natural_object(5, 5, FeatureType.WILD_CROP))
+        self.assertIsNotNone(plants.add_natural_object(5, 5, FeatureType.WILD_CROP))
+        self.assertIsNone(plants.add_natural_object(5, 5, FeatureType.WILD_CROP))
+
+    def test_loose_drop_uses_free_subcell(self):
+        world = World(cols=10, rows=10, seed=10)
+        cell = world.cells[5][5]
+        cell.terrain = TerrainType.GRASS
+        cell.feature = FeatureType.SAPLING
+        cell.object_anchor_slot = 4
+
+        world.add_meat_deposit(5, 5, 2)
+
+        self.assertIsNotNone(cell.meat_anchor_slot)
+        self.assertNotEqual(cell.meat_anchor_slot, 4)
 
     def test_small_natural_objects_are_walkable(self):
         world = World(cols=10, rows=10, seed=9)
@@ -96,6 +133,34 @@ class HabitatTestMapTests(unittest.TestCase):
         # The destination centre is open, but the travel segment crosses trunk.
         self.assertTrue(world.is_walkable(5, 5))
         self.assertFalse(world.can_step(4, 5, 5, 5))
+
+    def test_continuous_actor_can_pass_above_trunk_in_adjacent_cell(self):
+        world = World(cols=16, rows=44, seed=12)
+        cell = world.cells[39][11]
+        cell.terrain = TerrainType.FOREST_FLOOR
+        cell.feature = FeatureType.TREE
+        cell.tree_age_years = 3
+        cell.object_anchor_slot = 4
+
+        # Cell-centre AI routing crosses the trunk, but the player's real path
+        # at y=38.5658 passes above it (the new_stuck.json regression).
+        self.assertFalse(world.can_step(12, 39, 11, 39))
+        self.assertTrue(
+            world.can_move_between_positions(11.5121, 38.5658, 11.4921, 38.5658)
+        )
+
+    def test_soft_secondary_object_keeps_path_cache(self):
+        world = World(cols=10, rows=10, seed=13)
+        cell = world.cells[5][5]
+        cell.terrain = TerrainType.FOREST_FLOOR
+        cell.feature = FeatureType.SAPLING
+        cell.object_anchor_slot = 0
+        world._can_step_cache[(1, 1, 1, 2)] = True
+
+        self.assertIsNotNone(
+            world.add_natural_object(5, 5, FeatureType.MUSHROOM)
+        )
+        self.assertIn((1, 1, 1, 2), world._can_step_cache)
 
     def test_building_walls_halo_and_bottom_door(self):
         world = World(cols=12, rows=12, seed=13)
@@ -122,12 +187,17 @@ class HabitatTestMapTests(unittest.TestCase):
     def test_single_cell_building_has_only_doorway_open(self):
         world = World(cols=8, rows=8, seed=15)
         footprint = (3, 3, 1, 1)
-        world.cells[3][3].terrain = TerrainType.GRASS
-        world.cells[3][3].feature = FeatureType.NONE
+        for y in range(2, 5):
+            for x in range(2, 5):
+                world.cells[y][x].terrain = TerrainType.GRASS
+                world.cells[y][x].feature = FeatureType.NONE
         world.set_building_footprints([footprint])
         self.assertFalse(world.is_position_walkable(3.0, 3.0))
         self.assertTrue(world.is_position_walkable(3.0, 3.0 + 1.0 / 3.0))
         self.assertFalse(world.is_position_walkable(2.84, 3.0))
+        self.assertTrue(world.can_step(3, 4, 3, 3))
+        self.assertFalse(world.can_step(2, 3, 3, 3))
+        self.assertFalse(world.can_step(3, 2, 3, 3))
 
 
 if __name__ == "__main__":

@@ -498,6 +498,7 @@ class Game:
         self._edit_paint_rng = random.Random(0xED17)
         self._show_subtile_grid = False
         self._show_object_footprints = False
+        self._player_inside_building_id: int | None = None
 
         # The live launch menu does not need a generated production world behind
         # it.  Keep only a tiny valid placeholder until New/Continue/Load supplies
@@ -1121,6 +1122,7 @@ class Game:
         self.calendar_day = 0
         self.day_tick = self.ticks_per_day
         self.player.reset(world.start_pos[0], world.start_pos[1])
+        self._player_inside_building_id = None
         self.discovered_cells = set()
         self._give_starting_resources()
         self._ensure_core_buildings()
@@ -1339,6 +1341,23 @@ class Game:
         self, dx: float, dy: float, dt: float, *, follow_camera: bool
     ) -> None:
         """Move freely in world space while using grid cells for collision/resources."""
+        if self._player_inside_building_id is not None:
+            building = self.buildings.get(self._player_inside_building_id)
+            self._player_inside_building_id = None
+            if building is not None:
+                footprint = (
+                    building.x,
+                    building.y,
+                    max(1, building.plot_w),
+                    max(1, building.plot_h),
+                )
+                self.player.x, self.player.y = self.world.building_entrance_cell(footprint)
+                self.player.world_x, self.player.world_y = (
+                    self.world.building_entrance_position(footprint)
+                )
+            # First input is the emerge-at-doorway action. A following frame
+            # begins normal outward movement through the halo.
+            return
         if self.sim_speed <= 0 or dt <= 0.0:
             return
         length = math.hypot(dx, dy)
@@ -1364,14 +1383,25 @@ class Game:
         for _ in range(steps):
             nx = max(-0.49, min(self.world.cols - 0.51, wx + ux * step_distance))
             ny = max(-0.49, min(self.world.rows - 0.51, wy + uy * step_distance))
-            cell = (int(math.floor(nx + 0.5)), int(math.floor(ny + 0.5)))
-            current = (int(math.floor(wx + 0.5)), int(math.floor(wy + 0.5)))
-            if not self.world.is_position_walkable(nx, ny):
+
+            def position_allowed(tx: float, ty: float) -> bool:
+                return self.world.can_move_between_positions(wx, wy, tx, ty)
+
+            old_wx, old_wy = wx, wy
+            if position_allowed(nx, ny):
+                wx, wy = nx, ny
+            else:
+                # Resolve axes independently at a hard boundary. This removes
+                # the component pushing into the wall while retaining motion
+                # parallel to it (wall sliding for simultaneous key input).
+                if abs(nx - wx) > 1e-9 and position_allowed(nx, wy):
+                    wx = nx
+                if abs(ny - wy) > 1e-9 and position_allowed(wx, ny):
+                    wy = ny
+            segment_moved = math.hypot(wx - old_wx, wy - old_wy)
+            if segment_moved <= 1e-9:
                 break
-            if cell != current and not self.world.can_step(*current, *cell):
-                break
-            wx, wy = nx, ny
-            moved += step_distance
+            moved += segment_moved
         if moved <= 0.0:
             self.player._continuous_moving = False
             return
@@ -2325,12 +2355,10 @@ class Game:
             state = "ON" if self.bug_log.enabled else "OFF"
             self._set_status(f"Bug log {state} (writes saves/bug_log.jsonl)")
         elif key == pygame.K_o:
-            if not getattr(self, "_show_subtile_grid", False):
-                self._set_status("Object footprints are available on the habitat test map.")
-            else:
-                self._show_object_footprints = not self._show_object_footprints
-                state = "ON" if self._show_object_footprints else "OFF"
-                self._set_status(f"Subtile object footprints {state} (O to toggle).")
+            self._show_object_footprints = not self._show_object_footprints
+            state = "ON" if self._show_object_footprints else "OFF"
+            legend = " — green visual, orange hard" if self._show_object_footprints else ""
+            self._set_status(f"Object footprints {state}{legend} (O to toggle).")
         elif key == pygame.K_TAB:
             collapsed = toggle_panel_collapsed()
             self._set_status(
@@ -4953,11 +4981,71 @@ class Game:
             self.calendar_day,
             self.weather.localisation_grid(self.world.rows, self.world.cols),
         )
+        self._unstick_villagers()
         if self.overlay_mode in (OverlayMode.TEMPERATURE, OverlayMode.RAINFALL,
                                  OverlayMode.SOIL_MOISTURE):
             self._refresh_indicators()
         if season_changed:
             self._autosave_season_start()
+
+    def _unstick_villagers(self, *, search_radius: int = 8) -> int:
+        """Once-daily recovery for actors trapped by changed world collision."""
+        occupied = {(v.x, v.y) for v in self.villagers}
+        moved = 0
+        directions = (
+            (0, -1), (1, 0), (0, 1), (-1, 0),
+            (1, -1), (1, 1), (-1, 1), (-1, -1),
+        )
+
+        def has_exit(x: int, y: int) -> bool:
+            return any(
+                self.world.can_step(x, y, x + dx, y + dy)
+                for dx, dy in directions
+            )
+
+        for villager in self.villagers:
+            # Indoor villagers intentionally occupy a doorway cell while hidden.
+            if self._villager_inside_building(villager) is not None:
+                continue
+            wx = float(getattr(villager, "world_x", villager.x))
+            wy = float(getattr(villager, "world_y", villager.y))
+            if self.world.is_position_walkable(wx, wy) and has_exit(
+                villager.x, villager.y
+            ):
+                continue
+
+            destination: tuple[int, int] | None = None
+            for radius in range(1, max(1, search_radius) + 1):
+                candidates: list[tuple[int, int, int]] = []
+                for dy in range(-radius, radius + 1):
+                    for dx in range(-radius, radius + 1):
+                        if max(abs(dx), abs(dy)) != radius:
+                            continue
+                        x, y = villager.x + dx, villager.y + dy
+                        candidates.append((abs(dx) + abs(dy), y, x))
+                for _, y, x in sorted(candidates):
+                    if (
+                        (x, y) in occupied
+                        or self.world._building_at_cell(x, y) is not None
+                    ):
+                        continue
+                    if self.world.is_walkable(x, y) and has_exit(x, y):
+                        destination = (x, y)
+                        break
+                if destination is not None:
+                    break
+            if destination is None:
+                continue
+
+            occupied.discard((villager.x, villager.y))
+            villager.x, villager.y = destination
+            villager.world_x, villager.world_y = map(float, destination)
+            occupied.add(destination)
+            villager.move_cooldown = 0
+            self._clear_villager_path(villager)
+            snap_entity_visual(villager)
+            moved += 1
+        return moved
 
     def _apply_path_fertility_drain(self) -> None:
         """Each season a path remains, drain fertility on soft land (floor 0.3)."""
@@ -7358,15 +7446,26 @@ class Game:
             # that left them inside what is now a hard wall.
             for villager in self.villagers:
                 footprint = self.world._building_at_cell(villager.x, villager.y)
-                if footprint is None:
-                    continue
-                entrance = self.world.building_entrance_cell(footprint)
-                if (villager.x, villager.y) != entrance:
-                    villager.x, villager.y = entrance
-                    villager.world_x, villager.world_y = self.world.building_entrance_position(
-                        footprint
+                if footprint is not None:
+                    entrance = self.world.building_entrance_cell(footprint)
+                    if (villager.x, villager.y) != entrance:
+                        villager.x, villager.y = entrance
+                    villager.world_x, villager.world_y = (
+                        self.world.building_entrance_position(footprint)
                     )
-                self._clear_villager_path(villager)
+                    self._clear_villager_path(villager)
+                    snap_entity_visual(villager)
+                    continue
+                # Old saves can contain a legal logical cell but a fractional
+                # render position now covered by a newly hard building wall.
+                if not self.world.is_position_walkable(
+                    float(getattr(villager, "world_x", villager.x)),
+                    float(getattr(villager, "world_y", villager.y)),
+                ):
+                    villager.world_x = float(villager.x)
+                    villager.world_y = float(villager.y)
+                    self._clear_villager_path(villager)
+                    snap_entity_visual(villager)
             footprint = self.world._building_at_cell(self.player.x, self.player.y)
             if footprint is not None and not self.world.is_position_walkable(
                 float(self.player.world_x), float(self.player.world_y)
@@ -7375,6 +7474,7 @@ class Game:
                 self.player.world_x, self.player.world_y = self.world.building_entrance_position(
                     footprint
                 )
+                snap_entity_visual(self.player)
 
     def _at_building_entrance(self, building: Building, wx: float, wy: float) -> bool:
         footprint = (building.x, building.y, max(1, building.plot_w), max(1, building.plot_h))
@@ -7384,6 +7484,92 @@ class Game:
     def _player_interact_workplace(self, building: Building) -> Building:
         """Return the exact structure under the player, including extensions."""
         return building
+
+    def _enter_player_building(self, building: Building) -> None:
+        """Hide the player indoors after using a valid doorway."""
+        self._player_inside_building_id = building.id
+
+    def _villager_inside_building(self, villager: object) -> int | None:
+        """Return persistent indoor state; job target changes must not reveal actors."""
+        value = getattr(villager, "_inside_building_id", None)
+        return int(value) if value is not None else None
+
+    def _begin_villager_building_entry(self, villager: Villager) -> None:
+        """Commit a completed doorway step to an explicit indoor state."""
+        building_id = getattr(villager, "_pending_building_entry_id", None)
+        if building_id is None or villager.move_cooldown > 0:
+            return
+        villager._pending_building_entry_id = None  # type: ignore[attr-defined]
+        building = self.buildings.get(int(building_id))
+        if (
+            building is None
+            or building.kind == BuildingKind.FIELD
+            or (villager.x, villager.y) != building.center_cell()
+        ):
+            return
+        transition_ticks = max(
+            1, round(self._villager_move_interval(villager) * 0.55)
+        )
+        villager._inside_building_id = building.id  # type: ignore[attr-defined]
+        villager._building_entry_ticks = transition_ticks  # type: ignore[attr-defined]
+        villager._building_transition_total = transition_ticks  # type: ignore[attr-defined]
+        villager._building_exit_ticks = 0  # type: ignore[attr-defined]
+        villager._building_exiting = False  # type: ignore[attr-defined]
+        villager._building_inside_ticks = 0  # type: ignore[attr-defined]
+        villager._indoor_inventory_total = int(  # type: ignore[attr-defined]
+            getattr(
+                villager,
+                "_pending_entry_inventory_total",
+                villager.inventory.total,
+            )
+        )
+        villager._pending_entry_inventory_total = None  # type: ignore[attr-defined]
+
+    def _tick_villager_building_transition(self, villager: Villager) -> None:
+        if self._villager_inside_building(villager) is not None:
+            previous_total = int(
+                getattr(villager, "_indoor_inventory_total", villager.inventory.total)
+            )
+            current_total = villager.inventory.total
+            transferred = abs(current_total - previous_total)
+            if transferred > 0:
+                # Each transferred item costs one efficiency-adjusted work
+                # action. Faster/skilled workers therefore spend less time in
+                # the building, while larger loads take proportionally longer.
+                transfer_ticks = transferred * self._villager_work_interval(villager)
+                villager._building_inside_ticks = max(  # type: ignore[attr-defined]
+                    int(getattr(villager, "_building_inside_ticks", 0) or 0),
+                    transfer_ticks,
+                )
+            villager._indoor_inventory_total = current_total  # type: ignore[attr-defined]
+        for name in (
+            "_building_entry_ticks",
+            "_building_inside_ticks",
+            "_building_exit_ticks",
+        ):
+            value = int(getattr(villager, name, 0) or 0)
+            if value > 0:
+                setattr(villager, name, value - 1)
+
+    def _villager_building_draw_position(
+        self, villager: Villager
+    ) -> tuple[float, float] | None:
+        """Move vertically through the door, or hide while fully indoors."""
+        if self._villager_inside_building(villager) is None:
+            return entity_draw_xy(villager)
+        vx, vy = entity_draw_xy(villager)
+        entry = int(getattr(villager, "_building_entry_ticks", 0) or 0)
+        leaving = int(getattr(villager, "_building_exit_ticks", 0) or 0)
+        total = max(
+            1, int(getattr(villager, "_building_transition_total", 8) or 8)
+        )
+        if entry > 0:
+            progress = 1.0 - entry / total
+            return vx, vy - progress * 0.55
+        if leaving > 0:
+            progress = 1.0 - leaving / total
+            return vx, vy - (1.0 - progress) * 0.55
+        return None
 
     def _player_at_craft_site(self, building: Building) -> bool:
         """True when the player stands in a workplace's bottom-middle doorway."""
@@ -7502,6 +7688,119 @@ class Game:
     # ------------------------------------------------------------------
     # Player interaction
     # ------------------------------------------------------------------
+    def _player_natural_interaction_target(
+        self,
+    ) -> tuple[int, int, FeatureType, object | None] | None:
+        """Pick the overlapping/nearest subcell object, using trunks for trees."""
+        from subtile_layout import object_footprint
+
+        px = float(self.player.world_x)
+        py = float(self.player.world_y)
+        base_x = int(math.floor(px + 0.5))
+        base_y = int(math.floor(py + 0.5))
+        candidates: list[
+            tuple[int, float, int, int, FeatureType, object | None]
+        ] = []
+        for y in range(base_y - 1, base_y + 2):
+            for x in range(base_x - 1, base_x + 2):
+                cell = self.world.get_cell(x, y)
+                if cell is None:
+                    continue
+                objects: list[tuple[FeatureType, object, int, bool]] = []
+                if (
+                    cell.feature != FeatureType.NONE
+                    and cell.feature not in BUILDING_FEATURES
+                    and cell.feature != FeatureType.CROP_HERB
+                ):
+                    objects.append(
+                        (
+                            cell.feature,
+                            cell,
+                            self.world._primary_anchor_slot(x, y, cell),
+                            True,
+                        )
+                    )
+                objects.extend(
+                    (obj.feature, obj, obj.anchor_slot, False)
+                    for obj in cell.extra_objects
+                )
+                for feature, obj, anchor, primary in objects:
+                    spec = object_footprint(
+                        feature.name,
+                        x,
+                        y,
+                        tree_age_years=int(getattr(obj, "tree_age_years", 0)),
+                        variant=int(getattr(obj, "icon_variant", None) or 1),
+                        deposit=int(getattr(obj, "deposit", 0)),
+                        anchor_slot=anchor,
+                    )
+                    if feature == FeatureType.TREE:
+                        # Canopies never select a tree: distance is measured to
+                        # its hard trunk subcell centre only.
+                        trunk_u = (anchor % 3 + 0.5) / 3.0
+                        trunk_v = (anchor // 3 + 0.5) / 3.0
+                        centre_x = x + trunk_u - 0.5
+                        centre_y = y + trunk_v - 0.5
+                        distance = math.hypot(px - centre_x, py - centre_y)
+                        if distance > 0.58:
+                            continue
+                        overlap_priority = 0
+                    else:
+                        centre_x = x + spec.centre_u - 0.5
+                        centre_y = y + spec.centre_v - 0.5
+                        half = spec.scale * 0.5
+                        overlaps = (
+                            abs(px - centre_x) <= half
+                            and abs(py - centre_y) <= half
+                        )
+                        distance = math.hypot(px - centre_x, py - centre_y)
+                        if not overlaps and distance > 0.45:
+                            continue
+                        overlap_priority = 0 if overlaps else 1
+                    candidates.append(
+                        (
+                            overlap_priority,
+                            distance,
+                            y,
+                            x,
+                            feature,
+                            None if primary else obj,
+                        )
+                    )
+        if not candidates:
+            return None
+        _overlap, _distance, y, x, feature, obj = min(
+            candidates, key=lambda item: item[:4]
+        )
+        return x, y, feature, obj
+
+    def _player_loose_deposit_target(self) -> tuple[int, int, str] | None:
+        """Pick a nearby loose pile by its allocated subcell, not cell order."""
+        from subtile_layout import slot_centre
+
+        px, py = float(self.player.world_x), float(self.player.world_y)
+        cx, cy = self.player.x, self.player.y
+        candidates: list[tuple[float, int, int, str]] = []
+        for y in range(cy - 1, cy + 2):
+            for x in range(cx - 1, cx + 2):
+                cell = self.world.get_cell(x, y)
+                if cell is None:
+                    continue
+                for kind, amount, slot in (
+                    ("meat", cell.meat_deposit, cell.meat_anchor_slot),
+                    ("fish", cell.fish_deposit, cell.fish_anchor_slot),
+                ):
+                    if amount <= 0:
+                        continue
+                    u, v = slot_centre(slot if slot is not None else 4)
+                    distance = math.hypot(px - (x + u - 0.5), py - (y + v - 0.5))
+                    if distance <= 0.45:
+                        candidates.append((distance, y, x, kind))
+        if not candidates:
+            return None
+        _distance, y, x, kind = min(candidates)
+        return x, y, kind
+
     def _interact_at_player(self) -> None:
         if getattr(self, "control_mode", "dog") != "dog":
             self._set_status("Switch to Dog mode to control the player dog.")
@@ -7523,6 +7822,7 @@ class Game:
                 ):
                     self._set_status("Use the bottom-middle doorway to enter this building.")
                     return
+                self._enter_player_building(building)
                 self._select_building(building, show_player=True, detail_only=True)
             return
 
@@ -7534,6 +7834,7 @@ class Game:
                 ):
                     self._set_status("Use the bottom-middle doorway to enter this building.")
                     return
+                self._enter_player_building(building)
                 self._select_building(building, show_player=True, detail_only=True)
             return
 
@@ -7605,6 +7906,7 @@ class Game:
                     self._set_status("Use the bottom-middle doorway to enter this building.")
                     return
                 building = self._player_interact_workplace(building)
+                self._enter_player_building(building)
                 self._select_building(building, show_player=True, detail_only=True)
             return
 
@@ -7612,13 +7914,17 @@ class Game:
             self._set_status("Still working…")
             return
 
-        # Collect meat / fish on this cell first if present.
-        if cell.meat_deposit > 0:
-            if self._collect_meat(x, y, self.player.inventory, status=True):
+        # Loose piles use their individual subcell positions.
+        loose_target = self._player_loose_deposit_target()
+        if loose_target is not None:
+            target_x, target_y, kind = loose_target
+            if kind == "meat" and self._collect_meat(
+                target_x, target_y, self.player.inventory, status=True
+            ):
                 self._finish_player_work()
-            return
-        if cell.fish_deposit > 0:
-            if self._collect_fish(x, y, self.player.inventory, status=True):
+            elif kind == "fish" and self._collect_fish(
+                target_x, target_y, self.player.inventory, status=True
+            ):
                 self._finish_player_work()
             return
 
@@ -7653,6 +7959,26 @@ class Game:
         villager = self._villager_at(x, y) or self._adjacent_villager(x, y)
         if villager is not None:
             self._open_villager_inspect(villager, show_player=True, detail_only=True)
+            return
+
+        natural_target = self._player_natural_interaction_target()
+        if natural_target is not None:
+            x, y, _feature, secondary = natural_target
+            if secondary is not None:
+                self.world.promote_natural_object(x, y, secondary)
+            cell = self.world.cells[y][x]
+        elif cell.feature in (
+            FeatureType.TREE,
+            FeatureType.ROCK,
+            FeatureType.SAPLING,
+            FeatureType.MUSHROOM,
+            FeatureType.WOOD_BUSH,
+            FeatureType.BERRY_BUSH,
+            FeatureType.HERB,
+            FeatureType.WILD_CROP,
+            FeatureType.REED,
+        ) or cell.extra_objects:
+            self._set_status("Move closer to the object to interact.")
             return
 
         if cell.feature == FeatureType.MUSHROOM:
@@ -8497,9 +8823,11 @@ class Game:
         """Energy drain, happiness drift, skill decay, leave check."""
         if villager.state == VillagerState.SLEEPING:
             house = self.buildings.get(villager.housing_id or -1)
+            sleep_position = self._villager_sleep_position(villager, house)
             at_home = (
                 house is not None
-                and (villager.x, villager.y) == house.center_cell()
+                and sleep_position is not None
+                and (villager.x, villager.y) == sleep_position
             )
             if at_home:
                 villager.energy = min(
@@ -8508,12 +8836,14 @@ class Game:
                 if villager.energy >= 0.95:
                     villager.state = VillagerState.IDLE
                     villager.target = None
+                    villager._sleep_position = None  # type: ignore[attr-defined]
             elif house is not None:
-                villager.target = house.center_cell()
+                villager.target = sleep_position or house.center_cell()
             else:
                 # No bed — cannot sleep; wake and keep draining slowly.
                 villager.state = VillagerState.IDLE
                 villager.target = None
+                villager._sleep_position = None  # type: ignore[attr-defined]
         else:
             # Energy is spent only when work ticks fire (_spend_work_energy).
             if villager.energy <= ENERGY_SLEEP_THRESHOLD:
@@ -8521,6 +8851,7 @@ class Game:
                 if villager.housed and house is not None:
                     villager.state = VillagerState.SLEEPING
                     villager.target = house.center_cell()
+                    villager._sleep_position = house.center_cell()  # type: ignore[attr-defined]
                     villager.seeking_food = False
                     return
 
@@ -8545,6 +8876,45 @@ class Game:
         tick_skill_decay(villager, day_frac)
 
         # Leaving is checked once per season (see _check_seasonal_happiness_leaves).
+
+    @staticmethod
+    def _villager_sleep_position(
+        villager: Villager, house: Building | None
+    ) -> tuple[int, int] | None:
+        if house is None:
+            return None
+        saved = getattr(villager, "_sleep_position", None)
+        if saved is None:
+            return house.center_cell()
+        return int(saved[0]), int(saved[1])
+
+    def _recover_villager_sleep_route(
+        self, villager: Villager, house: Building
+    ) -> bool:
+        """Use reachable exterior ground when a packed-town doorway is sealed."""
+        hx, hy = house.center_cell()
+        candidates: list[tuple[int, int, int]] = []
+        for radius in range(1, 7):
+            for dy in range(-radius, radius + 1):
+                for dx in range(-radius, radius + 1):
+                    if max(abs(dx), abs(dy)) != radius:
+                        continue
+                    x, y = hx + dx, hy + dy
+                    if self.world._building_at_cell(x, y) is not None:
+                        continue
+                    if not self.world.is_walkable(x, y):
+                        continue
+                    candidates.append((abs(dx) + abs(dy), y, x))
+            for _distance, y, x in sorted(candidates):
+                target = (x, y)
+                if self.world.find_path((villager.x, villager.y), target) is None:
+                    continue
+                villager._sleep_position = target  # type: ignore[attr-defined]
+                villager.target = target
+                self._clear_villager_path(villager)
+                return True
+            candidates.clear()
+        return False
 
     def _villager_leaves(self, villager: Villager) -> None:
         """Unhappy villager returns to the traveller hire pool."""
@@ -9859,6 +10229,7 @@ class Game:
     # ------------------------------------------------------------------
     def _update_villagers(self) -> None:
         for villager in self.villagers:
+            self._tick_villager_building_transition(villager)
             if villager.move_cooldown > 0:
                 villager.move_cooldown -= 1
             if villager.work_cooldown > 0:
@@ -9867,6 +10238,7 @@ class Game:
                 villager.decision_cooldown -= 1
             if villager.fish_bait_ticks > 0:
                 villager.fish_bait_ticks -= 1
+            self._begin_villager_building_entry(villager)
 
         self._tick_village_food = self._village_food_amounts()
         if any(self._villager_needs_ai_pass(v) for v in self.villagers):
@@ -9887,8 +10259,15 @@ class Game:
                     and (villager.x, villager.y) != villager.target
                     and villager.move_cooldown == 0
                 ):
-                    self._step_villager_toward(villager, villager.target)
-                    villager.move_cooldown = self._villager_move_interval(villager)
+                    moved = self._step_villager_toward(villager, villager.target)
+                    if not moved:
+                        house = self.buildings.get(villager.housing_id or -1)
+                        if house is None or not self._recover_villager_sleep_route(
+                            villager, house
+                        ):
+                            villager.state = VillagerState.IDLE
+                            villager.target = None
+                            villager._sleep_position = None  # type: ignore[attr-defined]
                 continue
 
             if self._tick_job_change_deposit(villager):
@@ -18152,6 +18531,32 @@ class Game:
     def _step_villager_toward(self, villager: Villager, goal: tuple[int, int]) -> bool:
         """Step along a path toward goal. Returns False if the goal is unreachable."""
         self._sync_building_collision()
+        inside_id = self._villager_inside_building(villager)
+        if inside_id is not None:
+            building = self.buildings.get(inside_id)
+            doorway = building.center_cell() if building is not None else None
+            if goal == doorway:
+                return True
+            if (
+                int(getattr(villager, "_building_entry_ticks", 0) or 0) > 0
+                or int(getattr(villager, "_building_inside_ticks", 0) or 0) > 0
+            ):
+                return True
+            leaving = int(getattr(villager, "_building_exit_ticks", 0) or 0)
+            exiting = bool(getattr(villager, "_building_exiting", False))
+            if not exiting:
+                transition_ticks = max(
+                    1, round(self._villager_move_interval(villager) * 0.55)
+                )
+                villager._building_exit_ticks = transition_ticks  # type: ignore[attr-defined]
+                villager._building_transition_total = transition_ticks  # type: ignore[attr-defined]
+                villager._building_exiting = True  # type: ignore[attr-defined]
+                return True
+            if leaving > 0:
+                return True
+            villager._inside_building_id = None  # type: ignore[attr-defined]
+            villager._building_exit_ticks = 0  # type: ignore[attr-defined]
+            villager._building_exiting = False  # type: ignore[attr-defined]
         if villager.move_cooldown > 0:
             return True
         if (villager.x, villager.y) == goal:
@@ -18173,15 +18578,47 @@ class Game:
             villager._path_cache = None  # type: ignore[attr-defined]
             villager._path_goal = None  # type: ignore[attr-defined]
             return False
-        step = cache.pop(0)
-        interval = self._villager_move_interval(villager)
+        step = cache[0]
+        if not self.world.can_step(villager.x, villager.y, step[0], step[1]):
+            # A building or hard object may have appeared since this route was
+            # cached. Never execute a stale edge through its wall or corner.
+            self._clear_villager_path(villager)
+            path = self.world.find_path((villager.x, villager.y), goal)
+            if not path:
+                return False
+            villager._path_cache = path  # type: ignore[attr-defined]
+            villager._path_goal = goal  # type: ignore[attr-defined]
+            cache = path
+            step = cache[0]
+        cache.pop(0)
         footprint = self.world._building_at_cell(*step)
         world_target = (
             self.world.building_navigation_position(footprint, *step)
             if footprint is not None
             else None
         )
+        target_x, target_y = world_target or (float(step[0]), float(step[1]))
+        start_x = float(getattr(villager, "_vis_to_x", villager.x))
+        start_y = float(getattr(villager, "_vis_to_y", villager.y))
+        interval = max(
+            1,
+            round(
+                self._villager_move_interval(villager)
+                * math.hypot(target_x - start_x, target_y - start_y)
+            ),
+        )
         note_cell_step(villager, step[0], step[1], world_target=world_target)
+        if footprint is not None:
+            building = self._building_at(step[0], step[1])
+            if (
+                building is not None
+                and building.kind != BuildingKind.FIELD
+                and step == building.center_cell()
+            ):
+                villager._pending_building_entry_id = building.id  # type: ignore[attr-defined]
+                villager._pending_entry_inventory_total = (  # type: ignore[attr-defined]
+                    villager.inventory.total
+                )
         self._record_path_traffic(step[0], step[1])
         villager.move_cooldown = interval
         arm_cell_step_visual(villager, interval)
@@ -18350,9 +18787,13 @@ class Game:
                         villager._work_search_cd = max(0, search_cd - skip)  # type: ignore[attr-defined]
                     if villager.state == VillagerState.SLEEPING:
                         house = self.buildings.get(villager.housing_id or -1)
+                        sleep_position = self._villager_sleep_position(
+                            villager, house
+                        )
                         at_home = (
                             house is not None
-                            and (villager.x, villager.y) == house.center_cell()
+                            and sleep_position is not None
+                            and (villager.x, villager.y) == sleep_position
                         )
                         if at_home:
                             villager.energy = min(
@@ -18363,6 +18804,7 @@ class Game:
                             if villager.energy >= 0.95:
                                 villager.state = VillagerState.IDLE
                                 villager.target = None
+                                villager._sleep_position = None  # type: ignore[attr-defined]
                     else:
                         villager.satiation = max(
                             0.0,
@@ -18512,6 +18954,7 @@ class Game:
 
     def _apply_travel_skip(self, villager: Villager, ticks: int) -> bool:
         """Walk along a cached path for ``ticks``. Returns True if traveling."""
+        self._sync_building_collision()
         if ticks <= 0 or not self._villager_is_traveling(villager):
             return False
         chasing = (
@@ -18531,9 +18974,53 @@ class Game:
             if (villager.x, villager.y) == goal:
                 continue
             if villager.move_cooldown == 0:
-                step = path.pop(0)
-                interval = max(1, self._villager_move_interval(villager))
-                note_cell_step(villager, step[0], step[1])
+                step = path[0]
+                if not self.world.can_step(
+                    villager.x, villager.y, step[0], step[1]
+                ):
+                    self._clear_villager_path(villager)
+                    path = self._ensure_travel_path(villager)
+                    if not path:
+                        return True
+                    step = path[0]
+                path.pop(0)
+                footprint = self.world._building_at_cell(*step)
+                world_target = (
+                    self.world.building_navigation_position(footprint, *step)
+                    if footprint is not None
+                    else None
+                )
+                # A batched trip can take several steps without a render call.
+                # Start each new segment at the prior segment's legal endpoint,
+                # rather than interpolating again from an old on-screen point.
+                previous_x = float(getattr(villager, "_vis_to_x", villager.x))
+                previous_y = float(getattr(villager, "_vis_to_y", villager.y))
+                villager.world_x = previous_x
+                villager.world_y = previous_y
+                target_x, target_y = world_target or (float(step[0]), float(step[1]))
+                interval = max(
+                    1,
+                    round(
+                        self._villager_move_interval(villager)
+                        * math.hypot(
+                            target_x - previous_x, target_y - previous_y
+                        )
+                    ),
+                )
+                note_cell_step(
+                    villager, step[0], step[1], world_target=world_target
+                )
+                if footprint is not None:
+                    building = self._building_at(step[0], step[1])
+                    if (
+                        building is not None
+                        and building.kind != BuildingKind.FIELD
+                        and step == building.center_cell()
+                    ):
+                        villager._pending_building_entry_id = building.id  # type: ignore[attr-defined]
+                        villager._pending_entry_inventory_total = (  # type: ignore[attr-defined]
+                            villager.inventory.total
+                        )
                 self._record_path_traffic(step[0], step[1])
                 villager.move_cooldown = interval
                 arm_cell_step_visual(villager, interval)
@@ -18557,9 +19044,11 @@ class Game:
 
         if villager.state == VillagerState.SLEEPING:
             house = self.buildings.get(villager.housing_id or -1)
+            sleep_position = self._villager_sleep_position(villager, house)
             at_home = (
                 house is not None
-                and (villager.x, villager.y) == house.center_cell()
+                and sleep_position is not None
+                and (villager.x, villager.y) == sleep_position
             )
             if not at_home:
                 if traveling:
@@ -18606,6 +19095,14 @@ class Game:
         ):
             return 1
         if getattr(self, "_arrow_shots", None):
+            return 1
+        if any(
+            int(getattr(v, "_building_entry_ticks", 0) or 0) > 0
+            or int(getattr(v, "_building_inside_ticks", 0) or 0) > 0
+            or int(getattr(v, "_building_exit_ticks", 0) or 0) > 0
+            or getattr(v, "_pending_building_entry_id", None) is not None
+            for v in self.villagers
+        ):
             return 1
         skip = min(limit, max(1, self.day_tick))
         for villager in self.villagers:
@@ -20337,27 +20834,32 @@ class Game:
 
         def _draw_loose_deposits(x: int, y: int) -> None:
             cell = self.world.cells[y][x]
-            cx, cy = self._cell_center(x, y)
+            from subtile_layout import slot_centre
+
             if cell.meat_deposit > 0:
                 from icons import ICON_MEAT_MARKER, blit_icon
 
+                u, v = slot_centre(cell.meat_anchor_slot if cell.meat_anchor_slot is not None else 4)
+                cx, cy = self._cell_center(x + u - 0.5, y + v - 0.5)
                 blit_icon(
                     self.screen,
                     ICON_MEAT_MARKER,
-                    cx + max(4, vc // 5),
-                    cy + max(4, vc // 5),
-                    max(10, vc // 2),
+                    cx,
+                    cy,
+                    max(8, vc // 3),
                     recolour={"body": COLOUR_MEAT},
                 )
             if cell.fish_deposit > 0:
                 from icons import ICON_FISH_MARKER, blit_icon
 
+                u, v = slot_centre(cell.fish_anchor_slot if cell.fish_anchor_slot is not None else 4)
+                cx, cy = self._cell_center(x + u - 0.5, y + v - 0.5)
                 blit_icon(
                     self.screen,
                     ICON_FISH_MARKER,
-                    cx - max(4, vc // 5),
-                    cy + max(4, vc // 5),
-                    max(10, vc // 2),
+                    cx,
+                    cy,
+                    max(8, vc // 3),
                     recolour={"body": COLOUR_FISH},
                 )
 
@@ -21014,10 +21516,10 @@ class Game:
         )
 
     def _draw_object_footprints(self) -> None:
-        """Draw height-projected 3x3 occupancy diagnostics for the test map."""
+        """Draw visual occupancy plus orange hard-collision subcells."""
         if not getattr(self, "_show_object_footprints", False):
             return
-        from subtile_layout import feature_subtile_layout, footprint_scale
+        from subtile_layout import object_footprint, slot_centre
 
         overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
         map_clip = pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())
@@ -21039,24 +21541,57 @@ class Game:
             pygame.draw.lines(overlay, (*colour, 190), True, points, 2)
 
         x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
+
+        def draw_object(
+            x: int, y: int, obj: object, *, anchor_slot: int | None = None
+        ) -> None:
+            spec = object_footprint(
+                obj.feature.name,
+                x,
+                y,
+                tree_age_years=int(getattr(obj, "tree_age_years", 0)),
+                variant=int(getattr(obj, "icon_variant", None) or 1),
+                deposit=int(getattr(obj, "deposit", 0)),
+                anchor_slot=(
+                    int(anchor_slot)
+                    if anchor_slot is not None
+                    else int(getattr(obj, "anchor_slot"))
+                ),
+            )
+            footprint(
+                x + spec.centre_u,
+                y + spec.centre_v,
+                spec.scale,
+                (80, 225, 115),
+            )
+            for slot in spec.hard_slots:
+                u, v = slot_centre(slot)
+                footprint(x + u, y + v, 1.0 / 3.0, (245, 125, 45))
+
         for y in range(y0, y1 + 1):
             for x in range(x0, x1 + 1):
                 cell = self.world.cells[y][x]
-                has_loose_deposit = cell.meat_deposit > 0 or cell.fish_deposit > 0
                 if cell.feature == FeatureType.STRUCTURE_PAD:
                     continue
-                if cell.feature != FeatureType.NONE:
-                    slots, u, v = feature_subtile_layout(
-                        cell.feature.name,
+                if cell.feature != FeatureType.NONE and cell.feature not in BUILDING_FEATURES:
+                    draw_object(
                         x,
                         y,
-                        tree_age_years=int(getattr(cell, "tree_age_years", 0)),
-                        variant=int(cell.icon_variant or 1),
-                        deposit=int(getattr(cell, "deposit", 0)),
+                        cell,
+                        anchor_slot=self.world._primary_anchor_slot(x, y, cell),
                     )
-                    footprint(x + u, y + v, footprint_scale(slots), (80, 225, 115))
-                elif has_loose_deposit:
-                    footprint(x + 0.5, y + 0.5, 1.0 / 3.0, (80, 225, 115))
+                for obj in cell.extra_objects:
+                    draw_object(x, y, obj)
+                for amount, slot in (
+                    (cell.meat_deposit, cell.meat_anchor_slot),
+                    (cell.fish_deposit, cell.fish_anchor_slot),
+                    (cell.hide_deposit, cell.hide_anchor_slot),
+                    (cell.fur_deposit, cell.fur_anchor_slot),
+                    (cell.feather_deposit, cell.feather_anchor_slot),
+                ):
+                    if amount > 0:
+                        u, v = slot_centre(slot if slot is not None else 4)
+                        footprint(x + u, y + v, 1.0 / 3.0, (105, 205, 235))
 
         actor_scale = 1.0 / 3.0
         for villager in self.villagers:
@@ -21243,10 +21778,14 @@ class Game:
         for villager in self.villagers:
             if villager is getattr(self, "_god_dog_villager", None):
                 continue
-            vx, vy = entity_draw_xy(villager)
+            draw_position = self._villager_building_draw_position(villager)
+            if draw_position is None:
+                continue
+            vx, vy = draw_position
             people.append((vy, vx, "villager", villager))
-        px, py = entity_draw_xy(self.player)
-        people.append((py, px, "player", self.player))
+        if self._player_inside_building_id is None:
+            px, py = entity_draw_xy(self.player)
+            people.append((py, px, "player", self.player))
         people.sort(key=lambda item: (item[0], item[1], item[2]))
 
         commands = sorted(

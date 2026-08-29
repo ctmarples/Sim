@@ -294,6 +294,16 @@ def _cell_to_dict(cell: Cell) -> dict[str, Any]:
         data["path_worn"] = True
     if cell.object_anchor_slot is not None:
         data["object_anchor_slot"] = int(cell.object_anchor_slot)
+    if cell.meat_anchor_slot is not None:
+        data["meat_anchor_slot"] = int(cell.meat_anchor_slot)
+    if cell.fish_anchor_slot is not None:
+        data["fish_anchor_slot"] = int(cell.fish_anchor_slot)
+    if cell.hide_anchor_slot is not None:
+        data["hide_anchor_slot"] = int(cell.hide_anchor_slot)
+    if cell.fur_anchor_slot is not None:
+        data["fur_anchor_slot"] = int(cell.fur_anchor_slot)
+    if cell.feather_anchor_slot is not None:
+        data["feather_anchor_slot"] = int(cell.feather_anchor_slot)
     if cell.extra_objects:
         data["extra_objects"] = [
             {
@@ -373,6 +383,21 @@ def _cell_from_save(c: dict[str, Any], *, migrate_legacy_fertility: bool = False
     raw_anchor = c.get("object_anchor_slot")
     if raw_anchor is not None:
         cell.object_anchor_slot = max(0, min(8, int(raw_anchor)))
+    raw_meat_anchor = c.get("meat_anchor_slot")
+    if raw_meat_anchor is not None:
+        cell.meat_anchor_slot = max(0, min(8, int(raw_meat_anchor)))
+    raw_fish_anchor = c.get("fish_anchor_slot")
+    if raw_fish_anchor is not None:
+        cell.fish_anchor_slot = max(0, min(8, int(raw_fish_anchor)))
+    raw_hide_anchor = c.get("hide_anchor_slot")
+    if raw_hide_anchor is not None:
+        cell.hide_anchor_slot = max(0, min(8, int(raw_hide_anchor)))
+    raw_fur_anchor = c.get("fur_anchor_slot")
+    if raw_fur_anchor is not None:
+        cell.fur_anchor_slot = max(0, min(8, int(raw_fur_anchor)))
+    raw_feather_anchor = c.get("feather_anchor_slot")
+    if raw_feather_anchor is not None:
+        cell.feather_anchor_slot = max(0, min(8, int(raw_feather_anchor)))
     for raw_obj in c.get("extra_objects", []):
         if not isinstance(raw_obj, dict):
             continue
@@ -1008,6 +1033,9 @@ def _spawn_field_building(
 def apply_save(game: Game, data: dict[str, Any]) -> None:
     from indicators import OverlayMode, build_overlay_grid
     from settings import BUILDING_STORAGE_CAPACITY, RANDOM_SEED
+
+    if hasattr(game, "_player_inside_building_id"):
+        game._player_inside_building_id = None
 
     if int(data.get("version", 0)) != SAVE_VERSION:
         raise ValueError(f"Unsupported save version: {data.get('version')}")

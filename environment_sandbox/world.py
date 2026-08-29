@@ -289,10 +289,15 @@ class Cell:
     growth_ticks: int = 0  # sapling maturity / berry regen countdown
     deposit: int = 0  # wood, rock, or berries remaining
     meat_deposit: int = 0
+    meat_anchor_slot: int | None = None
     hide_deposit: int = 0
+    hide_anchor_slot: int | None = None
     fur_deposit: int = 0
+    fur_anchor_slot: int | None = None
     feather_deposit: int = 0
+    feather_anchor_slot: int | None = None
     fish_deposit: int = 0
+    fish_anchor_slot: int | None = None
     crop_kind: str | None = None  # CropDef / WildSpeciesDef key
     tree_species: str | None = None  # TreeDef key for TREE / SAPLING
     tree_age_years: int = 0  # mature-tree age; saplings begin at zero
@@ -1828,19 +1833,20 @@ class World:
         left, top = bx - 0.5, by - 0.5
         right, bottom = bx + bw - 0.5, by + bh - 0.5
         door_x, door_y = self.building_entrance_position(footprint)
+        eps = 1e-6
         in_door = (
-            abs(world_x - door_x) < 1.0 / 6.0
-            and abs(world_y - door_y) < 1.0 / 6.0
+            abs(world_x - door_x) < 1.0 / 6.0 + eps
+            and abs(world_y - door_y) < 1.0 / 6.0 + eps
         )
         if in_door:
             return True
         if (bw, bh) == (3, 2):
             halo = 1.0 / 3.0
             return (
-                world_x <= left + halo
-                or world_x >= right - halo
-                or world_y <= top + halo
-                or world_y >= bottom - halo
+                world_x <= left + halo + eps
+                or world_x >= right - halo - eps
+                or world_y <= top + halo + eps
+                or world_y >= bottom - halo - eps
             )
         # Single-square and other compact buildings have no walkable halo.
         return False
@@ -1849,12 +1855,19 @@ class World:
     def _object_has_hard_anchor(
         feature: FeatureType, *, tree_age_years: int = 0, deposit: int = 0
     ) -> bool:
-        """Only trunks and large rock cores create hard movement boundaries."""
-        if feature == FeatureType.TREE:
-            return True
-        if feature == FeatureType.ROCK:
-            return int(deposit) >= 20
-        return False
+        """Compatibility query backed by the central footprint definition."""
+        from subtile_layout import object_footprint
+
+        return bool(
+            object_footprint(
+                feature.name,
+                0,
+                0,
+                tree_age_years=tree_age_years,
+                deposit=deposit,
+                anchor_slot=4,
+            ).hard_slots
+        )
 
     @staticmethod
     def _point_in_anchor(
@@ -1936,24 +1949,53 @@ class World:
         tree_age_years: int = 0,
         icon_variant: int | None = None,
     ) -> NaturalObject | None:
-        """Add an overlapping secondary object, keeping hard anchors distinct."""
-        from subtile_layout import stable_anchor_slot
+        """Add a secondary object using the shared subcell-capacity rules."""
+        from subtile_layout import (
+            first_available_anchor,
+            object_footprint,
+        )
 
         cell = self.get_cell(x, y)
         if cell is None or feature in STRUCTURE_FEATURES or feature == FeatureType.NONE:
             return None
-        occupied = {obj.anchor_slot for obj in cell.extra_objects}
+        existing = []
         if cell.feature != FeatureType.NONE:
-            occupied.add(self._primary_anchor_slot(x, y, cell))
-        preferred = (
-            stable_anchor_slot(x, y, int(icon_variant or 1))
-            if anchor_slot is None
-            else max(0, min(8, int(anchor_slot)))
+            existing.append(
+                object_footprint(
+                    cell.feature.name,
+                    x,
+                    y,
+                    tree_age_years=cell.tree_age_years,
+                    variant=int(cell.icon_variant or 1),
+                    deposit=cell.deposit,
+                    anchor_slot=self._primary_anchor_slot(x, y, cell),
+                )
+            )
+        existing.extend(
+            object_footprint(
+                obj.feature.name,
+                x,
+                y,
+                tree_age_years=obj.tree_age_years,
+                variant=int(obj.icon_variant or 1),
+                deposit=obj.deposit,
+                anchor_slot=obj.anchor_slot,
+            )
+            for obj in cell.extra_objects
         )
-        free = [slot for slot in range(9) if slot not in occupied]
-        if not free:
+        placement = first_available_anchor(
+            feature.name,
+            x,
+            y,
+            existing,
+            tree_age_years=tree_age_years,
+            variant=int(icon_variant or 1),
+            deposit=deposit,
+            preferred=anchor_slot,
+        )
+        if placement is None:
             return None
-        slot = preferred if preferred in free else min(free, key=lambda s: abs(s - preferred))
+        slot, _footprint = placement
         obj = NaturalObject(
             feature=feature,
             anchor_slot=slot,
@@ -1965,8 +2007,119 @@ class World:
             icon_variant=icon_variant,
         )
         cell.extra_objects.append(obj)
-        self.bump_terrain()
+        # Soft plants/litter do not alter navigation. Clearing the global edge
+        # cache for them caused a recurring AI hitch at ecology spawn intervals.
+        if _footprint.hard_slots:
+            self.invalidate_movement_cache()
         return obj
+
+    def promote_natural_object(self, x: int, y: int, obj: NaturalObject) -> bool:
+        """Swap a selected secondary object into legacy primary fields."""
+        cell = self.get_cell(x, y)
+        if cell is None or obj not in cell.extra_objects:
+            return False
+        prior = NaturalObject(
+            feature=cell.feature,
+            anchor_slot=self._primary_anchor_slot(x, y, cell),
+            deposit=cell.deposit,
+            growth_ticks=cell.growth_ticks,
+            crop_kind=cell.crop_kind,
+            tree_species=cell.tree_species,
+            tree_age_years=cell.tree_age_years,
+            icon_variant=cell.icon_variant,
+        )
+        cell.extra_objects.remove(obj)
+        if prior.feature != FeatureType.NONE:
+            cell.extra_objects.append(prior)
+        cell.feature = obj.feature
+        cell.object_anchor_slot = obj.anchor_slot
+        cell.deposit = obj.deposit
+        cell.growth_ticks = obj.growth_ticks
+        cell.crop_kind = obj.crop_kind
+        cell.tree_species = obj.tree_species
+        cell.tree_age_years = obj.tree_age_years
+        cell.icon_variant = obj.icon_variant
+        return True
+
+    def can_move_between_positions(
+        self, start_x: float, start_y: float, end_x: float, end_y: float
+    ) -> bool:
+        """Continuous actor collision along its actual subcell path."""
+        sx = int(math.floor(start_x + 0.5))
+        sy = int(math.floor(start_y + 0.5))
+        ex = int(math.floor(end_x + 0.5))
+        ey = int(math.floor(end_y + 0.5))
+        if not self.is_position_walkable(end_x, end_y):
+            return False
+        if (sx, sy) != (ex, ey):
+            if abs(ex - sx) > 1 or abs(ey - sy) > 1:
+                return False
+            if self._edge_key(sx, sy, ex, ey) in getattr(
+                self, "blocked_edges", set()
+            ):
+                return False
+        distance = math.hypot(end_x - start_x, end_y - start_y)
+        samples = max(1, int(math.ceil(distance * 24.0)))
+        for index in range(1, samples + 1):
+            t = index / samples
+            if not self.is_position_walkable(
+                start_x + (end_x - start_x) * t,
+                start_y + (end_y - start_y) * t,
+            ):
+                return False
+        return True
+
+    def free_loose_object_anchor(self, x: int, y: int, kind: str) -> int | None:
+        """Return the nearest free subcell for a ground drop such as meat or fish."""
+        from subtile_layout import (
+            first_available_anchor,
+            object_footprint,
+            stable_drop_slot,
+        )
+
+        cell = self.get_cell(x, y)
+        if cell is None:
+            return None
+        existing = []
+        if cell.feature != FeatureType.NONE:
+            existing.append(
+                object_footprint(
+                    cell.feature.name,
+                    x,
+                    y,
+                    tree_age_years=cell.tree_age_years,
+                    variant=int(cell.icon_variant or 1),
+                    deposit=cell.deposit,
+                    anchor_slot=self._primary_anchor_slot(x, y, cell),
+                )
+            )
+        existing.extend(
+            object_footprint(
+                obj.feature.name,
+                x,
+                y,
+                tree_age_years=obj.tree_age_years,
+                variant=int(obj.icon_variant or 1),
+                deposit=obj.deposit,
+                anchor_slot=obj.anchor_slot,
+            )
+            for obj in cell.extra_objects
+        )
+        for deposit_kind, slot in (
+            ("MEAT", cell.meat_anchor_slot),
+            ("FISH", cell.fish_anchor_slot),
+            ("HIDE", cell.hide_anchor_slot),
+            ("FUR", cell.fur_anchor_slot),
+            ("FEATHER", cell.feather_anchor_slot),
+        ):
+            if slot is not None:
+                existing.append(
+                    object_footprint(deposit_kind, x, y, anchor_slot=slot)
+                )
+        placement = first_available_anchor(
+            kind, x, y, existing, preferred=stable_drop_slot(x, y, kind)
+        )
+        return placement[0] if placement is not None else None
 
     def set_blocked_edges(self, edges: set[tuple[int, int, int, int]]) -> None:
         self.blocked_edges = set(edges)
@@ -1996,15 +2149,6 @@ class World:
             return False
         entering = self._building_at_cell(bx, by)
         leaving = self._building_at_cell(ax, ay)
-        compact_door_transition = (
-            entering is not None
-            and (entering[2], entering[3]) != (3, 2)
-            and (bx, by) == self.building_entrance_cell(entering)
-        ) or (
-            leaving is not None
-            and (leaving[2], leaving[3]) != (3, 2)
-            and (ax, ay) == self.building_entrance_cell(leaving)
-        )
         start_x, start_y = (
             self.building_navigation_position(leaving, ax, ay)
             if leaving is not None
@@ -2017,25 +2161,35 @@ class World:
         )
         # Most edges cross empty terrain and need no subcell work. Sample only
         # when the segment touches a hard natural anchor or a building doorway.
-        if not compact_door_transition and (
+        if (
             entering is not None
             or leaving is not None
             or self._cell_has_hard_anchor(ax, ay)
             or self._cell_has_hard_anchor(bx, by)
         ):
-            for index in range(1, 7):
-                t = index / 6.0
+            # Match continuous actor collision closely enough that a narrow
+            # wall corner cannot fall between samples on a diagonal edge.
+            for index in range(1, 25):
+                t = index / 24.0
                 px = start_x + (end_x - start_x) * t
                 py = start_y + (end_y - start_y) * t
                 if not self.is_position_walkable(px, py):
                     return False
         blocked = getattr(self, "blocked_edges", set())
-        if compact_door_transition:
-            # A compact doorway occupies only one subcell while the logical
-            # path graph is cell-sized. Treat the final edge as the precise
-            # doorway approach so tightly packed legacy towns remain usable.
-            return self._edge_key(ax, ay, bx, by) not in blocked
         if dx and dy:
+            if any(
+                footprint is not None
+                for footprint in (
+                    entering,
+                    leaving,
+                    self._building_at_cell(bx, ay),
+                    self._building_at_cell(ax, by),
+                )
+            ):
+                # Follow cardinal halo segments around structures. A diagonal
+                # between them can visually shave the hard wall corner even
+                # when both endpoint cells themselves are walkable.
+                return False
             # Do not squeeze diagonally between water or across fence corners.
             return (
                 self.is_walkable(bx, ay)
@@ -2137,7 +2291,13 @@ class World:
         if best == (x, y):
             return best
         cell.fish_deposit = 0
-        self.cells[best[1]][best[0]].fish_deposit += amount
+        cell.fish_anchor_slot = None
+        target = self.cells[best[1]][best[0]]
+        if target.fish_deposit <= 0:
+            target.fish_anchor_slot = self.free_loose_object_anchor(
+                best[0], best[1], "FISH"
+            )
+        target.fish_deposit += amount
         return best
 
     def next_step_toward(self, start: tuple[int, int], goal: tuple[int, int]) -> tuple[int, int] | None:
@@ -2243,6 +2403,11 @@ class World:
                     cells.append((x, y))
                 elif feat == FeatureType.WOOD_BUSH:
                     cells.append((x, y))
+                elif any(
+                    obj.feature in (FeatureType.SAPLING, FeatureType.WOOD_BUSH)
+                    for obj in cell.extra_objects
+                ):
+                    cells.append((x, y))
         self._growth_cells = cells
         self._growth_index_age = 0
 
@@ -2311,6 +2476,7 @@ class World:
             self._growth_index_age = age + ticks
 
         still_growing: list[tuple[int, int]] = []
+        hard_collision_changed = False
         for x, y in growth_cells or ():
             cell = self.cells[y][x]
             feat = cell.feature
@@ -2324,6 +2490,7 @@ class World:
                         cell.tree_age_years = 0
                         cell.growth_ticks = 0
                         cell.deposit = tree.yield_amount
+                        hard_collision_changed = True
                     else:
                         still_growing.append((x, y))
                 else:
@@ -2370,7 +2537,36 @@ class World:
                     cell.crop_kind = None
                 else:
                     still_growing.append((x, y))
+            keep_cell = False
+            for obj in list(cell.extra_objects):
+                if obj.feature == FeatureType.SAPLING:
+                    if grow_step > 0:
+                        obj.growth_ticks -= grow_step * ticks
+                        if obj.growth_ticks <= 0:
+                            tree = resolve_tree(obj.tree_species)
+                            obj.feature = FeatureType.TREE
+                            obj.tree_species = tree.key
+                            obj.tree_age_years = 0
+                            obj.growth_ticks = 0
+                            obj.deposit = tree.yield_amount
+                            hard_collision_changed = True
+                        else:
+                            keep_cell = True
+                    else:
+                        keep_cell = True
+                elif obj.feature == FeatureType.WOOD_BUSH:
+                    if obj.growth_ticks <= 0:
+                        obj.growth_ticks = self._fallen_wood_lifetime_ticks()
+                    obj.growth_ticks = max(0, obj.growth_ticks - ticks)
+                    if obj.growth_ticks <= 0:
+                        cell.extra_objects.remove(obj)
+                    else:
+                        keep_cell = True
+            if keep_cell and (x, y) not in still_growing:
+                still_growing.append((x, y))
         self._growth_cells = still_growing
+        if hard_collision_changed:
+            self.invalidate_movement_cache()
 
         # Seasonal spawn/despawn timers: fire the same number of times as real ticks.
         def _drain_timer(attr: str, interval: int, callback) -> None:
@@ -2540,6 +2736,40 @@ class World:
                             else:
                                 cell.crop_kind = species.key
                                 wild_n[cell.terrain] = wild_n.get(cell.terrain, 0) + 1
+                # A vegetated ecology cell can hold up to three individually
+                # selected plants. Each additional plant gets its own species
+                # suitability roll and free subcell rather than cloning the
+                # primary cell icon/anchor.
+                for obj in list(cell.extra_objects):
+                    if obj.feature not in (FeatureType.HERB, FeatureType.WILD_CROP):
+                        continue
+                    if self._forage_rng.random() < herb_despawn_rate(day, x, y):
+                        cell.extra_objects.remove(obj)
+                wild_here = int(cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP)) + sum(
+                    obj.feature in (FeatureType.HERB, FeatureType.WILD_CROP)
+                    for obj in cell.extra_objects
+                )
+                if (
+                    0 < wild_here < 3
+                    and cell.terrain in WILD_CROPS_BY_TERRAIN
+                    and crop_peak > 0
+                    and self._forage_rng.random() < crop_peak * 0.35
+                ):
+                    crop_key = self._forage_rng.choice(
+                        WILD_CROPS_BY_TERRAIN[cell.terrain]
+                    )
+                    species = WILD_BY_KEY[crop_key]
+                    score = self.species_suitability_at(x, y, species)
+                    if (
+                        environment_allows_establishment(species, score)
+                        and self._forage_rng.random() < score.combined
+                    ):
+                        self.add_natural_object(
+                            x,
+                            y,
+                            FeatureType.WILD_CROP,
+                            crop_kind=crop_key,
+                        )
                 if (
                     cell.feature == FeatureType.NONE
                     and cell.terrain in WILD_CROPS_BY_TERRAIN
@@ -2660,6 +2890,15 @@ class World:
             for x in range(self.cols)
             if self.cells[y][x].feature == FeatureType.MUSHROOM
         ]
+        for extra_y, row in enumerate(self.cells):
+            for extra_x, cell in enumerate(row):
+                for obj in list(cell.extra_objects):
+                    if (
+                        obj.feature == FeatureType.MUSHROOM
+                        and self._forage_rng.random()
+                        < mushroom_despawn_rate(day, extra_x, extra_y)
+                    ):
+                        cell.extra_objects.remove(obj)
         for mx, my in existing:
             if self._forage_rng.random() < mushroom_despawn_rate(day, mx, my):
                 cell = self.cells[my][mx]
@@ -2689,6 +2928,13 @@ class World:
             for x in range(self.cols):
                 if self.cells[y][x].feature != FeatureType.TREE:
                     continue
+                if self._forage_rng.random() < mushroom_spawn_rate(day, x, y) * 0.35:
+                    self.add_natural_object(
+                        x,
+                        y,
+                        FeatureType.MUSHROOM,
+                        crop_kind=mushroom.key,
+                    )
                 for ny, nx in self.neighbourhood(x, y, radius=1):
                     if (nx, ny) == (x, y):
                         continue
@@ -2719,14 +2965,23 @@ class World:
         for nx, ny in wood_candidates:
             cell = self.cells[ny][nx]
             if (
-                cell.feature == FeatureType.NONE
-                and cell.terrain in wood_terrains
+                cell.terrain in wood_terrains
                 and self._forage_rng.random() < wood_bush_spawn_rate(day, nx, ny)
             ):
-                cell.feature = FeatureType.WOOD_BUSH
-                cell.crop_kind = wood.key
-                cell.deposit = WOOD_BUSH_YIELD
-                cell.growth_ticks = self._fallen_wood_lifetime_ticks()
+                if cell.feature == FeatureType.NONE:
+                    cell.feature = FeatureType.WOOD_BUSH
+                    cell.crop_kind = wood.key
+                    cell.deposit = WOOD_BUSH_YIELD
+                    cell.growth_ticks = self._fallen_wood_lifetime_ticks()
+                else:
+                    self.add_natural_object(
+                        nx,
+                        ny,
+                        FeatureType.WOOD_BUSH,
+                        crop_kind=wood.key,
+                        deposit=WOOD_BUSH_YIELD,
+                        growth_ticks=self._fallen_wood_lifetime_ticks(),
+                    )
 
     def clear_mushrooms(self) -> None:
         """Remove seasonal mushrooms; fallen wood has its own lifetime."""
@@ -2737,6 +2992,11 @@ class World:
                     cell.feature = FeatureType.NONE
                     cell.deposit = 0
                     cell.crop_kind = None
+                cell.extra_objects = [
+                    obj
+                    for obj in cell.extra_objects
+                    if obj.feature != FeatureType.MUSHROOM
+                ]
 
     def _wild_plant_counts(self, terrain: TerrainType) -> tuple[int, int]:
         """Return (wild plant tiles, total tiles) for a terrain type."""
@@ -2858,11 +3118,22 @@ class World:
         cell = self.get_cell(x, y)
         if cell is None:
             return False
-        if cell.feature != FeatureType.NONE:
-            return False
         if cell.terrain not in PLANTABLE_LAND:
             return False
         tree = resolve_tree(species)
+        if cell.feature != FeatureType.NONE:
+            planted = self.add_natural_object(
+                x,
+                y,
+                FeatureType.SAPLING,
+                tree_species=tree.key,
+                tree_age_years=0,
+                growth_ticks=growth_ticks_for(tree),
+            )
+            if planted is None:
+                return False
+            self.note_growth_cell(x, y)
+            return True
         cell.feature = FeatureType.SAPLING
         cell.tree_species = tree.key
         cell.tree_age_years = 0
@@ -2905,7 +3176,7 @@ class World:
         environment_checked: bool = False,
     ) -> bool:
         cell = self.get_cell(x, y)
-        if cell is None or cell.feature != FeatureType.NONE:
+        if cell is None:
             return False
         allowed = WILD_CROPS_BY_TERRAIN.get(cell.terrain)
         if not allowed:
@@ -2914,6 +3185,17 @@ class World:
             crop_key = allowed[0]
         if crop_key not in allowed:
             return False
+        if cell.feature != FeatureType.NONE:
+            if not self._wild_plant_room(
+                cell.terrain, wild_n=wild_n, total_n=total_n
+            ):
+                return False
+            return self.add_natural_object(
+                x,
+                y,
+                FeatureType.WILD_CROP,
+                crop_kind=crop_key,
+            ) is not None
         species = WILD_BY_KEY.get(crop_key)
         if species is not None and not environment_checked:
             if not self._species_can_occupy(x, y, species):
@@ -3160,12 +3442,16 @@ class World:
             return 0
         taken = min(amount, cell.meat_deposit)
         cell.meat_deposit -= taken
+        if cell.meat_deposit <= 0:
+            cell.meat_anchor_slot = None
         return taken
 
     def add_meat_deposit(self, x: int, y: int, amount: int) -> None:
         cell = self.get_cell(x, y)
         if cell is None:
             return
+        if cell.meat_deposit <= 0:
+            cell.meat_anchor_slot = self.free_loose_object_anchor(x, y, "MEAT")
         cell.meat_deposit += amount
 
     def harvest_hide(self, x: int, y: int, amount: int = 1) -> int:
@@ -3174,12 +3460,16 @@ class World:
             return 0
         taken = min(amount, cell.hide_deposit)
         cell.hide_deposit -= taken
+        if cell.hide_deposit <= 0:
+            cell.hide_anchor_slot = None
         return taken
 
     def add_hide_deposit(self, x: int, y: int, amount: int) -> None:
         cell = self.get_cell(x, y)
         if cell is None:
             return
+        if cell.hide_deposit <= 0:
+            cell.hide_anchor_slot = self.free_loose_object_anchor(x, y, "HIDE")
         cell.hide_deposit += amount
 
     def harvest_fur(self, x: int, y: int, amount: int = 1) -> int:
@@ -3188,12 +3478,16 @@ class World:
             return 0
         taken = min(amount, cell.fur_deposit)
         cell.fur_deposit -= taken
+        if cell.fur_deposit <= 0:
+            cell.fur_anchor_slot = None
         return taken
 
     def add_fur_deposit(self, x: int, y: int, amount: int) -> None:
         cell = self.get_cell(x, y)
         if cell is None:
             return
+        if cell.fur_deposit <= 0:
+            cell.fur_anchor_slot = self.free_loose_object_anchor(x, y, "FUR")
         cell.fur_deposit += amount
 
     def harvest_feathers(self, x: int, y: int, amount: int = 1) -> int:
@@ -3202,11 +3496,17 @@ class World:
             return 0
         taken = min(amount, cell.feather_deposit)
         cell.feather_deposit -= taken
+        if cell.feather_deposit <= 0:
+            cell.feather_anchor_slot = None
         return taken
 
     def add_feather_deposit(self, x: int, y: int, amount: int) -> None:
         cell = self.get_cell(x, y)
         if cell is not None:
+            if cell.feather_deposit <= 0:
+                cell.feather_anchor_slot = self.free_loose_object_anchor(
+                    x, y, "FEATHER"
+                )
             cell.feather_deposit += amount
 
     def harvest_fish(self, x: int, y: int, amount: int = 1) -> int:
@@ -3215,6 +3515,8 @@ class World:
             return 0
         taken = min(amount, cell.fish_deposit)
         cell.fish_deposit -= taken
+        if cell.fish_deposit <= 0:
+            cell.fish_anchor_slot = None
         return taken
 
     def add_fish_deposit(self, x: int, y: int, amount: int) -> tuple[int, int] | None:
@@ -3222,11 +3524,17 @@ class World:
         shore = self.best_fish_shore(x, y)
         if shore is not None:
             sx, sy = shore
+            if self.cells[sy][sx].fish_deposit <= 0:
+                self.cells[sy][sx].fish_anchor_slot = self.free_loose_object_anchor(
+                    sx, sy, "FISH"
+                )
             self.cells[sy][sx].fish_deposit += amount
             return shore
         cell = self.get_cell(x, y)
         if cell is None:
             return None
+        if cell.fish_deposit <= 0:
+            cell.fish_anchor_slot = self.free_loose_object_anchor(x, y, "FISH")
         cell.fish_deposit += amount
         return (x, y)
 
