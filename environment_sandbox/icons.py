@@ -3,7 +3,9 @@
 Coordinate convention (Y down, matching the game)
 -------------------------------------------------
 * ``ICON_CELL`` (40) units = one map cell edge (SVG viewBox / PNG export space).
-* The **home cell** is the tile the feature lives on. By default it is the
+* Tree and sapling sources use an 80×80 canvas. Their **home cell** is the
+  bottom-left 40×40 quadrant, leaving room above and right for canopy/shadow.
+* For other icons, the **home cell** is the tile the feature lives on. By default it is the
   **bottom-left 40×40** of the viewBox (so a 40×80 tree keeps its trunk in the
   lower cell and canopy may overlap the cell above).
 * The **anchor** is the home-cell centre. That point is blitted to the map cell
@@ -61,6 +63,13 @@ _ICON_BASE_ALIASES: dict[str, str] = {
 
 # One map cell in SVG / export units (home-cell edge).
 ICON_CELL: float = 40.0
+
+# Recolourable vegetation sources with deliberate 80x80 overhang canvases.
+# Their SVGs remain authoritative if an older narrow PNG export is present.
+_OVERHANG_SVG_PREFIXES: tuple[str, ...] = (
+    "tree_", "sapling_", "berry_bush", "cattail_", "crop_", "flower_plant_",
+    "reed_", "sedge_", "vine_plant_",
+)
 
 Colour = tuple[int, int, int]
 Paint = tuple[int, int, int, int]  # RGBA; alpha 255 = opaque
@@ -823,11 +832,11 @@ def _rasterise_svg(
     surf_h = max(1, int(round(vb[3] * scale)))
     surf = pygame.Surface((surf_w, surf_h), pygame.SRCALPHA)
     surf.fill((0, 0, 0, 0))
-    # Tree art always reserves its bottom-left 40x40 SVG units for the trunk
-    # home cell. Ignore stale editor metadata so newly replaced variants align.
+    # Tree and sapling art always reserve the bottom-left 40x40 SVG units for
+    # the trunk home cell. Ignore stale editor metadata so replaced variants align.
     anchor = (
         (vb[0] + ICON_CELL / 2.0, vb[1] + vb[3] - ICON_CELL / 2.0)
-        if path.stem.startswith("tree_")
+        if path.stem.startswith(("tree_", "sapling_"))
         else _layout_anchor(root, vb)
     )
     # class_scales grow/shrink around the home-cell anchor.
@@ -1352,7 +1361,7 @@ def _load_png_icon(name: str, cell_px: int) -> IconImage | None:
         return None
     ax = int(meta.get("anchor_x", surf.get_width() // 2))
     ay = int(meta.get("anchor_y", surf.get_height() // 2))
-    if name.startswith("tree_"):
+    if name.startswith(("tree_", "sapling_")):
         ax = export_cell // 2
         ay = surf.get_height() - export_cell // 2
     scale = float(cell_px) / float(max(1, export_cell))
@@ -1399,6 +1408,10 @@ def get_icon(
     cell_px = max(4, int(cell_px))
     omit = frozenset(omit_classes) if omit_classes else None
     want_png = _prefer_png() if prefer_png is None else bool(prefer_png)
+    # Tree-stage SVGs are the authoritative, recolourable 80x80 sources. Keep
+    # using them even when an older baked PNG exists with the former canvas.
+    if name.startswith(_OVERHANG_SVG_PREFIXES) and icon_path(name, ".svg") is not None:
+        want_png = False
     want_stipple = bool(stipple)
     rc = tuple(sorted((k, v) for k, v in (recolour or {}).items()))
     sc = tuple(sorted((k, round(v, 3)) for k, v in (class_scales or {}).items()))

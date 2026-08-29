@@ -7732,6 +7732,7 @@ class Game:
                         tree_age_years=int(getattr(obj, "tree_age_years", 0)),
                         variant=int(getattr(obj, "icon_variant", None) or 1),
                         deposit=int(getattr(obj, "deposit", 0)),
+                        crop_kind=getattr(obj, "crop_kind", None),
                         anchor_slot=anchor,
                     )
                     if feature == FeatureType.TREE:
@@ -20764,7 +20765,13 @@ class Game:
                 not self.use_original_resource_grid
                 and cell.feature != FeatureType.NONE
                 and cell.feature not in BUILDING_FEATURES
-                and cell.feature != FeatureType.CROP_HERB
+                and (
+                    cell.feature != FeatureType.CROP_HERB
+                    or (
+                        CROP_BY_KEY.get(cell.crop_kind or "") is not None
+                        and CROP_BY_KEY[cell.crop_kind].icon_base == "crop_vine"
+                    )
+                )
             ):
                 from subtile_layout import (
                     feature_subtile_layout,
@@ -20781,6 +20788,7 @@ class Game:
                     tree_age_years=int(getattr(cell, "tree_age_years", 0)),
                     variant=int(cell.icon_variant or 1),
                     deposit=int(getattr(cell, "deposit", 0)),
+                    crop_kind=getattr(cell, "crop_kind", None),
                     anchor_slot=anchor,
                 )
                 if cell.feature == FeatureType.TREE:
@@ -20905,6 +20913,7 @@ class Game:
                     tree_age_years=obj.tree_age_years,
                     variant=int(obj.icon_variant or 1),
                     deposit=obj.deposit,
+                    crop_kind=obj.crop_kind,
                     anchor_slot=obj.anchor_slot,
                 )
                 if obj.feature == FeatureType.TREE:
@@ -20929,7 +20938,7 @@ class Game:
                 growth_ticks=obj.growth_ticks,
             )
 
-        from subtile_layout import feature_subtile_layout, slot_centre
+        from subtile_layout import feature_subtile_layout, object_footprint, slot_centre
 
         # (ground-y, ground-x, kind, cell-x, cell-y, object). Primary and
         # secondary objects share one queue, so overlap follows Y position.
@@ -20950,7 +20959,13 @@ class Game:
                 not self.use_original_resource_grid
                 and cell.feature != FeatureType.NONE
                 and cell.feature not in BUILDING_FEATURES
-                and cell.feature != FeatureType.CROP_HERB
+                and (
+                    cell.feature != FeatureType.CROP_HERB
+                    or (
+                        CROP_BY_KEY.get(cell.crop_kind or "") is not None
+                        and CROP_BY_KEY[cell.crop_kind].icon_base == "crop_vine"
+                    )
+                )
             ):
                 _slots, u, v = feature_subtile_layout(
                     cell.feature.name,
@@ -20959,6 +20974,7 @@ class Game:
                     tree_age_years=int(getattr(cell, "tree_age_years", 0)),
                     variant=int(cell.icon_variant or 1),
                     deposit=int(getattr(cell, "deposit", 0)),
+                    crop_kind=getattr(cell, "crop_kind", None),
                     anchor_slot=self.world._primary_anchor_slot(x, y, cell),
                 )
                 if cell.feature == FeatureType.TREE:
@@ -20981,6 +20997,7 @@ class Game:
                         tree_age_years=obj.tree_age_years,
                         variant=int(obj.icon_variant or 1),
                         deposit=obj.deposit,
+                        crop_kind=obj.crop_kind,
                         anchor_slot=obj.anchor_slot,
                     )
                     if obj.feature == FeatureType.TREE:
@@ -20990,14 +21007,39 @@ class Game:
         draw_queue.sort(key=lambda item: (item[0], item[1], item[2]))
         depth_commands: list[tuple[float, float, object]] = []
         for _depth_y, _depth_x, kind, x, y, obj in draw_queue:
+            floor_layer = False
             if kind == 1:
                 command = lambda x=x, y=y: _draw_loose_deposits(x, y)
             elif obj is None:
+                cell = self.world.cells[y][x]
+                floor_layer = object_footprint(
+                    cell.feature.name,
+                    x,
+                    y,
+                    tree_age_years=int(getattr(cell, "tree_age_years", 0)),
+                    variant=int(getattr(cell, "icon_variant", None) or 1),
+                    deposit=int(getattr(cell, "deposit", 0)),
+                    crop_kind=getattr(cell, "crop_kind", None),
+                    anchor_slot=self.world._primary_anchor_slot(x, y, cell),
+                ).floor_layer
                 command = lambda x=x, y=y: _draw_cell_feature(x, y)
             else:
+                floor_layer = object_footprint(
+                    obj.feature.name,
+                    x,
+                    y,
+                    tree_age_years=int(getattr(obj, "tree_age_years", 0)),
+                    variant=int(getattr(obj, "icon_variant", None) or 1),
+                    deposit=int(getattr(obj, "deposit", 0)),
+                    crop_kind=getattr(obj, "crop_kind", None),
+                    anchor_slot=int(getattr(obj, "anchor_slot")),
+                ).floor_layer
                 command = lambda x=x, y=y, obj=obj: _draw_extra_feature(x, y, obj)
             command()
-            depth_commands.append((_depth_y, _depth_x, command))
+            # Floor objects live permanently in the cached base layer. Omitting
+            # them here prevents proximity to an actor from changing layering.
+            if not floor_layer:
+                depth_commands.append((_depth_y, _depth_x, command))
         self._world_depth_draw_commands = depth_commands
 
         self.screen.set_clip(None)
@@ -21581,6 +21623,7 @@ class Game:
                 tree_age_years=int(getattr(obj, "tree_age_years", 0)),
                 variant=int(getattr(obj, "icon_variant", None) or 1),
                 deposit=int(getattr(obj, "deposit", 0)),
+                crop_kind=getattr(obj, "crop_kind", None),
                 anchor_slot=(
                     int(anchor_slot)
                     if anchor_slot is not None

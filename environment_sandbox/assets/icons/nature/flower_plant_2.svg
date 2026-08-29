@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <svg
-   width="40"
-   height="40"
+   viewBox="0 -40 80 80"
+   width="80"
+   height="80"
    version="1.1"
    id="svg2"
    sodipodi:docname="flower_plant_2.svg"
@@ -22,10 +23,10 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      inkscape:zoom="7.2417542"
-     inkscape:cx="42.876352"
-     inkscape:cy="31.345996"
+     inkscape:cx="21.127478"
+     inkscape:cy="53.371046"
      inkscape:window-width="1470"
-     inkscape:window-height="835"
+     inkscape:window-height="834"
      inkscape:window-x="0"
      inkscape:window-y="33"
      inkscape:window-maximized="1"
@@ -35,81 +36,77 @@
   <desc
      id="desc1">Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
   <ellipse
-     style="fill:#3f2f0c;fill-opacity:0.358796;stroke-width:1.257"
+     style="fill:#3f2f0c;fill-opacity:0.358796;stroke-width:2.18074"
      id="path2-3"
-     cx="10.905175"
-     cy="21.890337"
-     rx="6.8642325"
-     ry="3.3455923" />
+     cx="16.422461"
+     cy="33.001724"
+     rx="11.841641"
+     ry="5.8370185" />
   <ellipse
-     style="fill:#3f2f0c;fill-opacity:0.358796;stroke-width:1.257"
+     style="fill:#3f2f0c;fill-opacity:0.358796;stroke-width:1.98857"
      id="path2-3-3"
-     cx="33.058475"
-     cy="18.031479"
-     rx="6.8642325"
-     ry="3.3455923" />
-  <g
-     id="g2">
-    <title
-       id="title2">Layer 1</title>
-    <path
-       stroke="#5aae50"
-       stroke-linejoin="round"
-       stroke-linecap="round"
-       stroke-width="2"
-       fill="none"
-       d="m7.66708,11.45888l0,13.2391"
-       class="stem"
-       id="svg_3" />
-    <path
-       transform="rotate(8.73613 9.5516 17.8429)"
-       stroke="#5aae50"
-       stroke-linejoin="round"
-       stroke-linecap="round"
-       stroke-width="2"
-       fill="none"
-       d="m9.55165,11.22331l0,13.2391"
-       class="stem"
-       id="svg_5" />
-    <path
-       transform="rotate(-13.6828 31.1833 14.5362)"
-       stroke="#5aae50"
-       stroke-linejoin="round"
-       stroke-linecap="round"
-       stroke-width="2"
-       fill="none"
-       d="m31.18333,7.91661l0,13.2391"
-       class="stem"
-       id="svg_10" />
-    <path
-       transform="rotate(8.73613 33.7809 13.9441)"
-       stroke="#5aae50"
-       stroke-linejoin="round"
-       stroke-linecap="round"
-       stroke-width="2"
-       fill="none"
-       d="m33.78091,7.32454l0,13.2391"
-       class="stem"
-       id="svg_11" />
-    <path
-       fill="#466ec8"
-       d="m9.17876,10.86509c0,-1.46235 1.18547,-2.64782 2.64782,-2.64782c1.46235,0 2.64782,1.18547 2.64782,2.64782c0,1.46235 -1.18547,2.64782 -2.64782,2.64782c-1.46235,0 -2.64782,-1.18547 -2.64782,-2.64782z"
-       class="flower"
-       id="svg_13" />
-    <path
-       fill="#466ec8"
-       d="m32.26545,5.31416c0,-1.46235 1.18547,-2.64782 2.64782,-2.64782c1.46235,0 2.64782,1.18547 2.64782,2.64782c0,1.46235 -1.18547,2.64782 -2.64782,2.64782c-1.46235,0 -2.64782,-1.18547 -2.64782,-2.64782z"
-       class="flower"
-       id="svg_14" />
-    <path
-       fill="#466ec8"
-       d="m3.29641,9.61732c0,-1.46235 1.18547,-2.64782 2.64782,-2.64782c1.46235,0 2.64782,1.18547 2.64782,2.64782c0,1.46235 -1.18547,2.64782 -2.64782,2.64782c-1.46235,0 -2.64782,-1.18547 -2.64782,-2.64782z"
-       class="flower"
-       id="svg_1" />
-    <path
-       fill="#466ec8"
-       d="m25.67009,6.56193c0,-1.46235 1.18547,-2.64782 2.64782,-2.64782c1.46235,0 2.64782,1.18547 2.64782,2.64782c0,1.46235 -1.18547,2.64782 -2.64782,2.64782c-1.46235,0 -2.64782,-1.18547 -2.64782,-2.64782z"
-       class="flower"
-       id="svg_2" />
-  </g>
+     cx="29.866241"
+     cy="15.243462"
+     rx="10.056467"
+     ry="5.7151828" />
+  <path
+     stroke="#5aae50"
+     stroke-linejoin="round"
+     stroke-linecap="round"
+     stroke-width="3.46976"
+     fill="none"
+     d="M 10.836351,14.802073 V 37.900188"
+     class="stem"
+     id="svg_3" />
+  <path
+     stroke="#5aae50"
+     stroke-linejoin="round"
+     stroke-linecap="round"
+     stroke-width="3.46976"
+     fill="none"
+     d="M 15.82192,14.525079 12.353028,37.355217"
+     class="stem"
+     id="svg_5" />
+  <path
+     stroke="#5aae50"
+     stroke-linejoin="round"
+     stroke-linecap="round"
+     stroke-width="3.16399"
+     fill="none"
+     d="M 24.825011,-1.7145809 29.413064,20.25957"
+     class="stem"
+     id="svg_10" />
+  <path
+     stroke="#5aae50"
+     stroke-linejoin="round"
+     stroke-linecap="round"
+     stroke-width="3.16399"
+     fill="none"
+     d="M 32.397619,-2.9157118 29.451677,19.437894"
+     class="stem"
+     id="svg_11" />
+  <path
+     fill="#466ec8"
+     d="m 13.444184,13.766094 c 0,-2.551346 2.045081,-4.6196231 4.567813,-4.6196231 2.522733,0 4.567814,2.0682771 4.567814,4.6196231 0,2.551346 -2.045081,4.619623 -4.567814,4.619623 -2.522732,0 -4.567813,-2.068277 -4.567813,-4.619623 z"
+     class="flower"
+     id="svg_13"
+     style="stroke-width:1.73488" />
+  <path
+     fill="#466ec8"
+     d="m 28.704416,-6.481183 c 0,-2.4980922 1.736777,-4.523198 3.879198,-4.523198 2.142421,0 3.879198,2.0251058 3.879198,4.523198 0,2.4980921 -1.736777,4.5231977 -3.879198,4.5231977 -2.142421,0 -3.879198,-2.0251056 -3.879198,-4.5231977 z"
+     class="flower"
+     id="svg_14"
+     style="stroke-width:1.582" />
+  <path
+     fill="#466ec8"
+     d="m 3.29641,11.589123 c 0,-2.5513463 2.0450808,-4.619623 4.5678136,-4.619623 2.5227324,0 4.5678134,2.0682767 4.5678134,4.619623 0,2.551346 -2.045081,4.619623 -4.5678134,4.619623 -2.5227328,0 -4.5678136,-2.068277 -4.5678136,-4.619623 z"
+     class="flower"
+     id="svg_1"
+     style="stroke-width:1.73488" />
+  <path
+     fill="#466ec8"
+     d="m 19.041862,-4.349652 c 0,-2.4980921 1.736777,-4.5231978 3.879197,-4.5231978 2.142421,0 3.879198,2.0251057 3.879198,4.5231978 0,2.4980921 -1.736777,4.52319777 -3.879198,4.52319777 -2.14242,0 -3.879197,-2.02510567 -3.879197,-4.52319777 z"
+     class="flower"
+     id="svg_2"
+     style="stroke-width:1.582" />
 </svg>

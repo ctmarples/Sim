@@ -1968,6 +1968,7 @@ class World:
                     tree_age_years=cell.tree_age_years,
                     variant=int(cell.icon_variant or 1),
                     deposit=cell.deposit,
+                    crop_kind=cell.crop_kind,
                     anchor_slot=self._primary_anchor_slot(x, y, cell),
                 )
             )
@@ -1979,6 +1980,7 @@ class World:
                 tree_age_years=obj.tree_age_years,
                 variant=int(obj.icon_variant or 1),
                 deposit=obj.deposit,
+                crop_kind=obj.crop_kind,
                 anchor_slot=obj.anchor_slot,
             )
             for obj in cell.extra_objects
@@ -1991,6 +1993,7 @@ class World:
             tree_age_years=tree_age_years,
             variant=int(icon_variant or 1),
             deposit=deposit,
+            crop_kind=crop_kind,
             preferred=anchor_slot,
         )
         if placement is None:
@@ -2090,6 +2093,7 @@ class World:
                     tree_age_years=cell.tree_age_years,
                     variant=int(cell.icon_variant or 1),
                     deposit=cell.deposit,
+                    crop_kind=cell.crop_kind,
                     anchor_slot=self._primary_anchor_slot(x, y, cell),
                 )
             )
@@ -2101,6 +2105,7 @@ class World:
                 tree_age_years=obj.tree_age_years,
                 variant=int(obj.icon_variant or 1),
                 deposit=obj.deposit,
+                crop_kind=obj.crop_kind,
                 anchor_slot=obj.anchor_slot,
             )
             for obj in cell.extra_objects

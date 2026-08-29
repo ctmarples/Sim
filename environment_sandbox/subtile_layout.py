@@ -16,6 +16,7 @@ class ObjectFootprint:
     hard_slots: frozenset[int]
     family: str
     max_per_cell: int
+    floor_layer: bool
 
     @property
     def scale(self) -> float:
@@ -58,6 +59,7 @@ def feature_subtile_layout(
     tree_age_years: int = 0,
     variant: int = 1,
     deposit: int = 0,
+    crop_kind: str | None = None,
     anchor_slot: int | None = None,
 ) -> tuple[int, float, float]:
     """Return visual footprint size and centre around a stable hard anchor.
@@ -70,12 +72,23 @@ def feature_subtile_layout(
     slot = stable_anchor_slot(x, y, variant) if anchor_slot is None else int(anchor_slot)
     u, v = slot_centre(slot)
     one_slot = {
-        "SAPLING", "MUSHROOM", "HERB", "WILD_CROP", "REED",
+        "SAPLING", "MUSHROOM", "HERB", "WILD_CROP",
         "BERRY_BUSH", "WOOD_BUSH", "MEAT", "FISH", "HIDE", "FUR",
         "FEATHER",
     }
+    if name in {"HERB", "WILD_CROP", "CROP_HERB"} and crop_kind:
+        from crops import CROP_BY_KEY
+
+        crop = CROP_BY_KEY.get(str(crop_kind))
+        if crop is not None and crop.icon_base == "crop_vine":
+            centre_u, centre_v = _two_by_two_centre(slot, x, y)
+            return 4, centre_u, centre_v
     if name in one_slot:
         return 1, u, v
+    if name == "REED":
+        # Reed, cattail, and sedge species all share FeatureType.REED.
+        centre_u, centre_v = _two_by_two_centre(slot, x, y)
+        return 4, centre_u, centre_v
     if name == "ROCK":
         if int(deposit) < 20:
             return 1, u, v
@@ -112,6 +125,7 @@ def object_footprint(
     tree_age_years: int = 0,
     variant: int = 1,
     deposit: int = 0,
+    crop_kind: str | None = None,
     anchor_slot: int | None = None,
 ) -> ObjectFootprint:
     """Describe visual occupancy, hard collision, family, and cell capacity."""
@@ -124,6 +138,7 @@ def object_footprint(
         tree_age_years=tree_age_years,
         variant=variant,
         deposit=deposit,
+        crop_kind=crop_kind,
         anchor_slot=anchor,
     )
     hard = frozenset({anchor}) if name == "TREE" or (name == "ROCK" and int(deposit) >= 20) else frozenset()
@@ -139,6 +154,11 @@ def object_footprint(
         family, maximum = "loose_drop", 9
     else:
         family, maximum = name.lower(), 1 if hard else 3
+    floor_layer = (
+        name in {"SAPLING", "MUSHROOM", "WOOD_BUSH"}
+        or (name == "ROCK" and slots == 1)
+        or (name in {"HERB", "WILD_CROP", "BERRY_BUSH"} and slots == 1)
+    )
     return ObjectFootprint(
         slots=slots,
         centre_u=u,
@@ -147,6 +167,7 @@ def object_footprint(
         hard_slots=hard,
         family=family,
         max_per_cell=maximum,
+        floor_layer=floor_layer,
     )
 
 
@@ -177,6 +198,7 @@ def first_available_anchor(
     tree_age_years: int = 0,
     variant: int = 1,
     deposit: int = 0,
+    crop_kind: str | None = None,
     preferred: int | None = None,
 ) -> tuple[int, ObjectFootprint] | None:
     """Choose a deterministic legal anchor, preferring the requested slot."""
@@ -190,6 +212,7 @@ def first_available_anchor(
             tree_age_years=tree_age_years,
             variant=variant,
             deposit=deposit,
+            crop_kind=crop_kind,
             anchor_slot=anchor,
         )
         if placement_allowed(candidate, existing):

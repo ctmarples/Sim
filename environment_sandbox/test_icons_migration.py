@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 # Allow running from repo root or environment_sandbox/
@@ -41,6 +42,34 @@ from world import FeatureType
 
 
 def main() -> None:
+    # Every tree-stage source shares the same editing canvas. The bottom-left
+    # 40x40 quadrant is its trunk/home cell; the remainder permits overhang.
+    nature_icons = ROOT / "assets" / "icons" / "nature"
+    tree_sources = sorted(nature_icons.glob("tree_*.svg")) + sorted(
+        nature_icons.glob("sapling_*.svg")
+    )
+    assert tree_sources
+    for source in tree_sources:
+        root = ET.parse(source).getroot()
+        assert root.get("viewBox") == "0 0 80 80", source
+        assert root.get("width") == "80", source
+        assert root.get("height") == "80", source
+
+    plant_patterns = (
+        "berry_bush.svg", "cattail_*.svg", "crop_*.svg", "flower_plant_*.svg",
+        "reed_*.svg", "sedge_*.svg", "vine_plant_*.svg",
+    )
+    plant_sources = sorted(
+        {source for pattern in plant_patterns for source in nature_icons.glob(pattern)}
+    )
+    assert plant_sources
+    for source in plant_sources:
+        root = ET.parse(source).getroot()
+        assert root.get("viewBox") == "0 -40 80 80", source
+        assert root.get("width") == "80", source
+        assert root.get("height") == "80", source
+        assert root.get("transform") is None, source
+
     on_disk = set(list_icon_names())
     expected = set(ALL_ICON_NAMES)
     missing = []
@@ -84,8 +113,7 @@ def main() -> None:
     assert len(round_variants) >= 3, round_variants
     tall = get_icon(round_variants[0], 40)
     # Tree art may extend above and right of its bottom-left 40x40 trunk cell.
-    assert tall.surface.get_width() >= 40, tall.surface.get_size()
-    assert tall.surface.get_height() >= 40, tall.surface.get_size()
+    assert tall.surface.get_size() == (80, 80), tall.surface.get_size()
     assert tall.anchor_x == 20
     assert tall.anchor_y == tall.surface.get_height() - 20
 

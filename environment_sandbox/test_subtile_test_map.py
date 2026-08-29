@@ -2,7 +2,7 @@ import unittest
 
 from balance_config import BalanceState, set_active_balance
 from subtile_test_map import build_test_map
-from subtile_layout import feature_subtile_layout, footprint_scale, tree_icon_scale
+from subtile_layout import feature_subtile_layout, footprint_scale, object_footprint, tree_icon_scale
 from wildlife import AnimalKind, WildlifeManager
 from world import FeatureType, TerrainType, World
 
@@ -14,10 +14,26 @@ class HabitatTestMapTests(unittest.TestCase):
         young_tree = feature_subtile_layout("TREE", 2, 3, tree_age_years=3)
         large_tree = feature_subtile_layout("TREE", 2, 3, tree_age_years=8)
         large_rock = feature_subtile_layout("ROCK", 2, 3, deposit=20)
+        reed = feature_subtile_layout("REED", 2, 3)
+        vine_crop = feature_subtile_layout("WILD_CROP", 2, 3, crop_kind="peas")
+        farmed_vine = feature_subtile_layout("CROP_HERB", 2, 3, crop_kind="beans")
+        ordinary_crop = feature_subtile_layout("WILD_CROP", 2, 3, crop_kind="wheat")
 
         self.assertEqual(
-            (rock[0], large_rock[0], sapling[0], young_tree[0], large_tree[0]),
-            (1, 4, 1, 4, 9),
+            (rock[0], large_rock[0], sapling[0], young_tree[0], large_tree[0], reed[0]),
+            (1, 4, 1, 4, 9, 4),
+        )
+        self.assertEqual((vine_crop[0], farmed_vine[0], ordinary_crop[0]), (4, 4, 1))
+        self.assertTrue(object_footprint("ROCK", 2, 3, deposit=5).floor_layer)
+        self.assertFalse(object_footprint("ROCK", 2, 3, deposit=20).floor_layer)
+        self.assertTrue(object_footprint("WOOD_BUSH", 2, 3).floor_layer)
+        self.assertTrue(object_footprint("MUSHROOM", 2, 3).floor_layer)
+        self.assertTrue(object_footprint("SAPLING", 2, 3).floor_layer)
+        self.assertTrue(
+            object_footprint("WILD_CROP", 2, 3, crop_kind="wheat").floor_layer
+        )
+        self.assertFalse(
+            object_footprint("WILD_CROP", 2, 3, crop_kind="peas").floor_layer
         )
         self.assertEqual(
             tuple(footprint_scale(item[0]) for item in (rock, young_tree, large_tree)),

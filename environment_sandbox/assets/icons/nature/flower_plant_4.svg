@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <svg
-   width="40"
-   height="40"
+   viewBox="0 -40 80 80"
+   width="80"
+   height="80"
    version="1.1"
    id="svg2"
    sodipodi:docname="flower_plant_4.svg"
@@ -22,10 +23,10 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      inkscape:zoom="5.9134267"
-     inkscape:cx="34.413211"
-     inkscape:cy="43.460418"
+     inkscape:cx="34.497764"
+     inkscape:cy="43.375865"
      inkscape:window-width="1470"
-     inkscape:window-height="835"
+     inkscape:window-height="834"
      inkscape:window-x="0"
      inkscape:window-y="33"
      inkscape:window-maximized="1"
@@ -35,29 +36,30 @@
   <desc
      id="desc1">Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
   <ellipse
-     style="fill:#3f2f0c;fill-opacity:0.358796;stroke-width:1.257"
+     style="fill:#3f2f0c;fill-opacity:0.358796;stroke-width:2.97431"
      id="path2-3"
-     cx="17.60071"
-     cy="23.685297"
-     rx="6.8642325"
-     ry="3.3455923" />
+     cx="27.730322"
+     cy="17.625912"
+     rx="14.829036"
+     ry="8.6707039" />
   <g
-     id="g2">
+     id="g2"
+     transform="matrix(2.1603341,0,0,2.5916799,-10.293092,-43.758796)">
     <title
        id="title2">Layer 1</title>
     <path
-       transform="rotate(-13.6828 13.47 20.0606)"
+       transform="rotate(-13.6828,13.47,20.0606)"
        stroke="#5aae50"
        stroke-linejoin="round"
        stroke-linecap="round"
        stroke-width="2"
        fill="none"
-       d="m13.47005,13.44098l0,13.2391"
+       d="m 13.47005,13.44098 v 13.2391"
        class="stem"
        id="svg_10" />
     <path
        fill="#466ec8"
-       d="m8.8708,14.84087c0,-1.46235 1.18547,-2.64782 2.64782,-2.64782c1.46235,0 2.64782,1.18547 2.64782,2.64782c0,1.46235 -1.18547,2.64782 -2.64782,2.64782c-1.46235,0 -2.64782,-1.18547 -2.64782,-2.64782z"
+       d="m 8.8708,14.84087 c 0,-1.46235 1.18547,-2.64782 2.64782,-2.64782 1.46235,0 2.64782,1.18547 2.64782,2.64782 0,1.46235 -1.18547,2.64782 -2.64782,2.64782 -1.46235,0 -2.64782,-1.18547 -2.64782,-2.64782 z"
        class="flower"
        id="svg_1" />
   </g>
