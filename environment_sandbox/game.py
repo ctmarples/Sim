@@ -614,6 +614,9 @@ class Game:
         # Live games begin at a native launch menu. Headless diagnostics retain
         # the historical automatic boot so existing simulations stay unattended.
         self._launch_menu: str | None = None if headless else "main"
+        self.developer_tools = None
+        self._content_lab_active = False
+        self._content_lab_session = None
         self._launch_map_files: list[Path] = []
         self._launch_gen = {
             "composition": "valley",
@@ -897,10 +900,11 @@ class Game:
                 f"Continue — {recent.stem}" if recent is not None else "Continue — no saves"
             )
             return [
-                (pygame.Rect(x, panel.y + 125, w, h), "continue", continue_label),
-                (pygame.Rect(x, panel.y + 179, w, h), "new", "New game"),
-                (pygame.Rect(x, panel.y + 233, w, h), "load", "Load game"),
-                (pygame.Rect(x, panel.y + 287, w, h), "quit", "Quit"),
+                (pygame.Rect(x, panel.y + 110, w, h), "continue", continue_label),
+                (pygame.Rect(x, panel.y + 158, w, h), "new", "New game"),
+                (pygame.Rect(x, panel.y + 206, w, h), "load", "Load game"),
+                (pygame.Rect(x, panel.y + 254, w, h), "developer_tools", "Developer Tools"),
+                (pygame.Rect(x, panel.y + 302, w, h), "quit", "Quit"),
             ]
         if self._launch_menu == "new":
             return [
@@ -971,6 +975,21 @@ class Game:
         return sorted(folder.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
 
     def _handle_launch_event(self, event: pygame.event.Event) -> None:
+        if self._launch_menu == "developer_tools":
+            if self.developer_tools is None:
+                from developer_tools import DeveloperToolsController
+
+                self.developer_tools = DeveloperToolsController()
+            result = self.developer_tools.handle_event(event)
+            if result == "launcher":
+                self._launch_menu = "main"
+            elif result == "content_lab":
+                from developer_tools.content_lab import ContentLabSession
+
+                session = ContentLabSession(self)
+                session.start()
+                self._launch_menu = None
+            return
         if self.file_dialog.open:
             if event.type == pygame.KEYDOWN:
                 self.file_dialog.handle_keydown(event)
@@ -1028,6 +1047,11 @@ class Game:
             self._launch_menu = "load"
             self._pending_file_action = "launch_load"
             self.file_dialog.open_load()
+        elif action == "developer_tools":
+            from developer_tools import DeveloperToolsController
+
+            self.developer_tools = DeveloperToolsController()
+            self._launch_menu = "developer_tools"
         elif action == "quit":
             self.running = False
         elif action == "default":
@@ -1738,6 +1762,8 @@ class Game:
                 continue
             elif self._launch_menu is not None:
                 self._handle_launch_event(event)
+                continue
+            elif self._content_lab_active and self._content_lab_session.handle_event(event):
                 continue
             elif (
                 self.management.open
@@ -19178,6 +19204,13 @@ class Game:
     def _draw_launch_menu(self) -> None:
         if self._launch_menu is None:
             return
+        if self._launch_menu == "developer_tools":
+            if self.developer_tools is None:
+                from developer_tools import DeveloperToolsController
+
+                self.developer_tools = DeveloperToolsController()
+            self.developer_tools.draw(self.screen)
+            return
         shade = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
         shade.fill((9, 14, 18, 232))
         self.screen.blit(shade, (0, 0))
@@ -19617,6 +19650,8 @@ class Game:
         self.sound_settings.draw(self.screen, self.sounds)
         self.file_dialog.draw(self.screen)
         self.number_input.draw(self.screen)
+        if self._content_lab_active and self._content_lab_session is not None:
+            self._content_lab_session.draw(self.screen)
         pygame.display.flip()
 
     def _farm_field_cells(self) -> set[tuple[int, int]]:

@@ -45,6 +45,7 @@ from society import SKILL_ORDER, SkillType
 _SKILL_CSV_COLS: tuple[str, ...] = tuple(s.name.lower() for s in SKILL_ORDER)
 
 _RECIPES_DATA_DIR = Path(__file__).resolve().parent / "recipes_data"
+RECIPE_REGISTRY_REVISION: int = 0
 
 # Folder name under recipes_data → module attribute holding that building's recipes.
 _BUILDING_RECIPE_ATTR: dict[str, str] = {
@@ -514,6 +515,30 @@ PROCESSED_KEYS: tuple[str, ...] = tuple(
         )
     )
 )
+
+
+def rebuild_recipe_derived_keys() -> None:
+    """Refresh module-level key summaries after a validated definitions reload."""
+    global MILL_INPUT_KEYS, MILL_OUTPUT_KEYS, CRAFT_BENCH_INPUT_KEYS
+    global CRAFT_BENCH_OUTPUT_KEYS, ALCHEMIST_INPUT_KEYS, ALCHEMIST_OUTPUT_KEYS
+    global TAILOR_INPUT_KEYS, TAILOR_OUTPUT_KEYS, COBBLER_INPUT_KEYS, COBBLER_OUTPUT_KEYS
+    global KITCHEN_INPUT_KEYS, KITCHEN_OUTPUT_KEYS, PROCESSED_KEYS
+    MILL_INPUT_KEYS = input_keys_for_recipes(MILL_RECIPES)
+    MILL_OUTPUT_KEYS = output_keys_for_recipes(MILL_RECIPES)
+    CRAFT_BENCH_INPUT_KEYS = input_keys_for_recipes(CRAFT_BENCH_RECIPES)
+    CRAFT_BENCH_OUTPUT_KEYS = output_keys_for_recipes(CRAFT_BENCH_RECIPES)
+    ALCHEMIST_INPUT_KEYS = input_keys_for_recipes(ALCHEMIST_RECIPES)
+    ALCHEMIST_OUTPUT_KEYS = output_keys_for_recipes(ALCHEMIST_RECIPES)
+    TAILOR_INPUT_KEYS = input_keys_for_recipes(TAILOR_RECIPES)
+    TAILOR_OUTPUT_KEYS = output_keys_for_recipes(TAILOR_RECIPES)
+    COBBLER_INPUT_KEYS = input_keys_for_recipes(COBBLER_RECIPES)
+    COBBLER_OUTPUT_KEYS = output_keys_for_recipes(COBBLER_RECIPES)
+    KITCHEN_INPUT_KEYS = input_keys_for_recipes(KITCHEN_RECIPES)
+    KITCHEN_OUTPUT_KEYS = output_keys_for_recipes(KITCHEN_RECIPES)
+    PROCESSED_KEYS = tuple(dict.fromkeys((*MILL_OUTPUT_KEYS, *KITCHEN_OUTPUT_KEYS,
+        *CRAFT_BENCH_OUTPUT_KEYS, *ALCHEMIST_OUTPUT_KEYS, *TAILOR_OUTPUT_KEYS,
+        *COBBLER_OUTPUT_KEYS, *output_keys_for_recipes(FISHER_RECIPES),
+        *output_keys_for_recipes(COMPOST_HEAP_RECIPES), "spoilage")))
 
 
 def recipe_label(recipe: Recipe) -> str:

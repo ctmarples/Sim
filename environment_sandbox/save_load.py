@@ -26,7 +26,6 @@ from entities import (
     WorkMode,
     WorkPriority,
 )
-from recipes import PROCESSED_KEYS
 from society import (
     Community,
     HireCandidate,
@@ -68,7 +67,11 @@ _BASE_STORAGE_KEYS = (
     "bow",
 )
 _CROP_STORAGE_KEYS = PRODUCE_KEYS + SEED_KEYS
-_STORAGE_KEYS = _BASE_STORAGE_KEYS + _CROP_STORAGE_KEYS + PROCESSED_KEYS
+def _storage_keys() -> tuple[str, ...]:
+    """Resolve reloadable recipe outputs when serializing future state."""
+    from recipes import PROCESSED_KEYS
+
+    return tuple(dict.fromkeys((*_BASE_STORAGE_KEYS, *_CROP_STORAGE_KEYS, *PROCESSED_KEYS)))
 
 # Pre-rename gather recipe keys → current recipe names.
 _LEGACY_RECIPE_KEYS: dict[str, str] = {
@@ -151,7 +154,7 @@ def list_save_files() -> list[str]:
 def _inv_to_dict(inv: Inventory) -> dict[str, Any]:
     from food_spoilage import serialize_food_quality
 
-    data: dict[str, Any] = {key: int(getattr(inv, key, 0)) for key in _STORAGE_KEYS}
+    data: dict[str, Any] = {key: int(getattr(inv, key, 0)) for key in _storage_keys()}
     data["capacity"] = inv.capacity
     if inv.equipped_tools:
         data["equipped_tools"] = list(inv.equipped_tools)
@@ -174,7 +177,7 @@ def _inv_from_dict(data: dict[str, Any]) -> Inventory:
     # unable to carry FARM_PRODUCE_YIELD / other multi-unit harvests.
     saved_cap = int(data.get("capacity", INVENTORY_CAPACITY))
     inv = Inventory(capacity=max(saved_cap, INVENTORY_CAPACITY))
-    for key in _STORAGE_KEYS:
+    for key in _storage_keys():
         setattr(inv, key, int(data.get(key, 0)))
     # Legacy: generic herbs → sage; generic saplings → oak.
     inv.sage += int(data.get("herbs", 0))
@@ -207,7 +210,7 @@ def _inv_from_dict(data: dict[str, Any]) -> Inventory:
 def _storage_to_dict(obj: Any) -> dict[str, Any]:
     from food_spoilage import serialize_food_quality
 
-    data: dict[str, Any] = {key: int(getattr(obj, key, 0)) for key in _STORAGE_KEYS}
+    data: dict[str, Any] = {key: int(getattr(obj, key, 0)) for key in _storage_keys()}
     fq = serialize_food_quality(obj)
     if fq:
         data["food_quality"] = fq
@@ -216,7 +219,7 @@ def _storage_to_dict(obj: Any) -> dict[str, Any]:
 
 def _apply_storage(obj: Any, data: dict[str, Any]) -> None:
     data = _normalize_legacy_storage(data)
-    for key in _STORAGE_KEYS:
+    for key in _storage_keys():
         setattr(obj, key, int(data.get(key, 0)))
     # Legacy migration.
     setattr(obj, LEGACY_HERB_PRODUCE, getattr(obj, LEGACY_HERB_PRODUCE) + int(data.get("herbs", 0)))

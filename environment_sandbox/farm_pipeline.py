@@ -10,9 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from recipes import BARN_RECIPES
-
-
 class FarmJobKind(Enum):
     """Jobs a farm-assigned worker may claim."""
 
@@ -59,6 +56,8 @@ def farm_job_priority(kind: FarmJobKind) -> int:
 
 def barn_sheaf_keys() -> tuple[str, ...]:
     """Produce keys the barn stores for threshing (recipe inputs)."""
+    from recipes import BARN_RECIPES
+
     keys: set[str] = set()
     for recipe in BARN_RECIPES:
         keys.update(str(k) for k in recipe.inputs)
@@ -67,6 +66,8 @@ def barn_sheaf_keys() -> tuple[str, ...]:
 
 def barn_sheaf_keep_amount(key: str) -> int:
     """On-barn buffer: two crafts of each sheaf input."""
+    from recipes import BARN_RECIPES
+
     keep = 0
     for recipe in BARN_RECIPES:
         need = int(recipe.inputs.get(key, 0))

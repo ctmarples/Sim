@@ -22,7 +22,7 @@ t2_reed_north_020,Reed North,2,2,meat,mushroom_stew,0,Kind;Curious,Lazy;Picky,6,
 t1_dell_lake_021,Dell Lake,1,1,meat;vegetables,vegetable_soup,0,Steady,Restless,4,2,2,4,1,5,5,5,4,5,5,6,,0
 t2_oona_field_022,Oona Field,2,2,vegetables,vegetable_soup,0,Cheerful,Nervous,3,4,5,5,4,4,3,7,6,6,7,7,,4
 t2_orin_haven_023,Orin Haven,2,1,meat/fish,mushroom_stew,0,Hardy,,3,4,3,2,3,4,3,5,6,7,6,6,farm,2
-t2_gwen_bay_024,Gwen Bay,2,1,vegetables,fish_stew,0,Steady;Curious,Lazy,6,2,5,4,4,5,5,5,7,4,4,6,,3
+t2_gwen_bay_024,Gwen Bay,2,1,vegetables,fish_stew,0,Steady;Curious,Lazy,6,2,5,4,4,5,6,5,7,4,4,6,,3
 t3_cade_thorn_025,Cade Thorn,3,2,bread;vegetables,mushroom_stew,0,Kind;Patient,Picky;Stubborn,4,3,7,6,6,3,10,6,8,10,8,7,hunter,7
 t2_wren_marsh_026,Wren Marsh,2,2,meat;fish,fish_stew,0,Patient,Nervous;Restless,3,5,2,4,5,5,6,6,3,5,7,6,,2
 t2_willa_field_027,Willa Field,2,2,meat/fish;vegetables,spiced_stew,0,Loyal;Diligent,Picky,2,3,4,4,2,4,7,4,7,6,4,5,hunter,3
@@ -48,7 +48,7 @@ t3_dara_run_046,Dara Run,3,3,meat,vegetable_soup,0,Kind;Patient,Picky,6,5,4,7,3,
 t2_kira_stone_047,Kira Stone,2,2,meat;fish,berries,0,Cheerful;Patient,Glutton;Greedy,4,2,4,5,2,4,6,7,5,5,5,4,craft_bench,2
 t3_bram_thorn_048,Bram Thorn,3,3,fish,fish_stew,0,Curious;Hardy,Stubborn,3,3,4,6,5,7,5,4,7,9,6,8,craft_bench,6
 t2_joss_thorn_049,Joss Thorn,2,1,meat;fish,,0,Loyal,Nervous;Restless,5,6,2,5,4,4,6,6,5,5,7,4,farm,4
-t3_nell_glen_050,Nell Glen,3,2,meat,grilled_meat,0,Curious;Hardy,Greedy;Lazy,6,4,7,6,6,6,10,8,6,6,6,6,hunter,8
+t3_nell_glen_050,Nell Glen,3,2,meat,grilled_meat,0,Curious;Hardy,Greedy;Lazy,6,4,7,6,6,6,10,8,7,6,6,6,hunter,8
 t2_holt_moor_051,Holt Moor,2,2,vegetables,spiced_stew,1,Curious;Hardy,Moody,5,5,2,4,4,3,7,7,6,6,6,3,farm,3
 t2_xander_mill_052,Xander Mill,2,1,meat/fish;bread,grilled_meat,1,Loyal,Lazy,3,5,5,6,3,2,6,7,7,7,6,6,,4
 t2_hana_brook_053,Hana Brook,2,1,fish,bread,0,Hardy;Kind,Lazy;Picky,2,5,2,4,5,3,7,6,6,6,7,3,farm,2
@@ -56,7 +56,7 @@ t3_hana_haven_054,Hana Haven,3,2,bread,,0,Kind,,4,5,7,5,3,5,6,7,10,10,10,5,,8
 t2_reed_mill_055,Reed Mill,2,2,meat/fish;bread,honey,0,Curious,Picky,4,3,2,5,6,2,7,7,5,7,6,6,craft_bench,4
 t1_nell_ford_056,Nell Ford,1,1,fish;vegetables,grilled_fish,1,Diligent,Glutton,3,2,2,2,4,5,5,5,3,3,4,6,,0
 t3_orin_field_057,Orin Field,3,3,meat,fish_stew,0,Patient;Diligent,Nervous;Stubborn,5,6,4,4,6,6,8,7,10,10,6,8,farm,7
-t2_finn_north_058,Finn North,2,1,bread,fish_stew,0,Diligent;Steady,Nervous,6,5,5,4,5,4,5,5,7,5,5,5,,4
+t2_finn_north_058,Finn North,2,1,bread,fish_stew,0,Diligent;Steady,Nervous,6,5,5,4,5,4,6,5,7,5,5,5,,4
 t3_ivy_stone_059,Ivy Stone,3,2,fish,bread,0,Kind,Lazy,4,4,4,6,5,5,7,10,8,6,6,5,,5
 t1_holt_pine_060,Holt Pine,1,1,fish;vegetables,honey,0,Patient,Stubborn,1,2,2,3,1,5,4,5,2,3,5,5,,0
 t3_xander_oaks_061,Xander Oaks,3,2,meat/fish,spiced_stew,1,Curious,Picky;Stubborn,5,6,4,4,6,5,10,9,10,4,6,6,farm,7
@@ -79,7 +79,7 @@ t1_dell_hill_077,Dell Hill,1,1,meat;vegetables,spiced_stew,0,Diligent,Stubborn,4
 t3_lina_shore_078,Lina Shore,3,3,fish,,0,Loyal,Picky,5,6,6,6,3,4,8,7,8,10,6,9,craft_bench,8
 t2_tess_bay_079,Tess Bay,2,1,meat/fish;bread,grilled_fish,1,Steady;Loyal,Lazy;Nervous,3,4,2,5,6,4,6,5,5,5,7,6,craft_bench,4
 t1_dell_knoll_080,Dell Knoll,1,1,meat/fish,bread,0,Diligent,Lazy,3,3,2,2,3,4,4,4,5,5,4,4,,0
-t2_leif_hill_081,Leif Hill,2,2,vegetables,berries,0,Diligent,Lazy;Picky,3,5,5,7,5,2,7,5,5,6,6,7,craft_bench,3
+t2_leif_hill_081,Leif Hill,2,2,vegetables,berries,0,Diligent,Lazy;Picky,3,5,5,7,5,2,7,5,5,7,6,7,craft_bench,3
 t2_ash_mill_082,Ash Mill,2,2,meat,honey,0,Hardy,Glutton,2,2,5,4,4,5,6,5,5,7,7,6,,4
 t2_holt_thorn_083,Holt Thorn,2,1,bread;vegetables,vegetable_soup,0,Patient,Restless,5,5,5,3,4,5,7,7,5,6,5,6,farm,2
 t1_pia_lake_084,Pia Lake,1,1,meat/fish,stew,0,Hardy,Stubborn,4,2,2,2,3,4,4,2,4,4,3,4,,0
@@ -88,7 +88,7 @@ t3_bea_field_086,Bea Field,3,3,bread;vegetables,grilled_meat,1,Patient;Diligent,
 t3_moss_mill_087,Moss Mill,3,2,meat/fish,bread,0,Patient,Picky,5,6,5,5,6,5,8,10,7,7,9,10,farm,5
 t2_yara_ford_088,Yara Ford,2,2,meat;vegetables,,0,Diligent,Restless;Lazy,3,5,3,4,5,5,5,7,6,6,7,6,,4
 t1_jude_haven_089,Jude Haven,1,1,vegetables,berries,0,Cheerful,,1,4,2,2,4,3,2,4,2,2,6,3,,0
-t2_jude_field_090,Jude Field,2,1,meat;vegetables,,0,Loyal,Glutton;Restless,7,2,3,3,4,4,6,3,4,7,6,7,,3
+t2_jude_field_090,Jude Field,2,1,meat;vegetables,,0,Loyal,Glutton;Restless,7,2,3,3,4,4,7,3,4,7,6,7,,3
 t3_tara_fern_091,Tara Fern,3,2,fish,mushroom_stew,0,Hardy,Stubborn;Restless,7,3,4,6,5,3,7,9,4,9,9,8,mason,5
 t1_cora_shore_092,Cora Shore,1,1,meat/fish,mushroom_stew,0,Hardy,Glutton,2,4,3,2,5,2,3,4,3,5,5,2,,0
 t1_noah_north_093,Noah North,1,1,meat;fish,honey,0,Curious,Nervous,5,3,4,2,1,2,5,5,5,5,4,2,,0

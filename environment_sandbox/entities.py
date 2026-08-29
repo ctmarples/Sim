@@ -1563,6 +1563,7 @@ class Building:
     _input_policy: dict = field(default_factory=dict, repr=False, compare=False)
     _supply_memo: dict = field(default_factory=dict, repr=False, compare=False)
     _recipe_state_ready: bool = field(default=False, repr=False, compare=False)
+    _recipe_registry_revision: int = field(default=-1, repr=False, compare=False)
 
     @property
     def saplings(self) -> int:
@@ -1906,54 +1907,60 @@ class Building:
         )
 
     def known_recipes(self) -> tuple[Recipe, ...]:
+        import recipes as recipe_registry
+
         if self.kind == BuildingKind.MILL:
-            return MILL_RECIPES
+            return recipe_registry.MILL_RECIPES
         if self.kind == BuildingKind.KITCHEN:
-            return KITCHEN_RECIPES
+            return recipe_registry.KITCHEN_RECIPES
         if self.kind == BuildingKind.CRAFT_BENCH:
-            return CRAFT_BENCH_RECIPES
+            return recipe_registry.CRAFT_BENCH_RECIPES
         if self.kind == BuildingKind.ALCHEMIST:
-            return ALCHEMIST_RECIPES
+            return recipe_registry.ALCHEMIST_RECIPES
         if self.kind == BuildingKind.TAILOR:
-            return TAILOR_RECIPES
+            return recipe_registry.TAILOR_RECIPES
         if self.kind == BuildingKind.COBBLER:
-            return COBBLER_RECIPES
+            return recipe_registry.COBBLER_RECIPES
         if self.kind == BuildingKind.FORESTER:
-            return FORESTER_RECIPES
+            return recipe_registry.FORESTER_RECIPES
         if self.kind == BuildingKind.HUNTER:
-            return HUNTER_RECIPES
+            return recipe_registry.HUNTER_RECIPES
         if self.kind == BuildingKind.FORAGER:
-            return FORAGER_RECIPES
+            return recipe_registry.FORAGER_RECIPES
         if self.kind == BuildingKind.FISHER:
-            return FISHER_RECIPES
+            return recipe_registry.FISHER_RECIPES
         if self.kind == BuildingKind.FARM:
             return self.addon_craft_recipes()
         return ()
 
     def addon_craft_recipes(self) -> tuple[Recipe, ...]:
         """Craft recipes unlocked by attached extensions (barn / drying rack)."""
+        import recipes as recipe_registry
+
         if self.kind == BuildingKind.FARM:
             recipes: list[Recipe] = []
             if BuildingKind.BARN in self.linked_extensions:
-                recipes.extend(BARN_RECIPES)
+                recipes.extend(recipe_registry.BARN_RECIPES)
             if BuildingKind.COMPOST_HEAP in self.linked_extensions:
-                recipes.extend(COMPOST_HEAP_RECIPES)
+                recipes.extend(recipe_registry.COMPOST_HEAP_RECIPES)
             return tuple(recipes)
         if (
             self.kind == BuildingKind.HUNTER
             and BuildingKind.DRYING_RACK in self.linked_extensions
         ):
-            return DRYING_RACK_RECIPES
+            return recipe_registry.DRYING_RACK_RECIPES
         return ()
 
     def split_recipes(self) -> tuple[Recipe, ...]:
+        import recipes as recipe_registry
         if self.kind == BuildingKind.FORESTER:
-            return FORESTER_SPLIT_RECIPES
+            return recipe_registry.FORESTER_SPLIT_RECIPES
         return ()
 
     def plant_recipes(self) -> tuple[Recipe, ...]:
+        import recipes as recipe_registry
         if self.kind == BuildingKind.FORESTER:
-            return FORESTER_PLANT_RECIPES
+            return recipe_registry.FORESTER_PLANT_RECIPES
         return ()
 
     def enabled_output_keys(self) -> frozenset[str]:
@@ -1982,7 +1989,10 @@ class Building:
         return self.is_recipe_enabled(key)
 
     def ensure_recipe_state(self) -> None:
-        if self._recipe_state_ready:
+        import recipes as recipe_registry
+
+        revision = int(getattr(recipe_registry, "RECIPE_REGISTRY_REVISION", 0))
+        if self._recipe_state_ready and self._recipe_registry_revision == revision:
             return
         # Preserve existing toggles; newly added recipe names default on so they
         # show up and can craft (disable manually if unwanted).
@@ -2001,6 +2011,8 @@ class Building:
                 )
             self.recipe_priority.setdefault(recipe.name, default_prio)
         self._recipe_state_ready = True
+        self._recipe_registry_revision = revision
+        self._invalidate_recipe_policy()
 
     def _invalidate_recipe_policy(self) -> None:
         self._input_policy.clear()
