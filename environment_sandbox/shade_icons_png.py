@@ -135,7 +135,9 @@ def main() -> int:
     pygame.init()
     pygame.display.set_mode((1, 1))
     done = 0
-    for path in sorted(ICONS.glob("*.png")):
+    for path in sorted(ICONS.rglob("*.png")):
+        if any(part.startswith("_") for part in path.relative_to(ICONS).parts[:-1]):
+            continue
         if path.name in SKIP or path.name.startswith("_"):
             print(f"skip {path.name}")
             continue

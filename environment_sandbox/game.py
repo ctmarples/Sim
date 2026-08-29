@@ -20728,11 +20728,11 @@ class Game:
                         )
         # Tall / overhanging icons (trees, buildings) must paint after ground
         # features and in north→south order, or neighbour cells square-cut them.
-        # Include a one-cell halo because large footprints may overhang the
+        # Include a two-cell halo because enlarged 3x3 trees may overhang the
         # viewport. Every object is depth-sorted later by its ground Y anchor.
         primary_cells: list[tuple[int, int]] = []
-        for y in range(max(0, y0 - 1), min(self.world.rows, y1 + 2)):
-            for x in range(max(0, x0 - 1), min(self.world.cols, x1 + 2)):
+        for y in range(max(0, y0 - 2), min(self.world.rows, y1 + 3)):
+            for x in range(max(0, x0 - 2), min(self.world.cols, x1 + 3)):
                 cell = self.world.cells[y][x]
                 if (
                     cell.feature != FeatureType.NONE
@@ -20766,8 +20766,14 @@ class Game:
                 and cell.feature not in BUILDING_FEATURES
                 and cell.feature != FeatureType.CROP_HERB
             ):
-                from subtile_layout import feature_subtile_layout, footprint_scale
+                from subtile_layout import (
+                    feature_subtile_layout,
+                    footprint_scale,
+                    slot_centre,
+                    tree_icon_scale,
+                )
 
+                anchor = self.world._primary_anchor_slot(x, y, cell)
                 slots, u, v = feature_subtile_layout(
                     cell.feature.name,
                     x,
@@ -20775,10 +20781,16 @@ class Game:
                     tree_age_years=int(getattr(cell, "tree_age_years", 0)),
                     variant=int(cell.icon_variant or 1),
                     deposit=int(getattr(cell, "deposit", 0)),
-                    anchor_slot=self.world._primary_anchor_slot(x, y, cell),
+                    anchor_slot=anchor,
                 )
+                if cell.feature == FeatureType.TREE:
+                    # SVG bottom-left 40x40 is the trunk home cell. An 80x80
+                    # icon therefore spans 2x2 at normal scale and 3x3 at 1.5x.
+                    u, v = slot_centre(anchor)
+                    draw_size = max(8, int(round(vc * tree_icon_scale(slots))))
                 cx, cy = self._cell_center(x + u - 0.5, y + v - 0.5)
-                draw_size = max(8, int(round(vc * footprint_scale(slots))))
+                if cell.feature != FeatureType.TREE:
+                    draw_size = max(8, int(round(vc * footprint_scale(slots))))
             if (
                 cell.feature in BUILDING_FEATURES
                 and cell.feature != FeatureType.STRUCTURE_PAD
@@ -20865,7 +20877,12 @@ class Game:
 
         def _draw_extra_feature(x: int, y: int, obj: object) -> None:
             from icons import ensure_icon_variant, icon_base_for_feature
-            from subtile_layout import feature_subtile_layout, footprint_scale
+            from subtile_layout import (
+                feature_subtile_layout,
+                footprint_scale,
+                slot_centre,
+                tree_icon_scale,
+            )
 
             base = icon_base_for_feature(
                 obj.feature,
@@ -20890,8 +20907,14 @@ class Game:
                     deposit=obj.deposit,
                     anchor_slot=obj.anchor_slot,
                 )
+                if obj.feature == FeatureType.TREE:
+                    u, v = slot_centre(obj.anchor_slot)
+                    draw_size = max(
+                        8, int(round(vc * tree_icon_scale(slots)))
+                    )
                 cx, cy = self._cell_center(x + u - 0.5, y + v - 0.5)
-                draw_size = max(8, int(round(vc * footprint_scale(slots))))
+                if obj.feature != FeatureType.TREE:
+                    draw_size = max(8, int(round(vc * footprint_scale(slots))))
             draw_feature(
                 self.screen,
                 obj.feature,
@@ -20906,7 +20929,7 @@ class Game:
                 growth_ticks=obj.growth_ticks,
             )
 
-        from subtile_layout import feature_subtile_layout
+        from subtile_layout import feature_subtile_layout, slot_centre
 
         # (ground-y, ground-x, kind, cell-x, cell-y, object). Primary and
         # secondary objects share one queue, so overlap follows Y position.
@@ -20938,6 +20961,10 @@ class Game:
                     deposit=int(getattr(cell, "deposit", 0)),
                     anchor_slot=self.world._primary_anchor_slot(x, y, cell),
                 )
+                if cell.feature == FeatureType.TREE:
+                    u, v = slot_centre(
+                        self.world._primary_anchor_slot(x, y, cell)
+                    )
                 depth_x, depth_y = x + u, y + v
             if cell.feature != FeatureType.NONE:
                 draw_queue.append((depth_y, depth_x, 0, x, y, None))
@@ -20956,6 +20983,8 @@ class Game:
                         deposit=obj.deposit,
                         anchor_slot=obj.anchor_slot,
                     )
+                    if obj.feature == FeatureType.TREE:
+                        u, v = slot_centre(obj.anchor_slot)
                 draw_queue.append((y + v, x + u, 0, x, y, obj))
 
         draw_queue.sort(key=lambda item: (item[0], item[1], item[2]))

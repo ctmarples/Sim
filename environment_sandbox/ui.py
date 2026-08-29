@@ -1719,7 +1719,6 @@ def draw_feature(
     if feature == FeatureType.TREE:
         tree = resolve_tree(tree_species)
         base = ICON_TREE_CONE if tree.shape == "cone" else ICON_TREE_ROUND
-        scales = {"canopy": tree.cone_scale} if tree.shape == "cone" else None
         blit_icon(
             surface,
             base,
@@ -1731,7 +1730,6 @@ def draw_feature(
                 "canopy": adjust_colour(tree.canopy, vibrancy),
                 "trunk": trunk,
             },
-            class_scales=scales,
         )
     elif feature == FeatureType.SAPLING:
         tree = resolve_tree(tree_species)

@@ -5,7 +5,7 @@
    height="400"
    version="1.1"
    id="svg1"
-   sodipodi:docname="wood_loose_4.svg"
+   sodipodi:docname="wood_loose_2.svg"
    inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
@@ -168,42 +168,41 @@
      inkscape:deskcolor="#d1d1d1"
      showgrid="false"
      inkscape:zoom="1.1184532"
-     inkscape:cx="61.245298"
-     inkscape:cy="199.82955"
+     inkscape:cx="60.798252"
+     inkscape:cy="199.3825"
      inkscape:window-width="1470"
-     inkscape:window-height="834"
+     inkscape:window-height="835"
      inkscape:window-x="0"
      inkscape:window-y="33"
      inkscape:window-maximized="1"
-     inkscape:current-layer="svg1" />
+     inkscape:current-layer="berry_bush" />
   <title
      id="title1">berry bush</title>
   <desc
      id="desc1">Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
   <path
-     id="path1-5"
-     style="fill:#1d0e09;fill-opacity:0.636574;stroke-width:0.120462"
-     inkscape:transform-center-x="0.90342151"
-     inkscape:transform-center-y="-0.24120411"
-     d="m 27.04207,26.074881 -1.087606,-1.411799 2.264793,-2.964806 c -1.063149,-0.203038 1.03688,-0.439057 1.03688,-0.439057 l 2.148608,-2.404055 c 2.675021,-1.624317 4.524728,-2.712384 4.524728,-2.712384 0,0 0.643923,0.271099 0.781103,1.570551 0,0 -1.07029,-0.07888 -2.442095,1.992123 -2.682178,1.032732 -6.054342,4.570378 -7.226411,6.369427 z"
-     sodipodi:nodetypes="ccccccccc" />
+     id="path1-2-9"
+     style="fill:#1c0d08;fill-opacity:0.635294;stroke-width:0.265522"
+     inkscape:transform-center-x="-1.645542"
+     inkscape:transform-center-y="-0.64338268"
+     d="m 30.249525,37.737914 5.956691,-4.622479 -5.15341,-6.516188 c 1.936477,-0.541582 5.106943,1.957032 5.106943,1.957032 l 0.635579,-2.394801 -7.444383,-5.357835 -4.100364,-1.788066 C 20.378146,14.682899 5.6657976,5.6559923 5.6657976,5.6559923 c 0,0 -2.338158,-1.0921207 -2.5880237,2.3740174 0,0 6.331491,1.7472753 8.8301761,7.2714333 4.885469,2.754689 16.206704,17.637714 18.341575,22.436471 z"
+     sodipodi:nodetypes="ccccccccccc" />
+  <path
+     id="path1-2"
+     style="fill:#d28269;fill-opacity:1;stroke-width:0.410072"
+     inkscape:transform-center-x="-2.6665565"
+     inkscape:transform-center-y="-0.94699613"
+     d="m 31.088701,37.345659 5.589432,-3.6703 -8.350968,-9.591167 c 3.138019,-0.797153 8.275667,2.880556 8.275667,2.880556 L 37.632773,23.439842 25.569342,15.553649 18.924813,12.921793 C 11.029161,6.5445301 5.5695234,2.2726481 5.5695234,2.2726481 c 0,0 -2.7731144,0.1128853 -3.1780171,5.2146895 0,0 7.2483165,-0.6401055 11.2973677,7.4908974 7.916771,4.054625 13.940327,15.30414 17.399827,22.367424 z"
+     sodipodi:nodetypes="ccccccccccc" />
+  <path
+     id="path2-4"
+     style="fill:#f5e4de;stroke-width:0.220061"
+     d="m 30.251221,36.379367 c 0,1.405814 2.591382,1.678915 4.066155,1.678915 1.474769,0 2.245485,-3.739243 2.245485,-5.145053 0,-1.405813 -1.741738,-1.245648 -3.216511,-1.245648 -1.474769,0 -3.095129,3.305977 -3.095129,4.711786 z"
+     sodipodi:nodetypes="sssss" />
   <g
      id="berry_bush"
      inkscape:groupmode="layer"
-     inkscape:label="berry_bush">
-    <path
-       id="path1"
-       style="fill:#d28269;fill-opacity:1;stroke-width:0.123747"
-       inkscape:transform-center-x="0.94653302"
-       inkscape:transform-center-y="-0.24294182"
-       d="m 26.872161,25.504918 -1.958684,-1.183416 c 0,0 3.212262,-1.383839 2.500533,-2.577665 l 2.256099,-1.351629 1.281737,-1.314532 c 2.802674,-1.636022 4.966447,-3.494694 4.966447,-3.494694 0,0 0.70518,0.514792 0.848906,1.82361 0,0 -1.716382,-0.32119 -3.153651,1.764737 -2.810173,1.040173 -5.513387,4.521575 -6.741387,6.333589 z"
-       sodipodi:nodetypes="ccccccccc" />
-    <path
-       id="path2"
-       style="fill:#f5e4de;stroke-width:0.0725096"
-       d="m 27.17623,25.597599 c 0,0.396236 -0.998183,0.473211 -1.566255,0.473211 -0.568071,0 -0.864946,-1.053926 -0.864946,-1.450161 0,-0.396236 0.670905,-0.351092 1.238977,-0.351092 0.568071,0 1.192224,0.931807 1.192224,1.328042 z"
-       sodipodi:nodetypes="sssss" />
-  </g>
+     inkscape:label="berry_bush" />
   <metadata
      id="metadata1">
     <rdf:RDF>

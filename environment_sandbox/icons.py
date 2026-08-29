@@ -19,8 +19,9 @@ Coordinate convention (Y down, matching the game)
 
 Icon variants (folder discovery)
 --------------------------------
-Each logical base (e.g. ``crop_plant``, ``tree_round``) resolves to files in
-``assets/icons/``:
+Each logical base (e.g. ``crop_plant``, ``tree_round``) resolves recursively
+by filename stem below ``assets/icons/``. Category folders are organizational;
+callers continue using stable stem names:
 
 * If ``base_1.png`` / ``base_1.svg``, ``base_2…`` exist, those are the only
   variants (``base.png`` / ``base.svg`` is ignored).
@@ -90,17 +91,51 @@ def _is_icon_stem(stem: str) -> bool:
 
 
 def _has_icon_file(stem: str) -> bool:
-    return (_ICONS_DIR / f"{stem}.png").is_file() or (_ICONS_DIR / f"{stem}.svg").is_file()
+    return icon_path(stem, ".png") is not None or icon_path(stem, ".svg") is not None
+
+
+_ICON_PATH_INDEX: dict[tuple[str, str], Path] | None = None
+
+
+def _icon_path_index() -> dict[tuple[str, str], Path]:
+    global _ICON_PATH_INDEX
+    if _ICON_PATH_INDEX is None:
+        index: dict[tuple[str, str], Path] = {}
+        for path in sorted(_ICONS_DIR.rglob("*")):
+            suffix = path.suffix.lower()
+            relative_parts = path.relative_to(_ICONS_DIR).parts[:-1]
+            if (
+                path.is_file()
+                and suffix in (".png", ".svg")
+                and not any(part.startswith("_") for part in relative_parts)
+            ):
+                index.setdefault((path.stem, suffix), path)
+        _ICON_PATH_INDEX = index
+    return _ICON_PATH_INDEX
+
+
+def icon_path(stem: str, suffix: str) -> Path | None:
+    """Resolve an icon stem recursively, independent of category folder."""
+    suffix = suffix if suffix.startswith(".") else f".{suffix}"
+    return _icon_path_index().get((str(stem), suffix.lower()))
+
+
+def has_icon(stem: str) -> bool:
+    return _has_icon_file(stem)
 
 
 def list_icon_names() -> list[str]:
     if not _ICONS_DIR.is_dir():
         return []
     stems: set[str] = set()
-    for path in _ICONS_DIR.glob("*.png"):
+    for path in _ICONS_DIR.rglob("*.png"):
+        if any(part.startswith("_") for part in path.relative_to(_ICONS_DIR).parts[:-1]):
+            continue
         if _is_icon_stem(path.stem):
             stems.add(path.stem)
-    for path in _ICONS_DIR.glob("*.svg"):
+    for path in _ICONS_DIR.rglob("*.svg"):
+        if any(part.startswith("_") for part in path.relative_to(_ICONS_DIR).parts[:-1]):
+            continue
         if _is_icon_stem(path.stem):
             stems.add(path.stem)
     return sorted(stems)
@@ -788,7 +823,13 @@ def _rasterise_svg(
     surf_h = max(1, int(round(vb[3] * scale)))
     surf = pygame.Surface((surf_w, surf_h), pygame.SRCALPHA)
     surf.fill((0, 0, 0, 0))
-    anchor = _layout_anchor(root, vb)
+    # Tree art always reserves its bottom-left 40x40 SVG units for the trunk
+    # home cell. Ignore stale editor metadata so newly replaced variants align.
+    anchor = (
+        (vb[0] + ICON_CELL / 2.0, vb[1] + vb[3] - ICON_CELL / 2.0)
+        if path.stem.startswith("tree_")
+        else _layout_anchor(root, vb)
+    )
     # class_scales grow/shrink around the home-cell anchor.
     origin = anchor
 
@@ -1216,9 +1257,11 @@ _VARIANT_CACHE: dict[str, tuple[str, ...]] = {}
 
 
 def clear_cache() -> None:
+    global _ICON_PATH_INDEX
     _SURFACE_CACHE.clear()
     _HIT_CACHE.clear()
     _VARIANT_CACHE.clear()
+    _ICON_PATH_INDEX = None
     reload_png_manifest()
 
 
@@ -1297,8 +1340,8 @@ def ensure_icon_variant(
 
 def _load_png_icon(name: str, cell_px: int) -> IconImage | None:
     """Load a baked PNG and scale anchors/surface to ``cell_px``."""
-    path = _ICONS_DIR / f"{name}.png"
-    if not path.is_file() or path.stat().st_size == 0:
+    path = icon_path(name, ".png")
+    if path is None or path.stat().st_size == 0:
         return None
     manifest = _load_png_manifest()
     export_cell = int(manifest.get("export_cell_px") or ICON_CELL)
@@ -1309,6 +1352,9 @@ def _load_png_icon(name: str, cell_px: int) -> IconImage | None:
         return None
     ax = int(meta.get("anchor_x", surf.get_width() // 2))
     ay = int(meta.get("anchor_y", surf.get_height() // 2))
+    if name.startswith("tree_"):
+        ax = export_cell // 2
+        ay = surf.get_height() - export_cell // 2
     scale = float(cell_px) / float(max(1, export_cell))
     if abs(scale - 1.0) > 1e-6:
         tw = max(1, int(round(surf.get_width() * scale)))
@@ -1374,11 +1420,11 @@ def get_icon(
             _HIT_CACHE[png_hit_key] = icon
         return icon
 
-    png_path = _ICONS_DIR / f"{name}.png"
-    svg_path = _ICONS_DIR / f"{name}.svg"
+    png_path = icon_path(name, ".png")
+    svg_path = icon_path(name, ".svg")
     tile_px = _stipple_native_px() if want_stipple else cell_px
 
-    if want_png and png_path.is_file():
+    if want_png and png_path is not None:
         path = png_path
         source = "png"
         # Baked PNG: ignore class recolour / omit / scale in the cache key so
@@ -1386,10 +1432,10 @@ def get_icon(
         recolour = None
         class_scales = None
         omit = None
-    elif svg_path.is_file():
+    elif svg_path is not None:
         path = svg_path
         source = "svg"
-    elif png_path.is_file():
+    elif png_path is not None:
         path = png_path
         source = "png"
     else:

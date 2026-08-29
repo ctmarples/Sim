@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Export ``assets/icons/*.svg`` → PNG (+ anchors manifest) via the game rasteriser.
+"""Export category-organized ``assets/icons/**/*.svg`` beside each source SVG.
 
 Usage (from environment_sandbox)::
 
     python export_icons_png.py
 
 Writes:
-  assets/icons/<stem>.png
+  assets/icons/<category>/<stem>.png
   assets/icons/_png_anchors.json
 
 Re-run after editing SVGs. The game prefers PNG for plain loads and still
@@ -52,7 +52,11 @@ def _is_exportable_stem(stem: str) -> bool:
 
 def main() -> int:
     icons = icons_dir()
-    svgs = sorted(icons.glob("*.svg"))
+    svgs = [
+        path
+        for path in sorted(icons.rglob("*.svg"))
+        if not any(part.startswith("_") for part in path.relative_to(icons).parts[:-1])
+    ]
     clear_cache()
     manifest: dict[str, dict] = {
         "export_cell_px": EXPORT_CELL_PX,
@@ -79,7 +83,7 @@ def main() -> int:
             errors.append(f"{path.name}: {exc}")
             print(f"fail  {path.name}: {exc}")
             continue
-        out = icons / f"{stem}.png"
+        out = path.with_suffix(".png")
         pygame.image.save(icon.surface, str(out))
         manifest["icons"][stem] = {
             "anchor_x": icon.anchor_x,

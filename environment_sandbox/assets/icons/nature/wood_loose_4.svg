@@ -5,7 +5,7 @@
    height="400"
    version="1.1"
    id="svg1"
-   sodipodi:docname="wood_loose_3.svg"
+   sodipodi:docname="wood_loose_4.svg"
    inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
@@ -168,10 +168,10 @@
      inkscape:deskcolor="#d1d1d1"
      showgrid="false"
      inkscape:zoom="1.1184532"
-     inkscape:cx="61.245298"
-     inkscape:cy="199.82955"
+     inkscape:cx="60.798252"
+     inkscape:cy="199.3825"
      inkscape:window-width="1470"
-     inkscape:window-height="834"
+     inkscape:window-height="835"
      inkscape:window-x="0"
      inkscape:window-y="33"
      inkscape:window-maximized="1"
@@ -181,28 +181,29 @@
   <desc
      id="desc1">Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
   <path
-     id="path1-2-9"
-     style="fill:#1c0d08;fill-opacity:0.635294;stroke-width:0.0594246"
-     inkscape:transform-center-x="0.35003064"
-     inkscape:transform-center-y="-0.15149696"
-     d="M 4.8701665,17.239911 3.603092,16.151459 4.6992969,14.617096 C 4.2873801,14.48957 3.6129762,15.077917 3.6129762,15.077917 L 3.4777793,14.514015 5.0613075,13.252409 5.9335144,12.831375 c 1.0364375,-1.020213 4.1659676,-3.1457724 4.1659676,-3.1457724 0,0 0.49736,-0.257161 0.55051,0.5590084 0,0 -1.3468,0.41143 -1.8783065,1.7122 -1.0392101,0.648645 -3.447401,4.15314 -3.901519,5.2831 z"
-     sodipodi:nodetypes="ccccccccccc" />
-  <path
-     id="path1-2"
-     style="fill:#d28269;fill-opacity:1;stroke-width:0.0917755"
-     inkscape:transform-center-x="0.56721526"
-     inkscape:transform-center-y="-0.22298862"
-     d="M 4.6916615,17.147547 3.5027083,16.283304 5.2790803,14.024878 C 4.6115782,13.837173 3.518726,14.703161 3.518726,14.703161 L 3.2996425,13.873153 5.8657092,12.016197 7.279097,11.396476 c 1.6795195,-1.50165 2.840864,-2.5075473 2.840864,-2.5075473 0,0 0.589881,0.026581 0.67601,1.2278993 0,0 -1.541822,-0.150725 -2.403114,1.763877 -1.6840118,0.95474 -2.9653095,3.603655 -3.7011955,5.266842 z"
-     sodipodi:nodetypes="ccccccccccc" />
-  <path
-     id="path2-4"
-     style="fill:#f5e4de;stroke-width:0.0492504"
-     d="m 4.8698057,16.920015 c 0,0.331026 -0.5512245,0.395333 -0.86493,0.395333 -0.3137049,0 -0.4776474,-0.880477 -0.4776474,-1.211502 0,-0.331026 0.3704929,-0.293312 0.6841985,-0.293312 0.3137048,0 0.6583789,0.778456 0.6583789,1.109481 z"
-     sodipodi:nodetypes="sssss" />
+     id="path1-5"
+     style="fill:#1d0e09;fill-opacity:0.636574;stroke-width:0.390182"
+     inkscape:transform-center-x="2.6973327"
+     inkscape:transform-center-y="-0.84757008"
+     d="m 8.5356998,38.681577 -3.24725,-4.960938 6.7619612,-10.418068 c -3.1742295,-0.713457 3.095798,-1.542807 3.095798,-1.542807 l 6.415068,-8.447638 c 7.986774,-5.7077076 13.509418,-9.5310795 13.509418,-9.5310795 0,0 1.922552,0.9526181 2.332129,5.5187783 0,0 -3.19555,-0.2771774 -7.291329,7.0001452 C 22.103353,19.9289 12.03513,32.359877 8.5356998,38.681577 Z"
+     sodipodi:nodetypes="ccccccccc" />
   <g
      id="berry_bush"
      inkscape:groupmode="layer"
-     inkscape:label="berry_bush" />
+     inkscape:label="berry_bush">
+    <path
+       id="path1"
+       style="fill:#d28269;fill-opacity:1;stroke-width:0.400823"
+       inkscape:transform-center-x="2.8260504"
+       inkscape:transform-center-y="-0.85367628"
+       d="m 8.0284049,36.678777 -5.8480154,-4.15842 c 0,0 9.5908055,-4.862688 7.4658064,-9.057688 l 6.7360031,-4.749506 3.826864,-4.61915 C 28.576969,8.3451757 35.037315,1.8139655 35.037315,1.8139655 c 0,0 2.105446,1.8089339 2.534567,6.4080054 0,0 -5.124578,-1.1286335 -9.415812,6.2011311 -8.390295,3.655076 -16.461243,15.888417 -20.1276651,22.255675 z"
+       sodipodi:nodetypes="ccccccccc" />
+    <path
+       id="path2"
+       style="fill:#f5e4de;stroke-width:0.234862"
+       d="m 8.9362594,37.00445 c 0,1.392338 -2.9802609,1.662822 -4.6763456,1.662822 -1.6960816,0 -2.5824571,-3.703404 -2.5824571,-5.095739 0,-1.392338 2.0031117,-1.233706 3.6991963,-1.233706 1.6960816,0 3.5596064,3.274288 3.5596064,4.666623 z"
+       sodipodi:nodetypes="sssss" />
+  </g>
   <metadata
      id="metadata1">
     <rdf:RDF>

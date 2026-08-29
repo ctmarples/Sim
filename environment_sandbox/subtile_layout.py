@@ -203,3 +203,8 @@ def footprint_scale(slots: int) -> float:
     if slots <= 4:
         return 2.0 / 3.0
     return 1.0
+
+
+def tree_icon_scale(slots: int) -> float:
+    """SVG cell scale: 2x2 trees normal, 3x3 trees enlarged by 1.5."""
+    return 1.5 if int(slots) >= 9 else 1.0

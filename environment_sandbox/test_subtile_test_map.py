@@ -2,7 +2,7 @@ import unittest
 
 from balance_config import BalanceState, set_active_balance
 from subtile_test_map import build_test_map
-from subtile_layout import feature_subtile_layout, footprint_scale
+from subtile_layout import feature_subtile_layout, footprint_scale, tree_icon_scale
 from wildlife import AnimalKind, WildlifeManager
 from world import FeatureType, TerrainType, World
 
@@ -23,6 +23,7 @@ class HabitatTestMapTests(unittest.TestCase):
             tuple(footprint_scale(item[0]) for item in (rock, young_tree, large_tree)),
             (1 / 3, 2 / 3, 1.0),
         )
+        self.assertEqual((tree_icon_scale(4), tree_icon_scale(9)), (1.0, 1.5))
 
     def test_real_map_builds_habitats_and_seeds_forest_wildlife(self):
         set_active_balance(BalanceState())

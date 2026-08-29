@@ -83,10 +83,11 @@ def main() -> None:
     round_variants = variant_names(ICON_TREE_ROUND)
     assert len(round_variants) >= 3, round_variants
     tall = get_icon(round_variants[0], 40)
-    assert tall.surface.get_width() == 40, tall.surface.get_size()
-    # Height may exceed one cell for overhanging art.
+    # Tree art may extend above and right of its bottom-left 40x40 trunk cell.
+    assert tall.surface.get_width() >= 40, tall.surface.get_size()
     assert tall.surface.get_height() >= 40, tall.surface.get_size()
     assert tall.anchor_x == 20
+    assert tall.anchor_y == tall.surface.get_height() - 20
 
     # Square icon still anchors at cell centre.
     rock = get_icon(resolve_icon_name("rock", 1), 40)
