@@ -71,7 +71,7 @@ _OVERHANG_SVG_PREFIXES: tuple[str, ...] = (
     "reed_", "sedge_", "vine_plant_",
 )
 
-Colour = tuple[int, int, int]
+Colour = tuple[int, int, int] | tuple[int, int, int, int]
 Paint = tuple[int, int, int, int]  # RGBA; alpha 255 = opaque
 Recolour = dict[str, Colour]
 
@@ -339,7 +339,7 @@ def _parse_transform(raw: str | None) -> Transform2D:
 def _as_paint(colour: Colour | None, alpha: float = 1.0) -> Paint | None:
     if colour is None:
         return None
-    a = max(0, min(255, int(round(alpha * 255))))
+    a = max(0,min(255,int(colour[3]))) if len(colour)>3 else max(0, min(255, int(round(alpha * 255))))
     if a <= 0:
         return None
     return colour[0], colour[1], colour[2], a
@@ -1307,6 +1307,43 @@ def has_icon_variants(base: str) -> bool:
     return len(variant_names(base)) > 1
 
 
+def icon_svg_classes(base: str) -> tuple[str, ...]:
+    """Return every authorable SVG class used by a logical icon's variants."""
+    found: set[str] = set()
+    for name in variant_names(base):
+        path=icon_path(name,".svg")
+        if path is None:continue
+        try:root=ET.parse(path).getroot()
+        except (ET.ParseError,OSError):continue
+        for element in root.iter():found.update(_classes(element))
+    return tuple(sorted(found))
+
+
+def icon_svg_class_styles(base: str) -> dict[str, tuple[int,int,int,int]]:
+    """Representative authored fill and alpha for every SVG class."""
+    styles={}
+    def paint_in(element):
+        colour=_resolve_paint(element,"fill",{}) or _resolve_paint(element,"stroke",{})
+        opacity=_elem_opacity(element,paint="fill")
+        if colour is not None:return colour,opacity
+        for child in element.iter():
+            if child is element:continue
+            colour=_resolve_paint(child,"fill",{}) or _resolve_paint(child,"stroke",{})
+            if colour is not None:return colour,opacity*_elem_opacity(child,paint="fill")
+        return None
+    for name in variant_names(base):
+        path=icon_path(name,".svg")
+        if path is None:continue
+        try:root=ET.parse(path).getroot()
+        except (ET.ParseError,OSError):continue
+        for element in root.iter():
+            result=paint_in(element)
+            if result is None:continue
+            colour,opacity=result
+            for cls in _classes(element):styles.setdefault(cls,(colour[0],colour[1],colour[2],max(0,min(255,round(opacity*255)))))
+    return styles
+
+
 def refresh_variant_index() -> None:
     """Drop discovered variant lists so the next lookup re-scans the folder."""
     _VARIANT_CACHE.clear()
@@ -1927,7 +1964,8 @@ def icon_base_for_feature(
         return None
     if feature == FeatureType.TREE:
         tree = resolve_tree(tree_species)
-        return ICON_TREE_CONE if tree.shape == "cone" else ICON_TREE_ROUND
+        from trees import TREE_PRESENTATION
+        return TREE_PRESENTATION.get(tree.key,{}).get("icon") or (ICON_TREE_CONE if tree.shape == "cone" else ICON_TREE_ROUND)
     if feature == FeatureType.SAPLING:
         tree = resolve_tree(tree_species)
         return ICON_SAPLING_CONE if tree.shape == "cone" else ICON_SAPLING_ROUND

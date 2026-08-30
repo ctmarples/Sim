@@ -1724,7 +1724,11 @@ def draw_feature(
 
     if feature == FeatureType.TREE:
         tree = resolve_tree(tree_species)
-        base = ICON_TREE_CONE if tree.shape == "cone" else ICON_TREE_ROUND
+        from trees import TREE_PRESENTATION
+        presentation=TREE_PRESENTATION.get(tree.key,{})
+        base = presentation.get("icon") or (ICON_TREE_CONE if tree.shape == "cone" else ICON_TREE_ROUND)
+        recolour={"canopy":adjust_colour(tree.canopy,vibrancy),"trunk":trunk}
+        recolour.update({name:adjust_colour(tuple(value),vibrancy) for name,value in presentation.get("recolour",{}).items()})
         blit_icon(
             surface,
             base,
@@ -1732,10 +1736,8 @@ def draw_feature(
             cy,
             size,
             variant=v,
-            recolour={
-                "canopy": adjust_colour(tree.canopy, vibrancy),
-                "trunk": trunk,
-            },
+            recolour=recolour,
+            omit_classes=presentation.get("omit_classes",()),
         )
     elif feature == FeatureType.SAPLING:
         tree = resolve_tree(tree_species)
@@ -2145,19 +2147,15 @@ def draw_feature(
             )
         else:
             crop = CROP_BY_KEY.get(crop_kind or "sage") or CROP_BY_KEY["sage"]
-            from crops import crop_presentation
+            from crops import crop_class_presentation,crop_presentation
             seasonal_icon,seasonal_stem,seasonal_flower=crop_presentation(crop,season_name)
             stem = adjust_colour(seasonal_stem, vibrancy)
             # Farm crops look sparse while growing; dense only when ready to harvest.
             ripe = feature != FeatureType.CROP_HERB or growth_ticks <= 0
             dense=ripe and feature == FeatureType.CROP_HERB
             name=(crop.dense_icon_base or f"{seasonal_icon}_dense") if dense else seasonal_icon
-            recolour = {"stem": stem}
-            omit: tuple[str, ...] = ()
-            if seasonal_flower is not None:
-                recolour["flower"] = adjust_colour(seasonal_flower, vibrancy)
-            else:
-                omit = ("flower",)
+            class_colours,omit=crop_class_presentation(crop,season_name)
+            recolour={name:adjust_colour(colour,vibrancy) for name,colour in class_colours.items()}
             blit_icon(
                 surface,
                 name,

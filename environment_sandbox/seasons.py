@@ -408,17 +408,18 @@ def seed_chance_multiplier(day: float) -> float:
 
 
 def adjust_colour(
-    colour: tuple[int, int, int], vibrancy: float
-) -> tuple[int, int, int]:
+    colour: tuple[int, ...], vibrancy: float
+) -> tuple[int, ...]:
     """Lerp toward muted grey-green when vibrancy is low."""
-    r, g, b = colour
+    r, g, b = colour[:3]
     mute_r, mute_g, mute_b = 72, 78, 70
     t = _clamp01(vibrancy)
-    return (
+    result = (
         int(mute_r + (r - mute_r) * t),
         int(mute_g + (g - mute_g) * t),
         int(mute_b + (b - mute_b) * t),
     )
+    return result+(int(colour[3]),) if len(colour)>3 else result
 
 
 def blend_colour(

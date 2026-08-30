@@ -82,6 +82,7 @@ TREES: tuple[TreeDef, ...] = (
 )
 
 TREE_BY_KEY: dict[str, TreeDef] = {t.key: t for t in TREES}
+TREE_PRESENTATION: dict[str, dict] = {}
 TREE_KEYS: tuple[str, ...] = tuple(t.key for t in TREES)
 DEFAULT_TREE_KEY: str = "oak"
 

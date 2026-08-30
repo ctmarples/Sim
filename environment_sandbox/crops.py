@@ -353,6 +353,8 @@ CROPS: tuple[CropDef, ...] = (
 CROP_BY_KEY: dict[str, CropDef] = {c.key: c for c in CROPS}
 CROP_SEASONAL_PRESENTATION: dict[str, dict] = {}
 CROP_FOOTPRINTS: dict[str, tuple[int, ...]] = {}
+CROP_PRESENTATION: dict[str, dict] = {}
+CROP_HARVEST_MAX: dict[str, int] = {}
 
 
 def crop_presentation(crop: CropDef, season: Season | str | None) -> tuple[str, Colour, Colour | None]:
@@ -361,6 +363,24 @@ def crop_presentation(crop: CropDef, season: Season | str | None) -> tuple[str, 
     row=CROP_SEASONAL_PRESENTATION.get(crop.key,{}).get(name,{})
     flower=row.get("flower_colour",crop.flower_colour)
     return str(row.get("icon_base") or crop.icon_base),tuple(row.get("stem_colour",crop.stem_colour)),tuple(flower) if flower is not None else None
+
+
+def crop_class_presentation(crop: CropDef, season: Season | str | None) -> tuple[dict[str, Colour], tuple[str, ...]]:
+    name=season.name if isinstance(season,Season) else str(season or "");base=CROP_PRESENTATION.get(crop.key,{})
+    recolour={k:tuple(v) for k,v in base.get("recolour",{}).items()};omit=set(base.get("omit_classes",()))
+    if not recolour:
+        recolour={"stem":crop.stem_colour}
+        if crop.flower_colour is not None:recolour["flower"]=crop.flower_colour
+        else:omit.add("flower")
+    row=CROP_SEASONAL_PRESENTATION.get(crop.key,{}).get(name,{})
+    seasonal=row.get("recolour")
+    if isinstance(seasonal,dict):
+        for key,value in seasonal.items():recolour[key]=tuple(value);omit.discard(key)
+        omit.update(row.get("omit_classes",()))
+    else:
+        if "stem_colour" in row:recolour["stem"]=tuple(row["stem_colour"])
+        if row.get("flower_colour") is not None:recolour["flower"]=tuple(row["flower_colour"])
+    return recolour,tuple(sorted(omit))
 CROP_KEYS: tuple[str, ...] = tuple(c.key for c in CROPS)
 PRODUCE_KEYS: tuple[str, ...] = tuple(dict.fromkeys(c.produce_key for c in CROPS))
 SEED_KEYS: tuple[str, ...] = tuple(c.seed_key for c in CROPS)

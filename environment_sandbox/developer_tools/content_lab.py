@@ -82,6 +82,7 @@ class ContentLabSession:
         self.message = "Choose a recipe, then set up the scenario."
         self.species_key: str | None = None
         self.crop_key: str | None = None
+        self.tree_key: str | None = None
         self.environment_fields = {name:FloatField(__import__("pygame").Rect(0,0,1,1),"0.5",minimum=0,maximum=1) for name in ("moisture","temperature","fertility","rainfall","disturbance")}
 
     def _refresh_recipe_dropdown(self) -> None:
@@ -122,14 +123,22 @@ class ContentLabSession:
     def select_species(self,key: str):
         from wild_species import WILD_BY_KEY
         if key not in WILD_BY_KEY:raise KeyError(f"Unknown loaded wild species: {key}")
-        self.crop_key=None;self.species_key=key;self.message=f"Wild Species test selected: {WILD_BY_KEY[key].label}."
+        self.crop_key=None;self.tree_key=None;self.species_key=key;self.message=f"Wild Species test selected: {WILD_BY_KEY[key].label}."
         return WILD_BY_KEY[key]
 
     def select_crop(self,key: str):
         from crops import CROP_BY_KEY
         if key not in CROP_BY_KEY:raise KeyError(f"Unknown loaded farm crop: {key}")
-        self.species_key=None;self.crop_key=key;self.message=f"Farm Crop test selected: {CROP_BY_KEY[key].label}."
+        self.species_key=None;self.tree_key=None;self.crop_key=key;self.message=f"Farm Crop test selected: {CROP_BY_KEY[key].label}."
         return CROP_BY_KEY[key]
+
+    def select_plant(self,key: str):
+        import crops,wild_species,trees
+        if key in crops.CROP_BY_KEY:return self.select_crop(key)
+        if key in wild_species.WILD_BY_KEY:return self.select_species(key)
+        if key in trees.TREE_BY_KEY:
+            self.species_key=None;self.crop_key=None;self.tree_key=key;self.message=f"Tree test selected: {trees.TREE_BY_KEY[key].label}.";return trees.TREE_BY_KEY[key]
+        raise KeyError(f"Unknown loaded plant: {key}")
 
     def spawn_crop(self):
         from world import FeatureType,TerrainType
@@ -139,6 +148,14 @@ class ContentLabSession:
                     cell.feature=FeatureType.CROP_HERB;cell.crop_kind=self.crop_key;cell.growth_ticks=0;cell.object_anchor_slot=4
                     self.message=f"Spawned ripe {self.crop_key} at {x}, {y} through the normal farm-crop renderer.";return cell
         self.message=f"No empty test-map placement found for {self.crop_key}.";return None
+
+    def spawn_tree(self):
+        from world import FeatureType,TerrainType
+        for y,row in enumerate(self.game.world.cells):
+            for x,cell in enumerate(row):
+                if cell.terrain in (TerrainType.GRASS,TerrainType.MEADOW,TerrainType.FOREST_FLOOR) and cell.feature==FeatureType.NONE:
+                    cell.feature=FeatureType.TREE;cell.tree_species=self.tree_key;cell.tree_age_years=8;cell.object_anchor_slot=4;self.message=f"Spawned mature {self.tree_key} at {x}, {y}.";return cell
+        self.message=f"No empty test-map placement found for {self.tree_key}.";return None
 
     def species_suitability(self):
         from wild_species import WILD_BY_KEY,species_environment_suitability
@@ -259,13 +276,14 @@ class ContentLabSession:
         """Compact lab controls; all simulation events not consumed continue normally."""
         import pygame
 
-        if self.species_key or self.crop_key:
+        if self.species_key or self.crop_key or self.tree_key:
             for control in self.environment_fields.values():
                 if control.handle_event(event):return True
             if event.type==pygame.MOUSEBUTTONDOWN and event.button==1:
                 action=next((a for rect,a in self._buttons if rect.collidepoint(event.pos)),None)
                 if action=="spawn_species":self.spawn_species();return True
                 if action=="spawn_crop":self.spawn_crop();return True
+                if action=="spawn_tree":self.spawn_tree();return True
                 if action=="back":self.leave();return True
             if event.type==pygame.KEYDOWN and event.key==pygame.K_ESCAPE:self.leave();return True
             return False
@@ -314,6 +332,7 @@ class ContentLabSession:
 
         if self.species_key:return self._draw_species(surface)
         if self.crop_key:return self._draw_crop(surface)
+        if self.tree_key:return self._draw_tree(surface)
         diag = self.diagnostics()
         panel = pygame.Rect(12, 92, 570, 650)
         pygame.draw.rect(surface, (24, 31, 35), panel, border_radius=6)
@@ -376,3 +395,11 @@ class ContentLabSession:
         surface.blit(body.render(f"Plant: {crop.plant_season.name.title()}   Growth: {crop.growth_days} days   Seeds: {crop.farm_seed_amounts}",True,(185,190,185)),(panel.x+20,y+8));y+=48
         button(panel.x+18,y,150,"Spawn Ripe Crop","spawn_crop");button(panel.x+178,y,190,"Back to Developer Tools","back")
         surface.blit(body.render(self.message,True,(190,195,190)),(panel.x+18,panel.bottom-42))
+
+    def _draw_tree(self,surface):
+        import pygame
+        from trees import TREE_BY_KEY
+        tree=TREE_BY_KEY[self.tree_key];panel=pygame.Rect(12,92,570,280);pygame.draw.rect(surface,(24,31,35),panel,border_radius=6);pygame.draw.rect(surface,(108,132,120),panel,1,border_radius=6);title=pygame.font.SysFont("menlo",16,bold=True);body=pygame.font.SysFont("menlo",12);surface.blit(title.render(f"CONTENT LAB — TREE: {tree.label}",True,(235,235,225)),(panel.x+12,panel.y+10));self._buttons=[]
+        def button(x,y,w,label,action):
+            rect=pygame.Rect(x,y,w,27);self._buttons.append((rect,action));pygame.draw.rect(surface,(58,70,70),rect,border_radius=3);pygame.draw.rect(surface,(108,132,120),rect,1,border_radius=3);text=body.render(label,True,(230,235,228));surface.blit(text,(rect.centerx-text.get_width()//2,rect.centery-text.get_height()//2))
+        surface.blit(body.render(f"Growth {tree.growth_years} years · yield {tree.yield_amount} {tree.yield_key} · {tree.shape}",True,(185,205,190)),(panel.x+20,panel.y+62));button(panel.x+18,panel.y+105,150,"Spawn Mature Tree","spawn_tree");button(panel.x+178,panel.y+105,190,"Back to Developer Tools","back");surface.blit(body.render(self.message,True,(190,195,190)),(panel.x+18,panel.bottom-42))

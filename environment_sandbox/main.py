@@ -66,6 +66,12 @@ def main() -> None:
         if not crop_ok:print(crop_message)
     except Exception as exc:
         print(f"Ignoring invalid Farm Crop overrides: {type(exc).__name__}: {exc}")
+    try:
+        from developer_tools.plant_editor import PlantEditorService
+        plant_ok,plant_message=PlantEditorService().load()
+        if not plant_ok:print(plant_message)
+    except Exception as exc:
+        print(f"Ignoring invalid Plant overrides: {type(exc).__name__}: {exc}")
 
     # Import Game after display metrics are applied so CELL_SIZE / grid bind correctly.
     from game import Game

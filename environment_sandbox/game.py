@@ -997,7 +997,8 @@ class Game:
                     self.sim_speed = 0
                     self.developer_tools.pending_lab_recipe = None
                 elif pending_species:
-                    if isinstance(pending_species,tuple) and pending_species[0]=="crop":session.select_crop(pending_species[1])
+                    if isinstance(pending_species,tuple) and pending_species[0]=="plant":session.select_plant(pending_species[1])
+                    elif isinstance(pending_species,tuple) and pending_species[0]=="crop":session.select_crop(pending_species[1])
                     else:session.select_species(pending_species)
                     self.sim_speed = 0
                     self.developer_tools.pending_lab_species = None
@@ -5716,8 +5717,10 @@ class Game:
         fert = overlay_fertility(cell) if cell is not None else 1.0
         weeds = float(getattr(cell, "weeds", 0.0)) if cell is not None else 0.0
         weed_mult = weed_yield_multiplier(weeds)
+        from crops import CROP_HARVEST_MAX
+        crop_base=CROP_HARVEST_MAX.get(getattr(cell,"crop_kind",None),farm_produce_yield()) if cell is not None else farm_produce_yield()
         return calculate_tile_yield_breakdown(
-            base=farm_produce_yield(),
+            base=crop_base,
             pest_control=pest,
             crop_health=health,
             pollination=poll,
@@ -9578,22 +9581,22 @@ class Game:
                 )
             return True
         crop = CROP_BY_KEY.get(crop_key, CROP_BY_KEY["sage"])
-        inventory.add_item(crop.produce_key, WILD_PRODUCE_YIELD)
-        self.record_produced(crop.produce_key, WILD_PRODUCE_YIELD)
+        wild_max=max(1,int(wild.yield_amount if wild is not None else 3));wild_amount=self._drop_rng.randint(1,wild_max)
+        inventory.add_item(crop.produce_key, wild_amount)
+        self.record_produced(crop.produce_key, wild_amount)
         seed_msg = ""
         # Forage: flat chance of a single seed (see resource_balance.WILD_SEED_CHANCE).
         seed_drop_chance=wild.seed_drop_chance if wild is not None else WILD_SEED_CHANCE
-        if self._drop_rng.random() < seed_drop_chance and inventory.can_add(
-            1, key=crop.seed_key
-        ):
-            inventory.add_item(crop.seed_key, 1)
-            self.record_produced(crop.seed_key, 1)
-            seed_msg = f" +1 {crop.label.lower()} seed"
+        seed_amount=self._drop_rng.randint(1,max(1,int(wild.seed_amount_max if wild is not None else 1)))
+        if self._drop_rng.random() < seed_drop_chance and inventory.can_add(seed_amount,key=crop.seed_key):
+            inventory.add_item(crop.seed_key,seed_amount)
+            self.record_produced(crop.seed_key,seed_amount)
+            seed_msg = f" +{seed_amount} {crop.label.lower()} seed"
         self.world.apply_extraction_disturbance(x, y)
         self._refresh_indicators()
         if status:
             self._set_status(
-                f"Collected {WILD_PRODUCE_YIELD} {crop.label.lower()}{seed_msg}."
+                f"Collected {wild_amount} {crop.label.lower()}{seed_msg}."
             )
         return True
 
@@ -21046,7 +21049,6 @@ class Game:
                 crop_kind=obj.crop_kind,
                 deposit=obj.deposit,
                 growth_ticks=obj.growth_ticks,
-                season_name=self.season.name,
             )
             base = editor_icon_key(obj.feature.name, crop_kind=obj.crop_kind, object_key=obj.tree_species or obj.crop_kind) or base
             if base is not None:
@@ -21087,6 +21089,7 @@ class Game:
                 icon_variant=obj.icon_variant,
                 deposit=obj.deposit,
                 growth_ticks=obj.growth_ticks,
+                season_name=self.season.name,
             )
 
         from subtile_layout import feature_subtile_layout, object_footprint, slot_centre

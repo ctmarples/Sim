@@ -122,17 +122,17 @@ class FloatField(NumericField):
 
 
 class ColourField(TextField):
-    """Compact RGB swatch which expands to three directly-manipulable sliders."""
+    """Compact RGB/RGBA swatch with directly-manipulable channel sliders."""
 
     def __init__(self, rect: pygame.Rect, value=(255, 255, 255)):
         if isinstance(value, str):
             import re
-            parts = [int(v) for v in re.findall(r"\d+", value)[:3]]
-            value = tuple(parts) if len(parts) == 3 else (255, 255, 255)
+            parts = [int(v) for v in re.findall(r"\d+", value)[:4]]
+            value = tuple(parts) if len(parts) in (3,4) else (255, 255, 255)
         self.value = tuple(max(0, min(255, int(v))) for v in value)
         super().__init__(rect, str(list(self.value)))
         self.open = False
-        self._slider_rects = [pygame.Rect(0, 0, 1, 1) for _ in range(3)]
+        self._slider_rects = [pygame.Rect(0, 0, 1, 1) for _ in self.value]
 
     def _set_channel(self, channel: int, mouse_x: int) -> None:
         slider = self._slider_rects[channel]
@@ -165,13 +165,13 @@ class ColourField(TextField):
         swatch = pygame.Rect(self.rect.x + 5, self.rect.y + 4, 28, self.rect.h - 8)
         pygame.draw.rect(surface, self.value, swatch, border_radius=2)
         pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, swatch, 1, border_radius=2)
-        surface.blit(font.render("RGB colour", True, COLOUR_TEXT), (swatch.right + 7, self.rect.centery-font.get_height()//2))
+        surface.blit(font.render("RGBA colour" if len(self.value)>3 else "RGB colour", True, COLOUR_TEXT), (swatch.right + 7, self.rect.centery-font.get_height()//2))
         if not self.open:
             return
-        popup = pygame.Rect(self.rect.x, self.rect.bottom + 3, max(250, self.rect.w), 116)
+        popup = pygame.Rect(self.rect.x, self.rect.bottom + 3, max(250, self.rect.w), 147 if len(self.value)>3 else 116)
         pygame.draw.rect(surface, (30, 37, 40), popup, border_radius=4)
         pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, popup, 1, border_radius=4)
-        for channel, label in enumerate("RGB"):
+        for channel, label in enumerate("RGBA"[:len(self.value)]):
             y = popup.y + 13 + channel * 31
             slider = pygame.Rect(popup.x + 38, y + 5, popup.w - 86, 8); self._slider_rects[channel] = slider
             pygame.draw.rect(surface, (65, 70, 72), slider, border_radius=4)
