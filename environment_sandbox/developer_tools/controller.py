@@ -15,8 +15,8 @@ from .widgets import ScrollableList, ValidationSummary
 from .editors import RecipeEditorService, TravellerEditorService
 from .icons_browser import IconBrowserService
 from .resources_browser import ResourceEditorService, resource_entries
-from .objects_editor import ObjectEditorService
-from .authoring_ui import IconImportPage, ObjectAuthoringPage, RecipeAuthoringPage, ResourceAuthoringPage, TravellerAuthoringPage
+from .wild_species_editor import WildSpeciesEditorService
+from .authoring_ui import IconImportPage, RecipeAuthoringPage, ResourceAuthoringPage, TravellerAuthoringPage, WildSpeciesAuthoringPage
 
 
 class DeveloperToolsController:
@@ -42,9 +42,10 @@ class DeveloperToolsController:
         self.icon_page = IconImportPage(self.icon_browser)
         self.resource_editor = ResourceEditorService()
         self.resource_page = ResourceAuthoringPage(self.resource_editor, self.icon_browser, self._resources_saved)
-        self.object_editor = ObjectEditorService()
-        self.object_page = ObjectAuthoringPage(self.object_editor, self.icon_browser)
+        self.wild_species_editor = WildSpeciesEditorService()
+        self.object_page = WildSpeciesAuthoringPage(self.wild_species_editor, self.icon_browser)
         self.pending_lab_recipe: tuple[str, str] | None = None
+        self.pending_lab_species: str | None = None
         self.refresh_page()
 
     def _resources_saved(self) -> None:
@@ -64,7 +65,7 @@ class DeveloperToolsController:
         elif self.page == "resources":
             self.items.set_items(resource_entries())
         elif self.page == "objects":
-            self.object_editor.load()
+            self.wild_species_editor.load()
             self.object_page.refresh()
 
     def _panel(self) -> pygame.Rect:
@@ -102,8 +103,10 @@ class DeveloperToolsController:
             self.message = self.icon_page.message; return None
         elif self.page == "resources" and self.resource_page.handle_event(event):
             self.message = self.resource_page.message; return None
-        elif self.page == "objects" and self.object_page.handle_event(event):
-            self.message = self.object_page.message; return None
+        elif self.page == "objects":
+            consumed,result=self.object_page.handle_event(event)
+            if result and result[0]=="test_species":self.pending_lab_species=result[1];return "content_lab"
+            if consumed:self.message=self.object_page.message;return None
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
             if self.page == "home":
                 return "launcher"

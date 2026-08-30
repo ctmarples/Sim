@@ -15,7 +15,7 @@ from entities import (
 from recipes import Recipe, recipe_ready
 from society import SkillState, recipe_skill_gate
 from resources import RESOURCE_KEYS, resource_label
-from .widgets import Dropdown, IntegerField
+from .widgets import Dropdown, FloatField, IntegerField
 
 
 WORKSTATION_KINDS = {
@@ -80,6 +80,8 @@ class ContentLabSession:
         self.skill_fields = {skill.name.lower(): IntegerField(__import__("pygame").Rect(0, 0, 1, 1), "1", minimum=1, maximum=10) for skill in __import__("society").SKILL_ORDER}
         self._buttons = []
         self.message = "Choose a recipe, then set up the scenario."
+        self.species_key: str | None = None
+        self.environment_fields = {name:FloatField(__import__("pygame").Rect(0,0,1,1),"0.5",minimum=0,maximum=1) for name in ("moisture","temperature","fertility","rainfall","disturbance")}
 
     def _refresh_recipe_dropdown(self) -> None:
         catalogue = recipe_catalogue()
@@ -106,6 +108,7 @@ class ContentLabSession:
         self.game._launch_menu = "developer_tools"
 
     def select_recipe(self, name: str, workstation: str | None = None) -> LabRecipe:
+        self.species_key=None
         matches = [item for item in recipe_catalogue() if item.recipe.name == name and (workstation is None or item.workstation == workstation)]
         if not matches:
             raise KeyError(f"Unknown loaded recipe: {name}")
@@ -114,6 +117,33 @@ class ContentLabSession:
         self.worker = None
         self._refresh_recipe_dropdown()
         return self.selected
+
+    def select_species(self,key: str):
+        from wild_species import WILD_BY_KEY
+        if key not in WILD_BY_KEY:raise KeyError(f"Unknown loaded wild species: {key}")
+        self.species_key=key;self.message=f"Wild Species test selected: {WILD_BY_KEY[key].label}."
+        return WILD_BY_KEY[key]
+
+    def species_suitability(self):
+        from wild_species import WILD_BY_KEY,species_environment_suitability
+        if not self.species_key:return None
+        values={name:field.parse() for name,field in self.environment_fields.items()}
+        if any(v is None for v in values.values()):return None
+        return species_environment_suitability(WILD_BY_KEY[self.species_key],temperature=values["temperature"],rainfall=values["rainfall"],soil_moisture=values["moisture"],fertility=values["fertility"],disturbance=values["disturbance"])
+
+    def spawn_species(self):
+        from wild_species import WILD_BY_KEY
+        from world import FeatureType
+        species=WILD_BY_KEY[self.species_key]
+        feature=FeatureType[species.feature]
+        crop_kind=species.crop_key or species.key
+        for y,row in enumerate(self.game.world.cells):
+            for x,cell in enumerate(row):
+                if not species.terrains or cell.terrain.name in species.terrains:
+                    obj=self.game.world.add_natural_object(x,y,feature,crop_kind=crop_kind,deposit=max(1,species.yield_amount))
+                    if obj is not None:
+                        self.message=f"Spawned {species.label} at {x}, {y} through the normal World placement path.";return obj
+        self.message=f"No legal test-map placement found for {species.label}.";return None
 
     def create_workstation(self) -> Building:
         if self.selected is None:
@@ -213,6 +243,15 @@ class ContentLabSession:
         """Compact lab controls; all simulation events not consumed continue normally."""
         import pygame
 
+        if self.species_key:
+            for control in self.environment_fields.values():
+                if control.handle_event(event):return True
+            if event.type==pygame.MOUSEBUTTONDOWN and event.button==1:
+                action=next((a for rect,a in self._buttons if rect.collidepoint(event.pos)),None)
+                if action=="spawn_species":self.spawn_species();return True
+                if action=="back":self.leave();return True
+            if event.type==pygame.KEYDOWN and event.key==pygame.K_ESCAPE:self.leave();return True
+            return False
         old_recipe = self.recipe_dropdown.value
         if self.recipe_dropdown.handle_event(event):
             if self.recipe_dropdown.value != old_recipe and self.recipe_dropdown.value:
@@ -256,6 +295,7 @@ class ContentLabSession:
     def draw(self, surface) -> None:
         import pygame
 
+        if self.species_key:return self._draw_species(surface)
         diag = self.diagnostics()
         panel = pygame.Rect(12, 92, 570, 650)
         pygame.draw.rect(surface, (24, 31, 35), panel, border_radius=6)
@@ -287,3 +327,18 @@ class ContentLabSession:
         # Draw open dropdowns last so their popup menus remain above the panel.
         if self.resource_dropdown.open:self.resource_dropdown.draw(surface,body)
         if self.recipe_dropdown.open:self.recipe_dropdown.draw(surface,body)
+
+    def _draw_species(self,surface):
+        import pygame
+        from wild_species import WILD_BY_KEY
+        species=WILD_BY_KEY[self.species_key];score=self.species_suitability()
+        panel=pygame.Rect(12,92,570,470);pygame.draw.rect(surface,(24,31,35),panel,border_radius=6);pygame.draw.rect(surface,(108,132,120),panel,1,border_radius=6)
+        title=pygame.font.SysFont("menlo",16,bold=True);body=pygame.font.SysFont("menlo",12);surface.blit(title.render(f"CONTENT LAB — WILD SPECIES: {species.label}",True,(235,235,225)),(panel.x+12,panel.y+10));self._buttons=[]
+        def button(x,y,w,label,action):
+            rect=pygame.Rect(x,y,w,27);self._buttons.append((rect,action));pygame.draw.rect(surface,(58,70,70),rect,border_radius=3);pygame.draw.rect(surface,(108,132,120),rect,1,border_radius=3);text=body.render(label,True,(230,235,228));surface.blit(text,(rect.centerx-text.get_width()//2,rect.centery-text.get_height()//2))
+        y=panel.y+52
+        for name,field in self.environment_fields.items():
+            surface.blit(body.render(name.title(),True,(180,190,185)),(panel.x+18,y+5));field.rect=pygame.Rect(panel.x+145,y,90,26);field.draw(surface,body);value=getattr(score,"moisture" if name=="moisture" else name,0) if score else 0;surface.blit(body.render(f"response {value:.3f}",True,(145,195,150)),(panel.x+250,y+5));y+=34
+        combined=score.combined if score else 0;surface.blit(title.render(f"Combined niche suitability: {combined:.3f}",True,(145,205,155)),(panel.x+18,y+8));y+=48
+        button(panel.x+18,y,150,"Spawn Species","spawn_species");button(panel.x+178,y,190,"Back to Developer Tools","back")
+        surface.blit(body.render(self.message,True,(190,195,190)),(panel.x+18,panel.bottom-42))

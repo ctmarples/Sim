@@ -44,6 +44,14 @@ def _editor_slots(feature_name: str, *, crop_kind: str | None = None, object_key
     if crop_kind:
         identifiers.extend((f"crop:{crop_kind}", f"wild:{crop_kind}"))
     identifiers.append({"ROCK": "feature:rock", "WOOD_BUSH": "feature:fallen_wood", "MUSHROOM": "feature:mushroom"}.get(name, ""))
+    # Dedicated Wild Species overrides supersede the legacy generic-object
+    # file for wild records.
+    wild_path=_OBJECTS_PATH.with_name("wild_species_overrides.json")
+    try:wild_rows=json.loads(wild_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError,json.JSONDecodeError,OSError):wild_rows={}
+    for key in (object_key,crop_kind):
+        value=wild_rows.get(str(key),{}).get("_footprint_slots") if key else None
+        if isinstance(value,list) and value:return tuple(sorted({max(0,min(8,int(slot))) for slot in value}))
     for identifier in identifiers:
         value = rows.get(identifier, {}).get("slots") if identifier else None
         if isinstance(value, list) and value:

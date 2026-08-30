@@ -54,6 +54,12 @@ def main() -> None:
         # Authored content must never make the game itself unlaunchable. The
         # editor can surface and repair an invalid override after startup.
         print(f"Ignoring invalid map-object overrides: {type(exc).__name__}: {exc}")
+    try:
+        from developer_tools.wild_species_editor import reload_wild_species
+        wild_result=reload_wild_species()
+        if not wild_result.success:print(wild_result.message)
+    except Exception as exc:
+        print(f"Ignoring invalid Wild Species overrides: {type(exc).__name__}: {exc}")
 
     # Import Game after display metrics are applied so CELL_SIZE / grid bind correctly.
     from game import Game

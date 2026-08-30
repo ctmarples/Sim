@@ -989,11 +989,16 @@ class Game:
                 session = ContentLabSession(self)
                 session.start()
                 pending = getattr(self.developer_tools, "pending_lab_recipe", None)
+                pending_species = getattr(self.developer_tools, "pending_lab_species", None)
                 if pending:
                     session.select_recipe(pending[0], pending[1])
                     session.prepare()
                     self.sim_speed = 0
                     self.developer_tools.pending_lab_recipe = None
+                elif pending_species:
+                    session.select_species(pending_species)
+                    self.sim_speed = 0
+                    self.developer_tools.pending_lab_species = None
                 self._launch_menu = None
             return
         if self.file_dialog.open:

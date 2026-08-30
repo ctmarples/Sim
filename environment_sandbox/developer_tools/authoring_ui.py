@@ -629,3 +629,192 @@ class ObjectAuthoringPage:
         for key,f in self.fields.items():
             surface.blit(small.render(key.replace("_"," ").title(),True,COLOUR_TEXT_DIM),(x,y+6));f.rect=pygame.Rect(fx,y,max(120,clip.right-fx-8),27);f.draw(surface,small);y+=34
         surface.set_clip(old);r=pygame.Rect(right.x+14,right.bottom-43,116,30);self.actions.append((r,"save",True));_button(surface,small,r,"Save")
+
+
+class WildSpeciesAuthoringPage:
+    """Typed form adapter for the existing immutable WildSpeciesDef registry."""
+    GROUPS=(
+        ("Identity / resource",("key","label","feature","resource_key","yield_amount","crop_key")),
+        ("Habitat",("terrains","edge_terrains","seed_near_feature","near_feature","ecology_tags")),
+        ("Environmental niche",("temperature_niche","rainfall_niche","moisture_niche","fertility_niche","disturbance_niche")),
+        ("Spawn / spread",("initial_count","initial_fraction","seed_near_chance","spawn_peak","spawn_rise","spawn_fall","spawn_activity","spread_chance","patch_extras","spawn_group")),
+        ("Despawn",("despawn_fade","despawn_fade_end","despawn_fade_chance","despawn_leftover_from","despawn_leftover_chance","clear_from_day","clear_ramp_days","counts_toward_cap")),
+        ("Fruiting / harvest",("fruiting","fruit_rise","fruit_fall","fruit_class","fruit_colour","empty_fruit_colour")),
+        ("Presentation",("icon_recolour",)),
+    )
+    BOOLS={"counts_toward_cap","fruiting"}
+    INTS={"yield_amount","initial_count"}
+    PAIRS={"spawn_rise","spawn_fall","patch_extras","despawn_fade","despawn_fade_end","fruit_rise","fruit_fall"}
+    NICHES={"temperature_niche","rainfall_niche","moisture_niche","fertility_niche","disturbance_niche"}
+    FLOATS={"initial_fraction","seed_near_chance","spawn_peak","spawn_activity","spread_chance","despawn_fade_chance","despawn_leftover_from","despawn_leftover_chance","clear_from_day","clear_ramp_days"}
+    def __init__(self,service,icons):
+        self.service=service;self.icons=icons;self.list=ScrollableList(pygame.Rect(0,0,1,1),row_height=25);self.list.category=lambda s:"Wild crops" if s.crop_key else s.feature.replace("_"," ").title();self.controls={};self.optional_enabled={};self.terrains={};self.icon_colours=[];self.actions=[];self.scroll=0;self.message="Select a wild species.";self.refresh()
+    def refresh(self,key=None):
+        self.list.set_items(sorted(self.service.records,key=lambda s:("0" if s.crop_key else s.feature,s.label.casefold())))
+        if key:self.list.selected_index=next((i for i,s in enumerate(self.list.items) if s.key==key),None)
+    def load(self):
+        import re
+        from resources import RESOURCES
+        from world import FeatureType,TerrainType
+        import crops
+        c=self.service.candidate;self.controls={};self.optional_enabled={};self.terrains={};self.icon_colours=[];self.scroll=0
+        if c is None:return
+        resources=[("","None")]+[(r.key,r.label) for r in RESOURCES]
+        # Collapse numbered variants into their logical base and retain the
+        # physical folder as a first-class selector category.
+        grouped={}
+        for entry in self.icons.entries():
+            folder=str(entry.paths[0].parent.relative_to(self.icons.icon_root)) if entry.paths else "Other"
+            match=re.match(r"^(.*)_([1-9][0-9]*)$",entry.key);logical=match.group(1) if match else entry.key
+            grouped.setdefault(folder,set()).add(logical)
+        self.icon_by_folder={folder:sorted(names) for folder,names in sorted(grouped.items())}
+        current_folder=next((folder for folder,names in self.icon_by_folder.items() if c.icon_base in names),next(iter(self.icon_by_folder),"Other"))
+        self.controls["icon_folder"]=Dropdown(pygame.Rect(0,0,1,1),[(folder,folder.replace("_"," ").title()) for folder in self.icon_by_folder],current_folder)
+        icons=[(name,name) for name in self.icon_by_folder.get(current_folder,[])]
+        crops_opts=[(None,"None")]+[(x.key,x.label) for x in crops.CROPS]
+        self.controls["key"]=TextField(pygame.Rect(0,0,1,1),c.key);self.controls["key"].disabled=True
+        self.controls["label"]=TextField(pygame.Rect(0,0,1,1),c.label)
+        self.controls["feature"]=Dropdown(pygame.Rect(0,0,1,1),[(x.name,x.name.replace("_"," ").title()) for x in FeatureType],c.feature)
+        self.controls["resource_key"]=Dropdown(pygame.Rect(0,0,1,1),resources,c.resource_key)
+        self.controls["crop_key"]=Dropdown(pygame.Rect(0,0,1,1),crops_opts,c.crop_key)
+        self.controls["icon_base"]=Dropdown(pygame.Rect(0,0,1,1),icons,c.icon_base)
+        for key in self.INTS:self.controls[key]=IntegerField(pygame.Rect(0,0,1,1),str(getattr(c,key)),minimum=0)
+        for key in self.FLOATS:self.controls[key]=FloatField(pygame.Rect(0,0,1,1),str(getattr(c,key)))
+        for key in self.BOOLS:self.controls[key]=Checkbox(pygame.Rect(0,0,1,1),getattr(c,key))
+        for key in self.PAIRS:self.controls[key]=tuple(FloatField(pygame.Rect(0,0,1,1),str(v)) for v in getattr(c,key))
+        for key in self.NICHES:
+            n=getattr(c,key);values=(n.minimum,n.optimum_low,n.optimum_high,n.maximum) if n else (0,.25,.75,1);self.controls[key]=tuple(FloatField(pygame.Rect(0,0,1,1),str(v),minimum=0,maximum=1) for v in values);self.optional_enabled[key]=Checkbox(pygame.Rect(0,0,1,1),n is not None)
+        for key in ("seed_near_feature","near_feature"):
+            value=getattr(c,key);self.controls[key]=Dropdown(pygame.Rect(0,0,1,1),[(None,"None")]+[(x.name,x.name.replace("_"," ").title()) for x in FeatureType],value)
+        for key in ("spawn_group","fruit_class"):
+            self.controls[key]=TextField(pygame.Rect(0,0,1,1),getattr(c,key) or "")
+        self.controls["ecology_tags"]=TextField(pygame.Rect(0,0,1,1),", ".join(c.ecology_tags),placeholder="comma-separated tags")
+        for key in ("fruit_colour","empty_fruit_colour"):
+            value=getattr(c,key);self.controls[key]=ColourField(pygame.Rect(0,0,1,1),value or (255,255,255));self.optional_enabled[key]=Checkbox(pygame.Rect(0,0,1,1),value is not None)
+        self.terrains={"terrains":{},"edge_terrains":{}}
+        for group in self.terrains:
+            selected=set(getattr(c,group));self.terrains[group]={name:Checkbox(pygame.Rect(0,0,1,1),name in selected) for name in TerrainType.__members__}
+        self.icon_colours=[(name,ColourField(pygame.Rect(0,0,1,1),rgb)) for name,rgb in c.icon_recolour]
+    def sync(self):
+        from wild_species import NicheRange
+        c=self.service.candidate
+        if c is None:return
+        values={"label":self.controls["label"].text.strip(),"feature":self.controls["feature"].value,"resource_key":self.controls["resource_key"].value or "","crop_key":self.controls["crop_key"].value,"icon_base":self.controls["icon_base"].value or ""}
+        for key in self.INTS|self.FLOATS:
+            parsed=self.controls[key].parse()
+            if parsed is not None:values[key]=parsed
+        for key in self.BOOLS:values[key]=self.controls[key].checked
+        for key in self.PAIRS:
+            parsed=tuple(x.parse() for x in self.controls[key])
+            if all(v is not None for v in parsed):values[key]=tuple(int(v) for v in parsed) if key=="patch_extras" else parsed
+        for key in self.NICHES:
+            controls=self.controls[key]
+            if self.optional_enabled[key].checked:
+                parsed=tuple(x.parse() for x in controls)
+                if all(v is not None for v in parsed):values[key]=NicheRange(*parsed)
+            else:values[key]=None
+        for key in ("seed_near_feature","near_feature"):values[key]=self.controls[key].value
+        for key in ("spawn_group","fruit_class"):values[key]=self.controls[key].text.strip() or None if key=="spawn_group" else self.controls[key].text.strip()
+        values["ecology_tags"]=tuple(x.strip() for x in self.controls["ecology_tags"].text.split(",") if x.strip())
+        for key in ("fruit_colour","empty_fruit_colour"):
+            ctl=self.controls[key];values[key]=ctl.value if self.optional_enabled[key].checked else None
+        for group,boxes in self.terrains.items():values[group]=tuple(name for name,box in boxes.items() if box.checked)
+        values["icon_recolour"]=tuple((name,ctl.value) for name,ctl in self.icon_colours)
+        self.service.update(**values)
+    def act(self,action):
+        if action.startswith("footprint_"):
+            size=int(action.rsplit("_",1)[1]);self.service.candidate_slots={1:[4],2:[0,1,3,4],3:list(range(9))}[size];return None
+        if action=="save":self.sync();result=self.service.save();self.message=result.message;self.refresh(self.service.candidate.key if self.service.candidate else None);self.load();return None
+        if action=="cancel":self.service.cancel();self.load();self.message="Unsaved changes cancelled.";return None
+        if action=="reload":
+            key=self.service.candidate.key if self.service.candidate else None;result=self.service.load();self.message=result.message;self.refresh(key)
+            if key:
+                item=next((x for x in self.service.records if x.key==key),None)
+                if item:self.service.select(item);self.load()
+            return None
+        if action=="test" and self.service.candidate:return ("test_species",self.service.candidate.key)
+    def _all_controls(self):
+        out=[]
+        for ctl in self.controls.values():
+            if isinstance(ctl,tuple):out.extend(ctl)
+            elif ctl is not None:out.append(ctl)
+        out.extend(self.optional_enabled.values());out.extend(box for group in self.terrains.values() for box in group.values());out.extend(ctl for _,ctl in self.icon_colours);return out
+    def handle_event(self,event):
+        if event.type==pygame.MOUSEBUTTONDOWN and event.button==1:
+            for rect,action,enabled in reversed(self.actions):
+                if enabled and rect.collidepoint(event.pos):return True,self.act(action)
+        old=self.list.selected_index
+        if self.list.handle_event(event):
+            if old!=self.list.selected_index and self.list.selected:self.service.select(self.list.selected);self.load()
+            return True,None
+        controls=self._all_controls();controls.sort(key=lambda x:not isinstance(x,Dropdown) or not x.open)
+        for ctl in controls:
+            old_folder=self.controls["icon_folder"].value
+            if ctl.handle_event(event):
+                if ctl is self.controls["icon_folder"] and ctl.value!=old_folder:
+                    names=self.icon_by_folder.get(ctl.value,[]);icon_ctl=self.controls["icon_base"];icon_ctl.options=[(name,name) for name in names]
+                    if icon_ctl.value not in names:icon_ctl.value=names[0] if names else None
+                self.sync();return True,None
+        if event.type==pygame.MOUSEWHEEL:self.scroll=max(0,self.scroll-event.y*40);return True,None
+        return False,None
+    def draw(self,surface,panel,font,small):
+        left=pygame.Rect(panel.x+24,panel.y+92,300,panel.h-160);right=pygame.Rect(left.right+14,left.y,panel.right-left.right-38,left.h);self.actions=[]
+        surface.blit(font.render("WILD SPECIES",True,(150,190,165)),(left.x,left.y))
+        # Always-visible presentation controls: icon and footprint should not
+        # require scrolling through ecology parameters.
+        c=self.service.candidate;preview=pygame.Rect(left.x,left.y+30,left.w,176);pygame.draw.rect(surface,BG,preview);pygame.draw.rect(surface,COLOUR_TOOLBAR_BORDER,preview,1)
+        if c is not None:
+            icon=c.icon_base
+            if not icon and c.crop_key:
+                import crops
+                crop=crops.CROP_BY_KEY.get(c.crop_key);icon=crop.plant_icon(dense=False) if crop else ""
+            slots=self.service.candidate_slots;size=3 if len(slots)>=9 else 2 if len(slots)>=4 else 1;gx,gy,cell=preview.x+12,preview.y+12,32
+            for i in range(9):
+                rect=pygame.Rect(gx+(i%3)*cell,gy+(i//3)*cell,cell-2,cell-2);pygame.draw.rect(surface,(55,75,62) if i in slots else (39,44,47),rect);pygame.draw.rect(surface,COLOUR_TOOLBAR_BORDER,rect,1)
+            recolour=dict(c.icon_recolour)
+            if icon and variant_names(icon):blit_icon(surface,icon,gx+cell*3//2,gy+cell*3//2,_preview_cell_px(icon,size,cell),recolour=recolour or None)
+            surface.blit(small.render("Icon folder",True,COLOUR_TEXT_DIM),(preview.x+120,preview.y+4));folder_ctl=self.controls.get("icon_folder")
+            if folder_ctl:folder_ctl.rect=pygame.Rect(preview.x+120,preview.y+21,165,25);folder_ctl.draw(surface,small)
+            surface.blit(small.render("Icon",True,COLOUR_TEXT_DIM),(preview.x+120,preview.y+49));icon_ctl=self.controls.get("icon_base")
+            if icon_ctl:icon_ctl.rect=pygame.Rect(preview.x+120,preview.y+66,165,25);icon_ctl.draw(surface,small)
+            surface.blit(small.render(f"Footprint: {size}×{size}",True,COLOUR_TEXT_DIM),(preview.x+120,preview.y+98))
+            for i,n in enumerate((1,2,3)):
+                rect=pygame.Rect(preview.x+120+i*55,preview.y+119,50,26);self.actions.append((rect,f"footprint_{n}",True));_button(surface,small,rect,f"[{n}×{n}]" if size==n else f"{n}×{n}")
+        self.list.rect=pygame.Rect(left.x,left.y+216,left.w,left.h-216);self.list.draw(surface,small,lambda s:s.label)
+        pygame.draw.rect(surface,BG,right);pygame.draw.rect(surface,COLOUR_TOOLBAR_BORDER,right,1);surface.blit(font.render("WILD SPECIES EDITOR",True,COLOUR_TEXT),(right.x+14,right.y+10))
+        if c is None:return
+        clip=pygame.Rect(right.x+2,right.y+40,right.w-4,right.h-94);old_clip=surface.get_clip();surface.set_clip(clip);x=right.x+14;fx=right.x+210;y=right.y+47-self.scroll
+        def label(text):surface.blit(small.render(text,True,COLOUR_TEXT_DIM),(x,y+5))
+        for heading,keys in self.GROUPS:
+            surface.blit(font.render(heading.upper(),True,(150,190,165)),(x,y));y+=28
+            for key in keys:
+                label(key.replace("_"," ").title())
+                if key in self.terrains:
+                    boxes=self.terrains[key]
+                    for i,(name,box) in enumerate(boxes.items()):
+                        col=i%3;row=i//3;box.rect=pygame.Rect(fx+col*105,y+row*23,17,17);box.draw(surface);surface.blit(small.render(name.title(),True,COLOUR_TEXT),(box.rect.right+3,box.rect.y+1))
+                    y+=((len(boxes)+2)//3)*23+5;continue
+                if key=="icon_recolour":
+                    for name,ctl in self.icon_colours:surface.blit(small.render(name,True,COLOUR_TEXT),(fx,y+5));ctl.rect=pygame.Rect(fx+85,y,190,26);ctl.draw(surface,small);y+=31
+                    if not self.icon_colours:surface.blit(small.render("No recolour classes",True,COLOUR_TEXT_DIM),(fx,y+5));y+=30
+                    continue
+                ctl=self.controls.get(key)
+                if isinstance(ctl,tuple):
+                    offset=25 if key in self.optional_enabled else 0
+                    if key in self.optional_enabled:self.optional_enabled[key].rect=pygame.Rect(fx,y+3,18,18);self.optional_enabled[key].draw(surface)
+                    for i,item in enumerate(ctl):item.rect=pygame.Rect(fx+offset+i*72,y,66,26);item.draw(surface,small)
+                elif isinstance(ctl,Checkbox):ctl.rect=pygame.Rect(fx,y+3,20,20);ctl.draw(surface)
+                else:
+                    offset=25 if key in self.optional_enabled else 0
+                    if key in self.optional_enabled:self.optional_enabled[key].rect=pygame.Rect(fx,y+3,18,18);self.optional_enabled[key].draw(surface)
+                    ctl.rect=pygame.Rect(fx+offset,y,min(390-offset,right.right-fx-16-offset),26);ctl.draw(surface,small)
+                y+=32
+            y+=8
+        for ctl in self._all_controls():
+            if isinstance(ctl,Dropdown) and ctl.open:ctl.draw(surface,small)
+            if isinstance(ctl,ColourField) and ctl.open:ctl.draw(surface,small)
+        surface.set_clip(old_clip)
+        report=self.service.report;status="✓ Valid" if report.ok else f"✕ {report.errors[0].message}"
+        surface.blit(small.render(status,True,GOOD if report.ok else BAD),(right.x+14,right.bottom-69));surface.blit(small.render("● Unsaved" if self.service.dirty else "Saved",True,(226,183,80) if self.service.dirty else GOOD),(right.x+120,right.bottom-69))
+        for i,(action,text,enabled) in enumerate((("save","Save",report.ok),("cancel","Cancel",self.service.dirty),("reload","Reload",True),("test","Test",report.ok))):
+            rect=pygame.Rect(right.x+14+i*105,right.bottom-40,96,29);self.actions.append((rect,action,enabled));_button(surface,small,rect,text,enabled=enabled)
