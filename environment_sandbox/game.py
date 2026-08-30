@@ -2985,7 +2985,7 @@ class Game:
 
         # Click (same cell): selection / assignment.
         if end == down:
-            self._handle_click(end)
+            self._handle_click(end, screen_pos=pos)
             return
 
         # Drag: task areas only while area tool is on.
@@ -3011,7 +3011,36 @@ class Game:
             )
             self._wake_building_workers(building.id)
 
-    def _handle_click(self, cell: tuple[int, int]) -> None:
+    def _natural_object_at_screen(self,x:int,y:int,pos:tuple[int,int]):
+        """Return the concrete primary/secondary object under a subcell click."""
+        from subtile_layout import object_footprint
+        cell=self.world.get_cell(x,y)
+        if cell is None:return None
+        candidates=[]
+        if cell.feature!=FeatureType.NONE and cell.feature not in BUILDING_FEATURES:candidates.append((cell,None))
+        candidates.extend((obj,obj) for obj in cell.extra_objects)
+        vc=self.camera.view_cell()
+        for obj,secondary in reversed(candidates):
+            spec=object_footprint(obj.feature.name,x,y,tree_age_years=int(getattr(obj,"tree_age_years",0)),variant=int(getattr(obj,"icon_variant",None) or 1),deposit=int(getattr(obj,"deposit",0)),crop_kind=getattr(obj,"crop_kind",None),object_key=getattr(obj,"tree_species",None) or getattr(obj,"crop_kind",None),anchor_slot=(int(getattr(obj,"anchor_slot")) if secondary is not None else self.world._primary_anchor_slot(x,y,cell)))
+            cx,cy=self._cell_center(x+spec.centre_u-.5,y+spec.centre_v-.5);side=max(4,int(round(vc*spec.scale)))
+            if pygame.Rect(cx-side//2,cy-side//2,side,side).collidepoint(pos):return obj,secondary,spec
+        return None
+
+    def _open_natural_object_inspect(self,x,y,obj,secondary,spec,screen_pos):
+        from wild_species import resolve_species
+        feature=obj.feature;kind=getattr(obj,"crop_kind",None);species=resolve_species(feature.name,kind)
+        title=species.label if species is not None else feature.name.replace("_"," ").title()
+        if feature==FeatureType.TREE:
+            from trees import resolve_tree
+            title=resolve_tree(getattr(obj,"tree_species",None)).label
+        lines=[f"Feature: {feature.name.replace('_',' ').title()}",f"Subcells: {', '.join(str(v) for v in sorted(spec.occupied_slots))}",f"Footprint: {spec.slots} subcell{'s' if spec.slots!=1 else ''}",f"Anchor: {getattr(obj,'anchor_slot',None) if secondary is not None else self.world._primary_anchor_slot(x,y,self.world.cells[y][x])}"]
+        if kind:lines.append(f"Species key: {kind}")
+        if hasattr(obj,"deposit"):lines.append(f"Deposit: {int(getattr(obj,'deposit',0))}")
+        self.villager_inspect.close();self.inspected_animal_id=None;self.inspected_tree_cell=None
+        self.resource_inspect.open_details(title=title,lines=lines,cell=(x,y),screen_xy=screen_pos)
+        self._set_status(f"Inspecting {title} at subcells {sorted(spec.occupied_slots)}.")
+
+    def _handle_click(self, cell: tuple[int, int], *, screen_pos:tuple[int,int]|None=None) -> None:
         x, y = cell
 
         # Relocate / build mode: click places a construction site (non-Field).
@@ -3059,7 +3088,16 @@ class Game:
             self._select_construction(site, detail_only=True)
             return
 
-        resource = self._map_resource_at(x, y)
+        cell_obj=self.world.get_cell(x,y)
+        natural_hit=self._natural_object_at_screen(x,y,screen_pos) if screen_pos is not None else None
+        if natural_hit is not None:
+            obj,secondary,spec=natural_hit
+            if obj.feature==FeatureType.TREE and secondary is None:
+                self.inspected_tree_cell=(x,y);self._refresh_tracking_inspect(force=True)
+            else:self._open_natural_object_inspect(x,y,obj,secondary,spec,screen_pos)
+            return
+        has_natural=bool(cell_obj and ((cell_obj.feature!=FeatureType.NONE and cell_obj.feature not in BUILDING_FEATURES) or cell_obj.extra_objects))
+        resource = None if has_natural else self._map_resource_at(x, y)
         if resource is not None:
             self.villager_inspect.close()
             title, quantity, unit, detail = resource

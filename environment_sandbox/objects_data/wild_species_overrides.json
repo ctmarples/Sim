@@ -1,4 +1,20 @@
 {
+  "barley": {
+    "_footprint_slots": [
+      4
+    ],
+    "icon_base": "crop_plant",
+    "icon_recolour": [
+      [
+        "stem",
+        [
+          190,
+          160,
+          65
+        ]
+      ]
+    ]
+  },
   "cabbage": {
     "_footprint_slots": [
       4
@@ -7,16 +23,381 @@
   },
   "carrot": {
     "_footprint_slots": [
-      0,
-      1,
-      2,
-      3,
-      4,
-      5,
-      6,
-      7,
-      8
+      4
     ],
-    "icon_base": "crop_plant"
+    "icon_base": "crop_plant",
+    "icon_recolour": [
+      [
+        "stem",
+        [
+          80,
+          140,
+          55
+        ]
+      ],
+      [
+        "flower",
+        [
+          220,
+          120,
+          40
+        ]
+      ]
+    ]
+  },
+  "clover": {
+    "_footprint_slots": [
+      4
+    ],
+    "icon_base": "flower_plant",
+    "icon_recolour": [
+      [
+        "stem",
+        [
+          65,
+          145,
+          65
+        ]
+      ],
+      [
+        "flower",
+        [
+          65,
+          145,
+          65
+        ]
+      ]
+    ]
+  },
+  "flax": {
+    "_footprint_slots": [
+      4
+    ],
+    "icon_base": "flower_plant",
+    "icon_recolour": [
+      [
+        "stem",
+        [
+          90,
+          150,
+          70
+        ]
+      ],
+      [
+        "flower",
+        [
+          150,
+          90,
+          190
+        ]
+      ]
+    ]
+  },
+  "garlic": {
+    "_footprint_slots": [
+      4
+    ],
+    "icon_base": "crop_plant",
+    "icon_recolour": [
+      [
+        "stem",
+        [
+          110,
+          150,
+          80
+        ]
+      ],
+      [
+        "flower",
+        [
+          230,
+          230,
+          210
+        ]
+      ]
+    ]
+  },
+  "hemp": {
+    "_footprint_slots": [
+      4
+    ],
+    "icon_base": "flower_plant",
+    "icon_recolour": [
+      [
+        "stem",
+        [
+          60,
+          140,
+          55
+        ]
+      ],
+      [
+        "flower",
+        [
+          170,
+          220,
+          110
+        ]
+      ]
+    ]
+  },
+  "meadowsweet": {
+    "_footprint_slots": [
+      4
+    ],
+    "icon_base": "flower_plant",
+    "icon_recolour": [
+      [
+        "stem",
+        [
+          115,
+          170,
+          90
+        ]
+      ],
+      [
+        "flower",
+        [
+          225,
+          240,
+          210
+        ]
+      ]
+    ]
+  },
+  "mint": {
+    "_footprint_slots": [
+      4
+    ],
+    "icon_base": "flower_plant",
+    "icon_recolour": [
+      [
+        "stem",
+        [
+          50,
+          160,
+          100
+        ]
+      ],
+      [
+        "flower",
+        [
+          217,
+          180,
+          240
+        ]
+      ]
+    ]
+  },
+  "mushroom": {
+    "_footprint_slots": [
+      4
+    ],
+    "icon_base": "mushroom",
+    "icon_recolour": [
+      [
+        "cap",
+        [
+          200,
+          170,
+          140
+        ]
+      ],
+      [
+        "stem",
+        [
+          210,
+          200,
+          180
+        ]
+      ]
+    ]
+  },
+  "nettle": {
+    "_footprint_slots": [
+      4
+    ],
+    "icon_base": "flower_plant",
+    "icon_recolour": [
+      [
+        "stem",
+        [
+          35,
+          90,
+          45
+        ]
+      ],
+      [
+        "flower",
+        [
+          35,
+          90,
+          45
+        ]
+      ]
+    ],
+    "terrains": [
+      "SOIL",
+      "FOREST_FLOOR",
+      "GRASS",
+      "MEADOW"
+    ]
+  },
+  "onion": {
+    "_footprint_slots": [
+      4
+    ],
+    "icon_base": "crop_plant",
+    "icon_recolour": [
+      [
+        "stem",
+        [
+          100,
+          160,
+          70
+        ]
+      ],
+      [
+        "flower",
+        [
+          220,
+          200,
+          90
+        ]
+      ]
+    ]
+  },
+  "rye": {
+    "_footprint_slots": [
+      4
+    ],
+    "icon_base": "crop_plant",
+    "icon_recolour": [
+      [
+        "stem",
+        [
+          170,
+          140,
+          70
+        ]
+      ]
+    ]
+  },
+  "sage": {
+    "_footprint_slots": [
+      4
+    ],
+    "icon_base": "flower_plant",
+    "icon_recolour": [
+      [
+        "stem",
+        [
+          80,
+          140,
+          90
+        ]
+      ],
+      [
+        "flower",
+        [
+          70,
+          110,
+          200
+        ]
+      ]
+    ]
+  },
+  "turnip": {
+    "_footprint_slots": [
+      4
+    ],
+    "icon_base": "crop_plant",
+    "icon_recolour": [
+      [
+        "stem",
+        [
+          85,
+          145,
+          65
+        ]
+      ],
+      [
+        "flower",
+        [
+          225,
+          210,
+          105
+        ]
+      ]
+    ]
+  },
+  "wheat": {
+    "_footprint_slots": [
+      4
+    ],
+    "icon_base": "crop_plant",
+    "icon_recolour": [
+      [
+        "stem",
+        [
+          200,
+          170,
+          55
+        ]
+      ]
+    ]
+  },
+  "wood_bush": {
+    "_footprint_slots": [
+      4
+    ],
+    "icon_base": "wood_loose",
+    "icon_recolour": [
+      [
+        "body",
+        [
+          120,
+          90,
+          50
+        ]
+      ],
+      [
+        "leaf",
+        [
+          70,
+          130,
+          55
+        ]
+      ]
+    ]
+  },
+  "yarrow": {
+    "_footprint_slots": [
+      4
+    ],
+    "icon_base": "flower_plant",
+    "icon_recolour": [
+      [
+        "stem",
+        [
+          75,
+          130,
+          60
+        ]
+      ],
+      [
+        "flower",
+        [
+          240,
+          240,
+          225
+        ]
+      ]
+    ],
+    "terrains": [
+      "SOIL",
+      "GRASS",
+      "MEADOW"
+    ]
   }
 }

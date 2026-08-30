@@ -3,6 +3,9 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import pygame
 
 from developer_tools.wild_species_editor import WildSpeciesEditorService, _apply_registry, _base_registry, reload_wild_species
 from wild_species import NicheRange
@@ -48,6 +51,28 @@ class WildSpeciesEditorTests(unittest.TestCase):
             before=__import__("wild_species").WILD_SPECIES
             result=reload_wild_species(path)
             self.assertFalse(result.success);self.assertIs(__import__("wild_species").WILD_SPECIES,before)
+
+    def test_cereal_flower_no_fill_persists(self):
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);(root/"objects_data").mkdir();service=WildSpeciesEditorService(root)
+            for key in ("wheat","rye","barley"):
+                item=next(x for x in service.records if x.key==key);service.select(item)
+                self.assertIn("flower",service.candidate_omit);self.assertTrue(service.save().success)
+            data=json.loads(service.path.read_text())
+            self.assertTrue(all("flower" in data[key]["_omit_icon_classes"] for key in ("wheat","rye","barley")))
+
+    def test_wild_cereal_renderer_receives_species_palette(self):
+        import icons
+        import ui
+        from world import FeatureType
+
+        _apply_registry(self.original)
+        surface=pygame.Surface((64,64))
+        with patch.object(icons,"blit_icon") as blit:
+            ui.draw_feature(surface,FeatureType.WILD_CROP,32,32,32,crop_kind="wheat")
+        self.assertEqual(blit.call_args.kwargs["recolour"],{"stem":(200,170,55)})
+        self.assertEqual(blit.call_args.kwargs["omit_classes"],("flower",))
 
 
 if __name__=="__main__":unittest.main()

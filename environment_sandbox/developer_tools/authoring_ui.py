@@ -648,7 +648,7 @@ class WildSpeciesAuthoringPage:
     NICHES={"temperature_niche","rainfall_niche","moisture_niche","fertility_niche","disturbance_niche"}
     FLOATS={"initial_fraction","seed_near_chance","spawn_peak","spawn_activity","spread_chance","despawn_fade_chance","despawn_leftover_from","despawn_leftover_chance","clear_from_day","clear_ramp_days"}
     def __init__(self,service,icons):
-        self.service=service;self.icons=icons;self.list=ScrollableList(pygame.Rect(0,0,1,1),row_height=25);self.list.category=lambda s:"Wild crops" if s.crop_key else s.feature.replace("_"," ").title();self.controls={};self.optional_enabled={};self.terrains={};self.icon_colours=[];self.actions=[];self.scroll=0;self.message="Select a wild species.";self.refresh()
+        self.service=service;self.icons=icons;self.list=ScrollableList(pygame.Rect(0,0,1,1),row_height=25);self.list.category=lambda s:"Wild crops" if s.crop_key else s.feature.replace("_"," ").title();self.controls={};self.optional_enabled={};self.terrains={};self.icon_colours=[];self.icon_colour_enabled={};self.actions=[];self.scroll=0;self.message="Select a wild species.";self.refresh()
     def refresh(self,key=None):
         self.list.set_items(sorted(self.service.records,key=lambda s:("0" if s.crop_key else s.feature,s.label.casefold())))
         if key:self.list.selected_index=next((i for i,s in enumerate(self.list.items) if s.key==key),None)
@@ -657,7 +657,7 @@ class WildSpeciesAuthoringPage:
         from resources import RESOURCES
         from world import FeatureType,TerrainType
         import crops
-        c=self.service.candidate;self.controls={};self.optional_enabled={};self.terrains={};self.icon_colours=[];self.scroll=0
+        c=self.service.candidate;self.controls={};self.optional_enabled={};self.terrains={};self.icon_colours=[];self.icon_colour_enabled={};self.scroll=0
         if c is None:return
         resources=[("","None")]+[(r.key,r.label) for r in RESOURCES]
         # Collapse numbered variants into their logical base and retain the
@@ -694,7 +694,10 @@ class WildSpeciesAuthoringPage:
         self.terrains={"terrains":{},"edge_terrains":{}}
         for group in self.terrains:
             selected=set(getattr(c,group));self.terrains[group]={name:Checkbox(pygame.Rect(0,0,1,1),name in selected) for name in TerrainType.__members__}
-        self.icon_colours=[(name,ColourField(pygame.Rect(0,0,1,1),rgb)) for name,rgb in c.icon_recolour]
+        colours=dict(c.icon_recolour)
+        if c.crop_key:colours.setdefault("flower",(255,255,255))
+        self.icon_colours=[(name,ColourField(pygame.Rect(0,0,1,1),rgb)) for name,rgb in colours.items()]
+        self.icon_colour_enabled={name:Checkbox(pygame.Rect(0,0,1,1),name not in self.service.candidate_omit) for name in colours}
     def sync(self):
         from wild_species import NicheRange
         c=self.service.candidate
@@ -719,7 +722,8 @@ class WildSpeciesAuthoringPage:
         for key in ("fruit_colour","empty_fruit_colour"):
             ctl=self.controls[key];values[key]=ctl.value if self.optional_enabled[key].checked else None
         for group,boxes in self.terrains.items():values[group]=tuple(name for name,box in boxes.items() if box.checked)
-        values["icon_recolour"]=tuple((name,ctl.value) for name,ctl in self.icon_colours)
+        values["icon_recolour"]=tuple((name,ctl.value) for name,ctl in self.icon_colours if self.icon_colour_enabled[name].checked)
+        self.service.candidate_omit=[name for name,_ in self.icon_colours if not self.icon_colour_enabled[name].checked]
         self.service.update(**values)
     def act(self,action):
         if action.startswith("footprint_"):
@@ -738,7 +742,7 @@ class WildSpeciesAuthoringPage:
         for ctl in self.controls.values():
             if isinstance(ctl,tuple):out.extend(ctl)
             elif ctl is not None:out.append(ctl)
-        out.extend(self.optional_enabled.values());out.extend(box for group in self.terrains.values() for box in group.values());out.extend(ctl for _,ctl in self.icon_colours);return out
+        out.extend(self.optional_enabled.values());out.extend(self.icon_colour_enabled.values());out.extend(box for group in self.terrains.values() for box in group.values());out.extend(ctl for _,ctl in self.icon_colours);return out
     def handle_event(self,event):
         if event.type==pygame.MOUSEBUTTONDOWN and event.button==1:
             for rect,action,enabled in reversed(self.actions):
@@ -772,7 +776,7 @@ class WildSpeciesAuthoringPage:
             for i in range(9):
                 rect=pygame.Rect(gx+(i%3)*cell,gy+(i//3)*cell,cell-2,cell-2);pygame.draw.rect(surface,(55,75,62) if i in slots else (39,44,47),rect);pygame.draw.rect(surface,COLOUR_TOOLBAR_BORDER,rect,1)
             recolour=dict(c.icon_recolour)
-            if icon and variant_names(icon):blit_icon(surface,icon,gx+cell*3//2,gy+cell*3//2,_preview_cell_px(icon,size,cell),recolour=recolour or None)
+            if icon and variant_names(icon):blit_icon(surface,icon,gx+cell*3//2,gy+cell*3//2,_preview_cell_px(icon,size,cell),recolour=recolour or None,omit_classes=self.service.candidate_omit)
             surface.blit(small.render("Icon folder",True,COLOUR_TEXT_DIM),(preview.x+120,preview.y+4));folder_ctl=self.controls.get("icon_folder")
             if folder_ctl:folder_ctl.rect=pygame.Rect(preview.x+120,preview.y+21,165,25);folder_ctl.draw(surface,small)
             surface.blit(small.render("Icon",True,COLOUR_TEXT_DIM),(preview.x+120,preview.y+49));icon_ctl=self.controls.get("icon_base")
@@ -795,7 +799,8 @@ class WildSpeciesAuthoringPage:
                         col=i%3;row=i//3;box.rect=pygame.Rect(fx+col*105,y+row*23,17,17);box.draw(surface);surface.blit(small.render(name.title(),True,COLOUR_TEXT),(box.rect.right+3,box.rect.y+1))
                     y+=((len(boxes)+2)//3)*23+5;continue
                 if key=="icon_recolour":
-                    for name,ctl in self.icon_colours:surface.blit(small.render(name,True,COLOUR_TEXT),(fx,y+5));ctl.rect=pygame.Rect(fx+85,y,190,26);ctl.draw(surface,small);y+=31
+                    for name,ctl in self.icon_colours:
+                        enabled=self.icon_colour_enabled[name];enabled.rect=pygame.Rect(fx,y+4,18,18);enabled.draw(surface);surface.blit(small.render(name,True,COLOUR_TEXT),(fx+24,y+5));ctl.rect=pygame.Rect(fx+105,y,170,26);ctl.draw(surface,small);surface.blit(small.render("colour" if enabled.checked else "no fill",True,COLOUR_TEXT_DIM),(fx+280,y+5));y+=31
                     if not self.icon_colours:surface.blit(small.render("No recolour classes",True,COLOUR_TEXT_DIM),(fx,y+5));y+=30
                     continue
                 ctl=self.controls.get(key)

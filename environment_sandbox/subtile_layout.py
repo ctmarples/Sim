@@ -46,12 +46,13 @@ def _editor_slots(feature_name: str, *, crop_kind: str | None = None, object_key
     identifiers.append({"ROCK": "feature:rock", "WOOD_BUSH": "feature:fallen_wood", "MUSHROOM": "feature:mushroom"}.get(name, ""))
     # Dedicated Wild Species overrides supersede the legacy generic-object
     # file for wild records.
-    wild_path=_OBJECTS_PATH.with_name("wild_species_overrides.json")
-    try:wild_rows=json.loads(wild_path.read_text(encoding="utf-8"))
-    except (FileNotFoundError,json.JSONDecodeError,OSError):wild_rows={}
-    for key in (object_key,crop_kind):
-        value=wild_rows.get(str(key),{}).get("_footprint_slots") if key else None
-        if isinstance(value,list) and value:return tuple(sorted({max(0,min(8,int(slot))) for slot in value}))
+    if name in {"HERB","WILD_CROP","REED","BERRY_BUSH","MUSHROOM","WOOD_BUSH"}:
+        wild_path=_OBJECTS_PATH.with_name("wild_species_overrides.json")
+        try:wild_rows=json.loads(wild_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError,json.JSONDecodeError,OSError):wild_rows={}
+        for key in (object_key,crop_kind):
+            value=wild_rows.get(str(key),{}).get("_footprint_slots") if key else None
+            if isinstance(value,list) and value:return tuple(sorted({max(0,min(8,int(slot))) for slot in value}))
     for identifier in identifiers:
         value = rows.get(identifier, {}).get("slots") if identifier else None
         if isinstance(value, list) and value:
@@ -128,8 +129,10 @@ def feature_subtile_layout(
     u, v = slot_centre(slot)
     configured = _editor_slots(name, crop_kind=crop_kind, object_key=object_key)
     if configured:
-        centres = [slot_centre(item) for item in configured]
-        return len(configured), sum(p[0] for p in centres) / len(centres), sum(p[1] for p in centres) / len(centres)
+        if len(configured) >= 9:return 9,.5,.5
+        if len(configured) >= 4:
+            centre_u,centre_v=_two_by_two_centre(slot,x,y);return 4,centre_u,centre_v
+        return 1,u,v
     one_slot = {
         "SAPLING", "MUSHROOM",
         "WOOD_BUSH", "MEAT", "FISH", "HIDE", "FUR",
@@ -216,12 +219,11 @@ def object_footprint(
         or (name == "ROCK" and slots == 1)
         or (name in {"HERB", "WILD_CROP", "BERRY_BUSH"} and slots == 1)
     )
-    configured = _editor_slots(name, crop_kind=crop_kind, object_key=object_key)
     return ObjectFootprint(
         slots=slots,
         centre_u=u,
         centre_v=v,
-        occupied_slots=frozenset(configured) if configured else _covered_parent_slots(u, v, footprint_scale(slots)),
+        occupied_slots=_covered_parent_slots(u, v, footprint_scale(slots)),
         hard_slots=hard,
         family=family,
         max_per_cell=maximum,
@@ -244,11 +246,6 @@ def placement_allowed(candidate: ObjectFootprint, existing: list[ObjectFootprint
         # Two 2x2 young trees may share one soft/canopy subcell. Saplings and a
         # large overhanging tree otherwise need a genuinely free parent subcell.
         return candidate.slots == 4 and all(item.slots == 4 for item in same_family) and len(overlap) <= 1 or not overlap
-    if candidate.family == "wild_plant":
-        # Plant SVGs are soft 2×2 canopies and all include their home/centre
-        # cell. They may visually interleave up to the family density cap;
-        # hard rock/trunk conflicts were already rejected above.
-        return True
     return not overlap
 
 

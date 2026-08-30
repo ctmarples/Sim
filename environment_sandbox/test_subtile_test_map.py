@@ -23,7 +23,7 @@ class HabitatTestMapTests(unittest.TestCase):
             (rock[0], large_rock[0], sapling[0], young_tree[0], large_tree[0], reed[0]),
             (1, 4, 1, 4, 9, 4),
         )
-        self.assertEqual((vine_crop[0], farmed_vine[0], ordinary_crop[0]), (4, 4, 1))
+        self.assertEqual((vine_crop[0], farmed_vine[0], ordinary_crop[0]), (4, 9, 1))
         self.assertTrue(object_footprint("ROCK", 2, 3, deposit=5).floor_layer)
         self.assertFalse(object_footprint("ROCK", 2, 3, deposit=20).floor_layer)
         self.assertTrue(object_footprint("WOOD_BUSH", 2, 3).floor_layer)
@@ -113,10 +113,28 @@ class HabitatTestMapTests(unittest.TestCase):
         plant_cell = plants.cells[5][5]
         plant_cell.terrain = TerrainType.GRASS
         plant_cell.feature = FeatureType.WILD_CROP
+        plant_cell.crop_kind = "wheat"
         plant_cell.object_anchor_slot = 0
-        self.assertIsNotNone(plants.add_natural_object(5, 5, FeatureType.WILD_CROP))
-        self.assertIsNotNone(plants.add_natural_object(5, 5, FeatureType.WILD_CROP))
-        self.assertIsNone(plants.add_natural_object(5, 5, FeatureType.WILD_CROP))
+        additions = [
+            plants.add_natural_object(5, 5, FeatureType.WILD_CROP, crop_kind="wheat")
+            for _ in range(9)
+        ]
+        # The family density cap remains three plants, but every accepted
+        # plant must now own a different subcell.
+        self.assertEqual(sum(obj is not None for obj in additions), 2)
+        footprints = [
+            object_footprint(
+                FeatureType.WILD_CROP.name,
+                5,
+                5,
+                crop_kind="wheat",
+                anchor_slot=slot,
+            )
+            for slot in [plant_cell.object_anchor_slot]
+            + [obj.anchor_slot for obj in additions if obj is not None]
+        ]
+        occupied = [slot for footprint in footprints for slot in footprint.occupied_slots]
+        self.assertEqual(len(occupied), len(set(occupied)))
 
     def test_loose_drop_uses_free_subcell(self):
         world = World(cols=10, rows=10, seed=10)

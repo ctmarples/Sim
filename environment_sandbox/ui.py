@@ -2046,6 +2046,7 @@ def draw_feature(
         FeatureType.BERRY_BUSH,
         FeatureType.REED,
     ):
+        import wild_species as wild_catalogue
         from wild_species import icon_recolour_for, resolve_species
 
         species = resolve_species(feature.name, crop_kind)
@@ -2062,6 +2063,7 @@ def draw_feature(
                 size,
                 variant=v,
                 recolour=recolour,
+                omit_classes=getattr(wild_catalogue,"WILD_ICON_OMIT_BY_KEY",{}).get(species.key,()),
             )
         elif feature == FeatureType.MUSHROOM:
             blit_icon(
@@ -2118,10 +2120,14 @@ def draw_feature(
                 recolour={"stem": adjust_colour(COLOUR_REED, vibrancy)},
             )
     elif feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.CROP_HERB):
+        import wild_species as wild_catalogue
         from wild_species import icon_recolour_for, resolve_species
 
         species = resolve_species(feature.name, crop_kind)
-        if species is not None and species.icon_base:
+        # Farmed crops always use CropDef so growth can switch sparse/dense art
+        # and retain the crop's stem/flower palette. Explicit Wild Species
+        # presentation applies only to genuinely wild map plants.
+        if feature != FeatureType.CROP_HERB and species is not None and species.icon_base:
             recolour = {
                 cls: adjust_colour(rgb, vibrancy)
                 for cls, rgb in icon_recolour_for(species, deposit=deposit).items()
@@ -2134,6 +2140,7 @@ def draw_feature(
                 size,
                 variant=v,
                 recolour=recolour,
+                omit_classes=getattr(wild_catalogue,"WILD_ICON_OMIT_BY_KEY",{}).get(species.key,()),
             )
         else:
             crop = CROP_BY_KEY.get(crop_kind or "sage") or CROP_BY_KEY["sage"]
