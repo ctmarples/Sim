@@ -45,6 +45,16 @@ def main() -> None:
     info = pygame.display.Info()
     settings.configure_for_display(info.current_w, info.current_h)
 
+    # Apply authored map-object definitions before Game and its consumers bind
+    # catalogue tuples at import time.
+    try:
+        from developer_tools.objects_editor import apply_saved_overrides
+        apply_saved_overrides()
+    except Exception as exc:
+        # Authored content must never make the game itself unlaunchable. The
+        # editor can surface and repair an invalid override after startup.
+        print(f"Ignoring invalid map-object overrides: {type(exc).__name__}: {exc}")
+
     # Import Game after display metrics are applied so CELL_SIZE / grid bind correctly.
     from game import Game
 

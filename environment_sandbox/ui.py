@@ -1666,6 +1666,7 @@ def draw_feature(
     icon_variant: int | None = None,
     deposit: int = 0,
     growth_ticks: int = 0,
+    icon_base_override: str | None = None,
 ) -> None:
     if feature == FeatureType.NONE:
         return
@@ -1712,6 +1713,10 @@ def draw_feature(
     def blit_building(*args, **kwargs):
         kwargs.setdefault("stipple", bool(ICON_BUILDING_STIPPLE))
         return blit_icon(*args, **kwargs)
+
+    if icon_base_override:
+        blit_icon(surface, icon_base_override, cx, cy, size, variant=icon_variant)
+        return
 
     trunk = adjust_colour(COLOUR_TREE_TRUNK, vibrancy)
     v = icon_variant

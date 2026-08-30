@@ -7806,6 +7806,7 @@ class Game:
                         variant=int(getattr(obj, "icon_variant", None) or 1),
                         deposit=int(getattr(obj, "deposit", 0)),
                         crop_kind=getattr(obj, "crop_kind", None),
+                        object_key=getattr(obj, "tree_species", None) or getattr(obj, "crop_kind", None),
                         anchor_slot=anchor,
                     )
                     if feature == FeatureType.TREE:
@@ -20838,6 +20839,8 @@ class Game:
                     primary_cells.append((x, y))
 
         def _draw_cell_feature(x: int, y: int) -> None:
+            from subtile_layout import editor_icon_key
+
             cell = self.world.cells[y][x]
             cx, cy = self._cell_center(x, y)
             if cell.feature != FeatureType.NONE:
@@ -20850,6 +20853,7 @@ class Game:
                     deposit=cell.deposit,
                     growth_ticks=cell.growth_ticks,
                 )
+                base = editor_icon_key(cell.feature.name, crop_kind=cell.crop_kind, object_key=cell.tree_species or cell.crop_kind) or base
                 if base is not None:
                     cell.icon_variant = ensure_icon_variant(
                         base, cell.icon_variant, self._drop_rng
@@ -20883,6 +20887,7 @@ class Game:
                     variant=int(cell.icon_variant or 1),
                     deposit=int(getattr(cell, "deposit", 0)),
                     crop_kind=getattr(cell, "crop_kind", None),
+                    object_key=getattr(cell, "tree_species", None) or getattr(cell, "crop_kind", None),
                     anchor_slot=anchor,
                 )
                 if cell.feature == FeatureType.TREE:
@@ -20930,6 +20935,7 @@ class Game:
                 icon_variant=cell.icon_variant,
                 deposit=cell.deposit,
                 growth_ticks=cell.growth_ticks,
+                icon_base_override=editor_icon_key(cell.feature.name, crop_kind=cell.crop_kind, object_key=cell.tree_species or cell.crop_kind),
             )
             weeds = float(getattr(cell, "weeds", 0.0))
             if cell.feature == FeatureType.CROP_HERB and weeds > 0.04:
@@ -20980,6 +20986,7 @@ class Game:
         def _draw_extra_feature(x: int, y: int, obj: object) -> None:
             from icons import ensure_icon_variant, icon_base_for_feature
             from subtile_layout import (
+                editor_icon_key,
                 feature_subtile_layout,
                 footprint_scale,
                 slot_centre,
@@ -20993,6 +21000,7 @@ class Game:
                 deposit=obj.deposit,
                 growth_ticks=obj.growth_ticks,
             )
+            base = editor_icon_key(obj.feature.name, crop_kind=obj.crop_kind, object_key=obj.tree_species or obj.crop_kind) or base
             if base is not None:
                 obj.icon_variant = ensure_icon_variant(
                     base, obj.icon_variant, self._drop_rng
@@ -21008,6 +21016,7 @@ class Game:
                     variant=int(obj.icon_variant or 1),
                     deposit=obj.deposit,
                     crop_kind=obj.crop_kind,
+                    object_key=obj.tree_species or obj.crop_kind,
                     anchor_slot=obj.anchor_slot,
                 )
                 if obj.feature == FeatureType.TREE:
@@ -21069,6 +21078,7 @@ class Game:
                     variant=int(cell.icon_variant or 1),
                     deposit=int(getattr(cell, "deposit", 0)),
                     crop_kind=getattr(cell, "crop_kind", None),
+                    object_key=getattr(cell, "tree_species", None) or getattr(cell, "crop_kind", None),
                     anchor_slot=self.world._primary_anchor_slot(x, y, cell),
                 )
                 if cell.feature == FeatureType.TREE:
@@ -21092,6 +21102,7 @@ class Game:
                         variant=int(obj.icon_variant or 1),
                         deposit=obj.deposit,
                         crop_kind=obj.crop_kind,
+                        object_key=obj.tree_species or obj.crop_kind,
                         anchor_slot=obj.anchor_slot,
                     )
                     if obj.feature == FeatureType.TREE:
@@ -21114,6 +21125,7 @@ class Game:
                     variant=int(getattr(cell, "icon_variant", None) or 1),
                     deposit=int(getattr(cell, "deposit", 0)),
                     crop_kind=getattr(cell, "crop_kind", None),
+                    object_key=getattr(cell, "tree_species", None) or getattr(cell, "crop_kind", None),
                     anchor_slot=self.world._primary_anchor_slot(x, y, cell),
                 ).floor_layer
                 command = lambda x=x, y=y: _draw_cell_feature(x, y)
@@ -21126,6 +21138,7 @@ class Game:
                     variant=int(getattr(obj, "icon_variant", None) or 1),
                     deposit=int(getattr(obj, "deposit", 0)),
                     crop_kind=getattr(obj, "crop_kind", None),
+                    object_key=getattr(obj, "tree_species", None) or getattr(obj, "crop_kind", None),
                     anchor_slot=int(getattr(obj, "anchor_slot")),
                 ).floor_layer
                 command = lambda x=x, y=y, obj=obj: _draw_extra_feature(x, y, obj)
@@ -21718,6 +21731,7 @@ class Game:
                 variant=int(getattr(obj, "icon_variant", None) or 1),
                 deposit=int(getattr(obj, "deposit", 0)),
                 crop_kind=getattr(obj, "crop_kind", None),
+                object_key=getattr(obj, "tree_species", None) or getattr(obj, "crop_kind", None),
                 anchor_slot=(
                     int(anchor_slot)
                     if anchor_slot is not None

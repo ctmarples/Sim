@@ -15,7 +15,8 @@ from .widgets import ScrollableList, ValidationSummary
 from .editors import RecipeEditorService, TravellerEditorService
 from .icons_browser import IconBrowserService
 from .resources_browser import ResourceEditorService, resource_entries
-from .authoring_ui import IconImportPage, RecipeAuthoringPage, ResourceAuthoringPage, TravellerAuthoringPage
+from .objects_editor import ObjectEditorService
+from .authoring_ui import IconImportPage, ObjectAuthoringPage, RecipeAuthoringPage, ResourceAuthoringPage, TravellerAuthoringPage
 
 
 class DeveloperToolsController:
@@ -41,6 +42,8 @@ class DeveloperToolsController:
         self.icon_page = IconImportPage(self.icon_browser)
         self.resource_editor = ResourceEditorService()
         self.resource_page = ResourceAuthoringPage(self.resource_editor, self.icon_browser, self._resources_saved)
+        self.object_editor = ObjectEditorService()
+        self.object_page = ObjectAuthoringPage(self.object_editor, self.icon_browser)
         self.pending_lab_recipe: tuple[str, str] | None = None
         self.refresh_page()
 
@@ -60,6 +63,9 @@ class DeveloperToolsController:
             self.items.set_items(self.icon_browser.entries())
         elif self.page == "resources":
             self.items.set_items(resource_entries())
+        elif self.page == "objects":
+            self.object_editor.load()
+            self.object_page.refresh()
 
     def _panel(self) -> pygame.Rect:
         return pygame.Rect(15, 15, WINDOW_WIDTH - 30, WINDOW_HEIGHT - 30)
@@ -70,11 +76,11 @@ class DeveloperToolsController:
             self._buttons.append((pygame.Rect(x if x is not None else panel.x + 40, y, w, 36), action, label, enabled))
         if self.page == "home":
             y = panel.y + 175
-            for action, label in (("recipes", "Recipes"), ("travellers", "Travellers"), ("icons", "Icons"), ("resources", "Resources"), ("content_lab", "Content Lab")):
+            for action, label in (("recipes", "Recipes"), ("travellers", "Travellers"), ("icons", "Icons"), ("resources", "Resources"), ("objects", "Map Objects"), ("content_lab", "Content Lab")):
                 add(y, action, label); y += 46
             add(y + 4, "validate_all", "Validate All")
             add(panel.bottom - 55, "launcher", "Back")
-        elif self.page in ("recipes", "travellers", "icons", "resources"):
+        elif self.page in ("recipes", "travellers", "icons", "resources", "objects"):
             add(panel.y + 27, "home", "Back", x=panel.right - 150, w=110)
         else:
             add(panel.y + 105, f"reload_{self.page}", "Refresh Icons" if self.page == "icons" else f"Reload {self.page.title()}", self.page != "resources")
@@ -96,6 +102,8 @@ class DeveloperToolsController:
             self.message = self.icon_page.message; return None
         elif self.page == "resources" and self.resource_page.handle_event(event):
             self.message = self.resource_page.message; return None
+        elif self.page == "objects" and self.object_page.handle_event(event):
+            self.message = self.object_page.message; return None
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
             if self.page == "home":
                 return "launcher"
@@ -109,7 +117,7 @@ class DeveloperToolsController:
         if event.type != pygame.MOUSEBUTTONDOWN or event.button != 1:
             return None
         action = next((action for rect, action, _label, enabled in self._buttons if enabled and rect.collidepoint(event.pos)), None)
-        if action in ("recipes", "travellers", "icons", "resources", "home"):
+        if action in ("recipes", "travellers", "icons", "resources", "objects", "home"):
             self.page = action; self.refresh_page(); return None
         if action == "content_lab":
             return "content_lab"
@@ -142,11 +150,12 @@ class DeveloperToolsController:
             status = "YES" if self.write_enabled else "NO — Developer Tools is read-only."
             surface.blit(self.font.render(f"Writable source tree: {status}", True, (115, 190, 125) if self.write_enabled else (225, 105, 95)), (panel.x + 40, panel.y + 105))
             surface.blit(self.small.render(f"Source root: {get_content_root()}", True, COLOUR_TEXT_DIM), (panel.x + 40, panel.y + 130))
-        elif self.page in ("recipes", "travellers", "icons", "resources"):
+        elif self.page in ("recipes", "travellers", "icons", "resources", "objects"):
             if self.page == "recipes": self.recipe_page.draw(surface, panel, self.font, self.small)
             elif self.page == "travellers": self.traveller_page.draw(surface, panel, self.font, self.small)
             elif self.page == "icons": self.icon_page.draw(surface, panel, self.font, self.small)
-            else: self.resource_page.draw(surface, panel, self.font, self.small)
+            elif self.page == "resources": self.resource_page.draw(surface, panel, self.font, self.small)
+            else: self.object_page.draw(surface, panel, self.font, self.small)
         else:
             revisions = {"recipes": self.recipe_revision, "travellers": self.traveller_revision, "icons": self.icon_revision}
             surface.blit(self.font.render(f"Loaded entries: {len(self.items.items)}   Registry revision: {revisions.get(self.page, 0)}", True, COLOUR_TEXT_DIM), (panel.x + 40, panel.y + 72))
@@ -176,7 +185,7 @@ class DeveloperToolsController:
         self.summary.list.rect = pygame.Rect(panel.x + 40, panel.bottom - 190, panel.w - 80, 115)
         counts = self.summary.severity_counts()
         count_text = f"Errors {counts.get(ValidationSeverity.ERROR, 0)} · Warnings {len(self.report.warnings)} · Info {len(self.report.infos)}"
-        footer = self.message if self.page in ("recipes", "travellers", "icons") else (self.message + "  " + count_text).strip()
+        footer = self.message if self.page in ("recipes", "travellers", "icons", "resources", "objects") else (self.message + "  " + count_text).strip()
         surface.blit(self.small.render(footer, True, COLOUR_TEXT_DIM), (panel.x + 40, panel.bottom - 30))
         if self.report.issues and self.page in ("home", "resources"):
             self.summary.draw(surface, self.font, self.small)

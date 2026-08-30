@@ -3,6 +3,52 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
+
+
+_OBJECTS_PATH = Path(__file__).resolve().parent / "objects_data" / "objects.json"
+
+
+def editor_icon_key(feature_name: str, *, crop_kind: str | None = None, object_key: str | None = None) -> str | None:
+    """Return the icon override authored for a concrete map object."""
+    try:
+        rows = json.loads(_OBJECTS_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    name = str(feature_name).upper()
+    identifiers: list[str] = []
+    if object_key:
+        identifiers.extend((f"tree:{object_key}", f"wild:{object_key}", f"crop:{object_key}"))
+    if crop_kind:
+        identifiers.extend((f"crop:{crop_kind}", f"wild:{crop_kind}"))
+    identifiers.append({"ROCK": "feature:rock", "WOOD_BUSH": "feature:fallen_wood", "MUSHROOM": "feature:mushroom"}.get(name, ""))
+    for identifier in identifiers:
+        value = rows.get(identifier, {}).get("icon_key") if identifier else None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _editor_slots(feature_name: str, *, crop_kind: str | None = None, object_key: str | None = None) -> tuple[int, ...] | None:
+    """Read an authored visual footprint. The file is deliberately tiny and
+    uncached so saving in Developer Tools is reflected in the live game."""
+    try:
+        rows = json.loads(_OBJECTS_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    name = str(feature_name).upper()
+    identifiers: list[str] = []
+    if object_key:
+        identifiers.extend((f"tree:{object_key}", f"wild:{object_key}", f"crop:{object_key}"))
+    if crop_kind:
+        identifiers.extend((f"crop:{crop_kind}", f"wild:{crop_kind}"))
+    identifiers.append({"ROCK": "feature:rock", "WOOD_BUSH": "feature:fallen_wood", "MUSHROOM": "feature:mushroom"}.get(name, ""))
+    for identifier in identifiers:
+        value = rows.get(identifier, {}).get("slots") if identifier else None
+        if isinstance(value, list) and value:
+            return tuple(sorted({max(0, min(8, int(slot))) for slot in value}))
+    return None
 
 
 @dataclass(frozen=True)
@@ -60,6 +106,7 @@ def feature_subtile_layout(
     variant: int = 1,
     deposit: int = 0,
     crop_kind: str | None = None,
+    object_key: str | None = None,
     anchor_slot: int | None = None,
 ) -> tuple[int, float, float]:
     """Return visual footprint size and centre around a stable hard anchor.
@@ -71,24 +118,24 @@ def feature_subtile_layout(
     name = str(feature_name).upper()
     slot = stable_anchor_slot(x, y, variant) if anchor_slot is None else int(anchor_slot)
     u, v = slot_centre(slot)
+    configured = _editor_slots(name, crop_kind=crop_kind, object_key=object_key)
+    if configured:
+        centres = [slot_centre(item) for item in configured]
+        return len(configured), sum(p[0] for p in centres) / len(centres), sum(p[1] for p in centres) / len(centres)
     one_slot = {
-        "SAPLING", "MUSHROOM", "HERB", "WILD_CROP",
-        "BERRY_BUSH", "WOOD_BUSH", "MEAT", "FISH", "HIDE", "FUR",
+        "SAPLING", "MUSHROOM",
+        "WOOD_BUSH", "MEAT", "FISH", "HIDE", "FUR",
         "FEATHER",
     }
-    if name in {"HERB", "WILD_CROP", "CROP_HERB"} and crop_kind:
-        from crops import CROP_BY_KEY
-
-        crop = CROP_BY_KEY.get(str(crop_kind))
-        if crop is not None and crop.icon_base == "crop_vine":
-            centre_u, centre_v = _two_by_two_centre(slot, x, y)
-            return 4, centre_u, centre_v
-    if name in one_slot:
-        return 1, u, v
-    if name == "REED":
-        # Reed, cattail, and sedge species all share FeatureType.REED.
+    if name == "CROP_HERB":
+        return 9, 0.5, 0.5
+    if name in {"HERB", "WILD_CROP", "REED", "BERRY_BUSH"}:
+        # These icon families use an 80×80 viewBox: two 40-unit icon cells
+        # across, irrespective of crop species or sparse/dense growth stage.
         centre_u, centre_v = _two_by_two_centre(slot, x, y)
         return 4, centre_u, centre_v
+    if name in one_slot:
+        return 1, u, v
     if name == "ROCK":
         if int(deposit) < 20:
             return 1, u, v
@@ -126,6 +173,7 @@ def object_footprint(
     variant: int = 1,
     deposit: int = 0,
     crop_kind: str | None = None,
+    object_key: str | None = None,
     anchor_slot: int | None = None,
 ) -> ObjectFootprint:
     """Describe visual occupancy, hard collision, family, and cell capacity."""
@@ -139,6 +187,7 @@ def object_footprint(
         variant=variant,
         deposit=deposit,
         crop_kind=crop_kind,
+        object_key=object_key,
         anchor_slot=anchor,
     )
     hard = frozenset({anchor}) if name == "TREE" or (name == "ROCK" and int(deposit) >= 20) else frozenset()
@@ -159,11 +208,12 @@ def object_footprint(
         or (name == "ROCK" and slots == 1)
         or (name in {"HERB", "WILD_CROP", "BERRY_BUSH"} and slots == 1)
     )
+    configured = _editor_slots(name, crop_kind=crop_kind, object_key=object_key)
     return ObjectFootprint(
         slots=slots,
         centre_u=u,
         centre_v=v,
-        occupied_slots=_covered_parent_slots(u, v, footprint_scale(slots)),
+        occupied_slots=frozenset(configured) if configured else _covered_parent_slots(u, v, footprint_scale(slots)),
         hard_slots=hard,
         family=family,
         max_per_cell=maximum,
@@ -186,6 +236,11 @@ def placement_allowed(candidate: ObjectFootprint, existing: list[ObjectFootprint
         # Two 2x2 young trees may share one soft/canopy subcell. Saplings and a
         # large overhanging tree otherwise need a genuinely free parent subcell.
         return candidate.slots == 4 and all(item.slots == 4 for item in same_family) and len(overlap) <= 1 or not overlap
+    if candidate.family == "wild_plant":
+        # Plant SVGs are soft 2×2 canopies and all include their home/centre
+        # cell. They may visually interleave up to the family density cap;
+        # hard rock/trunk conflicts were already rejected above.
+        return True
     return not overlap
 
 

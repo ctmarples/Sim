@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pygame
 
-from icons import blit_icon, has_icon
+from icons import blit_icon, get_icon, has_icon, variant_names
 from resources import resource_icon, resource_label
 from settings import COLOUR_TEXT, COLOUR_TEXT_DIM, COLOUR_TOOLBAR_BORDER, COLOUR_TOOLBAR_BTN, COLOUR_TOOLBAR_BTN_ACTIVE
-from .widgets import Checkbox, Dropdown, FloatField, IntegerField, ScrollableList, TextField
+from .widgets import Checkbox, ColourField, Dropdown, FloatField, IntegerField, ScrollableList, TextField
 
 
 BG = (25, 31, 34)
@@ -39,6 +39,15 @@ def _button(surface, font, rect, label, *, enabled=True, hot=False):
     surface.blit(text, (rect.centerx - text.get_width() // 2, rect.centery - text.get_height() // 2))
 
 
+def _preview_cell_px(icon: str, target_cells: int, grid_cell_px: int) -> int:
+    """Scale an icon's native viewBox extent to the selected footprint."""
+    try:
+        image=get_icon(icon,40)
+        native=max(1.0,image.surface.get_width()/40.0,image.surface.get_height()/40.0)
+    except (FileNotFoundError,OSError):native=1.0
+    return max(1,round(grid_cell_px*max(1,target_cells)/native))
+
+
 class RecipeAuthoringPage:
     """A structured recipe form; CSV amount syntax never reaches the user."""
 
@@ -46,6 +55,7 @@ class RecipeAuthoringPage:
         self.service = service
         self.icons = icons
         self.list = ScrollableList(pygame.Rect(0, 0, 1, 1), row_height=25)
+        self.list.category = lambda item: item.workstation
         self.workstation = Dropdown(pygame.Rect(0, 0, 1, 1), [(None, "All workstations")] + [(v, v.replace("_", " ").title()) for v in service.documents], None)
         self.search = TextField(pygame.Rect(0, 0, 1, 1), placeholder="Search recipes")
         self.fields: dict[str, TextField] = {}
@@ -306,6 +316,7 @@ class RecipeAuthoringPage:
 class TravellerAuthoringPage:
     def __init__(self, service):
         self.service = service; self.list = ScrollableList(pygame.Rect(0,0,1,1), row_height=25)
+        self.list.category=lambda item:f"Tier {item.row.get('tier','?')}"
         self.search = TextField(pygame.Rect(0,0,1,1), placeholder="Search travellers")
         self.tier = Dropdown(pygame.Rect(0,0,1,1), [(None, "All tiers"), (1,"Tier 1"),(2,"Tier 2"),(3,"Tier 3")], None)
         self.fields = {}; self.requirements = []; self.traits = {}; self.actions = []; self.form_scroll = 0; self.message = "Select a traveller or click New Traveller."
@@ -431,6 +442,7 @@ class TravellerAuthoringPage:
 class IconImportPage:
     def __init__(self,service):
         self.service=service;self.list=ScrollableList(pygame.Rect(0,0,1,1),row_height=25);self.source=TextField(pygame.Rect(0,0,1,1),placeholder="/path/to/icon.svg");self.key=TextField(pygame.Rect(0,0,1,1),placeholder="snake_case_key");self.category=Dropdown(pygame.Rect(0,0,1,1),[(v,v) for v in service.categories],".");self.importing=False;self.actions=[];self.message="Browse canonical icons or click Import Icon.";self.refresh()
+        self.list.category=lambda item:str(item.paths[0].parent.relative_to(service.icon_root)) if item.paths else "Other"
     def refresh(self):self.list.set_items(self.service.entries())
     def handle_event(self,event):
         if self.importing:
@@ -468,6 +480,7 @@ class IconImportPage:
 class ResourceAuthoringPage:
     def __init__(self,service,icons,on_saved=None):
         self.service=service;self.icons=icons;self.on_saved=on_saved;self.list=ScrollableList(pygame.Rect(0,0,1,1),row_height=25);self.icon_list=ScrollableList(pygame.Rect(0,0,1,1),row_height=24);self.icon_picker=False;self.fields={};self.actions=[];self.message="Select a resource or click New Resource.";self.refresh()
+        self.list.category=lambda item:item.get("group","Other")
     def refresh(self,key=None):
         self.list.set_items(self.service.records)
         if key:self.list.selected_index=next((i for i,r in enumerate(self.list.items) if r["key"]==key),None)
@@ -534,3 +547,85 @@ class ResourceAuthoringPage:
             if isinstance(f,Dropdown) and f.open:f.draw(surface,small)
         if self.icon_picker:
             modal=pygame.Rect(panel.centerx-270,panel.centery-260,540,520);pygame.draw.rect(surface,BG,modal);pygame.draw.rect(surface,(150,190,165),modal,2);surface.blit(font.render("CHOOSE RESOURCE ICON",True,COLOUR_TEXT),(modal.x+16,modal.y+14));self.icon_list.rect=pygame.Rect(modal.x+16,modal.y+48,modal.w-32,modal.h-64);self.icon_list.draw(surface,small,lambda i:i.key)
+
+
+class ObjectAuthoringPage:
+    def __init__(self,service,icons):
+        self.service=service;self.icons=icons;self.list=ScrollableList(pygame.Rect(0,0,1,1),row_height=25);self.kind=Dropdown(pygame.Rect(0,0,1,1),[("all","All objects"),("feature","Map features"),("wild","Wild plants"),("crop","Crops"),("tree","Trees")],"all");self.fields={};self.actions=[];self.scroll=0;self.message="Select a map object.";self.grid_rects=[];self.refresh()
+        self.list.category=lambda item:item.get("category","Other")
+    def refresh(self):
+        if self.kind.value=="all":rows=self.service.records
+        elif self.kind.value=="crop":rows=[r for r in self.service.records if r["kind"]=="crop" or r.get("category")=="Wild crops"]
+        else:rows=[r for r in self.service.records if r["kind"]==self.kind.value]
+        self.list.set_items(rows)
+    def load(self):
+        import json
+        c=self.service.candidate;self.fields={};self.scroll=0
+        if not c:return
+        self.fields["icon_key"]=TextField(pygame.Rect(0,0,1,1),c["icon_key"])
+        for key,value in c["params"].items():
+            if "colour" in key and isinstance(value, (list, tuple)) and len(value) == 3:
+                self.fields[key]=ColourField(pygame.Rect(0,0,1,1),value)
+            else:self.fields[key]=TextField(pygame.Rect(0,0,1,1),json.dumps(value) if isinstance(value,(list,dict)) else str(value) if value is not None else "null")
+    def sync(self):
+        import json
+        c=self.service.candidate;c["icon_key"]=self.fields["icon_key"].text.strip()
+        for key,f in self.fields.items():
+            if key=="icon_key":continue
+            if isinstance(f,ColourField):c["params"][key]=list(f.value);continue
+            raw=f.text.strip()
+            try:c["params"][key]=json.loads(raw)
+            except Exception:c["params"][key]=raw
+    def handle_event(self,event):
+        oldkind=self.kind.value
+        if self.kind.handle_event(event):
+            if oldkind!=self.kind.value:self.refresh()
+            return True
+        old=self.list.selected_index
+        if self.list.handle_event(event):
+            if old!=self.list.selected_index and self.list.selected:self.service.select(self.list.selected);self.load()
+            return True
+        if event.type==pygame.MOUSEBUTTONDOWN and event.button==1 and self.service.candidate:
+            for r,a,en in reversed(self.actions):
+                if en and r.collidepoint(event.pos):
+                    if a=="save":self.sync();self.message=self.service.save();self.load()
+                    elif a.startswith("footprint_"):
+                        size=int(a.rsplit("_",1)[1]);self.service.candidate["slots"]={1:[4],2:[0,1,3,4],3:list(range(9))}[size]
+                    return True
+        for f in self.fields.values():
+            if f.handle_event(event):self.sync();return True
+        if event.type==pygame.MOUSEWHEEL:self.scroll=max(0,self.scroll-event.y*35);return True
+        return False
+    def draw(self,surface,panel,font,small):
+        left=pygame.Rect(panel.x+24,panel.y+92,330,panel.h-160);right=pygame.Rect(left.right+14,left.y,panel.right-left.right-38,left.h);self.actions=[];self.kind.rect=pygame.Rect(left.x,left.y,180,30);self.kind.draw(surface,small);self.list.rect=pygame.Rect(left.x,left.y+40,left.w,left.h-40);self.list.draw(surface,small,lambda r:r["label"])
+        pygame.draw.rect(surface,BG,right);pygame.draw.rect(surface,COLOUR_TOOLBAR_BORDER,right,1);surface.blit(font.render("MAP OBJECT EDITOR",True,COLOUR_TEXT),(right.x+14,right.y+10));c=self.service.candidate
+        if not c:return
+        # Real map icon over the same 3x3 subtile grid used by the renderer.
+        gx,gy,cell=right.right-205,right.y+54,54;self.grid_rects=[]
+        for i in range(9):
+            r=pygame.Rect(gx+(i%3)*cell,gy+(i//3)*cell,cell-3,cell-3);self.grid_rects.append(r);pygame.draw.rect(surface,(55,75,62) if i in c["slots"] else (39,44,47),r);pygame.draw.rect(surface,COLOUR_TOOLBAR_BORDER,r,1)
+        uses=c.get("icon_uses") or []
+        icon=c["icon_key"] or (uses[0]["icon"] if uses else c.get("automatic_icon_key",""));footprint_size=3 if len(c["slots"])>=9 else 2 if len(c["slots"])>=4 else 1
+        recolour=dict(uses[0].get("recolour",{})) if uses else {};edited_recolour={}
+        for key,css_class in (("stem_colour","stem"),("flower_colour","flower"),("canopy","leaves"),("sapling_colour","leaves"),("fruit_colour","fruit")):
+            field=self.fields.get(key)
+            if isinstance(field,ColourField):recolour[css_class]=field.value;edited_recolour[css_class]=field.value
+        if icon and variant_names(icon):blit_icon(surface,icon,gx+cell*3//2,gy+cell*3//2,_preview_cell_px(icon,footprint_size,cell),recolour=recolour or None)
+        selected_label=f"Selected {footprint_size}×{footprint_size}"
+        surface.blit(small.render(selected_label+" · "+c.get("footprint_label","Map icon footprint"),True,COLOUR_TEXT_DIM),(gx,gy+cell*3+5))
+        for index,size in enumerate((1,2,3)):
+            r=pygame.Rect(gx+index*55,gy+cell*3+25,50,26);selected=footprint_size==size;self.actions.append((r,f"footprint_{size}",True));_button(surface,small,r,f"{size}×{size}" if not selected else f"[{size}×{size}]")
+        # Each object remains one list item; all runtime-selected icon/stage
+        # combinations are shown here with the season that uses them.
+        py=gy+cell*3+60
+        for index,use in enumerate(uses[:4]):
+            px=gx+index*41;selected_icon=c["icon_key"] or use["icon"];use_recolour=dict(use.get("recolour",{}));use_recolour.update(edited_recolour)
+            surface.blit(small.render(use["season"][:3],True,COLOUR_TEXT),(px+7,py))
+            if selected_icon and variant_names(selected_icon):blit_icon(surface,selected_icon,px+20,py+34,17,recolour=use_recolour or None)
+            surface.blit(small.render(use.get("stage","")[:3],True,COLOUR_TEXT_DIM),(px+7,py+49))
+        if uses:surface.blit(small.render("Selected icons · season · stage",True,COLOUR_TEXT_DIM),(gx,py+66))
+        clip=pygame.Rect(right.x+2,right.y+42,right.w-230,right.h-95);old=surface.get_clip();surface.set_clip(clip);x,y,fx=right.x+14,right.y+50-self.scroll,right.x+145
+        surface.blit(small.render(f"Type: {c['kind']}   Key: {c['key']}",True,(150,190,165)),(x,y));y+=30
+        for key,f in self.fields.items():
+            surface.blit(small.render(key.replace("_"," ").title(),True,COLOUR_TEXT_DIM),(x,y+6));f.rect=pygame.Rect(fx,y,max(120,clip.right-fx-8),27);f.draw(surface,small);y+=34
+        surface.set_clip(old);r=pygame.Rect(right.x+14,right.bottom-43,116,30);self.actions.append((r,"save",True));_button(surface,small,r,"Save")

@@ -1,0 +1,103 @@
+{
+  "wild:flax": {
+    "icon_key": "",
+    "params": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": "True",
+      "crop_key": "flax",
+      "despawn_fade": [
+        48.0,
+        58.0
+      ],
+      "despawn_fade_chance": 0.08,
+      "despawn_fade_end": [
+        72.0,
+        82.0
+      ],
+      "despawn_leftover_chance": 0.15,
+      "despawn_leftover_from": 70.0,
+      "disturbance_niche": {
+        "maximum": 0.75,
+        "minimum": 0.1,
+        "optimum_high": 0.55,
+        "optimum_low": 0.3
+      },
+      "ecology_tags": [
+        "feral_crop",
+        "grazer_forage"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "WILD_CROP",
+      "fertility_niche": {
+        "maximum": 0.9,
+        "minimum": 0.3,
+        "optimum_high": 0.75,
+        "optimum_low": 0.45
+      },
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": "False",
+      "icon_base": "",
+      "icon_recolour": [],
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "key": "flax",
+      "label": "Flax",
+      "moisture_niche": {
+        "maximum": 0.8,
+        "minimum": 0.3,
+        "optimum_high": 0.7,
+        "optimum_low": 0.45
+      },
+      "near_feature": null,
+      "patch_extras": [
+        1,
+        4
+      ],
+      "rainfall_niche": {
+        "maximum": 0.85,
+        "minimum": 0.25,
+        "optimum_high": 0.7,
+        "optimum_low": 0.4
+      },
+      "resource_key": "flax",
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": "wild_crop",
+      "spawn_peak": 0.045,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.0,
+      "temperature_niche": {
+        "maximum": 0.8,
+        "minimum": 0.2,
+        "optimum_high": 0.65,
+        "optimum_low": 0.35
+      },
+      "terrains": [
+        "MEADOW"
+      ],
+      "yield_amount": 3
+    },
+    "slots": [
+      4
+    ]
+  }
+}

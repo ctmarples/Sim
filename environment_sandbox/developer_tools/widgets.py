@@ -121,6 +121,67 @@ class FloatField(NumericField):
     kind = "number"
 
 
+class ColourField(TextField):
+    """Compact RGB swatch which expands to three directly-manipulable sliders."""
+
+    def __init__(self, rect: pygame.Rect, value=(255, 255, 255)):
+        if isinstance(value, str):
+            import re
+            parts = [int(v) for v in re.findall(r"\d+", value)[:3]]
+            value = tuple(parts) if len(parts) == 3 else (255, 255, 255)
+        self.value = tuple(max(0, min(255, int(v))) for v in value)
+        super().__init__(rect, str(list(self.value)))
+        self.open = False
+        self._slider_rects = [pygame.Rect(0, 0, 1, 1) for _ in range(3)]
+
+    def _set_channel(self, channel: int, mouse_x: int) -> None:
+        slider = self._slider_rects[channel]
+        values = list(self.value)
+        values[channel] = max(0, min(255, round((mouse_x - slider.x) * 255 / max(1, slider.w))))
+        self.value = tuple(values)
+        self.text = str(list(self.value))
+
+    def handle_event(self, event: pygame.event.Event) -> bool:
+        if event.type == pygame.KEYDOWN and self.open and event.key == pygame.K_ESCAPE:
+            self.open = False
+            return True
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.rect.collidepoint(event.pos):
+                self.open = not self.open
+                return True
+            if self.open:
+                for channel, slider in enumerate(self._slider_rects):
+                    if slider.inflate(0, 12).collidepoint(event.pos):
+                        self._set_channel(channel, event.pos[0]); return True
+                self.open = False
+        if event.type == pygame.MOUSEMOTION and self.open and event.buttons[0]:
+            for channel, slider in enumerate(self._slider_rects):
+                if slider.inflate(0, 12).collidepoint(event.pos):
+                    self._set_channel(channel, event.pos[0]); return True
+        return False
+
+    def draw(self, surface: pygame.Surface, font: pygame.font.Font) -> None:
+        pygame.draw.rect(surface, (25, 31, 34), self.rect, border_radius=3)
+        swatch = pygame.Rect(self.rect.x + 5, self.rect.y + 4, 28, self.rect.h - 8)
+        pygame.draw.rect(surface, self.value, swatch, border_radius=2)
+        pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, swatch, 1, border_radius=2)
+        surface.blit(font.render("RGB colour", True, COLOUR_TEXT), (swatch.right + 7, self.rect.centery-font.get_height()//2))
+        if not self.open:
+            return
+        popup = pygame.Rect(self.rect.x, self.rect.bottom + 3, max(250, self.rect.w), 116)
+        pygame.draw.rect(surface, (30, 37, 40), popup, border_radius=4)
+        pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, popup, 1, border_radius=4)
+        for channel, label in enumerate("RGB"):
+            y = popup.y + 13 + channel * 31
+            slider = pygame.Rect(popup.x + 38, y + 5, popup.w - 86, 8); self._slider_rects[channel] = slider
+            pygame.draw.rect(surface, (65, 70, 72), slider, border_radius=4)
+            knob_x = slider.x + round(slider.w * self.value[channel] / 255)
+            pygame.draw.circle(surface, (220, 225, 220), (knob_x, slider.centery), 7)
+            surface.blit(font.render(label, True, COLOUR_TEXT_DIM), (popup.x + 12, y))
+            surface.blit(font.render(str(self.value[channel]), True, COLOUR_TEXT), (slider.right + 9, y))
+        pygame.draw.rect(surface, self.value, pygame.Rect(popup.right-29, popup.bottom-24, 17, 17), border_radius=2)
+
+
 class Dropdown(Generic[T]):
     def __init__(self, rect: pygame.Rect, options: list[tuple[T, str]], value: T | None = None):
         self.rect = pygame.Rect(rect)
@@ -205,6 +266,20 @@ class ScrollableList(Generic[T]):
         self.row_height = row_height
         self.scroll = 0
         self.selected_index: int | None = None
+        self.category: Callable[[T], str] | None = None
+        self.collapsed: set[str] = set()
+
+    def _rows(self):
+        """Return (item-index, item) rows, with category headers as (None, str)."""
+        if self.category is None:
+            return list(enumerate(self.items))
+        rows=[]; last=object()
+        for index,item in enumerate(self.items):
+            group=str(self.category(item) or "Other")
+            if group != last:
+                rows.append((None,group));last=group
+            if group not in self.collapsed:rows.append((index,item))
+        return rows
 
     @property
     def selected(self) -> T | None:
@@ -219,13 +294,19 @@ class ScrollableList(Generic[T]):
 
     def handle_event(self, event: pygame.event.Event) -> bool:
         visible = max(1, self.rect.h // self.row_height)
+        rows=self._rows()
         if event.type == pygame.MOUSEWHEEL and self.rect.collidepoint(pygame.mouse.get_pos()):
-            self.scroll = max(0, min(max(0, len(self.items) - visible), self.scroll - event.y * 2))
+            self.scroll = max(0, min(max(0, len(rows) - visible), self.scroll - event.y * 2))
             return True
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.rect.collidepoint(event.pos):
-            index = self.scroll + (event.pos[1] - self.rect.y) // self.row_height
-            if 0 <= index < len(self.items):
-                self.selected_index = index
+            row_index = self.scroll + (event.pos[1] - self.rect.y) // self.row_height
+            if 0 <= row_index < len(rows):
+                index,item=rows[row_index]
+                if index is None:
+                    if item in self.collapsed:self.collapsed.remove(item)
+                    else:self.collapsed.add(item)
+                    self.scroll=min(self.scroll,max(0,len(self._rows())-visible))
+                else:self.selected_index=index
             return True
         return False
 
@@ -235,12 +316,16 @@ class ScrollableList(Generic[T]):
         old_clip = surface.get_clip()
         surface.set_clip(self.rect)
         visible = max(1, self.rect.h // self.row_height + 1)
-        for offset, item in enumerate(self.items[self.scroll:self.scroll + visible]):
-            index = self.scroll + offset
+        for offset, (index,item) in enumerate(self._rows()[self.scroll:self.scroll + visible]):
             row = pygame.Rect(self.rect.x + 1, self.rect.y + offset * self.row_height, self.rect.w - 2, self.row_height)
+            if index is None:
+                pygame.draw.rect(surface,(36,46,43),row)
+                marker="▸" if item in self.collapsed else "▾"
+                surface.blit(font.render(f"{marker}  {str(item).replace('_',' ').title()}",True,(150,190,165)),(row.x+6,row.centery-font.get_height()//2))
+                continue
             if index == self.selected_index:
                 pygame.draw.rect(surface, COLOUR_TOOLBAR_BTN_ACTIVE, row)
-            surface.blit(font.render(label(item), True, COLOUR_TEXT), (row.x + 6, row.centery - font.get_height() // 2))
+            surface.blit(font.render(label(item), True, COLOUR_TEXT), (row.x + 18, row.centery - font.get_height() // 2))
         surface.set_clip(old_clip)
 
 
