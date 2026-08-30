@@ -79,7 +79,7 @@ def validate_species(item) -> ValidationReport:
         if niche is not None:
             values=(niche.minimum,niche.optimum_low,niche.optimum_high,niche.maximum)
             if not (0<=values[0]<=values[1]<=values[2]<=values[3]<=1):report.add(ValidationSeverity.ERROR,"invalid_niche",f"{name} must satisfy 0 ≤ min ≤ optimum low ≤ optimum high ≤ max ≤ 1",field=name)
-    for name in ("seed_near_chance","spawn_peak","spawn_activity","spread_chance","despawn_fade_chance","despawn_leftover_chance"):
+    for name in ("seed_near_chance","spawn_peak","spawn_activity","spread_chance","despawn_fade_chance","despawn_leftover_chance","seed_drop_chance"):
         value=float(getattr(item,name))
         if not 0<=value<=1:report.add(ValidationSeverity.ERROR,"invalid_probability",f"{name} must be between 0 and 1",field=name)
     if item.yield_amount<0 or item.initial_count<0 or item.initial_fraction<0:report.add(ValidationSeverity.ERROR,"negative_value","Counts, yield and initial fraction cannot be negative",field=key)

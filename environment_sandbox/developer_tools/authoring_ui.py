@@ -639,14 +639,14 @@ class WildSpeciesAuthoringPage:
         ("Environmental niche",("temperature_niche","rainfall_niche","moisture_niche","fertility_niche","disturbance_niche")),
         ("Spawn / spread",("initial_count","initial_fraction","seed_near_chance","spawn_peak","spawn_rise","spawn_fall","spawn_activity","spread_chance","patch_extras","spawn_group")),
         ("Despawn",("despawn_fade","despawn_fade_end","despawn_fade_chance","despawn_leftover_from","despawn_leftover_chance","clear_from_day","clear_ramp_days","counts_toward_cap")),
-        ("Fruiting / harvest",("fruiting","fruit_rise","fruit_fall","fruit_class","fruit_colour","empty_fruit_colour")),
+        ("Fruiting / harvest",("fruiting","fruit_rise","fruit_fall","seed_drop_chance","fruit_class","fruit_colour","empty_fruit_colour")),
         ("Presentation",("icon_recolour",)),
     )
     BOOLS={"counts_toward_cap","fruiting"}
     INTS={"yield_amount","initial_count"}
     PAIRS={"spawn_rise","spawn_fall","patch_extras","despawn_fade","despawn_fade_end","fruit_rise","fruit_fall"}
     NICHES={"temperature_niche","rainfall_niche","moisture_niche","fertility_niche","disturbance_niche"}
-    FLOATS={"initial_fraction","seed_near_chance","spawn_peak","spawn_activity","spread_chance","despawn_fade_chance","despawn_leftover_from","despawn_leftover_chance","clear_from_day","clear_ramp_days"}
+    FLOATS={"initial_fraction","seed_near_chance","spawn_peak","spawn_activity","spread_chance","despawn_fade_chance","despawn_leftover_from","despawn_leftover_chance","clear_from_day","clear_ramp_days","seed_drop_chance"}
     def __init__(self,service,icons):
         self.service=service;self.icons=icons;self.list=ScrollableList(pygame.Rect(0,0,1,1),row_height=25);self.list.category=lambda s:"Wild crops" if s.crop_key else s.feature.replace("_"," ").title();self.controls={};self.optional_enabled={};self.terrains={};self.icon_colours=[];self.icon_colour_enabled={};self.actions=[];self.scroll=0;self.message="Select a wild species.";self.refresh()
     def refresh(self,key=None):
@@ -726,6 +726,7 @@ class WildSpeciesAuthoringPage:
         self.service.candidate_omit=[name for name,_ in self.icon_colours if not self.icon_colour_enabled[name].checked]
         self.service.update(**values)
     def act(self,action):
+        if action=="crops":return ("show_crops",)
         if action.startswith("footprint_"):
             size=int(action.rsplit("_",1)[1]);self.service.candidate_slots={1:[4],2:[0,1,3,4],3:list(range(9))}[size];return None
         if action=="save":self.sync();result=self.service.save();self.message=result.message;self.refresh(self.service.candidate.key if self.service.candidate else None);self.load();return None
@@ -764,6 +765,7 @@ class WildSpeciesAuthoringPage:
     def draw(self,surface,panel,font,small):
         left=pygame.Rect(panel.x+24,panel.y+92,300,panel.h-160);right=pygame.Rect(left.right+14,left.y,panel.right-left.right-38,left.h);self.actions=[]
         surface.blit(font.render("WILD SPECIES",True,(150,190,165)),(left.x,left.y))
+        tab=pygame.Rect(left.right-100,left.y-3,100,28);self.actions.append((tab,"crops",True));_button(surface,small,tab,"Farm Crops")
         # Always-visible presentation controls: icon and footprint should not
         # require scrolling through ecology parameters.
         c=self.service.candidate;preview=pygame.Rect(left.x,left.y+30,left.w,176);pygame.draw.rect(surface,BG,preview);pygame.draw.rect(surface,COLOUR_TOOLBAR_BORDER,preview,1)
@@ -821,5 +823,121 @@ class WildSpeciesAuthoringPage:
         surface.set_clip(old_clip)
         report=self.service.report;status="✓ Valid" if report.ok else f"✕ {report.errors[0].message}"
         surface.blit(small.render(status,True,GOOD if report.ok else BAD),(right.x+14,right.bottom-69));surface.blit(small.render("● Unsaved" if self.service.dirty else "Saved",True,(226,183,80) if self.service.dirty else GOOD),(right.x+120,right.bottom-69))
+        for i,(action,text,enabled) in enumerate((("save","Save",report.ok),("cancel","Cancel",self.service.dirty),("reload","Reload",True),("test","Test",report.ok))):
+            rect=pygame.Rect(right.x+14+i*105,right.bottom-40,96,29);self.actions.append((rect,action,enabled));_button(surface,small,rect,text,enabled=enabled)
+
+
+class CropAuthoringPage:
+    """Typed CropDef form with four-season schedule and presentation controls."""
+    def __init__(self,service,icons):
+        self.service=service;self.icons=icons;self.list=ScrollableList(pygame.Rect(0,0,1,1),row_height=26);self.list.category=lambda c:"Perennial" if c.perennial else "Annual";self.controls={};self.harvest={};self.phase={};self.season_colour={};self.season_enabled={};self.actions=[];self.scroll=0;self.message="Select a farm crop.";self.refresh()
+    def refresh(self,key=None):
+        self.list.set_items(sorted(self.service.records,key=lambda c:(not c.perennial,c.label.casefold())))
+        if key:self.list.selected_index=next((i for i,c in enumerate(self.list.items) if c.key==key),None)
+    def load(self):
+        import re
+        from crops import SeasonPhase
+        from seasons import Season
+        c=self.service.candidate;self.controls={};self.scroll=0
+        if c is None:return
+        grouped={}
+        for entry in self.icons.entries():
+            folder=str(entry.paths[0].parent.relative_to(self.icons.icon_root)) if entry.paths else "Other";match=re.match(r"^(.*)_([1-9][0-9]*)$",entry.key);grouped.setdefault(folder,set()).add(match.group(1) if match else entry.key)
+        self.icon_by_folder={k:sorted(v) for k,v in sorted(grouped.items())};folder=next((k for k,v in self.icon_by_folder.items() if c.icon_base in v),next(iter(self.icon_by_folder),"Other"))
+        self.controls["icon_folder"]=Dropdown(pygame.Rect(0,0,1,1),[(x,x.title()) for x in self.icon_by_folder],folder)
+        self.controls["icon_base"]=Dropdown(pygame.Rect(0,0,1,1),[(x,x) for x in self.icon_by_folder.get(folder,[])],c.icon_base)
+        dense=c.dense_icon_base or f"{c.icon_base}_dense";dense_folder=next((k for k,v in self.icon_by_folder.items() if dense in v),folder)
+        self.controls["dense_folder"]=Dropdown(pygame.Rect(0,0,1,1),[(x,x.title()) for x in self.icon_by_folder],dense_folder)
+        self.controls["dense_icon_base"]=Dropdown(pygame.Rect(0,0,1,1),[(x,x) for x in self.icon_by_folder.get(dense_folder,[])],dense)
+        for key in ("key","label","produce_key","seed_key","short"):self.controls[key]=TextField(pygame.Rect(0,0,1,1),str(getattr(c,key)))
+        self.controls["key"].disabled=True
+        self.controls["growth_days"]=IntegerField(pygame.Rect(0,0,1,1),str(c.growth_days),minimum=1)
+        self.controls["farm_seed_amounts"]=TextField(pygame.Rect(0,0,1,1),", ".join(str(v) for v in c.farm_seed_amounts))
+        self.controls["fertility_effect"]=FloatField(pygame.Rect(0,0,1,1),str(c.fertility_effect or 0))
+        self.controls["perennial"]=Checkbox(pygame.Rect(0,0,1,1),c.perennial)
+        self.controls["plant_season"]=Dropdown(pygame.Rect(0,0,1,1),[(s,s.name.title()) for s in Season],c.plant_season)
+        self.controls["stem_colour"]=ColourField(pygame.Rect(0,0,1,1),c.stem_colour)
+        self.controls["flower_colour"]=ColourField(pygame.Rect(0,0,1,1),c.flower_colour or (255,255,255));self.controls["flower_fill"]=Checkbox(pygame.Rect(0,0,1,1),c.flower_colour is not None)
+        self.harvest={s:Checkbox(pygame.Rect(0,0,1,1),s in c.harvest_seasons) for s in Season}
+        self.phase={s:Dropdown(pygame.Rect(0,0,1,1),[(p,p.name.replace("_"," ").title()) for p in SeasonPhase],c.year_phases[list(Season).index(s)]) for s in Season}
+        self.season_colour={};self.season_enabled={}
+        for s in Season:
+            row=self.service.candidate_seasonal.get(s.name,{})
+            self.season_enabled[s]=Checkbox(pygame.Rect(0,0,1,1),bool(row))
+            self.season_colour[s]={"stem":ColourField(pygame.Rect(0,0,1,1),row.get("stem_colour",c.stem_colour)),"flower":ColourField(pygame.Rect(0,0,1,1),row.get("flower_colour",c.flower_colour or (255,255,255)))}
+    def sync(self):
+        from seasons import Season
+        c=self.service.candidate
+        if c is None:return
+        amounts=[]
+        try:amounts=tuple(int(v.strip()) for v in self.controls["farm_seed_amounts"].text.split(",") if v.strip())
+        except ValueError:amounts=c.farm_seed_amounts
+        values={k:self.controls[k].text.strip() for k in ("label","produce_key","seed_key","short")};values.update(growth_days=self.controls["growth_days"].parse() or c.growth_days,farm_seed_amounts=amounts,perennial=self.controls["perennial"].checked,plant_season=self.controls["plant_season"].value,harvest_seasons=tuple(s for s,b in self.harvest.items() if b.checked),year_phases=tuple(self.phase[s].value for s in Season),stem_colour=self.controls["stem_colour"].value,flower_colour=self.controls["flower_colour"].value if self.controls["flower_fill"].checked else None,icon_base=self.controls["icon_base"].value or c.icon_base,dense_icon_base=self.controls["dense_icon_base"].value or None,fertility_effect=self.controls["fertility_effect"].parse())
+        seasonal={}
+        for s in Season:
+            # Fallow means no crop object is present, so it cannot own visual
+            # overrides. Changing a phase to Fallow removes stale JSON data.
+            if self.phase[s].value.name!="FALLOW" and self.season_enabled[s].checked:seasonal[s.name]={"stem_colour":list(self.season_colour[s]["stem"].value),"flower_colour":list(self.season_colour[s]["flower"].value) if self.controls["flower_fill"].checked else None}
+        self.service.candidate_seasonal=seasonal;self.service.update(**values)
+    def controls_all(self):
+        from crops import SeasonPhase
+        visible=[s for s,ctl in self.phase.items() if ctl.value!=SeasonPhase.FALLOW]
+        return list(self.controls.values())+list(self.harvest.values())+list(self.phase.values())+[self.season_enabled[s] for s in visible]+[v for s in visible for v in self.season_colour[s].values()]
+    def act(self,action):
+        if action=="wild":return ("show_wild",)
+        if action.startswith("footprint_"):self.service.candidate_slots={1:[4],2:[0,1,3,4],3:list(range(9))}[int(action[-1])];return None
+        if action=="save":self.sync();ok,msg=self.service.save();self.message=msg;self.refresh(self.service.candidate.key);self.load();return None
+        if action=="cancel":self.service.cancel();self.load();self.message="Unsaved changes cancelled.";return None
+        if action=="reload":key=self.service.candidate.key if self.service.candidate else None;ok,self.message=self.service.load();self.refresh(key);item=next((x for x in self.service.records if x.key==key),None);self.service.select(item) if item else None;self.load();return None
+        if action=="test" and self.service.candidate:return ("test_crop",self.service.candidate.key)
+    def handle_event(self,event):
+        if event.type==pygame.MOUSEBUTTONDOWN and event.button==1:
+            for rect,action,enabled in reversed(self.actions):
+                if enabled and rect.collidepoint(event.pos):return True,self.act(action)
+        old=self.list.selected_index
+        if self.list.handle_event(event):
+            if old!=self.list.selected_index and self.list.selected:self.service.select(self.list.selected);self.load()
+            return True,None
+        controls=self.controls_all();controls.sort(key=lambda x:not isinstance(x,Dropdown) or not x.open)
+        for ctl in controls:
+            if ctl.handle_event(event):
+                if ctl is self.controls.get("icon_folder"):
+                    names=self.icon_by_folder.get(ctl.value,[]);target=self.controls["icon_base"];target.options=[(x,x) for x in names]
+                    if target.value not in names:target.value=names[0] if names else None
+                elif ctl is self.controls.get("dense_folder"):
+                    names=self.icon_by_folder.get(ctl.value,[]);target=self.controls["dense_icon_base"];target.options=[(x,x) for x in names]
+                    if target.value not in names:target.value=names[0] if names else None
+                self.sync();return True,None
+        if event.type==pygame.MOUSEWHEEL:self.scroll=max(0,self.scroll-event.y*40);return True,None
+        return False,None
+    def draw(self,surface,panel,font,small):
+        from seasons import Season
+        left=pygame.Rect(panel.x+24,panel.y+92,300,panel.h-160);right=pygame.Rect(left.right+14,left.y,panel.right-left.right-38,left.h);self.actions=[]
+        surface.blit(font.render("FARM CROPS",True,(150,190,165)),(left.x,left.y));tab=pygame.Rect(left.right-110,left.y-3,110,28);self.actions.append((tab,"wild",True));_button(surface,small,tab,"Wild Species")
+        self.list.rect=pygame.Rect(left.x,left.y+36,left.w,left.h-36);self.list.draw(surface,small,lambda c:c.label)
+        pygame.draw.rect(surface,BG,right);pygame.draw.rect(surface,COLOUR_TOOLBAR_BORDER,right,1);surface.blit(font.render("FARM CROP EDITOR",True,COLOUR_TEXT),(right.x+14,right.y+10));c=self.service.candidate
+        if c is None:return
+        clip=pygame.Rect(right.x+2,right.y+40,right.w-4,right.h-94);old=surface.get_clip();surface.set_clip(clip);x=right.x+14;fx=right.x+190;y=right.y+48-self.scroll
+        def row(label,ctl):
+            nonlocal y
+            surface.blit(small.render(label,True,COLOUR_TEXT_DIM),(x,y+5));ctl.rect=pygame.Rect(fx,y,min(370,right.right-fx-14),26);ctl.draw(surface,small) if not isinstance(ctl,Checkbox) else ctl.draw(surface);y+=32
+        for heading,keys in (("Identity / resource",("key","label","produce_key","seed_key","short")),("Growth / yield",("growth_days","farm_seed_amounts","fertility_effect","perennial")),("Presentation",("icon_folder","icon_base","dense_folder","dense_icon_base","stem_colour","flower_fill","flower_colour"))):
+            surface.blit(font.render(heading.upper(),True,(150,190,165)),(x,y));y+=28
+            for key in keys:row(key.replace("_"," ").title(),self.controls[key])
+            y+=8
+        surface.blit(font.render("SEASONALITY",True,(150,190,165)),(x,y));y+=30
+        row("Plant season",self.controls["plant_season"])
+        for s in Season:
+            surface.blit(small.render(s.name.title(),True,COLOUR_TEXT),(x,y+5));self.harvest[s].rect=pygame.Rect(fx,y+3,18,18);self.harvest[s].draw(surface);surface.blit(small.render("Harvest",True,COLOUR_TEXT_DIM),(fx+23,y+5));self.phase[s].rect=pygame.Rect(fx+100,y,190,26);self.phase[s].draw(surface,small);y+=32
+        surface.blit(font.render("SEASONAL COLOURS",True,(150,190,165)),(x,y));y+=30
+        for s in Season:
+            if self.phase[s].value.name=="FALLOW":continue
+            enabled=self.season_enabled[s];enabled.rect=pygame.Rect(x,y+3,18,18);enabled.draw(surface);surface.blit(small.render(s.name.title(),True,COLOUR_TEXT),(x+24,y+5));stem=self.season_colour[s]["stem"];flower=self.season_colour[s]["flower"];stem.rect=pygame.Rect(fx,y,145,26);flower.rect=pygame.Rect(fx+153,y,145,26);stem.draw(surface,small);flower.draw(surface,small)
+            icon=c.plant_icon(dense=self.phase[s].value.name.startswith("HARVEST"));palette={"stem":stem.value};omit=()
+            if self.controls["flower_fill"].checked:palette["flower"]=flower.value
+            else:omit=("flower",)
+            if icon and variant_names(icon):blit_icon(surface,icon,right.right-38,y+13,24,recolour=palette,omit_classes=omit)
+            y+=34
+        surface.set_clip(old);report=self.service.report;surface.blit(small.render("✓ Valid" if report.ok else "✕ Invalid",True,GOOD if report.ok else BAD),(right.x+14,right.bottom-69));surface.blit(small.render("● Unsaved" if self.service.dirty else "Saved",True,(226,183,80) if self.service.dirty else GOOD),(right.x+110,right.bottom-69))
         for i,(action,text,enabled) in enumerate((("save","Save",report.ok),("cancel","Cancel",self.service.dirty),("reload","Reload",True),("test","Test",report.ok))):
             rect=pygame.Rect(right.x+14+i*105,right.bottom-40,96,29);self.actions.append((rect,action,enabled));_button(surface,small,rect,text,enabled=enabled)

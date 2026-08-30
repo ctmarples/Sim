@@ -81,6 +81,7 @@ class ContentLabSession:
         self._buttons = []
         self.message = "Choose a recipe, then set up the scenario."
         self.species_key: str | None = None
+        self.crop_key: str | None = None
         self.environment_fields = {name:FloatField(__import__("pygame").Rect(0,0,1,1),"0.5",minimum=0,maximum=1) for name in ("moisture","temperature","fertility","rainfall","disturbance")}
 
     def _refresh_recipe_dropdown(self) -> None:
@@ -121,8 +122,23 @@ class ContentLabSession:
     def select_species(self,key: str):
         from wild_species import WILD_BY_KEY
         if key not in WILD_BY_KEY:raise KeyError(f"Unknown loaded wild species: {key}")
-        self.species_key=key;self.message=f"Wild Species test selected: {WILD_BY_KEY[key].label}."
+        self.crop_key=None;self.species_key=key;self.message=f"Wild Species test selected: {WILD_BY_KEY[key].label}."
         return WILD_BY_KEY[key]
+
+    def select_crop(self,key: str):
+        from crops import CROP_BY_KEY
+        if key not in CROP_BY_KEY:raise KeyError(f"Unknown loaded farm crop: {key}")
+        self.species_key=None;self.crop_key=key;self.message=f"Farm Crop test selected: {CROP_BY_KEY[key].label}."
+        return CROP_BY_KEY[key]
+
+    def spawn_crop(self):
+        from world import FeatureType,TerrainType
+        for y,row in enumerate(self.game.world.cells):
+            for x,cell in enumerate(row):
+                if cell.terrain in (TerrainType.GRASS,TerrainType.MEADOW,TerrainType.SOIL) and cell.feature==FeatureType.NONE:
+                    cell.feature=FeatureType.CROP_HERB;cell.crop_kind=self.crop_key;cell.growth_ticks=0;cell.object_anchor_slot=4
+                    self.message=f"Spawned ripe {self.crop_key} at {x}, {y} through the normal farm-crop renderer.";return cell
+        self.message=f"No empty test-map placement found for {self.crop_key}.";return None
 
     def species_suitability(self):
         from wild_species import WILD_BY_KEY,species_environment_suitability
@@ -243,12 +259,13 @@ class ContentLabSession:
         """Compact lab controls; all simulation events not consumed continue normally."""
         import pygame
 
-        if self.species_key:
+        if self.species_key or self.crop_key:
             for control in self.environment_fields.values():
                 if control.handle_event(event):return True
             if event.type==pygame.MOUSEBUTTONDOWN and event.button==1:
                 action=next((a for rect,a in self._buttons if rect.collidepoint(event.pos)),None)
                 if action=="spawn_species":self.spawn_species();return True
+                if action=="spawn_crop":self.spawn_crop();return True
                 if action=="back":self.leave();return True
             if event.type==pygame.KEYDOWN and event.key==pygame.K_ESCAPE:self.leave();return True
             return False
@@ -296,6 +313,7 @@ class ContentLabSession:
         import pygame
 
         if self.species_key:return self._draw_species(surface)
+        if self.crop_key:return self._draw_crop(surface)
         diag = self.diagnostics()
         panel = pygame.Rect(12, 92, 570, 650)
         pygame.draw.rect(surface, (24, 31, 35), panel, border_radius=6)
@@ -341,4 +359,20 @@ class ContentLabSession:
             surface.blit(body.render(name.title(),True,(180,190,185)),(panel.x+18,y+5));field.rect=pygame.Rect(panel.x+145,y,90,26);field.draw(surface,body);value=getattr(score,"moisture" if name=="moisture" else name,0) if score else 0;surface.blit(body.render(f"response {value:.3f}",True,(145,195,150)),(panel.x+250,y+5));y+=34
         combined=score.combined if score else 0;surface.blit(title.render(f"Combined niche suitability: {combined:.3f}",True,(145,205,155)),(panel.x+18,y+8));y+=48
         button(panel.x+18,y,150,"Spawn Species","spawn_species");button(panel.x+178,y,190,"Back to Developer Tools","back")
+        surface.blit(body.render(self.message,True,(190,195,190)),(panel.x+18,panel.bottom-42))
+
+    def _draw_crop(self,surface):
+        import pygame
+        from crops import CROP_BY_KEY,PHASE_LABELS
+        from seasons import Season
+        crop=CROP_BY_KEY[self.crop_key];panel=pygame.Rect(12,92,570,390);pygame.draw.rect(surface,(24,31,35),panel,border_radius=6);pygame.draw.rect(surface,(108,132,120),panel,1,border_radius=6)
+        title=pygame.font.SysFont("menlo",16,bold=True);body=pygame.font.SysFont("menlo",12);surface.blit(title.render(f"CONTENT LAB — FARM CROP: {crop.label}",True,(235,235,225)),(panel.x+12,panel.y+10));self._buttons=[]
+        def button(x,y,w,label,action):
+            rect=pygame.Rect(x,y,w,27);self._buttons.append((rect,action));pygame.draw.rect(surface,(58,70,70),rect,border_radius=3);pygame.draw.rect(surface,(108,132,120),rect,1,border_radius=3);text=body.render(label,True,(230,235,228));surface.blit(text,(rect.centerx-text.get_width()//2,rect.centery-text.get_height()//2))
+        y=panel.y+55
+        for index,season in enumerate(Season):
+            phase=crop.year_phases[index];harvest=" · harvest" if season in crop.harvest_seasons else ""
+            surface.blit(body.render(f"{season.name.title():8} {PHASE_LABELS[phase]}{harvest}",True,(185,205,190)),(panel.x+20,y));y+=27
+        surface.blit(body.render(f"Plant: {crop.plant_season.name.title()}   Growth: {crop.growth_days} days   Seeds: {crop.farm_seed_amounts}",True,(185,190,185)),(panel.x+20,y+8));y+=48
+        button(panel.x+18,y,150,"Spawn Ripe Crop","spawn_crop");button(panel.x+178,y,190,"Back to Developer Tools","back")
         surface.blit(body.render(self.message,True,(190,195,190)),(panel.x+18,panel.bottom-42))

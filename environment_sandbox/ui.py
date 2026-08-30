@@ -1667,6 +1667,7 @@ def draw_feature(
     deposit: int = 0,
     growth_ticks: int = 0,
     icon_base_override: str | None = None,
+    season_name: str | None = None,
 ) -> None:
     if feature == FeatureType.NONE:
         return
@@ -2144,14 +2145,17 @@ def draw_feature(
             )
         else:
             crop = CROP_BY_KEY.get(crop_kind or "sage") or CROP_BY_KEY["sage"]
-            stem = adjust_colour(crop.stem_colour, vibrancy)
+            from crops import crop_presentation
+            seasonal_icon,seasonal_stem,seasonal_flower=crop_presentation(crop,season_name)
+            stem = adjust_colour(seasonal_stem, vibrancy)
             # Farm crops look sparse while growing; dense only when ready to harvest.
             ripe = feature != FeatureType.CROP_HERB or growth_ticks <= 0
-            name = crop.plant_icon(dense=ripe and feature == FeatureType.CROP_HERB)
+            dense=ripe and feature == FeatureType.CROP_HERB
+            name=(crop.dense_icon_base or f"{seasonal_icon}_dense") if dense else seasonal_icon
             recolour = {"stem": stem}
             omit: tuple[str, ...] = ()
-            if crop.flower_colour is not None:
-                recolour["flower"] = adjust_colour(crop.flower_colour, vibrancy)
+            if seasonal_flower is not None:
+                recolour["flower"] = adjust_colour(seasonal_flower, vibrancy)
             else:
                 omit = ("flower",)
             blit_icon(

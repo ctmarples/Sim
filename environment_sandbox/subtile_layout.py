@@ -33,11 +33,17 @@ def editor_icon_key(feature_name: str, *, crop_kind: str | None = None, object_k
 def _editor_slots(feature_name: str, *, crop_kind: str | None = None, object_key: str | None = None) -> tuple[int, ...] | None:
     """Read an authored visual footprint. The file is deliberately tiny and
     uncached so saving in Developer Tools is reflected in the live game."""
+    name = str(feature_name).upper()
+    if name=="CROP_HERB" and crop_kind:
+        try:
+            import crops
+            value=getattr(crops,"CROP_FOOTPRINTS",{}).get(crop_kind)
+            if value:return tuple(value)
+        except (ImportError,AttributeError):pass
     try:
         rows = json.loads(_OBJECTS_PATH.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
-    name = str(feature_name).upper()
     identifiers: list[str] = []
     if object_key:
         identifiers.extend((f"tree:{object_key}", f"wild:{object_key}", f"crop:{object_key}"))

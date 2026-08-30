@@ -122,6 +122,8 @@ class WildSpeciesDef:
     fruiting: bool = False
     fruit_rise: tuple[float, float] = (0.0, 0.0)
     fruit_fall: tuple[float, float] = (0.0, 0.0)
+    # Chance that harvesting this wild species also yields one seed.
+    seed_drop_chance: float = 1.0 / 3.0
 
     # Species that share one spawn roll (wild crops). First entry's envelope wins.
     spawn_group: str | None = None

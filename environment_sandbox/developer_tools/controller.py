@@ -16,7 +16,8 @@ from .editors import RecipeEditorService, TravellerEditorService
 from .icons_browser import IconBrowserService
 from .resources_browser import ResourceEditorService, resource_entries
 from .wild_species_editor import WildSpeciesEditorService
-from .authoring_ui import IconImportPage, RecipeAuthoringPage, ResourceAuthoringPage, TravellerAuthoringPage, WildSpeciesAuthoringPage
+from .crop_editor import CropEditorService
+from .authoring_ui import CropAuthoringPage, IconImportPage, RecipeAuthoringPage, ResourceAuthoringPage, TravellerAuthoringPage, WildSpeciesAuthoringPage
 
 
 class DeveloperToolsController:
@@ -43,7 +44,10 @@ class DeveloperToolsController:
         self.resource_editor = ResourceEditorService()
         self.resource_page = ResourceAuthoringPage(self.resource_editor, self.icon_browser, self._resources_saved)
         self.wild_species_editor = WildSpeciesEditorService()
-        self.object_page = WildSpeciesAuthoringPage(self.wild_species_editor, self.icon_browser)
+        self.crop_editor = CropEditorService()
+        self.wild_object_page = WildSpeciesAuthoringPage(self.wild_species_editor, self.icon_browser)
+        self.crop_object_page = CropAuthoringPage(self.crop_editor, self.icon_browser)
+        self.object_page = self.wild_object_page
         self.pending_lab_recipe: tuple[str, str] | None = None
         self.pending_lab_species: str | None = None
         self.refresh_page()
@@ -65,7 +69,8 @@ class DeveloperToolsController:
         elif self.page == "resources":
             self.items.set_items(resource_entries())
         elif self.page == "objects":
-            self.wild_species_editor.load()
+            if self.object_page is self.wild_object_page:self.wild_species_editor.load()
+            else:self.crop_editor.load()
             self.object_page.refresh()
 
     def _panel(self) -> pygame.Rect:
@@ -106,6 +111,9 @@ class DeveloperToolsController:
         elif self.page == "objects":
             consumed,result=self.object_page.handle_event(event)
             if result and result[0]=="test_species":self.pending_lab_species=result[1];return "content_lab"
+            if result and result[0]=="test_crop":self.pending_lab_species=("crop",result[1]);return "content_lab"
+            if result and result[0]=="show_crops":self.object_page=self.crop_object_page;self.object_page.refresh();return None
+            if result and result[0]=="show_wild":self.object_page=self.wild_object_page;self.object_page.refresh();return None
             if consumed:self.message=self.object_page.message;return None
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
             if self.page == "home":

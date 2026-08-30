@@ -60,6 +60,12 @@ def main() -> None:
         if not wild_result.success:print(wild_result.message)
     except Exception as exc:
         print(f"Ignoring invalid Wild Species overrides: {type(exc).__name__}: {exc}")
+    try:
+        from developer_tools.crop_editor import reload_crops
+        crop_ok,crop_message=reload_crops()
+        if not crop_ok:print(crop_message)
+    except Exception as exc:
+        print(f"Ignoring invalid Farm Crop overrides: {type(exc).__name__}: {exc}")
 
     # Import Game after display metrics are applied so CELL_SIZE / grid bind correctly.
     from game import Game

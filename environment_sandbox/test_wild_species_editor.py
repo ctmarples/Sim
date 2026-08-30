@@ -74,5 +74,13 @@ class WildSpeciesEditorTests(unittest.TestCase):
         self.assertEqual(blit.call_args.kwargs["recolour"],{"stem":(200,170,55)})
         self.assertEqual(blit.call_args.kwargs["omit_classes"],("flower",))
 
+    def test_wild_seed_drop_chance_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);(root/"objects_data").mkdir();service=WildSpeciesEditorService(root)
+            item=next(x for x in service.records if x.key=="wheat");service.select(item);service.update(seed_drop_chance=.17)
+            self.assertTrue(service.save().success)
+            import wild_species
+            self.assertEqual(wild_species.WILD_BY_KEY["wheat"].seed_drop_chance,.17)
+
 
 if __name__=="__main__":unittest.main()

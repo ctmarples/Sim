@@ -53,6 +53,7 @@ from resource_balance import (
     VILLAGER_FOOD_KEYS,
     satiation_decay_per_tick,
     WILD_PRODUCE_YIELD,
+    WILD_SEED_CHANCE,
     combine_meal_buffs,
     food_def,
     FoodSatisfaction,
@@ -996,7 +997,8 @@ class Game:
                     self.sim_speed = 0
                     self.developer_tools.pending_lab_recipe = None
                 elif pending_species:
-                    session.select_species(pending_species)
+                    if isinstance(pending_species,tuple) and pending_species[0]=="crop":session.select_crop(pending_species[1])
+                    else:session.select_species(pending_species)
                     self.sim_speed = 0
                     self.developer_tools.pending_lab_species = None
                 self._launch_menu = None
@@ -9580,7 +9582,8 @@ class Game:
         self.record_produced(crop.produce_key, WILD_PRODUCE_YIELD)
         seed_msg = ""
         # Forage: flat chance of a single seed (see resource_balance.WILD_SEED_CHANCE).
-        if self._drop_rng.random() < crop.wild_seed_chance and inventory.can_add(
+        seed_drop_chance=wild.seed_drop_chance if wild is not None else WILD_SEED_CHANCE
+        if self._drop_rng.random() < seed_drop_chance and inventory.can_add(
             1, key=crop.seed_key
         ):
             inventory.add_item(crop.seed_key, 1)
@@ -20979,6 +20982,7 @@ class Game:
                 deposit=cell.deposit,
                 growth_ticks=cell.growth_ticks,
                 icon_base_override=editor_icon_key(cell.feature.name, crop_kind=cell.crop_kind, object_key=cell.tree_species or cell.crop_kind),
+                season_name=self.season.name,
             )
             weeds = float(getattr(cell, "weeds", 0.0))
             if cell.feature == FeatureType.CROP_HERB and weeds > 0.04:
@@ -21042,6 +21046,7 @@ class Game:
                 crop_kind=obj.crop_kind,
                 deposit=obj.deposit,
                 growth_ticks=obj.growth_ticks,
+                season_name=self.season.name,
             )
             base = editor_icon_key(obj.feature.name, crop_kind=obj.crop_kind, object_key=obj.tree_species or obj.crop_kind) or base
             if base is not None:

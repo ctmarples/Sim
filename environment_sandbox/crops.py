@@ -351,6 +351,16 @@ CROPS: tuple[CropDef, ...] = (
 )
 
 CROP_BY_KEY: dict[str, CropDef] = {c.key: c for c in CROPS}
+CROP_SEASONAL_PRESENTATION: dict[str, dict] = {}
+CROP_FOOTPRINTS: dict[str, tuple[int, ...]] = {}
+
+
+def crop_presentation(crop: CropDef, season: Season | str | None) -> tuple[str, Colour, Colour | None]:
+    """Resolve authored seasonal presentation without expanding CropDef."""
+    name=season.name if isinstance(season,Season) else str(season or "")
+    row=CROP_SEASONAL_PRESENTATION.get(crop.key,{}).get(name,{})
+    flower=row.get("flower_colour",crop.flower_colour)
+    return str(row.get("icon_base") or crop.icon_base),tuple(row.get("stem_colour",crop.stem_colour)),tuple(flower) if flower is not None else None
 CROP_KEYS: tuple[str, ...] = tuple(c.key for c in CROPS)
 PRODUCE_KEYS: tuple[str, ...] = tuple(dict.fromkeys(c.produce_key for c in CROPS))
 SEED_KEYS: tuple[str, ...] = tuple(c.seed_key for c in CROPS)
