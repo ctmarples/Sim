@@ -1,0 +1,111 @@
+{
+  "bee_buzzing": {
+    "bus": "ambience",
+    "category": "Environment",
+    "conditions": {},
+    "file": "environment/wildlife/bee/freesound_community-bee-buzzing-6254.mp3",
+    "label": "Bee buzzing",
+    "parameters": {
+      "audible_distance": 8.0,
+      "easing_speed": 3.0,
+      "fade_in_ms": 180,
+      "fade_out_ms": 350,
+      "falloff_distance": 6.0,
+      "loop": false,
+      "max_interval": 9.0,
+      "menu_allowed": false,
+      "menu_fade_out_ms": 150,
+      "min_interval": 4.0,
+      "sample_interval": 0.2,
+      "search_radius": 10,
+      "source_key": "bee",
+      "source_type": "wildlife",
+      "start_threshold": 0.002
+    },
+    "trigger": "ambience.proximity",
+    "volume": 0.7,
+    "weight": 5.0
+  },
+  "bee_flying_out": {
+    "bus": "ambience",
+    "category": "Environment",
+    "conditions": {},
+    "file": "environment/wildlife/bee/freesound_community-bee-flyingout-40394.mp3",
+    "label": "Bee flying out",
+    "parameters": {
+      "audible_distance": 8.0,
+      "easing_speed": 3.0,
+      "fade_in_ms": 100,
+      "fade_out_ms": 300,
+      "falloff_distance": 6.0,
+      "loop": false,
+      "max_interval": 12.0,
+      "menu_allowed": false,
+      "menu_fade_out_ms": 150,
+      "min_interval": 6.0,
+      "sample_interval": 0.2,
+      "search_radius": 10,
+      "source_key": "bee",
+      "source_type": "wildlife",
+      "start_threshold": 0.002
+    },
+    "trigger": "ambience.proximity",
+    "volume": 0.75,
+    "weight": 3.0
+  },
+  "bee_landing_on_flower": {
+    "bus": "ambience",
+    "category": "Environment",
+    "conditions": {},
+    "file": "environment/wildlife/bee/ejah_music-bee-landing-on-flower-374609.mp3",
+    "label": "Bee landing on flower",
+    "parameters": {
+      "audible_distance": 8.0,
+      "easing_speed": 3.0,
+      "fade_in_ms": 100,
+      "fade_out_ms": 300,
+      "falloff_distance": 6.0,
+      "loop": false,
+      "max_interval": 14.0,
+      "menu_allowed": false,
+      "menu_fade_out_ms": 150,
+      "min_interval": 7.0,
+      "sample_interval": 0.2,
+      "search_radius": 10,
+      "source_key": "bee",
+      "source_type": "wildlife",
+      "start_threshold": 0.002
+    },
+    "trigger": "ambience.proximity",
+    "volume": 0.7,
+    "weight": 2.0
+  },
+  "boar_oink": {
+    "bus":"ambience","category":"Environment","conditions":{},"file":"environment/wildlife/boar/freesound_community-oink-40664.mp3","label":"Boar oink",
+    "parameters":{"audible_distance":10.0,"easing_speed":3.0,"fade_in_ms":100,"fade_out_ms":350,"falloff_distance":8.0,"loop":false,"max_interval":14.0,"menu_allowed":false,"menu_fade_out_ms":150,"min_interval":7.0,"sample_interval":0.2,"search_radius":12,"source_key":"boar","source_type":"wildlife","start_threshold":0.002},
+    "trigger":"ambience.proximity","volume":0.75,"weight":3.0
+  },
+  "boar_squeak": {
+    "bus":"ambience","category":"Environment","conditions":{},"file":"environment/wildlife/boar/freesound_community-pig-squeak-47166.mp3","label":"Boar squeak",
+    "parameters":{"audible_distance":10.0,"easing_speed":3.0,"fade_in_ms":100,"fade_out_ms":350,"falloff_distance":8.0,"loop":false,"max_interval":16.0,"menu_allowed":false,"menu_fade_out_ms":150,"min_interval":8.0,"sample_interval":0.2,"search_radius":12,"source_key":"boar","source_type":"wildlife","start_threshold":0.002},
+    "trigger":"ambience.proximity","volume":0.7,"weight":2.0
+  },
+  "deer_grunt": {
+    "bus":"ambience","category":"Environment","conditions":{},"file":"environment/wildlife/deer/dragon-studio-deer-grunt-472371.mp3","label":"Deer grunt",
+    "parameters":{"audible_distance":11.0,"easing_speed":3.0,"fade_in_ms":100,"fade_out_ms":350,"falloff_distance":9.0,"loop":false,"max_interval":18.0,"menu_allowed":false,"menu_fade_out_ms":150,"min_interval":9.0,"sample_interval":0.2,"search_radius":13,"source_key":"deer","source_type":"wildlife","start_threshold":0.002},
+    "trigger":"ambience.proximity","volume":0.7,"weight":1.0
+  },
+  "wolf_growl": {
+    "bus":"ambience","category":"Environment","conditions":{},"file":"environment/wildlife/wolf/dragon-studio-beast-growling-463211.mp3","label":"Wolf growl",
+    "parameters":{"audible_distance":12.0,"easing_speed":3.0,"fade_in_ms":100,"fade_out_ms":400,"falloff_distance":10.0,"loop":false,"max_interval":20.0,"menu_allowed":false,"menu_fade_out_ms":150,"min_interval":10.0,"sample_interval":0.2,"search_radius":14,"source_key":"wolf","source_type":"wildlife","start_threshold":0.002},
+    "trigger":"ambience.proximity","volume":0.8,"weight":1.0
+  },
+  "villager_ack_01": {
+    "bus":"sfx","category":"Villager Voice","conditions":{},"file":"villager/acknowledgement/villager_ack_01.wav","label":"Villager acknowledgement 1",
+    "parameters":{"cooldown":0.4,"loop":false,"menu_allowed":false},"trigger":"villager.acknowledgement","volume":0.8,"weight":1.0
+  },
+  "villager_ack_02": {
+    "bus":"sfx","category":"Villager Voice","conditions":{},"file":"villager/acknowledgement/villager_ack_02.wav","label":"Villager acknowledgement 2",
+    "parameters":{"cooldown":0.4,"loop":false,"menu_allowed":false},"trigger":"villager.acknowledgement","volume":0.8,"weight":1.0
+  }
+}

@@ -976,11 +976,13 @@ class Game:
         return sorted(folder.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
 
     def _handle_launch_event(self, event: pygame.event.Event) -> None:
+        self.sounds.set_menu_mode(True)
         if self._launch_menu == "developer_tools":
             if self.developer_tools is None:
                 from developer_tools import DeveloperToolsController
 
                 self.developer_tools = DeveloperToolsController()
+            old_page = self.developer_tools.page
             result = self.developer_tools.handle_event(event)
             if result == "launcher":
                 self._launch_menu = "main"
@@ -1003,6 +1005,10 @@ class Game:
                     self.sim_speed = 0
                     self.developer_tools.pending_lab_species = None
                 self._launch_menu = None
+            if result == "launcher":
+                self.sounds.emit("ui.window.close")
+            elif old_page != self.developer_tools.page:
+                self.sounds.emit("ui.window.close" if self.developer_tools.page == "home" else "ui.window.change")
             return
         if self.file_dialog.open:
             if event.type == pygame.KEYDOWN:
@@ -1023,8 +1029,10 @@ class Game:
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
             if self._launch_menu in ("new", "load"):
                 self._launch_menu = "main"
+                self.sounds.emit("ui.window.close")
             elif self._launch_menu in ("maps", "generator", "preview"):
                 self._launch_menu = "new"
+                self.sounds.emit("ui.window.close")
             return
         if event.type != pygame.MOUSEBUTTONDOWN or event.button != 1:
             return
@@ -1038,6 +1046,7 @@ class Game:
             (action for rect, action, _label in self._launch_buttons() if rect.collidepoint(event.pos)),
             None,
         )
+        previous_menu = self._launch_menu
         if action == "continue":
             path = self._most_recent_save_path()
             if path is None:
@@ -1114,6 +1123,9 @@ class Game:
             index = int(action.partition(":")[2])
             if 0 <= index < len(self._launch_map_files):
                 self._begin_new_game(self._launch_map_files[index])
+        if self._launch_menu != previous_menu:
+            closing = action in ("back", "back_new", "quit") or self._launch_menu is None
+            self.sounds.emit("ui.window.close" if closing else "ui.window.change")
 
     def _set_launch_slider(self, key: str, mouse_x: int) -> None:
         rect = self._launch_slider_rects().get(key)
@@ -1336,10 +1348,13 @@ class Game:
                 self._update_player_move_input(dt)
                 self._update_camera_input(dt)
             self.camera.update(dt, self.world.cols, self.world.rows)
+            self.sounds.set_menu_mode(self._launch_menu is not None)
             vis_w, vis_h = self.camera.visible_cells()
-            self.sounds.update_forest(
+            self.sounds.update_proximity(
                 dt,
                 self.world,
+                self.wildlife,
+                self.fish,
                 self.camera.x + vis_w / 2.0,
                 self.camera.y + vis_h / 2.0,
             )
@@ -1750,11 +1765,12 @@ class Game:
         self, storage: object, recipe, *, fuel_wood: int = 0
     ) -> None:
         apply_recipe(storage, recipe)
-        self.sounds.play(
-            "cook"
+        self.sounds.emit(
+            "work.cook"
             if isinstance(storage, Building) and storage.kind == BuildingKind.KITCHEN
-            else "craft",
-            cooldown=0.35,
+            else "work.craft",
+            x=getattr(storage,"x",self.world.home_pos[0]),
+            y=getattr(storage,"y",self.world.home_pos[1]),
         )
         for key, n in recipe.inputs.items():
             self.record_consumed(key, n)
@@ -1816,7 +1832,7 @@ class Game:
                     continue
                 if self.management.open and self.management.handle_keydown(event):
                     if not self.management.open:
-                        self.sounds.play("book_close")
+                        self.sounds.emit("ui.window.close")
                         self.selected_construction_id = None
                     continue
                 if self.field_plan_dialog.open and self.field_plan_dialog.handle_keydown(
@@ -2213,6 +2229,7 @@ class Game:
             self._pending_file_action = None
             if was_launch:
                 self._launch_menu = "main"
+                self.sounds.emit("ui.window.close")
             else:
                 self._set_status("Cancelled.")
             return
@@ -2240,11 +2257,13 @@ class Game:
                 self._minimap_terrain_key = None
                 if action == "launch_load":
                     self._launch_menu = None
+                    self.sounds.emit("ui.window.close")
                 self._set_status(f"Loaded {path.name} (speed x{self.sim_speed})")
             except Exception as exc:
                 self._set_status(f"Load failed: {exc}")
                 if action == "launch_load":
                     self._launch_menu = "main"
+                    self.sounds.emit("ui.window.close")
 
     def _quick_save(self) -> None:
         """Overwrite the last save path, else newest save, else quicksave.json."""
@@ -2279,7 +2298,7 @@ class Game:
                 self.player_inventory.close()
                 return
             if self.management.open:
-                self.sounds.play("book_close")
+                self.sounds.emit("ui.window.close")
                 self.management.close()
                 self.building_inspect.close()
                 self.villager_inspect.close()
@@ -3929,6 +3948,7 @@ class Game:
             self._begin_job_change_deposit(villager)
             tag = f"{season_name} P{slot + 1}" if season_name else f"P{slot + 1}"
             self._set_status(f"{villager.name} → {label} ({tag})")
+        self.sounds.emit("work.assigned.response",villager_id=villager.id,workplace=building.kind.name.lower())
         self._wake_building_workers(building_id)
 
     def _set_primary_workplace(
@@ -4164,13 +4184,13 @@ class Game:
         if action is None:
             return
         if action == "mgmt_closed":
-            self.sounds.play("book_close")
+            self.sounds.emit("ui.window.close")
             self.building_inspect.close()
             self.villager_inspect.close()
             self.field_plan_dialog.close()
             self.selected_construction_id = None
             return
-        self.sounds.play("page")
+        self.sounds.emit("ui.window.change")
         if action == "tab_people":
             self.management.tab = MgmtTab.PEOPLE
             self.management._layout_panel()
@@ -4251,7 +4271,7 @@ class Game:
         was_management_open = self.management.open
         self.management.open_people_list()
         if not was_management_open:
-            self.sounds.play("page")
+            self.sounds.emit("ui.window.change")
         self._mgmt_auto_select_people()
         self._set_status("People — villager list (V).")
 
@@ -4492,6 +4512,7 @@ class Game:
         self._set_status(
             f"{villager.name} → {BUILDING_LABELS[building.kind]}"
         )
+        self.sounds.emit("work.assigned.response",villager_id=villager.id,workplace=building.kind.name.lower())
         self._wake_building_workers(building_id)
 
     def _assign_villager_to_home(self, villager_id: int) -> None:
@@ -4508,6 +4529,7 @@ class Game:
         self.selected_villager_id = None
         self.selected_building_id = None
         self._set_status(f"Villager {villager.id} → Home (hauler)")
+        self.sounds.emit("work.assigned.response",villager_id=villager.id,workplace="home")
 
     def _cycle_place_kind(self) -> None:
         order = visible_build_order(unlock_built_kinds(self.buildings))
@@ -6126,7 +6148,7 @@ class Game:
             building.id, show_player=show_player, detail_only=detail_only
         )
         if not was_management_open:
-            self.sounds.play("page")
+            self.sounds.emit("ui.window.change")
         self._set_status(
             f"Plan Field #{building.id} ({building.plot_size_label()}). "
             f"Select season & crop, drag to plant."
@@ -6152,7 +6174,7 @@ class Game:
             building.id, show_player=show_player, detail_only=detail_only
         )
         if not was_management_open:
-            self.sounds.play("page")
+            self.sounds.emit("ui.window.change")
         if building.kind == BuildingKind.HOME:
             haulers = sum(1 for v in self.villagers if v.assigned_to_home)
             if show_player:
@@ -6702,8 +6724,10 @@ class Game:
         self.management.select_villager(
             villager.id, show_player=show_player, detail_only=detail_only
         )
+        if not show_player:
+            self.sounds.emit("villager.acknowledgement",villager_id=villager.id,action="selected")
         if not was_management_open:
-            self.sounds.play("page")
+            self.sounds.emit("ui.window.change")
         label = self._villager_assignment_label(villager)
         if show_player:
             self._set_status(
@@ -7607,7 +7631,7 @@ class Game:
 
     def _enter_player_building(self, building: Building) -> None:
         """Hide the player indoors after using a valid doorway."""
-        self.sounds.play("door")
+        self.sounds.emit("player.enter_building", building=building.kind.name.lower())
         self._player_inside_building_id = building.id
 
     def _villager_inside_building(self, villager: object) -> int | None:
@@ -8655,6 +8679,7 @@ class Game:
             if is_housing_kind(site.kind):
                 self._rehouse_villagers()
             self._set_status(f"Finished {BUILDING_LABELS[site.kind]} #{building.id}.")
+        self.sounds.emit("game.notification",kind="construction_complete",building=site.kind.name.lower())
         self._refresh_hardscape_terrain()
         # Rebuild toolbar unlocks when a new building completes.
         self.toolbar.set_built_kinds(unlock_built_kinds(self.buildings))
@@ -9274,7 +9299,7 @@ class Game:
                 self.record_produced(skey, 1)
                 sapling_msg = f" +1 {tree.label.lower()} sapling"
         self.world.apply_extraction_disturbance(x, y)
-        self.sounds.play("chop", cooldown=0.20)
+        self.sounds.emit("work.chop",actor="player",x=x,y=y)
         self._refresh_indicators()
         if status:
             left = self.world.get_cell(x, y)
@@ -9326,7 +9351,7 @@ class Game:
         inventory.consume_item(key, 1)
         self.record_consumed(key, 1)
         self.world.apply_disturbance(x, y)
-        self.sounds.play("plant", cooldown=0.25)
+        self.sounds.emit("work.plant",actor="player",plant_type="tree",x=x,y=y)
         self._refresh_indicators()
         if status:
             label = resolve_tree(species).label
@@ -9411,7 +9436,7 @@ class Game:
             inv.consume_item(seed_key, 1)
             self.record_consumed(seed_key, 1)
             self.world.apply_disturbance(x, y)
-            self.sounds.play("plant", cooldown=0.25)
+            self.sounds.emit("work.plant",actor="player",plant_type="crop",x=x,y=y)
             self._refresh_indicators()
             self._finish_player_work()
             self._set_status(f"Planted {crop.label.lower()}.")
@@ -9431,7 +9456,7 @@ class Game:
         inventory.consume_berry_seed()
         self.record_consumed("berry_seeds", 1)
         self.world.apply_disturbance(x, y)
-        self.sounds.play("plant", cooldown=0.25)
+        self.sounds.emit("work.plant",actor="player",plant_type="shrub",x=x,y=y)
         self._refresh_indicators()
         if status:
             self._set_status("Planted a berry bush.")
@@ -10828,7 +10853,7 @@ class Game:
         # Progress is measured in simulation ticks; one completed player work
         # action contributes the interval that just elapsed, not a single tick.
         site.build_progress += self._player_work_interval()
-        self.sounds.play("build", cooldown=0.25)
+        sx,sy=site.center_cell();self.sounds.emit("work.build",actor="player",building=site.kind.name.lower(),x=sx,y=sy)
         self._finish_player_work()
         if site.is_complete:
             label = BUILDING_LABELS[site.kind]
@@ -12284,7 +12309,7 @@ class Game:
         from recipes import apply_recipe_outputs
 
         apply_recipe_outputs(farm, recipe)
-        self.sounds.play("craft", cooldown=0.35)
+        sx,sy=farm.center_cell();self.sounds.emit("work.craft",actor="player",workstation="farm",x=sx,y=sy)
         for key, n in recipe.inputs.items():
             self.record_consumed(key, n)
         for key, n in recipe.outputs.items():
@@ -13728,7 +13753,7 @@ class Game:
             # Construction requirements are authored in simulation ticks.
             # Credit one full villager work interval per completed action.
             site.build_progress += self._villager_work_interval(villager)
-            self.sounds.play("build", cooldown=0.25)
+            sx,sy=site.center_cell();self.sounds.emit("work.build",actor="villager",building=site.kind.name.lower(),x=sx,y=sy)
             self._spend_work_energy(villager)
             self._gain_job_skill(villager, "BUILD")
             if site.is_complete:
@@ -15981,7 +16006,7 @@ class Game:
             ):
                 setattr(inv, seed_key, getattr(inv, seed_key) - 1)
                 self.record_consumed(seed_key, 1)
-                self.sounds.play("plant", cooldown=0.25)
+                self.sounds.emit("work.plant",actor="villager",plant_type="crop",x=x,y=y)
                 self.world.apply_disturbance(x, y)
                 self._refresh_indicators()
                 self._spend_work_energy(villager)
