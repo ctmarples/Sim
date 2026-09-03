@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pygame
+import settings as game_settings
 
 from crops import CROP_BY_KEY, PHASE_LABELS, phase_for_crop
 from entities import (
@@ -89,7 +90,6 @@ from settings import (
     COLOUR_WORKSTATION,
     MAP_OFFSET_Y,
     MAX_VILLAGERS,
-    PANEL_COLLAPSED,
     PANEL_WIDTH,
     TERRAIN_SUBDIV,
     WINDOW_HEIGHT,
@@ -356,17 +356,20 @@ class UI:
         *,
         map_edit_tool: MapEditTool,
         map_edit_terrain: TerrainType,
+        map_edit_tree_label: str,
+        map_edit_building_kind: BuildingKind,
+        overlay_mode: OverlayMode,
         height_paint_value: float,
         height_delta_step: float,
         height_brush_radius: int,
         local_mouse: tuple[int, int] | None,
     ) -> int:
         """Tool palette shown instead of the entity list while map-edit is on."""
-        y = _blit_text(content, self.font_title, "Map Edit", (x, y))
+        y = _blit_text(content, self.font_title, "Map / Object Edit", (x, y))
         y = _blit_text(
             content,
             self.font_small,
-            "Y / Esc exit · scroll zoom",
+            "T / Esc exit · Tab sidebar · scroll zoom",
             (x, y),
             COLOUR_TEXT_DIM,
         )
@@ -397,6 +400,24 @@ class UI:
             )
             bx += tw + gap
         y += btn_h + 8
+
+        y = _blit_text(content, self.font_title, "Layer views", (x, y))
+        layer_modes = (OverlayMode.NONE,) + tuple(
+            mode for mode in OverlayMode if mode != OverlayMode.NONE
+        )
+        col_w = (PANEL_WIDTH - 28) // 2
+        for index, mode in enumerate(layer_modes):
+            col = index % 2
+            row = index // 2
+            bx = x + col * (col_w + 4)
+            by = y + row * (btn_h + gap)
+            label = "None" if mode == OverlayMode.NONE else OVERLAY_LABELS[mode]
+            self._draw_labelled_tool_button(
+                content, bx, by, col_w, btn_h, label,
+                f"edit_overlay:{mode.name}", f"Show {label} layer",
+                active=overlay_mode == mode, local_mouse=local_mouse,
+            )
+        y += ((len(layer_modes) + 1) // 2) * (btn_h + gap) + 6
 
         height_tools = {
             MapEditTool.HEIGHT_SET,
@@ -446,7 +467,8 @@ class UI:
         y = _blit_text(content, self.font_title, "Terrain", (x, y))
         tools_t = (
             (MapEditTool.TERRAIN_PAINT, "Paint", "Paint the selected terrain type"),
-            (MapEditTool.SEED_FOREST, "Forest", "Seed mixed trees + forest floor"),
+            (MapEditTool.SEED_FOREST, "Forest", "Seed selected trees + forest floor"),
+            (MapEditTool.PAINT_ROCKS, "Rocks", "Paint mixed small and large rocks"),
         )
         bx = x
         for tool, label, tip in tools_t:
@@ -454,7 +476,7 @@ class UI:
                 content,
                 bx,
                 y,
-                64,
+                52,
                 btn_h,
                 label,
                 f"edit_tool:{tool.value}",
@@ -462,7 +484,7 @@ class UI:
                 active=map_edit_tool == tool,
                 local_mouse=local_mouse,
             )
-            bx += 68
+            bx += 56
         y += btn_h + 8
 
         if map_edit_tool == MapEditTool.TERRAIN_PAINT:
@@ -492,6 +514,49 @@ class UI:
             if col != 0:
                 row_y += btn_h + gap
             y = row_y + 4
+
+        if map_edit_tool == MapEditTool.SEED_FOREST:
+            y = _blit_text(content, self.font_small, f"Species: {map_edit_tree_label}", (x, y))
+            for glyph, action, tip in (
+                ("<", "edit_tree:-1", "Previous tree species"),
+                (">", "edit_tree:+1", "Next tree species"),
+            ):
+                self._register_tool_button(content, pygame.Rect(x, y, 28, 22), glyph, action, tip,
+                                           active=False, local_mouse=local_mouse)
+                x += 32
+            x -= 64
+            y += 28
+
+        y = _blit_text(content, self.font_title, "Buildings", (x, y))
+        for tool, label, tip in (
+            (MapEditTool.PLACE_BUILDING, "Place", "Place a completed building for free"),
+            (MapEditTool.MOVE_BUILDING, "Move", "Move a completed building instantly"),
+        ):
+            self._draw_labelled_tool_button(
+                content, x, y, 70, btn_h, label, f"edit_tool:{tool.value}", tip,
+                active=map_edit_tool == tool, local_mouse=local_mouse,
+            )
+            x += 74
+        x -= 148
+        y += btn_h + 6
+        if map_edit_tool == MapEditTool.PLACE_BUILDING:
+            y = _blit_text(content, self.font_small, "All buildings (unlocked)",
+                           (x, y), COLOUR_TEXT_DIM)
+            col_w = (PANEL_WIDTH - 28) // 2
+            for index, kind in enumerate(BuildingKind):
+                col = index % 2
+                row = index // 2
+                bx = x + col * (col_w + 4)
+                by = y + row * (btn_h + gap)
+                self._draw_labelled_tool_button(
+                    content, bx, by, col_w, btn_h,
+                    BUILDING_LABELS[kind], f"edit_building:{kind.name}",
+                    f"Place completed {BUILDING_LABELS[kind]}",
+                    active=map_edit_building_kind == kind,
+                    local_mouse=local_mouse,
+                )
+            rows = (len(BuildingKind) + 1) // 2
+            y += rows * (btn_h + gap) + 4
 
         y = _blit_text(
             content,
@@ -739,7 +804,8 @@ class UI:
         selected_habitat_id: int | None,
     ) -> int:
         y = _blit_text(content, self.font_title, "Environment Sandbox", (x, y))
-        y = _blit_text(content, self.font_small, "WASD · Enter/E · Y map edit · H habitats", (x, y), COLOUR_TEXT_DIM)
+        y = _blit_text(content, self.font_small, "WASD · Enter/E · T map edit · H habitats", (x, y), COLOUR_TEXT_DIM)
+        y = _blit_text(content, self.font_small, "Tab hides / shows sidebar", (x, y), COLOUR_TEXT_DIM)
         y = _blit_text(content, self.font_small, f"Speed x{sim_speed}" if sim_speed else "Paused", (x, y), COLOUR_TEXT_DIM)
         day_secs = ticks_to_seconds(ticks_per_day, playback_ticks)
         tiles = ticks_per_day / max(1, seconds_to_ticks(walk_seconds, playback_ticks)) if walk_seconds else 0
@@ -1087,6 +1153,8 @@ class UI:
         map_edit_mode: bool = False,
         map_edit_tool: MapEditTool = MapEditTool.HEIGHT_SET,
         map_edit_terrain: TerrainType = TerrainType.GRASS,
+        map_edit_tree_label: str = "Mixed",
+        map_edit_building_kind: BuildingKind = BuildingKind.HOME,
         height_paint_value: float = 20.0,
         height_delta_step: float = 2.0,
         height_brush_radius: int = 2,
@@ -1099,7 +1167,7 @@ class UI:
         self._tooltip = None
         self.expand_tab_rect = None
 
-        if PANEL_COLLAPSED:
+        if game_settings.PANEL_COLLAPSED:
             # Slim restore tab on the right edge of the map.
             tab = pygame.Rect(WINDOW_WIDTH - 22, MAP_OFFSET_Y + 8, 18, 52)
             self.expand_tab_rect = tab
@@ -1183,6 +1251,9 @@ class UI:
                 y,
                 map_edit_tool=map_edit_tool,
                 map_edit_terrain=map_edit_terrain,
+                map_edit_tree_label=map_edit_tree_label,
+                map_edit_building_kind=map_edit_building_kind,
+                overlay_mode=overlay_mode,
                 height_paint_value=height_paint_value,
                 height_delta_step=height_delta_step,
                 height_brush_radius=height_brush_radius,

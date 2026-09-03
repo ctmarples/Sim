@@ -35,24 +35,11 @@ def _bal(key: str, default: float) -> float:
 def fertility_base_for(terrain: TerrainType) -> float:
     """Starting fertility 0–1 for a terrain type."""
     from world import TerrainType as T
+    from developer_tools.terrain_editor import terrain_value
 
-    if terrain in (T.WATER, T.RIVER):
-        return _bal("FERTILITY_WATER", FERTILITY_WATER)
-    if terrain == T.ROCK:
-        return _bal("FERTILITY_ROCK", FERTILITY_ROCK)
-    if terrain in (T.URBAN, T.PATH):
-        return 0.0
-    if terrain == T.SOIL:
-        return _bal("FERTILITY_SOIL", FERTILITY_SOIL)
-    if terrain == T.RIPARIAN:
-        return _bal("FERTILITY_RIPARIAN", FERTILITY_RIPARIAN)
-    if terrain == T.FOREST_FLOOR:
-        return _bal("FERTILITY_FOREST", FERTILITY_FOREST)
-    if terrain == T.MEADOW:
-        return _bal("FERTILITY_MEADOW", FERTILITY_MEADOW)
-    if terrain == T.GRASS:
-        return _bal("FERTILITY_GRASS", FERTILITY_GRASS)
-    return _bal("FERTILITY_SOIL", FERTILITY_SOIL)
+    authored = terrain_value(terrain, "fertility")
+
+    return authored
 
 
 def clamp01(value: float) -> float:

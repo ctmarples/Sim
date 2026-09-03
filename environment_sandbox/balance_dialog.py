@@ -65,8 +65,10 @@ class BalanceDialog:
         self._close_rect = pygame.Rect(0, 0, 0, 0)
         self._title_rect = pygame.Rect(0, 0, 0, 0)
         self._reset_all_rect = pygame.Rect(0, 0, 0, 0)
+        self._respawn_flora_rect = pygame.Rect(0, 0, 0, 0)
         self._hit_regions: list[tuple[pygame.Rect, str, str | None]] = []
         self.pending_status: str | None = None
+        self.pending_action: str | None = None
 
     @property
     def open(self) -> bool:
@@ -148,6 +150,8 @@ class BalanceDialog:
             return True
         if self._reset_all_rect.collidepoint(pos):
             return True
+        if self._tab_id == "flora" and self._respawn_flora_rect.collidepoint(pos):
+            return True
         for rect, action, key in self._hit_regions:
             if rect.collidepoint(pos):
                 return True
@@ -164,6 +168,9 @@ class BalanceDialog:
         if self._reset_all_rect.collidepoint(pos):
             balance.reset()
             self.pending_status = "Balance reset to defaults"
+            return True
+        if self._tab_id == "flora" and self._respawn_flora_rect.collidepoint(pos):
+            self.pending_action = "respawn_flora"
             return True
         for rect, action, key in self._hit_regions:
             if not rect.collidepoint(pos):
@@ -318,6 +325,16 @@ class BalanceDialog:
                 hovered=mouse_pos is not None and reset_r.collidepoint(mouse_pos),
             )
             self._hit_regions.append((reset_r, "reset_cat", cat.id))
+            if cat.id == "flora":
+                self._respawn_flora_rect = pygame.Rect(reset_r.x - 154, reset_r.y, 146, 18)
+                self._draw_button(
+                    surface,
+                    self._respawn_flora_rect,
+                    "Respawn flora",
+                    hovered=mouse_pos is not None and self._respawn_flora_rect.collidepoint(mouse_pos),
+                )
+            else:
+                self._respawn_flora_rect = pygame.Rect(0, 0, 0, 0)
 
         clip = surface.get_clip()
         surface.set_clip(view)

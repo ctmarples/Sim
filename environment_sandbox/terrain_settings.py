@@ -7,6 +7,7 @@ by the game bake / seasonal overlay path.
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
@@ -18,6 +19,9 @@ from terrain_overlays import OverlayParams, clear_overlay_cache
 from world import TerrainType
 
 _SETTINGS_PATH = Path(__file__).resolve().parent / "assets" / "terrain" / "terrain_look.json"
+_SETS_DIR = _SETTINGS_PATH.parent / "sets"
+_ACTIVE_SET_PATH = _SETTINGS_PATH.parent / "active_terrain_set.json"
+_SET_NAME_RE = re.compile(r"[^a-zA-Z0-9_-]+")
 
 # Biomes that get independent mottling knobs.
 MOTTLE_BIOMES: tuple[TerrainType, ...] = (
@@ -69,6 +73,66 @@ _LOADED = False
 
 def settings_path() -> Path:
     return _SETTINGS_PATH
+
+
+def setting_sets_dir() -> Path:
+    return _SETS_DIR
+
+
+def _safe_set_name(name: str) -> str:
+    clean = _SET_NAME_RE.sub("_", str(name).strip()).strip("_-")
+    return clean or "default"
+
+
+def list_setting_sets() -> tuple[str, ...]:
+    names = {path.stem for path in _SETS_DIR.glob("*.json")} if _SETS_DIR.is_dir() else set()
+    if _SETTINGS_PATH.is_file():
+        names.add("default")
+    return tuple(sorted(names, key=str.casefold))
+
+
+def active_setting_set() -> str:
+    try:
+        data = json.loads(_ACTIVE_SET_PATH.read_text(encoding="utf-8"))
+        return _safe_set_name(str(data.get("active") or "default"))
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return "default"
+
+
+def _write_active_set(name: str) -> None:
+    _ACTIVE_SET_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _ACTIVE_SET_PATH.write_text(
+        json.dumps({"active": _safe_set_name(name)}, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def save_setting_set(name: str) -> Path:
+    """Save the live terrain look as a named set and make it active."""
+    safe = _safe_set_name(name)
+    # Preserve the legacy runtime look as the initial Default preset before a
+    # first named set replaces the compatibility file.
+    default_path = _SETS_DIR / "default.json"
+    if safe != "default" and not default_path.is_file() and _SETTINGS_PATH.is_file():
+        default_path.parent.mkdir(parents=True, exist_ok=True)
+        default_path.write_text(_SETTINGS_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+    dest = _SETS_DIR / f"{safe}.json"
+    save_settings(dest)
+    save_settings(_SETTINGS_PATH)
+    _write_active_set(safe)
+    return dest
+
+
+def load_setting_set(name: str) -> bool:
+    """Load a named set, mirror it to the runtime file, and make it active."""
+    safe = _safe_set_name(name)
+    src = _SETS_DIR / f"{safe}.json"
+    if safe == "default" and not src.is_file():
+        src = _SETTINGS_PATH
+    if not load_settings(src):
+        return False
+    save_settings(_SETTINGS_PATH)
+    _write_active_set(safe)
+    return True
 
 
 def get_anim_params() -> AnimParams:

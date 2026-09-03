@@ -1072,6 +1072,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             for c in row
         ])
     world.cells = cells
+    world.reconcile_flora_with_catalogue()
     world.ensure_tree_ages()
     world.update_forest_floor()
     # Legacy saves lack subclusters — carve them so seasonal masks look right.
@@ -1948,6 +1949,12 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         saved_env = data.get("env_maps")
         if saved_env:
             game.env_maps.load_save_dict(saved_env)
+            from developer_tools.terrain_editor import ecology_signature
+            if saved_env.get("terrain_ecology_signature") != ecology_signature():
+                from environment import rainfall_modifier_grid, soil_moisture_grid, temperature_grid
+                game.env_maps.soil_moisture = soil_moisture_grid(game.world, game.calendar_day)
+                game.env_maps.temperature = temperature_grid(game.world, game.calendar_day)
+                game.env_maps.rainfall_modifiers = rainfall_modifier_grid(game.world)
             game._biodiversity_samples = game.env_maps.biodiversity_samples
             game._biodiversity_average = game.env_maps.biodiversity
             # Older saves may lack floral/pollination — backfill without ratcheting health.

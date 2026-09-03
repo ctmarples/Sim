@@ -83,16 +83,8 @@ def soil_moisture_grid(world: World, calendar_day: int) -> list[list[float]]:
     from seasons import season_for_day
     from world import FeatureType, TerrainType, is_water_terrain
 
-    bases = {
-        TerrainType.SOIL: 0.48,
-        TerrainType.FOREST_FLOOR: 0.62,
-        TerrainType.GRASS: 0.43,
-        TerrainType.MEADOW: 0.47,
-        TerrainType.RIPARIAN: 0.76,
-        TerrainType.ROCK: 0.08,
-        TerrainType.URBAN: 0.04,
-        TerrainType.PATH: 0.12,
-    }
+    from developer_tools.terrain_editor import terrain_value
+    bases = {terrain: terrain_value(terrain,"soil_moisture") for terrain in TerrainType}
     distances = [[world.rows + world.cols] * world.cols for _ in range(world.rows)]
     queue: deque[tuple[int, int]] = deque()
     for y in range(world.rows):
@@ -148,16 +140,8 @@ def temperature_grid(world: World, calendar_day: int) -> list[list[float]]:
     # Same annual -cosine, but water only swings 4 C around a cool mean.
     angle = 2.0 * math.pi * (float(calendar_day) - 42.0) / float(YEAR_DAYS)
     water_temperature = 9.0 + 4.0 * math.cos(angle)
-    terrain_offset = {
-        TerrainType.SOIL: 0.8,
-        TerrainType.FOREST_FLOOR: -0.8,
-        TerrainType.GRASS: 0.0,
-        TerrainType.MEADOW: 0.2,
-        TerrainType.RIPARIAN: -0.8,
-        TerrainType.ROCK: 1.5,
-        TerrainType.URBAN: 2.0,
-        TerrainType.PATH: 0.8,
-    }
+    from developer_tools.terrain_editor import terrain_value
+    terrain_offset = {terrain: terrain_value(terrain,"temperature_offset_c") for terrain in TerrainType}
     shade_features = {
         FeatureType.TREE: 1.0,
         FeatureType.SAPLING: 0.45,
@@ -232,8 +216,8 @@ def rainfall_modifier_grid(world: World) -> list[list[float]]:
                 modifier *= 0.86
             elif cell.feature == FeatureType.SAPLING:
                 modifier *= 0.94
-            if cell.terrain == TerrainType.RIPARIAN:
-                modifier *= 1.06
+            from developer_tools.terrain_editor import terrain_value
+            modifier *= terrain_value(cell.terrain,"rainfall_multiplier")
             out[y][x] = max(0.65, min(1.25, modifier))
     return out
 
@@ -587,7 +571,9 @@ class EnvMaps:
         return self.average_over(EnvLayer.RAINFALL, cells)
 
     def to_save_dict(self) -> dict:
+        from developer_tools.terrain_editor import ecology_signature
         return {
+            "terrain_ecology_signature": ecology_signature(),
             "biodiversity_samples": self.biodiversity_samples,
             "biodiversity": self.biodiversity,
             "pest_control": self.pest_control,

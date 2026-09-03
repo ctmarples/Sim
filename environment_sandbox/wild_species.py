@@ -346,6 +346,7 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
 )
 
 WILD_BY_KEY: dict[str, WildSpeciesDef] = {s.key: s for s in WILD_SPECIES}
+WILD_FOOTPRINTS: dict[str, tuple[int, ...]] = {}
 
 
 def species_for_feature(feature_name: str) -> WildSpeciesDef | None:

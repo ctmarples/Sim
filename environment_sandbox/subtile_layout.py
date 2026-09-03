@@ -63,6 +63,13 @@ def _editor_slots(feature_name: str, *, crop_kind: str | None = None, object_key
     """Read an authored visual footprint. The file is deliberately tiny and
     uncached so saving in Developer Tools is reflected in the live game."""
     name = str(feature_name).upper()
+    if name in {"HERB","WILD_CROP","REED","BERRY_BUSH","MUSHROOM","WOOD_BUSH"}:
+        try:
+            import wild_species
+            for key in (object_key,crop_kind):
+                value=getattr(wild_species,"WILD_FOOTPRINTS",{}).get(key)
+                if value:return tuple(value)
+        except (ImportError,AttributeError):pass
     if name=="CROP_HERB" and crop_kind:
         try:
             import crops

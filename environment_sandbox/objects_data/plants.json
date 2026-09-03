@@ -1,4 +1,220 @@
 {
+  "barley": {
+    "can_be_cultivated": true,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "crop_plant_dense",
+      "fertility_effect": 0.0,
+      "flower_colour": null,
+      "footprint": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "growth_days": 32,
+      "harvest_max": 9,
+      "harvest_season": "SUMMER",
+      "harvest_seasons": [
+        "SUMMER"
+      ],
+      "omit_classes": [
+        "flower"
+      ],
+      "plant_season": "SPRING",
+      "recolour": {
+        "stem": [
+          190,
+          160,
+          65,
+          255
+        ]
+      },
+      "seasonal_recolour": {
+        "SPRING": {
+          "omit_classes": [
+            "flower"
+          ],
+          "recolour": {
+            "stem": [
+              190,
+              160,
+              65,
+              255
+            ]
+          }
+        },
+        "SUMMER": {
+          "omit_classes": [
+            "flower"
+          ],
+          "recolour": {
+            "stem": [
+              190,
+              160,
+              65,
+              255
+            ]
+          }
+        }
+      },
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "crop_plant",
+      "stem_colour": [
+        190,
+        160,
+        65,
+        255
+      ],
+      "year_phases": [
+        "PLOUGH_PLANT",
+        "HARVEST",
+        "FALLOW",
+        "FALLOW"
+      ]
+    },
+    "growth_form": "annual herb",
+    "harvest_outputs": {
+      "barley": 3
+    },
+    "label": "Barley",
+    "perennial": false,
+    "produce_resource": "barley",
+    "seed_resource": "barley_grain",
+    "short": "bar",
+    "tree": {
+      "canopy_colour": [
+        50,
+        130,
+        60
+      ],
+      "cone_scale": 1.0,
+      "growth_years": 2.0,
+      "sapling_colour": [
+        120,
+        190,
+        90
+      ],
+      "shape": "round",
+      "wood_resource": "logs",
+      "wood_yield": 2
+    },
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        48.0,
+        58.0
+      ],
+      "despawn_fade_chance": 0.08,
+      "despawn_fade_end": [
+        72.0,
+        82.0
+      ],
+      "despawn_leftover_chance": 0.15,
+      "despawn_leftover_from": 70.0,
+      "disturbance_niche": [
+        0.15,
+        0.35,
+        0.65,
+        0.85
+      ],
+      "ecology_tags": [
+        "feral_crop",
+        "grazer_forage"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "WILD_CROP",
+      "fertility_niche": [
+        0.35,
+        0.55,
+        0.9,
+        1.0
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "harvest_max": 3,
+      "icon": "crop_plant",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.15,
+        0.3,
+        0.6,
+        0.75
+      ],
+      "near_feature": null,
+      "omit_classes": [
+        "flower"
+      ],
+      "patch_extras": [
+        1,
+        4
+      ],
+      "rainfall_niche": [
+        0.1,
+        0.25,
+        0.55,
+        0.75
+      ],
+      "recolour": {
+        "stem": [
+          190,
+          160,
+          65,
+          255
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": "wild_crop",
+      "spawn_peak": 0.045,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.0,
+      "temperature_niche": [
+        0.2,
+        0.35,
+        0.7,
+        0.85
+      ],
+      "terrains": [
+        "MEADOW"
+      ]
+    }
+  },
   "beans": {
     "can_be_cultivated": true,
     "can_grow_wild": true,
@@ -238,6 +454,599 @@
       ]
     }
   },
+  "berry_bush": {
+    "can_be_cultivated": false,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "crop_plant_dense",
+      "fertility_effect": 0.0,
+      "flower_colour": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "growth_days": 32,
+      "harvest_max": 9,
+      "harvest_season": "SUMMER",
+      "harvest_seasons": [
+        "SUMMER"
+      ],
+      "omit_classes": [],
+      "plant_season": "SPRING",
+      "recolour": {
+        "flower": [
+          255,
+          255,
+          255,
+          255
+        ],
+        "stem": [
+          80,
+          140,
+          70,
+          255
+        ]
+      },
+      "seasonal_recolour": {
+        "SPRING": {
+          "omit_classes": [],
+          "recolour": {
+            "flower": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "stem": [
+              80,
+              140,
+              70,
+              255
+            ]
+          }
+        },
+        "SUMMER": {
+          "omit_classes": [],
+          "recolour": {
+            "flower": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "stem": [
+              80,
+              140,
+              70,
+              255
+            ]
+          }
+        }
+      },
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "crop_plant",
+      "stem_colour": [
+        80,
+        140,
+        70,
+        255
+      ],
+      "year_phases": [
+        "PLOUGH_PLANT",
+        "HARVEST",
+        "FALLOW",
+        "FALLOW"
+      ]
+    },
+    "growth_form": "shrub",
+    "harvest_outputs": {
+      "berries": 3
+    },
+    "label": "Berry bush",
+    "perennial": true,
+    "produce_resource": "berries",
+    "seed_resource": "",
+    "short": "berr",
+    "tree": {
+      "canopy_colour": [
+        50,
+        130,
+        60
+      ],
+      "cone_scale": 1.0,
+      "growth_years": 2.0,
+      "sapling_colour": [
+        120,
+        190,
+        90
+      ],
+      "shape": "round",
+      "wood_resource": "logs",
+      "wood_yield": 2
+    },
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        0.0,
+        0.0
+      ],
+      "despawn_fade_chance": 0.0,
+      "despawn_fade_end": [
+        0.0,
+        0.0
+      ],
+      "despawn_leftover_chance": 0.0,
+      "despawn_leftover_from": -1.0,
+      "disturbance_niche": [
+        0.0,
+        0.05,
+        0.25,
+        0.6
+      ],
+      "ecology_tags": [
+        "flowering",
+        "pollinator_food",
+        "grazer_forage"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": [
+        70,
+        95,
+        55
+      ],
+      "feature": "BERRY_BUSH",
+      "fertility_niche": [
+        0.25,
+        0.4,
+        0.75,
+        0.95
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "berry",
+      "fruit_colour": [
+        160,
+        40,
+        90
+      ],
+      "fruit_fall": [
+        48.0,
+        58.0
+      ],
+      "fruit_rise": [
+        26.0,
+        36.0
+      ],
+      "fruiting": true,
+      "harvest_max": 3,
+      "icon": "berry_bush",
+      "initial_count": 6,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.25,
+        0.4,
+        0.7,
+        0.85
+      ],
+      "near_feature": null,
+      "omit_classes": [],
+      "patch_extras": [
+        0,
+        0
+      ],
+      "rainfall_niche": [
+        0.25,
+        0.4,
+        0.7,
+        0.9
+      ],
+      "recolour": {
+        "berry": [
+          160,
+          40,
+          90,
+          255
+        ],
+        "bush": [
+          50,
+          110,
+          50,
+          255
+        ],
+        "shadow": [
+          51,
+          51,
+          51,
+          128
+        ],
+        "trunk": [
+          105,
+          75,
+          45,
+          255
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 1.0,
+      "spawn_fall": [
+        0.0,
+        0.0
+      ],
+      "spawn_group": null,
+      "spawn_peak": 0.03,
+      "spawn_rise": [
+        0.0,
+        0.0
+      ],
+      "spread_chance": 0.0,
+      "temperature_niche": [
+        0.2,
+        0.35,
+        0.65,
+        0.85
+      ],
+      "terrains": [
+        "GRASS"
+      ]
+    }
+  },
+  "cabbage": {
+    "can_be_cultivated": true,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "crop_plant_dense",
+      "fertility_effect": null,
+      "flower_colour": null,
+      "footprint": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "growth_days": 32,
+      "harvest_max": 9,
+      "harvest_season": "AUTUMN",
+      "harvest_seasons": [
+        "AUTUMN"
+      ],
+      "omit_classes": [
+        "flower"
+      ],
+      "plant_season": "SUMMER",
+      "recolour": {
+        "stem": [
+          70,
+          150,
+          80
+        ]
+      },
+      "seasonal_recolour": {},
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "crop_plant",
+      "stem_colour": [
+        70,
+        150,
+        80
+      ],
+      "year_phases": [
+        "FALLOW",
+        "PLOUGH_PLANT",
+        "HARVEST",
+        "FALLOW"
+      ]
+    },
+    "growth_form": "annual herb",
+    "harvest_outputs": {
+      "cabbage": 3
+    },
+    "label": "Cabbage",
+    "perennial": false,
+    "produce_resource": "cabbage",
+    "seed_resource": "cabbage_seeds",
+    "short": "cab",
+    "tree": {},
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        48.0,
+        58.0
+      ],
+      "despawn_fade_chance": 0.08,
+      "despawn_fade_end": [
+        72.0,
+        82.0
+      ],
+      "despawn_leftover_chance": 0.15,
+      "despawn_leftover_from": 70.0,
+      "disturbance_niche": [
+        0.1,
+        0.3,
+        0.6,
+        0.8
+      ],
+      "ecology_tags": [
+        "feral_crop",
+        "grazer_forage"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "WILD_CROP",
+      "fertility_niche": [
+        0.55,
+        0.7,
+        1,
+        1
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "icon": "crop_plant",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.35,
+        0.5,
+        0.75,
+        0.9
+      ],
+      "near_feature": null,
+      "omit_classes": [
+        "flower"
+      ],
+      "patch_extras": [
+        1,
+        4
+      ],
+      "rainfall_niche": [
+        0.3,
+        0.45,
+        0.75,
+        0.9
+      ],
+      "recolour": {
+        "stem": [
+          70,
+          150,
+          80
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": "wild_crop",
+      "spawn_peak": 0.045,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.0,
+      "temperature_niche": [
+        0.1,
+        0.25,
+        0.6,
+        0.75
+      ],
+      "terrains": []
+    }
+  },
+  "carrot": {
+    "can_be_cultivated": true,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "crop_plant_dense",
+      "fertility_effect": null,
+      "flower_colour": [
+        220,
+        120,
+        40
+      ],
+      "footprint": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "growth_days": 56,
+      "harvest_max": 9,
+      "harvest_season": "AUTUMN",
+      "harvest_seasons": [
+        "AUTUMN"
+      ],
+      "omit_classes": [],
+      "plant_season": "SPRING",
+      "recolour": {
+        "flower": [
+          220,
+          120,
+          40
+        ],
+        "stem": [
+          80,
+          140,
+          55
+        ]
+      },
+      "seasonal_recolour": {},
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "crop_plant",
+      "stem_colour": [
+        80,
+        140,
+        55
+      ],
+      "year_phases": [
+        "PLOUGH_PLANT",
+        "GROW",
+        "HARVEST",
+        "FALLOW"
+      ]
+    },
+    "growth_form": "annual herb",
+    "harvest_outputs": {
+      "carrot": 3
+    },
+    "label": "Carrot",
+    "perennial": false,
+    "produce_resource": "carrot",
+    "seed_resource": "carrot_seeds",
+    "short": "crt",
+    "tree": {},
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        48.0,
+        58.0
+      ],
+      "despawn_fade_chance": 0.08,
+      "despawn_fade_end": [
+        72.0,
+        82.0
+      ],
+      "despawn_leftover_chance": 0.15,
+      "despawn_leftover_from": 70.0,
+      "disturbance_niche": [
+        0.15,
+        0.35,
+        0.7,
+        0.9
+      ],
+      "ecology_tags": [
+        "feral_crop",
+        "grazer_forage"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "WILD_CROP",
+      "fertility_niche": [
+        0.3,
+        0.45,
+        0.8,
+        0.95
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "icon": "crop_plant",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.2,
+        0.35,
+        0.65,
+        0.8
+      ],
+      "near_feature": null,
+      "omit_classes": [],
+      "patch_extras": [
+        1,
+        4
+      ],
+      "rainfall_niche": [
+        0.2,
+        0.35,
+        0.65,
+        0.8
+      ],
+      "recolour": {
+        "flower": [
+          220,
+          120,
+          40
+        ],
+        "stem": [
+          80,
+          140,
+          55
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": "wild_crop",
+      "spawn_peak": 0.045,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.0,
+      "temperature_niche": [
+        0.15,
+        0.3,
+        0.7,
+        0.85
+      ],
+      "terrains": [
+        "SOIL"
+      ]
+    }
+  },
   "cattail": {
     "can_be_cultivated": false,
     "can_grow_wild": true,
@@ -452,6 +1261,2785 @@
       ],
       "terrains": [
         "WATER"
+      ]
+    }
+  },
+  "cedar": {
+    "can_be_cultivated": false,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "crop_plant_dense",
+      "fertility_effect": 0.0,
+      "flower_colour": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "growth_days": 32,
+      "harvest_max": 9,
+      "harvest_season": "SUMMER",
+      "harvest_seasons": [
+        "SUMMER"
+      ],
+      "omit_classes": [],
+      "plant_season": "SPRING",
+      "recolour": {
+        "flower": [
+          255,
+          255,
+          255,
+          255
+        ],
+        "stem": [
+          80,
+          140,
+          70,
+          255
+        ]
+      },
+      "seasonal_recolour": {
+        "SPRING": {
+          "omit_classes": [],
+          "recolour": {
+            "flower": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "stem": [
+              80,
+              140,
+              70,
+              255
+            ]
+          }
+        },
+        "SUMMER": {
+          "omit_classes": [],
+          "recolour": {
+            "flower": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "stem": [
+              80,
+              140,
+              70,
+              255
+            ]
+          }
+        }
+      },
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "crop_plant",
+      "stem_colour": [
+        80,
+        140,
+        70,
+        255
+      ],
+      "year_phases": [
+        "PLOUGH_PLANT",
+        "HARVEST",
+        "FALLOW",
+        "FALLOW"
+      ]
+    },
+    "growth_form": "tree",
+    "harvest_outputs": {
+      "logs": 3
+    },
+    "label": "Cedar",
+    "perennial": true,
+    "produce_resource": "logs",
+    "seed_resource": "cedar_saplings",
+    "short": "cdr",
+    "tree": {
+      "canopy_colour": [
+        30,
+        110,
+        55
+      ],
+      "cone_scale": 1.35,
+      "growth_years": 2.0,
+      "sapling_colour": [
+        80,
+        160,
+        90
+      ],
+      "shape": "cone",
+      "wild_footprint": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "wild_icon": "tree_cone",
+      "wood_resource": "logs",
+      "wood_yield": 3
+    },
+    "wild": {
+      "clear_from_day": 0.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade_chance": 0.0,
+      "despawn_leftover_chance": 0.0,
+      "despawn_leftover_from": 0.0,
+      "disturbance_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "edge_terrains": [],
+      "fertility_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "harvest_max": 3,
+      "icon": "tree_cone",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "omit_classes": [],
+      "patch_extras": [
+        0,
+        0
+      ],
+      "rainfall_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "recolour": {
+        "canopy": [
+          30,
+          110,
+          55,
+          255
+        ],
+        "shadow": [
+          51,
+          51,
+          51,
+          128
+        ],
+        "trunk": [
+          105,
+          75,
+          45,
+          255
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "spawn_activity": 0.0,
+      "spawn_peak": 0.0,
+      "spread_chance": 0.01,
+      "temperature_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "terrains": [
+        "GRASS"
+      ]
+    }
+  },
+  "clover": {
+    "can_be_cultivated": false,
+    "can_grow_wild": true,
+    "cultivated": {},
+    "growth_form": "perennial herb",
+    "harvest_outputs": {
+      "": 3
+    },
+    "label": "Clover",
+    "perennial": true,
+    "produce_resource": "",
+    "seed_resource": "",
+    "short": "clov",
+    "tree": {},
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        0.0,
+        0.0
+      ],
+      "despawn_fade_chance": 0.0,
+      "despawn_fade_end": [
+        0.0,
+        0.0
+      ],
+      "despawn_leftover_chance": 0.0,
+      "despawn_leftover_from": -1.0,
+      "disturbance_niche": [
+        0.05,
+        0.2,
+        0.45,
+        0.7
+      ],
+      "ecology_tags": [
+        "flowering",
+        "pollinator_food",
+        "grazer_forage"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "HERB",
+      "fertility_niche": [
+        0.2,
+        0.35,
+        0.7,
+        0.9
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "icon": "flower_plant",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.25,
+        0.4,
+        0.7,
+        0.85
+      ],
+      "near_feature": null,
+      "omit_classes": [],
+      "patch_extras": [
+        0,
+        0
+      ],
+      "rainfall_niche": [
+        0.2,
+        0.35,
+        0.7,
+        0.85
+      ],
+      "recolour": {
+        "flower": [
+          65,
+          145,
+          65
+        ],
+        "stem": [
+          65,
+          145,
+          65
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": null,
+      "spawn_peak": 0.035,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.01,
+      "temperature_niche": [
+        0.2,
+        0.35,
+        0.7,
+        0.85
+      ],
+      "terrains": [
+        "GRASS",
+        "MEADOW"
+      ]
+    }
+  },
+  "daisy": {
+    "can_be_cultivated": false,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "crop_plant_dense",
+      "fertility_effect": 0.0,
+      "flower_colour": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "growth_days": 32,
+      "harvest_max": 9,
+      "harvest_season": "SUMMER",
+      "harvest_seasons": [
+        "SUMMER"
+      ],
+      "omit_classes": [],
+      "plant_season": "SPRING",
+      "recolour": {
+        "flower": [
+          255,
+          255,
+          255,
+          255
+        ],
+        "stem": [
+          80,
+          140,
+          70,
+          255
+        ]
+      },
+      "seasonal_recolour": {
+        "SPRING": {
+          "omit_classes": [],
+          "recolour": {
+            "flower": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "stem": [
+              80,
+              140,
+              70,
+              255
+            ]
+          }
+        },
+        "SUMMER": {
+          "omit_classes": [],
+          "recolour": {
+            "flower": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "stem": [
+              80,
+              140,
+              70,
+              255
+            ]
+          }
+        }
+      },
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "crop_plant",
+      "stem_colour": [
+        80,
+        140,
+        70,
+        255
+      ],
+      "year_phases": [
+        "PLOUGH_PLANT",
+        "HARVEST",
+        "FALLOW",
+        "FALLOW"
+      ]
+    },
+    "growth_form": "perennial herb",
+    "harvest_outputs": {},
+    "label": "Daisy",
+    "perennial": true,
+    "produce_resource": "",
+    "seed_resource": "",
+    "short": "dais",
+    "tree": {
+      "canopy_colour": [
+        50,
+        130,
+        60
+      ],
+      "cone_scale": 1.0,
+      "growth_years": 2.0,
+      "sapling_colour": [
+        120,
+        190,
+        90
+      ],
+      "shape": "round",
+      "wood_resource": "logs",
+      "wood_yield": 2
+    },
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        0.0,
+        0.0
+      ],
+      "despawn_fade_chance": 0.0,
+      "despawn_fade_end": [
+        0.0,
+        0.0
+      ],
+      "despawn_leftover_chance": 0.0,
+      "despawn_leftover_from": -1.0,
+      "disturbance_niche": [
+        0.05,
+        0.15,
+        0.45,
+        0.7
+      ],
+      "ecology_tags": [
+        "flowering",
+        "pollinator_food"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "HERB",
+      "fertility_niche": [
+        0.1,
+        0.25,
+        0.6,
+        0.8
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "harvest_max": 3,
+      "icon": "flower_plant",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.15,
+        0.3,
+        0.65,
+        0.8
+      ],
+      "near_feature": null,
+      "omit_classes": [],
+      "patch_extras": [
+        0,
+        0
+      ],
+      "rainfall_niche": [
+        0.15,
+        0.3,
+        0.7,
+        0.85
+      ],
+      "recolour": {
+        "flower": [
+          244,
+          244,
+          246,
+          255
+        ],
+        "stem": [
+          35,
+          90,
+          45,
+          255
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": null,
+      "spawn_peak": 0.035,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.01,
+      "temperature_niche": [
+        0.15,
+        0.3,
+        0.7,
+        0.85
+      ],
+      "terrains": [
+        "GRASS",
+        "MEADOW",
+        "PATH"
+      ]
+    }
+  },
+  "dandelion": {
+    "can_be_cultivated": false,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "crop_plant_dense",
+      "fertility_effect": 0.0,
+      "flower_colour": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "growth_days": 32,
+      "harvest_max": 9,
+      "harvest_season": "SUMMER",
+      "harvest_seasons": [
+        "SUMMER"
+      ],
+      "omit_classes": [],
+      "plant_season": "SPRING",
+      "recolour": {
+        "flower": [
+          255,
+          255,
+          255,
+          255
+        ],
+        "stem": [
+          80,
+          140,
+          70,
+          255
+        ]
+      },
+      "seasonal_recolour": {
+        "SPRING": {
+          "omit_classes": [],
+          "recolour": {
+            "flower": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "stem": [
+              80,
+              140,
+              70,
+              255
+            ]
+          }
+        },
+        "SUMMER": {
+          "omit_classes": [],
+          "recolour": {
+            "flower": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "stem": [
+              80,
+              140,
+              70,
+              255
+            ]
+          }
+        }
+      },
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "crop_plant",
+      "stem_colour": [
+        80,
+        140,
+        70,
+        255
+      ],
+      "year_phases": [
+        "PLOUGH_PLANT",
+        "HARVEST",
+        "FALLOW",
+        "FALLOW"
+      ]
+    },
+    "growth_form": "perennial herb",
+    "harvest_outputs": {},
+    "label": "Dandelion",
+    "perennial": true,
+    "produce_resource": "",
+    "seed_resource": "",
+    "short": "dand",
+    "tree": {
+      "canopy_colour": [
+        50,
+        130,
+        60
+      ],
+      "cone_scale": 1.0,
+      "growth_years": 2.0,
+      "sapling_colour": [
+        120,
+        190,
+        90
+      ],
+      "shape": "round",
+      "wood_resource": "logs",
+      "wood_yield": 2
+    },
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        0.0,
+        0.0
+      ],
+      "despawn_fade_chance": 0.0,
+      "despawn_fade_end": [
+        0.0,
+        0.0
+      ],
+      "despawn_leftover_chance": 0.0,
+      "despawn_leftover_from": -1.0,
+      "disturbance_niche": [
+        0.1,
+        0.3,
+        0.7,
+        0.9
+      ],
+      "ecology_tags": [
+        "flowering",
+        "pollinator_food"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "HERB",
+      "fertility_niche": [
+        0.2,
+        0.4,
+        0.85,
+        1.0
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "harvest_max": 3,
+      "icon": "flower_plant",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.15,
+        0.3,
+        0.7,
+        0.85
+      ],
+      "near_feature": null,
+      "omit_classes": [],
+      "patch_extras": [
+        0,
+        0
+      ],
+      "rainfall_niche": [
+        0.15,
+        0.25,
+        0.7,
+        0.9
+      ],
+      "recolour": {
+        "flower": [
+          222,
+          187,
+          16,
+          255
+        ],
+        "stem": [
+          35,
+          90,
+          45,
+          255
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": null,
+      "spawn_peak": 0.035,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.01,
+      "temperature_niche": [
+        0.15,
+        0.3,
+        0.75,
+        0.9
+      ],
+      "terrains": [
+        "GRASS",
+        "MEADOW",
+        "PATH"
+      ]
+    }
+  },
+  "flax": {
+    "can_be_cultivated": true,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "flower_plant_dense",
+      "fertility_effect": null,
+      "flower_colour": [
+        150,
+        90,
+        190
+      ],
+      "footprint": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "growth_days": 32,
+      "harvest_max": 9,
+      "harvest_season": "SUMMER",
+      "harvest_seasons": [
+        "SUMMER"
+      ],
+      "omit_classes": [],
+      "plant_season": "SPRING",
+      "recolour": {
+        "flower": [
+          150,
+          90,
+          190
+        ],
+        "stem": [
+          90,
+          150,
+          70
+        ]
+      },
+      "seasonal_recolour": {},
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "flower_plant",
+      "stem_colour": [
+        90,
+        150,
+        70
+      ],
+      "year_phases": [
+        "PLOUGH_PLANT",
+        "HARVEST",
+        "FALLOW",
+        "FALLOW"
+      ]
+    },
+    "growth_form": "annual herb",
+    "harvest_outputs": {
+      "flax": 3
+    },
+    "label": "Flax",
+    "perennial": false,
+    "produce_resource": "flax",
+    "seed_resource": "flax_seeds",
+    "short": "flx",
+    "tree": {},
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        48.0,
+        58.0
+      ],
+      "despawn_fade_chance": 0.08,
+      "despawn_fade_end": [
+        72.0,
+        82.0
+      ],
+      "despawn_leftover_chance": 0.15,
+      "despawn_leftover_from": 70.0,
+      "disturbance_niche": [
+        0.1,
+        0.3,
+        0.55,
+        0.75
+      ],
+      "ecology_tags": [
+        "feral_crop",
+        "grazer_forage"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "WILD_CROP",
+      "fertility_niche": [
+        0.3,
+        0.45,
+        0.75,
+        0.9
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "icon": "flower_plant",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.3,
+        0.45,
+        0.7,
+        0.8
+      ],
+      "near_feature": null,
+      "omit_classes": [],
+      "patch_extras": [
+        1,
+        4
+      ],
+      "rainfall_niche": [
+        0.25,
+        0.4,
+        0.7,
+        0.85
+      ],
+      "recolour": {
+        "flower": [
+          150,
+          90,
+          190
+        ],
+        "stem": [
+          90,
+          150,
+          70
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": "wild_crop",
+      "spawn_peak": 0.045,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.0,
+      "temperature_niche": [
+        0.2,
+        0.35,
+        0.65,
+        0.8
+      ],
+      "terrains": [
+        "MEADOW"
+      ]
+    }
+  },
+  "garlic": {
+    "can_be_cultivated": true,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "crop_plant_dense",
+      "fertility_effect": null,
+      "flower_colour": [
+        230,
+        230,
+        210
+      ],
+      "footprint": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "growth_days": 80,
+      "harvest_max": 9,
+      "harvest_season": "SUMMER",
+      "harvest_seasons": [
+        "SUMMER"
+      ],
+      "omit_classes": [],
+      "plant_season": "AUTUMN",
+      "recolour": {
+        "flower": [
+          230,
+          230,
+          210
+        ],
+        "stem": [
+          110,
+          150,
+          80
+        ]
+      },
+      "seasonal_recolour": {},
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "crop_plant",
+      "stem_colour": [
+        110,
+        150,
+        80
+      ],
+      "year_phases": [
+        "GROW",
+        "HARVEST",
+        "PLOUGH_PLANT",
+        "GROW"
+      ]
+    },
+    "growth_form": "annual herb",
+    "harvest_outputs": {
+      "garlic": 3
+    },
+    "label": "Garlic",
+    "perennial": false,
+    "produce_resource": "garlic",
+    "seed_resource": "garlic_seeds",
+    "short": "gar",
+    "tree": {},
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        48.0,
+        58.0
+      ],
+      "despawn_fade_chance": 0.08,
+      "despawn_fade_end": [
+        72.0,
+        82.0
+      ],
+      "despawn_leftover_chance": 0.15,
+      "despawn_leftover_from": 70.0,
+      "disturbance_niche": [
+        0.1,
+        0.3,
+        0.6,
+        0.8
+      ],
+      "ecology_tags": [
+        "feral_crop",
+        "grazer_forage"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "WILD_CROP",
+      "fertility_niche": [
+        0.3,
+        0.45,
+        0.8,
+        0.95
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "icon": "crop_plant",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.2,
+        0.35,
+        0.6,
+        0.75
+      ],
+      "near_feature": null,
+      "omit_classes": [],
+      "patch_extras": [
+        1,
+        4
+      ],
+      "rainfall_niche": [
+        0.15,
+        0.3,
+        0.6,
+        0.8
+      ],
+      "recolour": {
+        "flower": [
+          230,
+          230,
+          210
+        ],
+        "stem": [
+          110,
+          150,
+          80
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": "wild_crop",
+      "spawn_peak": 0.045,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.0,
+      "temperature_niche": [
+        0.1,
+        0.25,
+        0.65,
+        0.8
+      ],
+      "terrains": [
+        "FOREST_FLOOR",
+        "SOIL"
+      ]
+    }
+  },
+  "hemp": {
+    "can_be_cultivated": true,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "flower_plant_dense",
+      "fertility_effect": null,
+      "flower_colour": [
+        170,
+        220,
+        110
+      ],
+      "footprint": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "growth_days": 32,
+      "harvest_max": 9,
+      "harvest_season": "SUMMER",
+      "harvest_seasons": [
+        "SUMMER"
+      ],
+      "omit_classes": [],
+      "plant_season": "SPRING",
+      "recolour": {
+        "flower": [
+          170,
+          220,
+          110
+        ],
+        "stem": [
+          60,
+          140,
+          55
+        ]
+      },
+      "seasonal_recolour": {},
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "flower_plant",
+      "stem_colour": [
+        60,
+        140,
+        55
+      ],
+      "year_phases": [
+        "PLOUGH_PLANT",
+        "HARVEST",
+        "FALLOW",
+        "FALLOW"
+      ]
+    },
+    "growth_form": "annual herb",
+    "harvest_outputs": {
+      "hemp": 3
+    },
+    "label": "Hemp",
+    "perennial": false,
+    "produce_resource": "hemp",
+    "seed_resource": "hemp_seeds",
+    "short": "hmp",
+    "tree": {},
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        48.0,
+        58.0
+      ],
+      "despawn_fade_chance": 0.08,
+      "despawn_fade_end": [
+        72.0,
+        82.0
+      ],
+      "despawn_leftover_chance": 0.15,
+      "despawn_leftover_from": 70.0,
+      "disturbance_niche": [
+        0.1,
+        0.3,
+        0.6,
+        0.8
+      ],
+      "ecology_tags": [
+        "feral_crop",
+        "grazer_forage"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "WILD_CROP",
+      "fertility_niche": [
+        0.45,
+        0.65,
+        1,
+        1
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "icon": "flower_plant",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.3,
+        0.45,
+        0.75,
+        0.9
+      ],
+      "near_feature": null,
+      "omit_classes": [],
+      "patch_extras": [
+        1,
+        4
+      ],
+      "rainfall_niche": [
+        0.25,
+        0.4,
+        0.75,
+        0.9
+      ],
+      "recolour": {
+        "flower": [
+          170,
+          220,
+          110
+        ],
+        "stem": [
+          60,
+          140,
+          55
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": "wild_crop",
+      "spawn_peak": 0.045,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.0,
+      "temperature_niche": [
+        0.3,
+        0.5,
+        0.8,
+        0.95
+      ],
+      "terrains": [
+        "MEADOW"
+      ]
+    }
+  },
+  "maple": {
+    "can_be_cultivated": false,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "crop_plant_dense",
+      "fertility_effect": 0.0,
+      "flower_colour": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "growth_days": 32,
+      "harvest_max": 9,
+      "harvest_season": "SUMMER",
+      "harvest_seasons": [
+        "SUMMER"
+      ],
+      "omit_classes": [],
+      "plant_season": "SPRING",
+      "recolour": {
+        "flower": [
+          255,
+          255,
+          255,
+          255
+        ],
+        "stem": [
+          80,
+          140,
+          70,
+          255
+        ]
+      },
+      "seasonal_recolour": {
+        "SPRING": {
+          "omit_classes": [],
+          "recolour": {
+            "flower": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "stem": [
+              80,
+              140,
+              70,
+              255
+            ]
+          }
+        },
+        "SUMMER": {
+          "omit_classes": [],
+          "recolour": {
+            "flower": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "stem": [
+              80,
+              140,
+              70,
+              255
+            ]
+          }
+        }
+      },
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "crop_plant",
+      "stem_colour": [
+        80,
+        140,
+        70,
+        255
+      ],
+      "year_phases": [
+        "PLOUGH_PLANT",
+        "HARVEST",
+        "FALLOW",
+        "FALLOW"
+      ]
+    },
+    "growth_form": "tree",
+    "harvest_outputs": {
+      "hardwood_logs": 2
+    },
+    "label": "Maple",
+    "perennial": true,
+    "produce_resource": "hardwood_logs",
+    "seed_resource": "maple_saplings",
+    "short": "mpl",
+    "tree": {
+      "canopy_colour": [
+        90,
+        170,
+        70
+      ],
+      "cone_scale": 1.0,
+      "growth_years": 2.0,
+      "sapling_colour": [
+        160,
+        220,
+        110
+      ],
+      "shape": "round",
+      "wild_footprint": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "wild_icon": "tree_round",
+      "wood_resource": "hardwood_logs",
+      "wood_yield": 2
+    },
+    "wild": {
+      "clear_from_day": 0.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade_chance": 0.0,
+      "despawn_leftover_chance": 0.0,
+      "despawn_leftover_from": 0.0,
+      "disturbance_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "edge_terrains": [],
+      "fertility_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "harvest_max": 3,
+      "icon": "tree_round",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "omit_classes": [],
+      "patch_extras": [
+        0,
+        0
+      ],
+      "rainfall_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "recolour": {
+        "canopy": [
+          90,
+          170,
+          70,
+          255
+        ],
+        "shadow": [
+          51,
+          51,
+          51,
+          128
+        ],
+        "trunk": [
+          105,
+          75,
+          45,
+          255
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "spawn_activity": 0.0,
+      "spawn_peak": 0.0,
+      "spread_chance": 0.01,
+      "temperature_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "terrains": [
+        "GRASS"
+      ]
+    }
+  },
+  "meadowsweet": {
+    "can_be_cultivated": false,
+    "can_grow_wild": true,
+    "cultivated": {},
+    "growth_form": "perennial herb",
+    "harvest_outputs": {
+      "": 3
+    },
+    "label": "Meadowsweet",
+    "perennial": true,
+    "produce_resource": "",
+    "seed_resource": "",
+    "short": "mead",
+    "tree": {},
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        0.0,
+        0.0
+      ],
+      "despawn_fade_chance": 0.0,
+      "despawn_fade_end": [
+        0.0,
+        0.0
+      ],
+      "despawn_leftover_chance": 0.0,
+      "despawn_leftover_from": -1.0,
+      "disturbance_niche": [
+        0,
+        0.1,
+        0.3,
+        0.55
+      ],
+      "ecology_tags": [
+        "flowering",
+        "pollinator_food",
+        "wetland_cover"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "HERB",
+      "fertility_niche": [
+        0.25,
+        0.4,
+        0.8,
+        0.95
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "icon": "flower_plant",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.45,
+        0.6,
+        0.9,
+        1
+      ],
+      "near_feature": null,
+      "omit_classes": [],
+      "patch_extras": [
+        0,
+        0
+      ],
+      "rainfall_niche": [
+        0.35,
+        0.5,
+        0.9,
+        1
+      ],
+      "recolour": {
+        "flower": [
+          225,
+          240,
+          210
+        ],
+        "stem": [
+          115,
+          170,
+          90
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": null,
+      "spawn_peak": 0.035,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.01,
+      "temperature_niche": [
+        0.15,
+        0.3,
+        0.7,
+        0.85
+      ],
+      "terrains": [
+        "MEADOW",
+        "RIPARIAN"
+      ]
+    }
+  },
+  "mint": {
+    "can_be_cultivated": true,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "flower_plant_dense",
+      "fertility_effect": null,
+      "flower_colour": [
+        217,
+        180,
+        240
+      ],
+      "footprint": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "growth_days": 32,
+      "harvest_max": 9,
+      "harvest_season": "SUMMER",
+      "harvest_seasons": [
+        "SUMMER"
+      ],
+      "omit_classes": [],
+      "plant_season": "SPRING",
+      "recolour": {
+        "flower": [
+          217,
+          180,
+          240
+        ],
+        "stem": [
+          50,
+          160,
+          100
+        ]
+      },
+      "seasonal_recolour": {},
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "flower_plant",
+      "stem_colour": [
+        50,
+        160,
+        100
+      ],
+      "year_phases": [
+        "GROW",
+        "HARVEST",
+        "GROW",
+        "DORMANT"
+      ]
+    },
+    "growth_form": "perennial herb",
+    "harvest_outputs": {
+      "mint": 3
+    },
+    "label": "Mint",
+    "perennial": true,
+    "produce_resource": "mint",
+    "seed_resource": "mint_seeds",
+    "short": "mnt",
+    "tree": {},
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        48.0,
+        58.0
+      ],
+      "despawn_fade_chance": 0.08,
+      "despawn_fade_end": [
+        72.0,
+        82.0
+      ],
+      "despawn_leftover_chance": 0.15,
+      "despawn_leftover_from": 70.0,
+      "disturbance_niche": [
+        0.05,
+        0.15,
+        0.4,
+        0.65
+      ],
+      "ecology_tags": [
+        "feral_crop",
+        "grazer_forage"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "WILD_CROP",
+      "fertility_niche": [
+        0.25,
+        0.45,
+        0.85,
+        1
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "icon": "flower_plant",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.45,
+        0.6,
+        0.9,
+        1
+      ],
+      "near_feature": null,
+      "omit_classes": [],
+      "patch_extras": [
+        1,
+        4
+      ],
+      "rainfall_niche": [
+        0.35,
+        0.5,
+        0.85,
+        1
+      ],
+      "recolour": {
+        "flower": [
+          217,
+          180,
+          240
+        ],
+        "stem": [
+          50,
+          160,
+          100
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": "wild_crop",
+      "spawn_peak": 0.045,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.0,
+      "temperature_niche": [
+        0.15,
+        0.3,
+        0.7,
+        0.9
+      ],
+      "terrains": [
+        "MEADOW"
+      ]
+    }
+  },
+  "nettle": {
+    "can_be_cultivated": false,
+    "can_grow_wild": true,
+    "cultivated": {},
+    "growth_form": "perennial herb",
+    "harvest_outputs": {
+      "": 3
+    },
+    "label": "Nettle",
+    "perennial": true,
+    "produce_resource": "",
+    "seed_resource": "",
+    "short": "nett",
+    "tree": {},
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        0.0,
+        0.0
+      ],
+      "despawn_fade_chance": 0.0,
+      "despawn_fade_end": [
+        0.0,
+        0.0
+      ],
+      "despawn_leftover_chance": 0.0,
+      "despawn_leftover_from": -1.0,
+      "disturbance_niche": [
+        0.15,
+        0.35,
+        0.65,
+        0.85
+      ],
+      "ecology_tags": [
+        "flowering",
+        "pollinator_food"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "HERB",
+      "fertility_niche": [
+        0.55,
+        0.75,
+        1,
+        1
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "icon": "flower_plant",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.25,
+        0.4,
+        0.75,
+        0.9
+      ],
+      "near_feature": null,
+      "omit_classes": [],
+      "patch_extras": [
+        0,
+        0
+      ],
+      "rainfall_niche": [
+        0.2,
+        0.35,
+        0.75,
+        0.9
+      ],
+      "recolour": {
+        "flower": [
+          35,
+          90,
+          45
+        ],
+        "stem": [
+          35,
+          90,
+          45
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": null,
+      "spawn_peak": 0.035,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.01,
+      "temperature_niche": [
+        0.2,
+        0.4,
+        0.75,
+        0.9
+      ],
+      "terrains": [
+        "FOREST_FLOOR",
+        "GRASS",
+        "MEADOW",
+        "PATH"
+      ]
+    }
+  },
+  "oak": {
+    "can_be_cultivated": false,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "crop_plant_dense",
+      "fertility_effect": 0.0,
+      "flower_colour": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "growth_days": 32,
+      "harvest_max": 9,
+      "harvest_season": "SUMMER",
+      "harvest_seasons": [
+        "SUMMER"
+      ],
+      "omit_classes": [],
+      "plant_season": "SPRING",
+      "recolour": {
+        "flower": [
+          255,
+          255,
+          255,
+          255
+        ],
+        "stem": [
+          80,
+          140,
+          70,
+          255
+        ]
+      },
+      "seasonal_recolour": {
+        "SPRING": {
+          "omit_classes": [],
+          "recolour": {
+            "flower": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "stem": [
+              80,
+              140,
+              70,
+              255
+            ]
+          }
+        },
+        "SUMMER": {
+          "omit_classes": [],
+          "recolour": {
+            "flower": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "stem": [
+              80,
+              140,
+              70,
+              255
+            ]
+          }
+        }
+      },
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "crop_plant",
+      "stem_colour": [
+        80,
+        140,
+        70,
+        255
+      ],
+      "year_phases": [
+        "PLOUGH_PLANT",
+        "HARVEST",
+        "FALLOW",
+        "FALLOW"
+      ]
+    },
+    "growth_form": "tree",
+    "harvest_outputs": {
+      "hardwood_logs": 4
+    },
+    "label": "Oak",
+    "perennial": true,
+    "produce_resource": "hardwood_logs",
+    "seed_resource": "oak_saplings",
+    "short": "oak",
+    "tree": {
+      "canopy_colour": [
+        34,
+        120,
+        45
+      ],
+      "cone_scale": 1.0,
+      "growth_years": 3.0,
+      "sapling_colour": [
+        140,
+        210,
+        90
+      ],
+      "shape": "round",
+      "wild_footprint": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "wild_icon": "tree_round",
+      "wood_resource": "hardwood_logs",
+      "wood_yield": 4
+    },
+    "wild": {
+      "clear_from_day": 0.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade_chance": 0.0,
+      "despawn_leftover_chance": 0.0,
+      "despawn_leftover_from": 0.0,
+      "disturbance_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "edge_terrains": [],
+      "fertility_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "harvest_max": 3,
+      "icon": "tree_round",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "omit_classes": [],
+      "patch_extras": [
+        0,
+        0
+      ],
+      "rainfall_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "recolour": {
+        "canopy": [
+          34,
+          120,
+          45,
+          255
+        ],
+        "shadow": [
+          51,
+          51,
+          51,
+          128
+        ],
+        "trunk": [
+          105,
+          75,
+          45,
+          255
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "spawn_activity": 0.0,
+      "spawn_peak": 0.0,
+      "spread_chance": 0.01,
+      "temperature_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "terrains": [
+        "GRASS"
+      ]
+    }
+  },
+  "onion": {
+    "can_be_cultivated": true,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "crop_plant_dense",
+      "fertility_effect": 0.0,
+      "flower_colour": [
+        220,
+        200,
+        90,
+        255
+      ],
+      "footprint": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "growth_days": 32,
+      "harvest_max": 9,
+      "harvest_season": "SUMMER",
+      "harvest_seasons": [
+        "SUMMER"
+      ],
+      "omit_classes": [],
+      "plant_season": "SPRING",
+      "recolour": {
+        "flower": [
+          220,
+          200,
+          90,
+          255
+        ],
+        "stem": [
+          100,
+          160,
+          70,
+          255
+        ]
+      },
+      "seasonal_recolour": {
+        "SPRING": {
+          "omit_classes": [],
+          "recolour": {
+            "flower": [
+              220,
+              200,
+              90,
+              255
+            ],
+            "stem": [
+              100,
+              160,
+              70,
+              255
+            ]
+          }
+        },
+        "SUMMER": {
+          "omit_classes": [],
+          "recolour": {
+            "flower": [
+              220,
+              200,
+              90,
+              255
+            ],
+            "stem": [
+              100,
+              160,
+              70,
+              255
+            ]
+          }
+        }
+      },
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "crop_plant",
+      "stem_colour": [
+        100,
+        160,
+        70,
+        255
+      ],
+      "year_phases": [
+        "PLOUGH_PLANT",
+        "HARVEST",
+        "FALLOW",
+        "FALLOW"
+      ]
+    },
+    "growth_form": "annual herb",
+    "harvest_outputs": {
+      "onion": 3
+    },
+    "label": "Onion",
+    "perennial": false,
+    "produce_resource": "onion",
+    "seed_resource": "onion_seeds",
+    "short": "oni",
+    "tree": {
+      "canopy_colour": [
+        50,
+        130,
+        60
+      ],
+      "cone_scale": 1.0,
+      "growth_years": 2.0,
+      "sapling_colour": [
+        120,
+        190,
+        90
+      ],
+      "shape": "round",
+      "wood_resource": "logs",
+      "wood_yield": 2
+    },
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        48.0,
+        58.0
+      ],
+      "despawn_fade_chance": 0.08,
+      "despawn_fade_end": [
+        72.0,
+        82.0
+      ],
+      "despawn_leftover_chance": 0.15,
+      "despawn_leftover_from": 70.0,
+      "disturbance_niche": [
+        0.15,
+        0.35,
+        0.65,
+        0.85
+      ],
+      "ecology_tags": [
+        "feral_crop",
+        "grazer_forage"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "WILD_CROP",
+      "fertility_niche": [
+        0.35,
+        0.55,
+        0.85,
+        1.0
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "harvest_max": 3,
+      "icon": "crop_plant",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.2,
+        0.35,
+        0.6,
+        0.75
+      ],
+      "near_feature": null,
+      "omit_classes": [],
+      "patch_extras": [
+        1,
+        4
+      ],
+      "rainfall_niche": [
+        0.15,
+        0.3,
+        0.6,
+        0.8
+      ],
+      "recolour": {
+        "flower": [
+          220,
+          200,
+          90,
+          255
+        ],
+        "stem": [
+          100,
+          160,
+          70,
+          255
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": "wild_crop",
+      "spawn_peak": 0.045,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.0,
+      "temperature_niche": [
+        0.2,
+        0.35,
+        0.7,
+        0.85
+      ],
+      "terrains": [
+        "MEADOW",
+        "SOIL"
+      ]
+    }
+  },
+  "peas": {
+    "can_be_cultivated": true,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "vine_plant_dense",
+      "fertility_effect": null,
+      "flower_colour": [
+        235,
+        235,
+        225
+      ],
+      "footprint": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "growth_days": 32,
+      "harvest_max": 9,
+      "harvest_season": "SUMMER",
+      "harvest_seasons": [
+        "SUMMER"
+      ],
+      "omit_classes": [],
+      "plant_season": "SPRING",
+      "recolour": {
+        "flower": [
+          235,
+          235,
+          225
+        ],
+        "stem": [
+          70,
+          145,
+          65
+        ]
+      },
+      "seasonal_recolour": {},
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "crop_vine",
+      "stem_colour": [
+        70,
+        145,
+        65
+      ],
+      "year_phases": [
+        "PLOUGH_PLANT",
+        "HARVEST",
+        "FALLOW",
+        "FALLOW"
+      ]
+    },
+    "growth_form": "annual herb",
+    "harvest_outputs": {
+      "peas": 3
+    },
+    "label": "Peas",
+    "perennial": false,
+    "produce_resource": "peas",
+    "seed_resource": "pea_seeds",
+    "short": "pea",
+    "tree": {},
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        48.0,
+        58.0
+      ],
+      "despawn_fade_chance": 0.08,
+      "despawn_fade_end": [
+        72.0,
+        82.0
+      ],
+      "despawn_leftover_chance": 0.15,
+      "despawn_leftover_from": 70.0,
+      "disturbance_niche": [
+        0.05,
+        0.2,
+        0.5,
+        0.75
+      ],
+      "ecology_tags": [
+        "feral_crop",
+        "grazer_forage"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "WILD_CROP",
+      "fertility_niche": [
+        0.4,
+        0.6,
+        0.95,
+        1
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "icon": "crop_vine",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.3,
+        0.45,
+        0.8,
+        0.95
+      ],
+      "near_feature": null,
+      "omit_classes": [],
+      "patch_extras": [
+        1,
+        4
+      ],
+      "rainfall_niche": [
+        0.25,
+        0.4,
+        0.75,
+        0.9
+      ],
+      "recolour": {
+        "flower": [
+          235,
+          235,
+          225
+        ],
+        "stem": [
+          70,
+          145,
+          65
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": "wild_crop",
+      "spawn_peak": 0.045,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.0,
+      "temperature_niche": [
+        0.1,
+        0.25,
+        0.6,
+        0.78
+      ],
+      "terrains": [
+        "MEADOW"
+      ]
+    }
+  },
+  "pine": {
+    "can_be_cultivated": false,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "crop_plant_dense",
+      "fertility_effect": 0.0,
+      "flower_colour": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "growth_days": 32,
+      "harvest_max": 9,
+      "harvest_season": "SUMMER",
+      "harvest_seasons": [
+        "SUMMER"
+      ],
+      "omit_classes": [],
+      "plant_season": "SPRING",
+      "recolour": {
+        "flower": [
+          255,
+          255,
+          255,
+          255
+        ],
+        "stem": [
+          80,
+          140,
+          70,
+          255
+        ]
+      },
+      "seasonal_recolour": {
+        "SPRING": {
+          "omit_classes": [],
+          "recolour": {
+            "flower": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "stem": [
+              80,
+              140,
+              70,
+              255
+            ]
+          }
+        },
+        "SUMMER": {
+          "omit_classes": [],
+          "recolour": {
+            "flower": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "stem": [
+              80,
+              140,
+              70,
+              255
+            ]
+          }
+        }
+      },
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "crop_plant",
+      "stem_colour": [
+        80,
+        140,
+        70,
+        255
+      ],
+      "year_phases": [
+        "PLOUGH_PLANT",
+        "HARVEST",
+        "FALLOW",
+        "FALLOW"
+      ]
+    },
+    "growth_form": "tree",
+    "harvest_outputs": {
+      "logs": 2
+    },
+    "label": "Pine",
+    "perennial": true,
+    "produce_resource": "logs",
+    "seed_resource": "pine_saplings",
+    "short": "pine",
+    "tree": {
+      "canopy_colour": [
+        20,
+        90,
+        45
+      ],
+      "cone_scale": 1.0,
+      "growth_years": 1.0,
+      "sapling_colour": [
+        60,
+        140,
+        70
+      ],
+      "shape": "cone",
+      "wild_footprint": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "wild_icon": "tree_cone",
+      "wood_resource": "logs",
+      "wood_yield": 2
+    },
+    "wild": {
+      "clear_from_day": 0.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade_chance": 0.0,
+      "despawn_leftover_chance": 0.0,
+      "despawn_leftover_from": 0.0,
+      "disturbance_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "edge_terrains": [],
+      "fertility_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "harvest_max": 3,
+      "icon": "tree_cone",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "omit_classes": [],
+      "patch_extras": [
+        0,
+        0
+      ],
+      "rainfall_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "recolour": {
+        "canopy": [
+          20,
+          90,
+          45,
+          255
+        ],
+        "shadow": [
+          51,
+          51,
+          51,
+          128
+        ],
+        "trunk": [
+          105,
+          75,
+          45,
+          255
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "spawn_activity": 0.0,
+      "spawn_peak": 0.0,
+      "spread_chance": 0.01,
+      "temperature_niche": [
+        0.0,
+        0.25,
+        0.75,
+        1.0
+      ],
+      "terrains": [
+        "GRASS"
       ]
     }
   },
@@ -671,6 +4259,452 @@
       ]
     }
   },
+  "rye": {
+    "can_be_cultivated": true,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "crop_plant_dense",
+      "fertility_effect": 0.0,
+      "flower_colour": null,
+      "footprint": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "growth_days": 80,
+      "harvest_max": 9,
+      "harvest_season": "SUMMER",
+      "harvest_seasons": [
+        "SUMMER"
+      ],
+      "omit_classes": [
+        "flower"
+      ],
+      "plant_season": "AUTUMN",
+      "recolour": {
+        "stem": [
+          170,
+          140,
+          70,
+          255
+        ]
+      },
+      "seasonal_recolour": {
+        "AUTUMN": {
+          "omit_classes": [
+            "flower"
+          ],
+          "recolour": {
+            "stem": [
+              170,
+              140,
+              70,
+              255
+            ]
+          }
+        },
+        "SPRING": {
+          "omit_classes": [
+            "flower"
+          ],
+          "recolour": {
+            "stem": [
+              170,
+              140,
+              70,
+              255
+            ]
+          }
+        },
+        "SUMMER": {
+          "omit_classes": [
+            "flower"
+          ],
+          "recolour": {
+            "stem": [
+              170,
+              140,
+              70,
+              255
+            ]
+          }
+        },
+        "WINTER": {
+          "omit_classes": [
+            "flower"
+          ],
+          "recolour": {
+            "stem": [
+              170,
+              140,
+              70,
+              255
+            ]
+          }
+        }
+      },
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "crop_plant",
+      "stem_colour": [
+        170,
+        140,
+        70,
+        255
+      ],
+      "year_phases": [
+        "GROW",
+        "HARVEST",
+        "PLOUGH_PLANT",
+        "GROW"
+      ]
+    },
+    "growth_form": "annual herb",
+    "harvest_outputs": {
+      "rye": 3
+    },
+    "label": "Rye",
+    "perennial": false,
+    "produce_resource": "rye",
+    "seed_resource": "rye_grain",
+    "short": "rye",
+    "tree": {
+      "canopy_colour": [
+        50,
+        130,
+        60
+      ],
+      "cone_scale": 1.0,
+      "growth_years": 2.0,
+      "sapling_colour": [
+        120,
+        190,
+        90
+      ],
+      "shape": "round",
+      "wood_resource": "logs",
+      "wood_yield": 2
+    },
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        48.0,
+        58.0
+      ],
+      "despawn_fade_chance": 0.08,
+      "despawn_fade_end": [
+        72.0,
+        82.0
+      ],
+      "despawn_leftover_chance": 0.15,
+      "despawn_leftover_from": 70.0,
+      "disturbance_niche": [
+        0.1,
+        0.3,
+        0.6,
+        0.85
+      ],
+      "ecology_tags": [
+        "feral_crop",
+        "grazer_forage"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "WILD_CROP",
+      "fertility_niche": [
+        0.15,
+        0.3,
+        0.65,
+        0.85
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "harvest_max": 3,
+      "icon": "crop_plant",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.15,
+        0.25,
+        0.55,
+        0.7
+      ],
+      "near_feature": null,
+      "omit_classes": [
+        "flower"
+      ],
+      "patch_extras": [
+        1,
+        4
+      ],
+      "rainfall_niche": [
+        0.1,
+        0.25,
+        0.6,
+        0.8
+      ],
+      "recolour": {
+        "stem": [
+          170,
+          140,
+          70,
+          255
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": "wild_crop",
+      "spawn_peak": 0.045,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.0,
+      "temperature_niche": [
+        0.05,
+        0.25,
+        0.6,
+        0.8
+      ],
+      "terrains": [
+        "MEADOW"
+      ]
+    }
+  },
+  "sage": {
+    "can_be_cultivated": true,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "flower_plant_dense",
+      "fertility_effect": 0.0,
+      "flower_colour": [
+        70,
+        110,
+        200
+      ],
+      "footprint": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "growth_days": 32,
+      "harvest_max": 9,
+      "harvest_season": "SUMMER",
+      "harvest_seasons": [
+        "SUMMER"
+      ],
+      "omit_classes": [],
+      "plant_season": "SPRING",
+      "recolour": {
+        "flower": [
+          70,
+          110,
+          200
+        ],
+        "stem": [
+          80,
+          140,
+          90
+        ]
+      },
+      "seasonal_recolour": {
+        "AUTUMN": {
+          "flower_colour": [
+            70,
+            110,
+            11
+          ],
+          "stem_colour": [
+            80,
+            140,
+            90
+          ]
+        },
+        "WINTER": {
+          "flower_colour": [
+            70,
+            110,
+            17
+          ],
+          "stem_colour": [
+            80,
+            140,
+            90
+          ]
+        }
+      },
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "flower_plant",
+      "stem_colour": [
+        80,
+        140,
+        90
+      ],
+      "year_phases": [
+        "GROW",
+        "HARVEST",
+        "GROW",
+        "DORMANT"
+      ]
+    },
+    "growth_form": "perennial herb",
+    "harvest_outputs": {
+      "sage": 3
+    },
+    "label": "Sage",
+    "perennial": true,
+    "produce_resource": "sage",
+    "seed_resource": "sage_seeds",
+    "short": "sag",
+    "tree": {},
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        48.0,
+        58.0
+      ],
+      "despawn_fade_chance": 0.08,
+      "despawn_fade_end": [
+        72.0,
+        82.0
+      ],
+      "despawn_leftover_chance": 0.15,
+      "despawn_leftover_from": 70.0,
+      "disturbance_niche": [
+        0.05,
+        0.2,
+        0.45,
+        0.7
+      ],
+      "ecology_tags": [
+        "feral_crop",
+        "grazer_forage"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "WILD_CROP",
+      "fertility_niche": [
+        0.1,
+        0.25,
+        0.6,
+        0.8
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "icon": "flower_plant",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.1,
+        0.2,
+        0.45,
+        0.65
+      ],
+      "near_feature": null,
+      "omit_classes": [],
+      "patch_extras": [
+        1,
+        4
+      ],
+      "rainfall_niche": [
+        0.0,
+        0.1,
+        0.4,
+        0.65
+      ],
+      "recolour": {
+        "flower": [
+          70,
+          110,
+          200
+        ],
+        "stem": [
+          80,
+          140,
+          90
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": "wild_crop",
+      "spawn_peak": 0.045,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.0,
+      "temperature_niche": [
+        0.35,
+        0.55,
+        0.85,
+        1
+      ],
+      "terrains": [
+        "MEADOW"
+      ]
+    }
+  },
   "sedge": {
     "can_be_cultivated": false,
     "can_grow_wild": true,
@@ -882,6 +4916,552 @@
       ],
       "terrains": [
         "RIPARIAN"
+      ]
+    }
+  },
+  "turnip": {
+    "can_be_cultivated": true,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "crop_plant_dense",
+      "fertility_effect": null,
+      "flower_colour": [
+        225,
+        210,
+        105
+      ],
+      "footprint": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "growth_days": 32,
+      "harvest_max": 9,
+      "harvest_season": "AUTUMN",
+      "harvest_seasons": [
+        "AUTUMN"
+      ],
+      "omit_classes": [],
+      "plant_season": "SUMMER",
+      "recolour": {
+        "flower": [
+          225,
+          210,
+          105
+        ],
+        "stem": [
+          85,
+          145,
+          65
+        ]
+      },
+      "seasonal_recolour": {},
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "crop_plant",
+      "stem_colour": [
+        85,
+        145,
+        65
+      ],
+      "year_phases": [
+        "FALLOW",
+        "PLOUGH_PLANT",
+        "HARVEST",
+        "FALLOW"
+      ]
+    },
+    "growth_form": "annual herb",
+    "harvest_outputs": {
+      "turnip": 3
+    },
+    "label": "Turnip",
+    "perennial": false,
+    "produce_resource": "turnip",
+    "seed_resource": "turnip_seeds",
+    "short": "trn",
+    "tree": {},
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        48.0,
+        58.0
+      ],
+      "despawn_fade_chance": 0.08,
+      "despawn_fade_end": [
+        72.0,
+        82.0
+      ],
+      "despawn_leftover_chance": 0.15,
+      "despawn_leftover_from": 70.0,
+      "disturbance_niche": [
+        0.1,
+        0.3,
+        0.6,
+        0.8
+      ],
+      "ecology_tags": [
+        "feral_crop",
+        "grazer_forage"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "WILD_CROP",
+      "fertility_niche": [
+        0.45,
+        0.65,
+        1,
+        1
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "icon": "crop_plant",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.3,
+        0.45,
+        0.8,
+        0.95
+      ],
+      "near_feature": null,
+      "omit_classes": [],
+      "patch_extras": [
+        1,
+        4
+      ],
+      "rainfall_niche": [
+        0.25,
+        0.4,
+        0.75,
+        0.9
+      ],
+      "recolour": {
+        "flower": [
+          225,
+          210,
+          105
+        ],
+        "stem": [
+          85,
+          145,
+          65
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": "wild_crop",
+      "spawn_peak": 0.045,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.0,
+      "temperature_niche": [
+        0.05,
+        0.2,
+        0.6,
+        0.78
+      ],
+      "terrains": [
+        "FOREST_FLOOR",
+        "SOIL"
+      ]
+    }
+  },
+  "wheat": {
+    "can_be_cultivated": true,
+    "can_grow_wild": true,
+    "cultivated": {
+      "dense_icon": "crop_plant_dense",
+      "fertility_effect": 0.0,
+      "flower_colour": null,
+      "footprint": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "growth_days": 80,
+      "harvest_max": 9,
+      "harvest_season": "SUMMER",
+      "harvest_seasons": [
+        "SUMMER"
+      ],
+      "omit_classes": [
+        "flower"
+      ],
+      "plant_season": "AUTUMN",
+      "recolour": {
+        "stem": [
+          200,
+          170,
+          55,
+          255
+        ]
+      },
+      "seasonal_recolour": {
+        "AUTUMN": {
+          "omit_classes": [
+            "flower"
+          ],
+          "recolour": {
+            "stem": [
+              200,
+              170,
+              55,
+              255
+            ]
+          }
+        },
+        "SPRING": {
+          "omit_classes": [
+            "flower"
+          ],
+          "recolour": {
+            "stem": [
+              200,
+              170,
+              55,
+              255
+            ]
+          }
+        },
+        "SUMMER": {
+          "omit_classes": [
+            "flower"
+          ],
+          "recolour": {
+            "stem": [
+              200,
+              170,
+              55,
+              255
+            ]
+          }
+        },
+        "WINTER": {
+          "omit_classes": [
+            "flower"
+          ],
+          "recolour": {
+            "stem": [
+              200,
+              170,
+              55,
+              255
+            ]
+          }
+        }
+      },
+      "seed_amounts": [
+        1,
+        2,
+        3
+      ],
+      "sparse_icon": "crop_plant",
+      "stem_colour": [
+        200,
+        170,
+        55,
+        255
+      ],
+      "year_phases": [
+        "GROW",
+        "HARVEST",
+        "PLOUGH_PLANT",
+        "GROW"
+      ]
+    },
+    "growth_form": "annual herb",
+    "harvest_outputs": {
+      "wheat": 3
+    },
+    "label": "Wheat",
+    "perennial": false,
+    "produce_resource": "wheat",
+    "seed_resource": "wheat_grain",
+    "short": "wht",
+    "tree": {
+      "canopy_colour": [
+        50,
+        130,
+        60
+      ],
+      "cone_scale": 1.0,
+      "growth_years": 2.0,
+      "sapling_colour": [
+        120,
+        190,
+        90
+      ],
+      "shape": "round",
+      "wood_resource": "logs",
+      "wood_yield": 2
+    },
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        48.0,
+        58.0
+      ],
+      "despawn_fade_chance": 0.08,
+      "despawn_fade_end": [
+        72.0,
+        82.0
+      ],
+      "despawn_leftover_chance": 0.15,
+      "despawn_leftover_from": 70.0,
+      "disturbance_niche": [
+        0.15,
+        0.35,
+        0.65,
+        0.85
+      ],
+      "ecology_tags": [
+        "feral_crop",
+        "grazer_forage"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "WILD_CROP",
+      "fertility_niche": [
+        0.45,
+        0.65,
+        1.0,
+        1.0
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "harvest_max": 3,
+      "icon": "crop_plant",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.2,
+        0.35,
+        0.6,
+        0.75
+      ],
+      "near_feature": null,
+      "omit_classes": [
+        "flower"
+      ],
+      "patch_extras": [
+        1,
+        4
+      ],
+      "rainfall_niche": [
+        0.15,
+        0.3,
+        0.6,
+        0.8
+      ],
+      "recolour": {
+        "stem": [
+          200,
+          170,
+          55,
+          255
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": "wild_crop",
+      "spawn_peak": 0.045,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.0,
+      "temperature_niche": [
+        0.2,
+        0.4,
+        0.7,
+        0.85
+      ],
+      "terrains": [
+        "MEADOW"
+      ]
+    }
+  },
+  "yarrow": {
+    "can_be_cultivated": false,
+    "can_grow_wild": true,
+    "cultivated": {},
+    "growth_form": "perennial herb",
+    "harvest_outputs": {
+      "": 3
+    },
+    "label": "Yarrow",
+    "perennial": true,
+    "produce_resource": "",
+    "seed_resource": "",
+    "short": "yarr",
+    "tree": {},
+    "wild": {
+      "clear_from_day": -1.0,
+      "clear_ramp_days": 0.0,
+      "counts_toward_cap": true,
+      "despawn_fade": [
+        0.0,
+        0.0
+      ],
+      "despawn_fade_chance": 0.0,
+      "despawn_fade_end": [
+        0.0,
+        0.0
+      ],
+      "despawn_leftover_chance": 0.0,
+      "despawn_leftover_from": -1.0,
+      "disturbance_niche": [
+        0.1,
+        0.25,
+        0.55,
+        0.8
+      ],
+      "ecology_tags": [
+        "flowering",
+        "pollinator_food",
+        "grazer_forage"
+      ],
+      "edge_terrains": [],
+      "empty_fruit_colour": null,
+      "feature": "HERB",
+      "fertility_niche": [
+        0.05,
+        0.2,
+        0.55,
+        0.75
+      ],
+      "footprint": [
+        4
+      ],
+      "fruit_class": "",
+      "fruit_colour": null,
+      "fruit_fall": [
+        0.0,
+        0.0
+      ],
+      "fruit_rise": [
+        0.0,
+        0.0
+      ],
+      "fruiting": false,
+      "icon": "flower_plant",
+      "initial_count": 0,
+      "initial_fraction": 0.0,
+      "moisture_niche": [
+        0.1,
+        0.2,
+        0.5,
+        0.7
+      ],
+      "near_feature": null,
+      "omit_classes": [],
+      "patch_extras": [
+        0,
+        0
+      ],
+      "rainfall_niche": [
+        0.05,
+        0.15,
+        0.45,
+        0.7
+      ],
+      "recolour": {
+        "flower": [
+          240,
+          240,
+          225
+        ],
+        "stem": [
+          75,
+          130,
+          60
+        ]
+      },
+      "seed_amount_max": 1,
+      "seed_drop_chance": 0.3333333333333333,
+      "seed_near_chance": 0.0,
+      "seed_near_feature": null,
+      "spawn_activity": 0.55,
+      "spawn_fall": [
+        18.0,
+        30.0
+      ],
+      "spawn_group": null,
+      "spawn_peak": 0.035,
+      "spawn_rise": [
+        0.0,
+        8.0
+      ],
+      "spread_chance": 0.01,
+      "temperature_niche": [
+        0.25,
+        0.45,
+        0.8,
+        0.95
+      ],
+      "terrains": [
+        "GRASS",
+        "MEADOW"
       ]
     }
   }

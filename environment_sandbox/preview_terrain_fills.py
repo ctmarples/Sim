@@ -30,13 +30,16 @@ from terrain_mottle import MottleParams
 from terrain_overlays import OverlayParams, apply_overlays_to_field
 from terrain_settings import (
     AnimParams,
+    active_setting_set,
     get_anim_params,
     get_fleck,
     get_mottle,
     get_overlay,
+    list_setting_sets,
+    load_setting_set,
     load_settings,
     reset_defaults,
-    save_settings,
+    save_setting_set,
     season_transition,
     set_anim_params,
     set_fleck,
@@ -369,6 +372,12 @@ def main() -> int:
     status = "Loaded settings" if settings_path().is_file() else "Using defaults"
     save_msg = ""
     panel_scroll = 0
+    set_names = list(list_setting_sets()) or ["default"]
+    selected_set = active_setting_set()
+    if selected_set not in set_names:
+        set_names.append(selected_set)
+        set_names.sort(key=str.casefold)
+    set_index = set_names.index(selected_set)
 
     cell = 72
     field_px = GRID * cell
@@ -438,8 +447,12 @@ def main() -> int:
     btn_flecks = ActionButton("Flecks ON", panel_x + 126, btn_y, w=118, h=24)
     btn_play = ActionButton("Play year", panel_x, btn_y + 30, w=118, h=24)
     btn_forest = ActionButton("Forest OFF", panel_x + 126, btn_y + 30, w=118, h=24)
-    btn_save = ActionButton("Save settings", panel_x, btn_y + 60, w=244, h=28)
-    btn_reset = ActionButton("Reset defaults", panel_x, btn_y + 92, w=244, h=26)
+    btn_set_prev = ActionButton("<", panel_x, btn_y + 60, w=30, h=24)
+    btn_set_next = ActionButton(">", panel_x + 36, btn_y + 60, w=30, h=24)
+    btn_set_load = ActionButton("Load set", panel_x + 72, btn_y + 60, w=82, h=24)
+    btn_set_new = ActionButton("New set", panel_x + 160, btn_y + 60, w=84, h=24)
+    btn_save = ActionButton("Save current set", panel_x, btn_y + 90, w=244, h=28)
+    btn_reset = ActionButton("Reset defaults", panel_x, btn_y + 124, w=244, h=26)
 
     panel_sliders = mottle_knobs + overlay_knobs + fleck_knobs + anim_knobs
     panel_buttons = [
@@ -450,6 +463,10 @@ def main() -> int:
         btn_flecks,
         btn_play,
         btn_forest,
+        btn_set_prev,
+        btn_set_next,
+        btn_set_load,
+        btn_set_new,
         btn_save,
         btn_reset,
     ]
@@ -464,7 +481,7 @@ def main() -> int:
         "Mottle + overlays: selected biome.",
         "PNGs: assets/terrain/overlays/{kind}_N.png",
         "Flecks: selected season.  Wheel scrolls panel.",
-        "S save   D reset   Space play   G grid",
+        "S save set   D reset   Space play   G grid",
     )
     tip_base_y = btn_reset.base_y + 34
     panel_content_h = tip_base_y + len(tip_lines) * 13 + 8
@@ -549,8 +566,8 @@ def main() -> int:
                 elif event.key == pygame.K_g:
                     show_grid = not show_grid
                 elif event.key == pygame.K_s:
-                    path = save_settings()
-                    save_msg = f"Saved → {path.name}"
+                    path = save_setting_set(set_names[set_index])
+                    save_msg = f"Saved set → {path.stem}"
                     btn_save.flash = 20
                     status = save_msg
                 elif event.key == pygame.K_r:
@@ -621,9 +638,38 @@ def main() -> int:
                         forest_center = not forest_center
                         dirty = True
                         handled = True
+                    elif in_panel and btn_set_prev.hit(event.pos):
+                        set_index = (set_index - 1) % len(set_names)
+                        status = f"Selected set: {set_names[set_index]}"
+                        handled = True
+                    elif in_panel and btn_set_next.hit(event.pos):
+                        set_index = (set_index + 1) % len(set_names)
+                        status = f"Selected set: {set_names[set_index]}"
+                        handled = True
+                    elif in_panel and btn_set_load.hit(event.pos):
+                        name = set_names[set_index]
+                        if load_setting_set(name):
+                            mottle, fleck, anim, overlay = sync_from_store()
+                            dirty = True
+                            status = f"Loaded set: {name}"
+                        else:
+                            status = f"Could not load set: {name}"
+                        handled = True
+                    elif in_panel and btn_set_new.hit(event.pos):
+                        used = set(set_names)
+                        number = 1
+                        while f"terrain_set_{number}" in used:
+                            number += 1
+                        name = f"terrain_set_{number}"
+                        set_names.append(name)
+                        set_names.sort(key=str.casefold)
+                        set_index = set_names.index(name)
+                        path = save_setting_set(name)
+                        status = f"Created set: {path.stem}"
+                        handled = True
                     elif in_panel and btn_save.hit(event.pos):
-                        path = save_settings()
-                        save_msg = f"Saved → {path.name}"
+                        path = save_setting_set(set_names[set_index])
+                        save_msg = f"Saved set → {path.stem}"
                         status = save_msg
                         btn_save.flash = 24
                         handled = True
@@ -784,6 +830,7 @@ def main() -> int:
         btn_flecks.label = "Flecks ON" if fleck.enabled else "Flecks OFF"
         btn_play.label = "Pause year" if anim.autoplay else "Play year"
         btn_forest.label = "Forest ON" if forest_center else "Forest OFF"
+        set_name = set_names[set_index]
         for b, on in (
             (btn_rocks, overlay.rocks),
             (btn_foliage, overlay.foliage),
@@ -794,8 +841,16 @@ def main() -> int:
             (btn_forest, forest_center),
         ):
             b.draw(screen, small, active=on)
+        btn_set_prev.draw(screen, small)
+        btn_set_next.draw(screen, small)
+        btn_set_load.draw(screen, small)
+        btn_set_new.draw(screen, small)
         btn_save.draw(screen, small)
         btn_reset.draw(screen, small)
+        screen.blit(
+            tiny.render(f"terrain set: {set_name}", True, (185, 195, 175)),
+            (panel_x, btn_y + 48 - panel_scroll),
+        )
 
         for i, line in enumerate(tip_lines):
             screen.blit(
@@ -819,9 +874,15 @@ def main() -> int:
 
         pygame.display.flip()
 
+    # Closing the editor commits the set currently shown in the preview. The
+    # parent game notices process exit and reloads this active set.
+    save_setting_set(set_names[set_index])
     pygame.quit()
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
+    active_setting_set,
+    list_setting_sets,
+    load_setting_set,

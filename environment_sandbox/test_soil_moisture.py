@@ -6,6 +6,12 @@ from world import FeatureType, TerrainType, World
 
 
 class SoilMoistureTests(unittest.TestCase):
+    def test_environment_save_records_terrain_ecology_version(self):
+        from environment import EnvMaps
+        from developer_tools.terrain_editor import ecology_signature
+        saved=EnvMaps(1,1).to_save_dict()
+        self.assertEqual(saved["terrain_ecology_signature"],ecology_signature())
+
     def setUp(self):
         self.world = World(cols=7, rows=5, seed=22)
         for row in self.world.cells:

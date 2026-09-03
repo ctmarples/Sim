@@ -142,6 +142,12 @@ def _wild_crops_map() -> dict[TerrainType, tuple[str, ...]]:
 
 WILD_CROPS_BY_TERRAIN: dict[TerrainType, tuple[str, ...]] = _wild_crops_map()
 
+
+def refresh_wild_crops_by_terrain() -> None:
+    """Rebuild the derived crop index after Developer Tools registry edits."""
+    WILD_CROPS_BY_TERRAIN.clear()
+    WILD_CROPS_BY_TERRAIN.update(_wild_crops_map())
+
 # Terrains that accept planted saplings / natural sprouts.
 PLANTABLE_LAND: tuple[TerrainType, ...] = (
     TerrainType.SOIL,
@@ -270,13 +276,16 @@ TERRAIN_EDIT_LABELS: dict[TerrainType, str] = {
 
 
 class MapEditTool(Enum):
-    """Side-panel tools available while map-edit mode (Y) is active."""
+    """Side-panel tools available while map/object edit mode (T) is active."""
 
     HEIGHT_SET = "height_set"
     HEIGHT_RAISE = "height_raise"
     HEIGHT_LOWER = "height_lower"
     TERRAIN_PAINT = "terrain_paint"
     SEED_FOREST = "seed_forest"
+    PAINT_ROCKS = "paint_rocks"
+    PLACE_BUILDING = "place_building"
+    MOVE_BUILDING = "move_building"
 
 
 @dataclass
@@ -554,6 +563,7 @@ class World:
         radius: int,
         *,
         clear_features: bool = True,
+        bump_revision: bool = True,
     ) -> bool:
         """Paint ``terrain`` in a Chebyshev brush. Skips structure footprints.
 
@@ -570,8 +580,9 @@ class World:
                 cell = self.cells[y][x]
                 if cell.feature in STRUCTURE_FEATURES:
                     continue
-                if clear_features and cell.feature != FeatureType.NONE:
+                if clear_features and (cell.feature != FeatureType.NONE or cell.extra_objects):
                     cell.feature = FeatureType.NONE
+                    cell.extra_objects.clear()
                     cell.deposit = 0
                     cell.growth_ticks = 0
                     cell.crop_kind = None
@@ -585,7 +596,7 @@ class World:
                     apply_terrain_fertility(cell, reset=True)
                     self.mark_terrain_dirty(x, y)
                     changed = True
-        if changed:
+        if changed and bump_revision:
             self.terrain_revision += 1
         return changed
 
@@ -595,8 +606,10 @@ class World:
         cy: int,
         radius: int,
         rng: random.Random | None = None,
+        species: str | None = None,
+        bump_revision: bool = True,
     ) -> bool:
-        """Stamp a mixed forest: forest floor + mature trees (density by distance)."""
+        """Stamp forest floor and mature trees of one species, or a mixed forest."""
         rng = rng or random.Random()
         radius = max(0, int(radius))
         changed = False
@@ -626,6 +639,12 @@ class World:
                     cell.icon_variant = None
                     changed = True
                 if cell.feature == FeatureType.TREE:
+                    if species is not None and cell.tree_species != species:
+                        tree = resolve_tree(species)
+                        cell.tree_species = tree.key
+                        cell.deposit = tree.yield_amount
+                        cell.icon_variant = None
+                        changed = True
                     if cell.terrain != TerrainType.FOREST_FLOOR:
                         cell.terrain = TerrainType.FOREST_FLOOR
                         from soil import apply_terrain_fertility
@@ -641,10 +660,10 @@ class World:
                     chance *= 0.7
                 if rng.random() >= chance:
                     continue
-                species = pick_tree_species(rng)
-                tree = resolve_tree(species)
+                tree_species = species if species is not None else pick_tree_species(rng)
+                tree = resolve_tree(tree_species)
                 cell.feature = FeatureType.TREE
-                cell.tree_species = species
+                cell.tree_species = tree.key
                 cell.deposit = tree.yield_amount
                 cell.growth_ticks = 0
                 cell.icon_variant = None
@@ -656,8 +675,52 @@ class World:
                     self.mark_terrain_dirty(x, y)
                 changed = True
         if changed:
+            if bump_revision:
+                self.terrain_revision += 1
+            self.update_forest_floor(bump_revision=bump_revision)
+        return changed
+
+    def paint_rocks(
+        self,
+        cx: int,
+        cy: int,
+        radius: int,
+        rng: random.Random | None = None,
+        *,
+        bump_revision: bool = True,
+    ) -> bool:
+        """Paint a natural-looking area containing mixed small and large rocks."""
+        rng = rng or random.Random()
+        radius = max(0, int(radius))
+        changed = False
+        for y in range(cy - radius, cy + radius + 1):
+            for x in range(cx - radius, cx + radius + 1):
+                if not self.in_bounds(x, y):
+                    continue
+                dist = max(abs(x - cx), abs(y - cy))
+                if dist > radius:
+                    continue
+                cell = self.cells[y][x]
+                if cell.feature in STRUCTURE_FEATURES or is_water_terrain(cell.terrain):
+                    continue
+                chance = 0.90 if dist == 0 else 0.68 if dist <= 1 else 0.48
+                if radius > 0 and dist == radius:
+                    chance *= 0.65
+                if rng.random() >= chance:
+                    continue
+                cell.feature = FeatureType.ROCK
+                cell.extra_objects.clear()
+                if rng.random() < 0.35:
+                    cell.deposit = rng.randint(ROCK_LARGE_MIN, ROCK_LARGE_MAX)
+                else:
+                    cell.deposit = rng.randint(ROCK_SMALL_MIN, ROCK_SMALL_MAX)
+                cell.growth_ticks = 0
+                cell.crop_kind = None
+                cell.tree_species = None
+                cell.icon_variant = None
+                changed = True
+        if changed and bump_revision:
             self.terrain_revision += 1
-            self.update_forest_floor()
         return changed
 
     def _smooth_height_region(
@@ -1064,7 +1127,7 @@ class World:
                         cell.terrain_shade = shade
                     next_id += 1
 
-    def update_forest_floor(self) -> None:
+    def update_forest_floor(self, *, bump_revision: bool = True) -> None:
         """Forest floor forms under mature trees only; saplings never create it.
 
         Mature trees convert soil / grass / meadow under them to forest floor.
@@ -1094,7 +1157,7 @@ class World:
                     cell.terrain = TerrainType.SOIL
                     self.mark_terrain_dirty(x, y)
                     changed = True
-        if changed:
+        if changed and bump_revision:
             self.terrain_revision += 1
 
     def forest_floor_cells(self) -> list[tuple[int, int]]:
@@ -2666,6 +2729,35 @@ class World:
         crop_peak = (float(herb_leader.spawn_peak) * herb_activity
                      if herb_leader is not None else 0.0)
 
+        def terrain_spawn_weight(terrain: TerrainType) -> float:
+            from balance_config import active_balance
+
+            return active_balance().get_float(f"FLORA_SPAWN_WEIGHT_{terrain.name}")
+
+        def pick_crop_for_terrain(terrain: TerrainType, sample_day: float) -> str:
+            """Use developer spawn chances as relative weights in this terrain."""
+            keys = WILD_CROPS_BY_TERRAIN[terrain]
+            weighted = [
+                (
+                    key,
+                    max(
+                        0.0,
+                        species_spawn_rate(WILD_BY_KEY[key], sample_day)
+                        * float(WILD_BY_KEY[key].spawn_activity),
+                    ),
+                )
+                for key in keys
+            ]
+            total = sum(weight for _key, weight in weighted)
+            if total <= 0.0:
+                return self._forage_rng.choice(keys)
+            pick = self._forage_rng.random() * total
+            for key, weight in weighted:
+                pick -= weight
+                if pick <= 0.0:
+                    return key
+            return weighted[-1][0]
+
         def room(terrain: TerrainType) -> bool:
             tot = total_n.get(terrain, 0)
             if tot <= 0:
@@ -2712,7 +2804,8 @@ class World:
                     cell.feature == FeatureType.NONE
                     and cell.terrain in non_crop_species
                     and room(cell.terrain)
-                    and self._forage_rng.random() < non_crop_peak[cell.terrain]
+                    and self._forage_rng.random()
+                    < non_crop_peak[cell.terrain] * terrain_spawn_weight(cell.terrain)
                 ):
                     local = local_day(day, x, y)
                     opportunities = [
@@ -2765,10 +2858,11 @@ class World:
                     0 < wild_here < 3
                     and cell.terrain in WILD_CROPS_BY_TERRAIN
                     and crop_peak > 0
-                    and self._forage_rng.random() < crop_peak * 0.35
+                    and self._forage_rng.random()
+                    < crop_peak * 0.35 * terrain_spawn_weight(cell.terrain)
                 ):
-                    crop_key = self._forage_rng.choice(
-                        WILD_CROPS_BY_TERRAIN[cell.terrain]
+                    crop_key = pick_crop_for_terrain(
+                        cell.terrain, local_day(day, x, y)
                     )
                     species = WILD_BY_KEY[crop_key]
                     score = self.species_suitability_at(x, y, species)
@@ -2787,11 +2881,14 @@ class World:
                     and cell.terrain in WILD_CROPS_BY_TERRAIN
                     and room(cell.terrain)
                     and crop_peak > 0
-                    and self._forage_rng.random() < crop_peak
+                    and self._forage_rng.random()
+                    < crop_peak * terrain_spawn_weight(cell.terrain)
                 ):
                     base_chance = herb_spawn_rate(day, x, y) * herb_activity
                     if self._forage_rng.random() < base_chance / crop_peak:
-                        crop_key = self._forage_rng.choice(WILD_CROPS_BY_TERRAIN[cell.terrain])
+                        crop_key = pick_crop_for_terrain(
+                            cell.terrain, local_day(day, x, y)
+                        )
                         species = WILD_BY_KEY[crop_key]
                         score = self.species_suitability_at(x, y, species)
                         if (environment_allows_establishment(species, score)
@@ -2821,7 +2918,12 @@ class World:
         pressure = min(WILD_PROPAGULE_MAX_MULTIPLIER,
                        1.0 + neighbours * WILD_PROPAGULE_NEIGHBOUR_BONUS)
         suitability = self.species_suitability_at(nx, ny, species).combined
-        if self._forage_rng.random() >= species.spread_chance * suitability * pressure:
+        from balance_config import active_balance
+
+        terrain_weight = active_balance().get_float(
+            f"FLORA_SPAWN_WEIGHT_{target.terrain.name}"
+        )
+        if self._forage_rng.random() >= species.spread_chance * suitability * pressure * terrain_weight:
             return False
         target.feature = FeatureType[species.feature]
         target.crop_kind = species.key
@@ -3009,6 +3111,84 @@ class World:
                     for obj in cell.extra_objects
                     if obj.feature != FeatureType.MUSHROOM
                 ]
+
+    def respawn_flora(self, day: float, *, passes: int = 32) -> int:
+        """Replace non-tree natural flora for the current season and ecology."""
+        flora = {
+            FeatureType.WILD_CROP,
+            FeatureType.HERB,
+            FeatureType.REED,
+            FeatureType.MUSHROOM,
+            FeatureType.BERRY_BUSH,
+            FeatureType.WOOD_BUSH,
+        }
+        for row in self.cells:
+            for cell in row:
+                if cell.feature in flora:
+                    cell.feature = FeatureType.NONE
+                    cell.deposit = 0
+                    cell.growth_ticks = 0
+                    cell.crop_kind = None
+                cell.extra_objects = [obj for obj in cell.extra_objects if obj.feature not in flora]
+
+        # Permanent fruiting plants do not use the recurring spawn envelope,
+        # so restore their configured initial population at the best live sites.
+        for species in WILD_BY_KEY.values():
+            if not species.fruiting or species.initial_count <= 0:
+                continue
+            try:
+                feature = FeatureType[species.feature]
+            except KeyError:
+                continue
+            sites = []
+            for y, row in enumerate(self.cells):
+                for x, cell in enumerate(row):
+                    if cell.feature != FeatureType.NONE or not self._species_can_occupy(x, y, species):
+                        continue
+                    suitability = self.species_suitability_at(x, y, species)
+                    if environment_allows_establishment(species, suitability):
+                        sites.append((suitability.combined, self._forage_rng.random(), x, y))
+            sites.sort(reverse=True)
+            for _score, _tie, x, y in sites[:int(species.initial_count)]:
+                cell = self.cells[y][x]
+                cell.feature = feature
+                cell.crop_kind = species.key
+                cell.deposit = 0
+                cell.growth_ticks = 0
+
+        # Repeated canonical seasonal ticks build an established population,
+        # while retaining the current day's spawn windows and live niche maps.
+        for _ in range(max(1, int(passes))):
+            self._tick_herbs_seasonal(day)
+            self._tick_mushrooms_seasonal(day)
+        self._tick_berry_fruit(day)
+
+        return sum(
+            int(cell.feature in flora)
+            + sum(obj.feature in flora for obj in cell.extra_objects)
+            for row in self.cells
+            for cell in row
+        )
+
+    def reconcile_flora_with_catalogue(self) -> int:
+        """Remove loaded wild flora whose authored terrain match is no longer valid."""
+        flora = {FeatureType.WILD_CROP,FeatureType.HERB,FeatureType.REED,FeatureType.MUSHROOM,FeatureType.BERRY_BUSH,FeatureType.WOOD_BUSH}
+        removed=0
+        for row in self.cells:
+            for cell in row:
+                if cell.feature in flora:
+                    species=resolve_species(cell.feature.name,cell.crop_kind)
+                    if species is None or cell.terrain.name not in species.terrains:
+                        cell.feature=FeatureType.NONE;cell.deposit=0;cell.growth_ticks=0;cell.crop_kind=None;removed+=1
+                kept=[]
+                for obj in cell.extra_objects:
+                    if obj.feature in flora:
+                        species=resolve_species(obj.feature.name,obj.crop_kind)
+                        if species is None or cell.terrain.name not in species.terrains:
+                            removed+=1;continue
+                    kept.append(obj)
+                cell.extra_objects=kept
+        return removed
 
     def _wild_plant_counts(self, terrain: TerrainType) -> tuple[int, int]:
         """Return (wild plant tiles, total tiles) for a terrain type."""

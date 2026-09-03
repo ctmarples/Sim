@@ -1355,6 +1355,27 @@ BALANCE_CATEGORIES = tuple(
     for category in (_split_wildlife if cat.id == "wildlife" else (cat,))
 )
 
+_FLORA_TERRAINS = (
+    "SOIL", "FOREST_FLOOR", "GRASS", "MEADOW", "RIPARIAN",
+    "WATER", "RIVER", "ROCK", "URBAN", "PATH",
+)
+BALANCE_CATEGORIES += (
+    BalanceCategory(
+        "flora",
+        "Flora",
+        tuple(
+            BalanceParam(
+                f"FLORA_SPAWN_WEIGHT_{name}",
+                f"{name.replace('_', ' ').title()} spawn strength",
+                "float", 1.0, 0.0, 3.0, 0.1,
+                "Scales total wild-flora spawn pressure on this terrain while preserving relative species chances.",
+                "×",
+            )
+            for name in _FLORA_TERRAINS
+        ),
+    ),
+)
+
 _PARAM_BY_KEY: dict[str, BalanceParam] = {
     p.key: p for cat in BALANCE_CATEGORIES for p in cat.params
 }

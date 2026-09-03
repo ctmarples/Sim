@@ -12,6 +12,16 @@ from settings import COLOUR_TEXT, COLOUR_TEXT_DIM, COLOUR_TOOLBAR_BORDER, COLOUR
 from .widgets import Checkbox, ColourField, Dropdown, FloatField, IntegerField, ScrollableList, TextField
 
 
+NICHE_VALUE_LABELS = ("Min", "Ideal from", "Ideal to", "Max")
+NICHE_DESCRIPTIONS = {
+    "temperature_niche": "0 = -10 C, 1 = 35 C; values between are proportional.",
+    "rainfall_niche": "0 = driest long-term climate, 1 = wettest climate.",
+    "moisture_niche": "0 = driest soil, 1 = fully waterlogged soil.",
+    "fertility_niche": "0 = depleted soil, 1 = richest soil.",
+    "disturbance_niche": "0 = untouched ground, 1 = heavily worked or disrupted ground.",
+}
+
+
 BG = (25, 31, 34)
 GOOD = (115, 190, 125)
 BAD = (230, 95, 95)
@@ -479,10 +489,10 @@ class IconImportPage:
 
 class ResourceAuthoringPage:
     def __init__(self,service,icons,on_saved=None):
-        self.service=service;self.icons=icons;self.on_saved=on_saved;self.list=ScrollableList(pygame.Rect(0,0,1,1),row_height=25);self.icon_list=ScrollableList(pygame.Rect(0,0,1,1),row_height=24);self.icon_picker=False;self.fields={};self.actions=[];self.message="Select a resource or click New Resource.";self.refresh()
+        self.service=service;self.icons=icons;self.on_saved=on_saved;self.list=ScrollableList(pygame.Rect(0,0,1,1),row_height=25);self.search=TextField(pygame.Rect(0,0,1,1),placeholder="Search resources");self.icon_list=ScrollableList(pygame.Rect(0,0,1,1),row_height=24);self.icon_picker=False;self.fields={};self.actions=[];self.message="Select a resource or click New Resource.";self.refresh()
         self.list.category=lambda item:item.get("group","Other")
     def refresh(self,key=None):
-        self.list.set_items(self.service.records)
+        query=self.search.text.strip().casefold();self.list.set_items([r for r in self.service.records if not query or query in r["key"].casefold() or query in r["label"].casefold()])
         if key:self.list.selected_index=next((i for i,r in enumerate(self.list.items) if r["key"]==key),None)
     def load(self):
         c=self.service.candidate;self.fields={}
@@ -532,7 +542,8 @@ class ResourceAuthoringPage:
     def draw(self,surface,panel,font,small):
         left=pygame.Rect(panel.x+24,panel.y+92,330,panel.h-160);right=pygame.Rect(left.right+14,left.y,panel.right-left.right-38,left.h);self.actions=[]
         for i,(a,l,en) in enumerate((("new","New Resource",True),("duplicate","Duplicate",self.service.candidate is not None),("delete","Delete",self.service.candidate is not None))):r=pygame.Rect(left.x+i*110,left.y,103,30);self.actions.append((r,a,en));_button(surface,small,r,l,enabled=en)
-        self.list.rect=pygame.Rect(left.x,left.y+40,left.w,left.h-40);self.list.draw(surface,small,lambda r:f"{r['key']} — {r['label']}")
+        self.search.rect=pygame.Rect(left.x,left.y+40,left.w,28);self.search.draw(surface,small)
+        self.list.rect=pygame.Rect(left.x,left.y+76,left.w,left.h-76);self.list.draw(surface,small,lambda r:f"{r['key']} — {r['label']}")
         pygame.draw.rect(surface,BG,right);pygame.draw.rect(surface,COLOUR_TOOLBAR_BORDER,right,1);surface.blit(font.render("RESOURCE EDITOR",True,COLOUR_TEXT),(right.x+14,right.y+10))
         if not self.service.candidate:return
         x,y,fx=right.x+14,right.y+50,right.x+175
@@ -797,6 +808,10 @@ class WildSpeciesAuthoringPage:
         def label(text):surface.blit(small.render(text,True,COLOUR_TEXT_DIM),(x,y+5))
         for heading,keys in self.GROUPS:
             surface.blit(font.render(heading.upper(),True,(150,190,165)),(x,y));y+=28
+            if heading == "Environmental niche":
+                surface.blit(small.render("Four points define tolerance: outside Min/Max = unsuitable; between Ideal from/to = best.",True,COLOUR_TEXT_DIM),(x,y));y+=22
+                for i,text in enumerate(NICHE_VALUE_LABELS):surface.blit(small.render(text,True,COLOUR_TEXT_DIM),(fx+25+i*72,y))
+                y+=20
             for key in keys:
                 label(key.replace("_"," ").title())
                 if key in self.terrains:
@@ -814,6 +829,8 @@ class WildSpeciesAuthoringPage:
                     offset=25 if key in self.optional_enabled else 0
                     if key in self.optional_enabled:self.optional_enabled[key].rect=pygame.Rect(fx,y+3,18,18);self.optional_enabled[key].draw(surface)
                     for i,item in enumerate(ctl):item.rect=pygame.Rect(fx+offset+i*72,y,66,26);item.draw(surface,small)
+                    if key in self.NICHES:
+                        y+=27;surface.blit(small.render(NICHE_DESCRIPTIONS[key],True,COLOUR_TEXT_DIM),(fx,y));y+=18;continue
                 elif isinstance(ctl,Checkbox):ctl.rect=pygame.Rect(fx,y+3,20,20);ctl.draw(surface)
                 else:
                     offset=25 if key in self.optional_enabled else 0
@@ -1089,15 +1106,15 @@ class PlantAuthoringPage:
     def draw(self,surface,panel,font,small):
         from seasons import Season
         left=pygame.Rect(panel.x+24,panel.y+72,245,panel.h-140);right=pygame.Rect(left.right+12,left.y,panel.right-left.right-36,left.h);self.actions=[]
-        self.search.rect=pygame.Rect(left.x,left.y,left.w,29);self.search.draw(surface,small)
-        top_x=right.x
-        for i,(action,label,enabled) in enumerate((("new","New Plant",True),("duplicate","Duplicate",self.service.candidate is not None),("delete","Confirm Delete" if self.delete_armed else "Delete",self.service.candidate is not None))):
-            rect=pygame.Rect(top_x+i*112,left.y,105,29);self.actions.append((rect,action,enabled));_button(surface,small,rect,label,enabled=enabled,hot=action=="delete" and self.delete_armed)
-        self.list.rect=pygame.Rect(left.x,left.y+38,left.w,left.h-38);self.list.draw(surface,small,lambda item:item.label)
+        for i,(action,label,enabled) in enumerate((("new","New Plant",True),("duplicate","Duplicate",self.service.candidate is not None))):
+            rect=pygame.Rect(left.x+i*124,left.y,117,29);self.actions.append((rect,action,enabled));_button(surface,small,rect,label,enabled=enabled)
+        self.search.rect=pygame.Rect(left.x,left.y+37,left.w,29);self.search.draw(surface,small)
+        self.list.rect=pygame.Rect(left.x,left.y+74,left.w,left.h-74);self.list.draw(surface,small,lambda item:item.label)
         pygame.draw.rect(surface,BG,right);pygame.draw.rect(surface,COLOUR_TOOLBAR_BORDER,right,1);p=self.service.candidate
         if not p:
             surface.blit(font.render("Select a plant or choose New Plant",True,COLOUR_TEXT_DIM),(right.x+18,right.y+55));return
         surface.blit(font.render(p.label,True,COLOUR_TEXT),(right.x+16,right.y+12));surface.blit(small.render(f"key: {p.key}  {'🔒' if self.service.original else '(new)' }",True,COLOUR_TEXT_DIM),(right.x+16,right.y+38))
+        delete=pygame.Rect(right.right-126,right.y+65,110,27);self.actions.append((delete,"delete",True));_button(surface,small,delete,"Confirm Delete" if self.delete_armed else "Delete",hot=self.delete_armed)
         self.controls["growth_form"].rect=pygame.Rect(right.x+190,right.y+10,190,27);self.controls["growth_form"].draw(surface,small)
         for i,(key,label) in enumerate((("can_be_cultivated","Cultivated"),("can_grow_wild","Wild"))):
             ctl=self.controls[key];ctl.rect=pygame.Rect(right.x+400+i*120,right.y+14,18,18);ctl.draw(surface);surface.blit(small.render(label,True,COLOUR_TEXT),(ctl.rect.right+4,ctl.rect.y+1))
@@ -1121,6 +1138,7 @@ class PlantAuthoringPage:
                 rect=pygame.Rect(fx+index*61,y,55,25);self.actions.append((rect,f"fp_{mode}_{n}",True));_button(surface,small,rect,f"[{n}×{n}]" if n==size else f"{n}×{n}")
             y+=33
         divider("SHARED")
+        row("ID / key",self.controls["key"])
         for key in ("label","short","produce_resource","seed_resource","perennial","harvest_amount"):row(key.replace("_"," ").title(),self.controls[key])
         divider("PRESENTATION")
         if p.can_grow_wild:
@@ -1167,10 +1185,13 @@ class PlantAuthoringPage:
                     for index,(name,ctl) in enumerate(boxes.items()):col=index%4;line=index//4;ctl.rect=pygame.Rect(fx+col*92,y+line*22,17,17);ctl.draw(surface);surface.blit(small.render(name[:7].title(),True,COLOUR_TEXT),(ctl.rect.right+2,ctl.rect.y))
                     y+=((len(boxes)+3)//4)*22+7
                 surface.blit(font.render("Environmental niche",True,COLOUR_TEXT),(x,y));y+=28
+                surface.blit(small.render("Outside Min/Max: cannot establish. Ideal from-to: full suitability.",True,COLOUR_TEXT_DIM),(x,y));y+=20
+                for i,text in enumerate(NICHE_VALUE_LABELS):surface.blit(small.render(text,True,COLOUR_TEXT_DIM),(fx+i*76,y))
+                y+=20
                 for name,items in self.niches.items():
                     surface.blit(small.render(name.replace("_niche","").title(),True,COLOUR_TEXT_DIM),(x,y+5))
                     for i,item in enumerate(items):item.rect=pygame.Rect(fx+i*76,y,69,25);item.draw(surface,small)
-                    y+=31
+                    y+=27;surface.blit(small.render(NICHE_DESCRIPTIONS[name],True,COLOUR_TEXT_DIM),(fx,y));y+=19
                 for key,label in (("spawn_peak","Spawn chance"),("spread_chance","Spread chance"),("patch_extras","Patch extras"),("wild_harvest_max","Maximum wild harvest"),("seed_drop_chance","Seed drop chance"),("wild_seed_amount_max","Maximum wild seed amount")):row(label,self.controls[key])
                 surface.blit(font.render("Advanced spawn / despawn",True,COLOUR_TEXT),(x,y));y+=27
                 for key in self.WILD_FLOATS:
@@ -1179,3 +1200,51 @@ class PlantAuthoringPage:
         for ctl in self._all():
             if isinstance(ctl,(Dropdown,ColourField)) and ctl.open:ctl.draw(surface,small)
         surface.set_clip(old)
+
+
+class TerrainAuthoringPage:
+    """Terrain-centric ecology values and the inverse wild-plant matrix."""
+    FIELDS=(
+        ("soil_moisture","Initial soil moisture","0 = dry, 1 = saturated"),
+        ("fertility","Initial fertility","0 = depleted, 1 = richest"),
+        ("temperature_offset_c","Temperature offset (C)","Added to local air temperature"),
+        ("rainfall_multiplier","Rainfall multiplier","1 = unchanged local rainfall"),
+    )
+    def __init__(self,service):
+        from world import TerrainType
+        rect=pygame.Rect(0,0,1,1);self.service=service;self.list=ScrollableList(rect,row_height=30);self.list.set_items(list(TerrainType));self.list.selected_index=list(TerrainType).index(TerrainType.GRASS);self.controls={};self.plants={};self.actions=[];self.scroll=0;self.message="Select a terrain type.";self.load(TerrainType.GRASS)
+    def load(self,terrain):
+        self.service.select(terrain.name);row=self.service.values[terrain.name];rect=pygame.Rect(0,0,1,1)
+        self.controls={k:FloatField(rect,str(row[k]),minimum=0 if k!="temperature_offset_c" else None,maximum=2 if k=="rainfall_multiplier" else 1 if k!="temperature_offset_c" else None) for k,_,_ in self.FIELDS}
+        selected=self.service.selected_plants();self.plants={p.key:Checkbox(rect,p.key in selected) for p in self.service.wild_plants()};self.scroll=0
+    def _all(self):return list(self.controls.values())+list(self.plants.values())
+    def handle_event(self,event):
+        old=self.list.selected_index
+        if self.list.handle_event(event):
+            if old!=self.list.selected_index and self.list.selected:self.load(self.list.selected)
+            return True
+        for ctl in self._all():
+            if ctl.handle_event(event):return True
+        if event.type==pygame.MOUSEWHEEL:self.scroll=max(0,self.scroll-event.y*35);return True
+        if event.type==pygame.MOUSEBUTTONDOWN and event.button==1:
+            for rect,action in self.actions:
+                if rect.collidepoint(event.pos) and action=="save":
+                    values={k:self.controls[k].parse() for k,_,_ in self.FIELDS}
+                    if any(v is None for v in values.values()):self.message="Enter valid numeric terrain values."
+                    else:_ok,self.message=self.service.save(values,{k for k,b in self.plants.items() if b.checked})
+                    return True
+        return False
+    def draw(self,surface,panel,font,small):
+        left=pygame.Rect(panel.x+24,panel.y+82,250,panel.h-145);right=pygame.Rect(left.right+14,left.y,panel.right-left.right-38,left.h);self.actions=[]
+        self.list.rect=left;self.list.draw(surface,small,lambda t:t.name.replace("_"," ").title())
+        pygame.draw.rect(surface,BG,right);pygame.draw.rect(surface,COLOUR_TOOLBAR_BORDER,right,1)
+        terrain=self.list.selected or __import__("world").TerrainType.GRASS
+        surface.blit(font.render(terrain.name.replace("_"," ").title(),True,COLOUR_TEXT),(right.x+16,right.y+12))
+        clip=pygame.Rect(right.x+2,right.y+43,right.w-4,right.h-92);old=surface.get_clip();surface.set_clip(clip);x=right.x+16;fx=right.x+230;y=right.y+52-self.scroll
+        surface.blit(font.render("ECOLOGICAL BASE VALUES",True,(150,190,165)),(x,y));y+=31
+        for key,label,hint in self.FIELDS:
+            surface.blit(small.render(label,True,COLOUR_TEXT_DIM),(x,y+5));ctl=self.controls[key];ctl.rect=pygame.Rect(fx,y,160,26);ctl.draw(surface,small);y+=28;surface.blit(small.render(hint,True,COLOUR_TEXT_DIM),(fx,y));y+=22
+        surface.blit(font.render("WILD PLANTS ALLOWED ON THIS TERRAIN",True,(150,190,165)),(x,y));y+=30
+        for p in self.service.wild_plants():
+            ctl=self.plants[p.key];ctl.rect=pygame.Rect(x,y+2,18,18);ctl.draw(surface);surface.blit(small.render(p.label,True,COLOUR_TEXT),(x+26,y+2));y+=25
+        surface.set_clip(old);save=pygame.Rect(right.x+16,right.bottom-39,110,28);self.actions.append((save,"save"));_button(surface,small,save,"Save")

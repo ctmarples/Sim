@@ -435,6 +435,9 @@ AREA_DRAW_KINDS = {
     BuildingKind.FISHER,
 }
 
+# Editor authoring is deliberately independent of progression unlocks.
+EDITOR_BUILDING_KINDS = tuple(BuildingKind)
+
 
 class Game:
     def __init__(
@@ -504,12 +507,17 @@ class Game:
         self._height_warp_before_edit = HEIGHT_SAMPLE_ENABLED_DEFAULT
         self.map_edit_tool = MapEditTool.HEIGHT_SET
         self.map_edit_terrain = TerrainType.GRASS
+        self.map_edit_tree_species: str | None = None
+        self.map_edit_building_kind = BuildingKind.HOME
+        self.map_edit_move_building_id: int | None = None
         self.height_paint_value = 20.0
         self.height_delta_step = HEIGHT_EDIT_DELTA_DEFAULT
         self.height_brush_radius = 2
         self._height_painting = False
         self._height_paint_last: tuple[int, int] | None = None
         self._edit_paint_rng = random.Random(0xED17)
+        self._map_edit_env_dirty = False
+        self._map_edit_terrain_dirty = False
         self._show_subtile_grid = False
         self._show_object_footprints = False
         self._player_inside_building_id: int | None = None
@@ -629,6 +637,7 @@ class Game:
         self.developer_tools = None
         self._content_lab_active = False
         self._content_lab_session = None
+        self._terrain_editor_process = None
         self._launch_map_files: list[Path] = []
         self._launch_gen = {
             "composition": "valley",
@@ -2060,6 +2069,14 @@ class Game:
                     self.balance_dialog.handle_mouseup(event.pos, self.balance)
                     self._apply_time_balance()
                     self._refresh_active_meal_buffs()
+                    action = self.balance_dialog.pending_action
+                    if action == "respawn_flora":
+                        self.balance_dialog.pending_action = None
+                        total = self.world.respawn_flora(float(self.calendar_day))
+                        self._invalidate_forage_index()
+                        self._sample_environment()
+                        self._refresh_indicators()
+                        self._set_status(f"Flora respawned: {total} plants for day {self.calendar_day}.")
                     status = self.balance_dialog.pending_status
                     if status:
                         self._set_status(status)
@@ -2377,17 +2394,19 @@ class Game:
         elif key == pygame.K_b:
             self._cycle_place_kind()
         elif key == pygame.K_t:
-            self._cycle_selected_building_task()
+            self._toggle_height_edit()
         elif key == pygame.K_c:
             self._clear_selected_building_areas()
         elif key == pygame.K_SPACE:
             self._toggle_pause()
         elif key == pygame.K_h:
             if self.height_edit_mode:
-                self._set_status("Exit map edit (Y) before toggling habitat view (H).")
+                self._set_status("Exit map/object edit (T) before toggling habitat view (H).")
             else:
                 self._toggle_habitat_view()
         elif key == pygame.K_y:
+            # Backward-compatible alias for saves/tutorial notes made while the
+            # original editor was exposed on Y.
             self._toggle_height_edit()
         elif self.height_edit_mode and key in (
             pygame.K_EQUALS,
@@ -2616,24 +2635,33 @@ class Game:
         if tool == MapEditTool.HEIGHT_SET:
             return (
                 f"Set height={self.height_paint_value:.0f}  brush={brush}  "
-                f"(drag paint · panel tools · Y exit)"
+                f"(drag paint · panel tools · T exit)"
             )
         if tool == MapEditTool.HEIGHT_RAISE:
             return (
                 f"Raise +{self.height_delta_step:.0f}  brush={brush}  "
-                f"(drag · panel tools · Y exit)"
+                f"(drag · panel tools · T exit)"
             )
         if tool == MapEditTool.HEIGHT_LOWER:
             return (
                 f"Lower -{self.height_delta_step:.0f}  brush={brush}  "
-                f"(drag · panel tools · Y exit)"
+                f"(drag · panel tools · T exit)"
             )
         if tool == MapEditTool.TERRAIN_PAINT:
             label = TERRAIN_EDIT_LABELS.get(
                 self.map_edit_terrain, self.map_edit_terrain.name.title()
             )
-            return f"Paint {label}  brush={brush}  (drag · panel tools · Y exit)"
-        return f"Seed forest  brush={brush}  (drag · panel tools · Y exit)"
+            return f"Paint {label}  brush={brush}  (drag · panel tools · T exit)"
+        if tool == MapEditTool.SEED_FOREST:
+            species = self.map_edit_tree_species or "mixed"
+            return f"Seed {species} forest  brush={brush}  (drag · T exit)"
+        if tool == MapEditTool.PAINT_ROCKS:
+            return f"Paint mixed rocks  brush={brush}  (drag · T exit)"
+        if tool == MapEditTool.PLACE_BUILDING:
+            return f"Place {BUILDING_LABELS[self.map_edit_building_kind]} instantly (click · T exit)"
+        if self.map_edit_move_building_id is None:
+            return "Move building: click a building, then its new centre (T exit)"
+        return f"Move building #{self.map_edit_move_building_id}: click its new centre"
 
     @staticmethod
     def _height_heatmap_colour(t: float) -> tuple[int, int, int]:
@@ -2666,21 +2694,25 @@ class Game:
             self.height_sample_enabled = False
             self._invalidate_height_sample_cache()
             self.place_kind = None
+            self.map_edit_move_building_id = None
             self._clear_selection()
             self.world.ensure_height_corners()
             self._set_status(self._height_edit_status())
         else:
             self._height_painting = False
             self._sync_height_sample_from_world()
+            self._flush_map_edit_environment()
             self.height_sample_enabled = self._height_warp_before_edit
             if self.height_sample_enabled:
                 self._invalidate_height_sample_cache()
                 self._set_status("Map edit OFF — warp restored (H to toggle)")
             else:
-                self._set_status("Map edit OFF — Y to edit, H for warp")
+                self._set_status("Map/object edit OFF — T to edit, H for habitat view")
 
     def _set_map_edit_tool(self, tool: MapEditTool) -> None:
         self.map_edit_tool = tool
+        if tool != MapEditTool.MOVE_BUILDING:
+            self.map_edit_move_building_id = None
         self._set_status(self._height_edit_status())
 
     def _adjust_height_paint_value(self, delta: float) -> None:
@@ -2753,10 +2785,112 @@ class Game:
             )
             self._sync_height_corners_peak()
         elif tool == MapEditTool.TERRAIN_PAINT:
-            self.world.paint_terrain(x, y, self.map_edit_terrain, r)
-            self._invalidate_fishing_shore_cache()
+            if self.world.paint_terrain(
+                x, y, self.map_edit_terrain, r, bump_revision=False
+            ):
+                self._after_map_edit(terrain_changed=True)
         elif tool == MapEditTool.SEED_FOREST:
-            self.world.seed_forest(x, y, r, self._edit_paint_rng)
+            if self.world.seed_forest(
+                x, y, r, self._edit_paint_rng, self.map_edit_tree_species,
+                bump_revision=False,
+            ):
+                self._after_map_edit(terrain_changed=True)
+        elif tool == MapEditTool.PAINT_ROCKS:
+            if self.world.paint_rocks(
+                x, y, r, self._edit_paint_rng, bump_revision=False
+            ):
+                self._after_map_edit(terrain_changed=True)
+
+    def _after_map_edit(self, *, terrain_changed: bool = False) -> None:
+        """Refresh simulation and baked visual state after an editor mutation."""
+        if terrain_changed:
+            self._map_edit_terrain_dirty = True
+        self._map_edit_env_dirty = True
+
+    def _flush_map_edit_environment(self) -> None:
+        if not self._map_edit_env_dirty:
+            return
+        self._map_edit_env_dirty = False
+        self.world.invalidate_movement_cache()
+        self._invalidate_forage_index()
+        self._invalidate_fishing_shore_cache()
+        self._invalidate_season_density_fields()
+        if self._map_edit_terrain_dirty:
+            self._map_edit_terrain_dirty = False
+            self.world.bump_terrain()
+            self._invalidate_terrain_layer()
+            self._world_layer = None
+            self._world_layer_key = None
+        self._sample_environment()
+
+    def _editor_place_building(self, kind: BuildingKind, x: int, y: int) -> bool:
+        """Place a completed, free building for authored map layouts."""
+        plot_w, plot_h = default_building_plot(kind)
+        ox, oy = x - plot_w // 2, y - plot_h // 2
+        cells = [(px, py) for py in range(oy, oy + plot_h) for px in range(ox, ox + plot_w)]
+        reason = self._footprint_blocked(cells)
+        if reason is not None:
+            self._set_status(reason)
+            return False
+        site = ConstructionSite(
+            id=self.next_construction_id, x=ox, y=oy, kind=kind,
+            plot_w=plot_w, plot_h=plot_h,
+        )
+        self.next_construction_id += 1
+        self.construction_sites[site.id] = site
+        self.world.claim_structure_footprint(
+            ox, oy, plot_w, plot_h, FeatureType.CONSTRUCTION_SITE
+        )
+        self._complete_construction(site)
+        self._after_map_edit(terrain_changed=True)
+        self._set_status(f"Editor placed {BUILDING_LABELS[kind]} instantly.")
+        return True
+
+    def _editor_move_building_at(self, x: int, y: int) -> bool:
+        """Select, then instantly move a completed building without construction."""
+        if self.map_edit_move_building_id is None:
+            building = self._building_at(x, y)
+            if building is None:
+                self._set_status("Move building: first click a completed building.")
+                return False
+            self.map_edit_move_building_id = building.id
+            self._set_status(
+                f"Move {BUILDING_LABELS[building.kind]} #{building.id}: click its new centre."
+            )
+            return True
+        building = self.buildings.get(self.map_edit_move_building_id)
+        if building is None:
+            self.map_edit_move_building_id = None
+            self._set_status("Move cancelled — building no longer exists.")
+            return False
+        plot_w, plot_h = max(1, building.plot_w), max(1, building.plot_h)
+        ox, oy = x - plot_w // 2, y - plot_h // 2
+        cells = [(px, py) for py in range(oy, oy + plot_h) for px in range(ox, ox + plot_w)]
+        old_x, old_y = building.x, building.y
+        del self.buildings[building.id]
+        self.world.clear_structure_footprint(old_x, old_y, plot_w, plot_h)
+        reason = self._footprint_blocked(cells)
+        if reason is not None:
+            building.x, building.y = old_x, old_y
+            self.buildings[building.id] = building
+            self.world.claim_structure_footprint(
+                old_x, old_y, plot_w, plot_h, FEATURE_FOR_BUILDING[building.kind]
+            )
+            self._sync_building_collision()
+            self._set_status(reason)
+            return False
+        building.x, building.y = ox, oy
+        self.buildings[building.id] = building
+        self.world.claim_structure_footprint(
+            ox, oy, plot_w, plot_h, FEATURE_FOR_BUILDING[building.kind]
+        )
+        self._sync_building_collision()
+        self._refresh_hardscape_terrain()
+        self._after_map_edit(terrain_changed=True)
+        moved_id = building.id
+        self.map_edit_move_building_id = None
+        self._set_status(f"Editor moved {BUILDING_LABELS[building.kind]} #{moved_id}.")
+        return True
 
     def _sync_height_corners_peak(self) -> None:
         if self.height_sample is not None:
@@ -2964,6 +3098,12 @@ class Game:
             return
         self._mouse_down_cell = cell
         if self.height_edit_mode:
+            if self.map_edit_tool == MapEditTool.PLACE_BUILDING:
+                self._editor_place_building(self.map_edit_building_kind, *cell)
+                return
+            if self.map_edit_tool == MapEditTool.MOVE_BUILDING:
+                self._editor_move_building_at(*cell)
+                return
             self._height_painting = True
             self._height_paint_last = None
             self._paint_height_at(cell[0], cell[1])
@@ -3280,6 +3420,29 @@ class Game:
                 self.map_edit_terrain = terrain
                 self.map_edit_tool = MapEditTool.TERRAIN_PAINT
                 self._set_status(self._height_edit_status())
+            return True
+        if action is not None and action.startswith("edit_overlay:"):
+            try:
+                self._set_overlay(OverlayMode[action.split(":", 1)[1]])
+            except KeyError:
+                pass
+            return True
+        if action is not None and action.startswith("edit_tree:"):
+            from trees import TREE_KEYS
+            choices: tuple[str | None, ...] = (None, *TREE_KEYS)
+            index = choices.index(self.map_edit_tree_species)
+            self.map_edit_tree_species = choices[(index + int(action.split(":", 1)[1])) % len(choices)]
+            self.map_edit_tool = MapEditTool.SEED_FOREST
+            self._set_status(self._height_edit_status())
+            return True
+        if action is not None and action.startswith("edit_building:"):
+            name = action.split(":", 1)[1]
+            try:
+                self.map_edit_building_kind = BuildingKind[name]
+            except KeyError:
+                return True
+            self.map_edit_tool = MapEditTool.PLACE_BUILDING
+            self._set_status(self._height_edit_status())
             return True
         if action is not None and action.startswith("edit_value:"):
             raw = action.split(":", 1)[1]
@@ -4799,6 +4962,40 @@ class Game:
             return
         self._set_status("Opened random map generator.")
 
+    def _open_terrain_type_editor(self) -> None:
+        """Open the standalone terrain appearance editor in a new process."""
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        script = Path(__file__).resolve().parent / "preview_terrain_fills.py"
+        try:
+            self._terrain_editor_process = subprocess.Popen(
+                [sys.executable, str(script)],
+                cwd=str(script.parent),
+                start_new_session=True,
+            )
+        except OSError as exc:
+            self._set_status(f"Could not open terrain type editor: {exc}")
+            return
+        self._set_status("Opened terrain type editor in a new window.")
+
+    def _poll_terrain_type_editor(self) -> None:
+        """Hot-reload the active terrain set after the child editor closes."""
+        process = self._terrain_editor_process
+        if process is None or process.poll() is None:
+            return
+        self._terrain_editor_process = None
+        from terrain_settings import active_setting_set, load_settings
+
+        load_settings()
+        self._invalidate_terrain_layer()
+        self._invalidate_season_density_fields()
+        self._invalidate_height_sample_cache()
+        self._world_layer = None
+        self._world_layer_key = None
+        self._set_status(f"Terrain set '{active_setting_set()}' applied to the map.")
+
     def _open_subtile_test(self) -> None:
         """Start a small scenario through the production game systems."""
         try:
@@ -6110,6 +6307,8 @@ class Game:
             self.wildlife_repopulate_dialog.open_dialog()
         elif action == "file_map_generator":
             self._open_map_generator()
+        elif action == "file_terrain_types":
+            self._open_terrain_type_editor()
         elif action == "file_subtile_test":
             self._open_subtile_test()
         elif action == "file_reset":
@@ -19607,6 +19806,7 @@ class Game:
             )
 
     def _draw(self) -> None:
+        self._poll_terrain_type_editor()
         self._center_cache = {}
         self.screen.fill(COLOUR_BG)
         if self._launch_menu is not None:
@@ -19617,10 +19817,10 @@ class Game:
             pygame.display.flip()
             return
         self._draw_world()
+        if self.overlay_mode != OverlayMode.NONE:
+            self._draw_overlay()
         if self.height_edit_mode:
             self._draw_height_edit_overlay()
-        elif self.overlay_mode != OverlayMode.NONE:
-            self._draw_overlay()
         self._draw_task_areas()
         self._draw_animals()
         self._draw_fish()
@@ -19630,7 +19830,8 @@ class Game:
         self._draw_overlay_hud()
         self._draw_selection_highlights()
         self._draw_object_footprints()
-        self._draw_map_shroud()
+        if not self.height_edit_mode:
+            self._draw_map_shroud()
         self._draw_day_night()
         self._draw_player_status_hud()
         self._draw_minimap()
@@ -19666,6 +19867,11 @@ class Game:
             map_edit_mode=self.height_edit_mode,
             map_edit_tool=self.map_edit_tool,
             map_edit_terrain=self.map_edit_terrain,
+            map_edit_tree_label=(
+                "Mixed" if self.map_edit_tree_species is None else
+                __import__("trees").resolve_tree(self.map_edit_tree_species).label
+            ),
+            map_edit_building_kind=self.map_edit_building_kind,
             height_paint_value=self.height_paint_value,
             height_delta_step=self.height_delta_step,
             height_brush_radius=self.height_brush_radius,

@@ -96,7 +96,7 @@ def _project(records):
     from seasons import Season
     from wild_species import NicheRange,WildSpeciesDef
     from trees import TreeDef
-    crop_items=[];wild_items=[];tree_items=[];seasonal={};crop_fp={};crop_presentation={};crop_harvest={};tree_presentation={};wild_omit={}
+    crop_items=[];wild_items=[];tree_items=[];seasonal={};crop_fp={};crop_presentation={};crop_harvest={};tree_presentation={};wild_omit={};wild_fp={}
     for p in records:
         if p.produce_resource and p.produce_resource not in resources.RESOURCE_KEYS:resources.register_resource(p.produce_resource,label=p.label,group="food",short=p.short)
         if p.seed_resource and p.seed_resource not in resources.RESOURCE_KEYS:resources.register_resource(p.seed_resource,label=f"{p.label} seeds",group="agriculture",short=p.short+".s")
@@ -118,10 +118,18 @@ def _project(records):
                 kwargs[f.name]=v
             feature=d.get("feature","WILD_CROP" if p.can_be_cultivated else "HERB")
             wild_items.append(WildSpeciesDef(p.key,p.label,feature,tuple(d.get("terrains",["GRASS"])),resource_key=p.produce_resource,yield_amount=int(d.get("harvest_max",3)),crop_key=p.key if p.can_be_cultivated else None,icon_base=d.get("icon","flower_plant"),icon_recolour=tuple((k,tuple(v)) for k,v in d.get("recolour",{}).items()),**kwargs));wild_omit[p.key]=tuple(d.get("omit_classes",()))
+            wild_fp[p.key]=tuple(d.get("footprint",[4]))
     old=(crops.CROPS,crops.CROP_BY_KEY,wild_species.WILD_SPECIES,wild_species.WILD_BY_KEY,trees.TREES,trees.TREE_BY_KEY)
     crops.CROPS=tuple(crop_items);crops.CROP_BY_KEY={x.key:x for x in crop_items};crops.CROP_SEASONAL_PRESENTATION=seasonal;crops.CROP_FOOTPRINTS=crop_fp;crops.CROP_PRESENTATION=crop_presentation;crops.CROP_HARVEST_MAX=crop_harvest
     wild_items.extend(x for x in _PASSTHROUGH_WILD if x.key not in {item.key for item in wild_items})
-    wild_species.WILD_SPECIES=tuple(wild_items);wild_species.WILD_BY_KEY={x.key:x for x in wild_items};wild_species.WILD_ICON_OMIT_BY_KEY=wild_omit
+    wild_species.WILD_SPECIES=tuple(wild_items);wild_species.WILD_BY_KEY={x.key:x for x in wild_items};wild_species.WILD_ICON_OMIT_BY_KEY=wild_omit;wild_species.WILD_FOOTPRINTS=wild_fp
+    world_module=sys.modules.get("world")
+    if world_module is not None and hasattr(world_module,"refresh_wild_crops_by_terrain"):
+        world_module.refresh_wild_crops_by_terrain()
+    try:
+        __import__("subtile_layout").invalidate_layout_cache()
+    except (ImportError,AttributeError):
+        pass
     trees.TREES=tuple(tree_items);trees.TREE_BY_KEY={x.key:x for x in tree_items};trees.TREE_KEYS=tuple(x.key for x in tree_items);trees.SAPLING_ITEM_KEYS=tuple(f"{x.key}_saplings" for x in tree_items);trees.TREE_PRESENTATION=tree_presentation
     for module in tuple(sys.modules.values()):
         if module is None:continue
@@ -171,6 +179,22 @@ class PlantEditorService:
         finally:
             if os.path.exists(tmp):os.unlink(tmp)
         by={p.key:p for p in self.items};by[self.candidate.key]=PlantDef(**asdict(self.candidate));self.items=sorted(by.values(),key=lambda p:p.label.casefold());_project(self.items);self.original=PlantDef(**asdict(self.candidate));REVISION+=1;return True,"Plant saved and projected into active runtime registries."
+    def save_terrain_membership(self,terrain,enabled_keys):
+        global REVISION
+        rows=load_file(self.path)
+        for p in self.items:
+            if not p.can_grow_wild:continue
+            terrains=set(p.wild.get("terrains",[]))
+            if p.key in enabled_keys:terrains.add(terrain)
+            else:terrains.discard(terrain)
+            p.wild["terrains"]=sorted(terrains);rows[p.key]={k:_enc(v) for k,v in asdict(p).items() if k!="key"}
+        self.path.parent.mkdir(parents=True,exist_ok=True);fd,tmp=tempfile.mkstemp(dir=self.path.parent,prefix="plants.",suffix=".tmp")
+        try:
+            with os.fdopen(fd,"w",encoding="utf-8") as h:json.dump(rows,h,indent=2,sort_keys=True);h.write("\n")
+            os.replace(tmp,self.path)
+        finally:
+            if os.path.exists(tmp):os.unlink(tmp)
+        _project(self.items);REVISION+=1
     def delete(self):
         global REVISION
         if self.candidate is None:return False,"Select a plant first."

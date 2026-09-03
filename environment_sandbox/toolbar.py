@@ -169,12 +169,16 @@ class Toolbar:
                 "file_map_generator", "Map generator…", 8, TOOLBAR_HEIGHT + 160,
                 110, 24, "menu",
             ),
-            self._make_btn("file_subtile_test", "Habitat test", 8, TOOLBAR_HEIGHT + 186, 110, 24, "menu"),
-            self._make_btn("file_reset", "Reset", 8, TOOLBAR_HEIGHT + 212, 110, 24, "menu"),
-            self._make_btn("day_slower", "Shorter day", 8, TOOLBAR_HEIGHT + 238, 110, 24, "menu"),
-            self._make_btn("day_faster", "Longer day", 8, TOOLBAR_HEIGHT + 264, 110, 24, "menu"),
-            self._make_btn("file_time_demo", "Time demo…", 8, TOOLBAR_HEIGHT + 290, 110, 24, "menu"),
-            self._make_btn("file_quit", "Quit", 8, TOOLBAR_HEIGHT + 316, 110, 24, "menu"),
+            self._make_btn(
+                "file_terrain_types", "Terrain types…", 8, TOOLBAR_HEIGHT + 186,
+                110, 24, "menu",
+            ),
+            self._make_btn("file_subtile_test", "Habitat test", 8, TOOLBAR_HEIGHT + 212, 110, 24, "menu"),
+            self._make_btn("file_reset", "Reset", 8, TOOLBAR_HEIGHT + 238, 110, 24, "menu"),
+            self._make_btn("day_slower", "Shorter day", 8, TOOLBAR_HEIGHT + 264, 110, 24, "menu"),
+            self._make_btn("day_faster", "Longer day", 8, TOOLBAR_HEIGHT + 290, 110, 24, "menu"),
+            self._make_btn("file_time_demo", "Time demo…", 8, TOOLBAR_HEIGHT + 316, 110, 24, "menu"),
+            self._make_btn("file_quit", "Quit", 8, TOOLBAR_HEIGHT + 342, 110, 24, "menu"),
         ]
 
     def task_buttons_for(

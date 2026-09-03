@@ -1,0 +1,62 @@
+{
+  "FOREST_FLOOR": {
+    "fertility": 1.0,
+    "rainfall_multiplier": 1.0,
+    "soil_moisture": 0.62,
+    "temperature_offset_c": -0.8
+  },
+  "GRASS": {
+    "fertility": 1.0,
+    "rainfall_multiplier": 1.0,
+    "soil_moisture": 0.43,
+    "temperature_offset_c": 0.0
+  },
+  "MEADOW": {
+    "fertility": 1.0,
+    "rainfall_multiplier": 1.0,
+    "soil_moisture": 0.47,
+    "temperature_offset_c": 0.2
+  },
+  "PATH": {
+    "fertility": 0.0,
+    "rainfall_multiplier": 1.0,
+    "soil_moisture": 0.12,
+    "temperature_offset_c": 0.8
+  },
+  "RIPARIAN": {
+    "fertility": 0.8,
+    "rainfall_multiplier": 1.06,
+    "soil_moisture": 0.76,
+    "temperature_offset_c": -0.8
+  },
+  "RIVER": {
+    "fertility": 0.0,
+    "rainfall_multiplier": 1.0,
+    "soil_moisture": 1.0,
+    "temperature_offset_c": 0.0
+  },
+  "ROCK": {
+    "fertility": 0.0,
+    "rainfall_multiplier": 1.0,
+    "soil_moisture": 0.08,
+    "temperature_offset_c": 1.5
+  },
+  "SOIL": {
+    "fertility": 1.0,
+    "rainfall_multiplier": 1.0,
+    "soil_moisture": 0.48,
+    "temperature_offset_c": 0.8
+  },
+  "URBAN": {
+    "fertility": 0.0,
+    "rainfall_multiplier": 1.0,
+    "soil_moisture": 0.04,
+    "temperature_offset_c": 2.0
+  },
+  "WATER": {
+    "fertility": 0.0,
+    "rainfall_multiplier": 1.0,
+    "soil_moisture": 1.0,
+    "temperature_offset_c": 0.0
+  }
+}

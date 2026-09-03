@@ -27,6 +27,24 @@ class PlantEditorTests(unittest.TestCase):
             consumed,result=page.handle_event(pygame.event.Event(pygame.MOUSEMOTION,{"pos":(1,1)}))
             self.assertFalse(consumed);self.assertIsNone(result)
 
+    def test_plant_page_new_and_duplicate_actions(self):
+        from developer_tools.authoring_ui import PlantAuthoringPage
+        from developer_tools.icons_browser import IconBrowserService
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);(root/"objects_data").mkdir();page=PlantAuthoringPage(PlantEditorService(root),IconBrowserService())
+            page.act("new");self.assertEqual(page.service.candidate.key,"new_plant");self.assertFalse(page.controls["key"].disabled)
+            page.controls["key"].text="mint";page.sync();self.assertEqual(page.service.candidate.key,"mint")
+            page.act("duplicate");self.assertEqual(page.service.candidate.key,"mint_copy");self.assertFalse(page.controls["key"].disabled)
+
+    def test_resource_page_initialises_search_control(self):
+        import pygame
+        from developer_tools.authoring_ui import ResourceAuthoringPage
+        from developer_tools.icons_browser import IconBrowserService
+        from developer_tools.resources_browser import ResourceEditorService
+        page=ResourceAuthoringPage(ResourceEditorService(),IconBrowserService())
+        consumed=page.handle_event(pygame.event.Event(pygame.MOUSEMOTION,{"pos":(1,1)}))
+        self.assertFalse(consumed)
+
     def test_new_dual_mode_herb_persists_and_projects(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);(root/"objects_data").mkdir();service=PlantEditorService(root);service.new()
@@ -71,6 +89,28 @@ class PlantEditorTests(unittest.TestCase):
             self.assertNotIn("mushroom",keys);self.assertNotIn("wood_bush",keys)
             import wild_species
             self.assertIn("mushroom",wild_species.WILD_BY_KEY);self.assertIn("wood_bush",wild_species.WILD_BY_KEY)
+
+    def test_terrain_editor_updates_same_plant_terrain_lists(self):
+        from developer_tools.terrain_editor import TerrainEditorService
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);(root/"objects_data").mkdir();plants=PlantEditorService(root);terrain=TerrainEditorService(plants,root)
+            chosen={next(p.key for p in plants.records if p.can_grow_wild)}
+            values={"soil_moisture":.6,"fertility":.7,"temperature_offset_c":1.2,"rainfall_multiplier":.9}
+            self.assertTrue(terrain.save(values,chosen)[0])
+            self.assertEqual({p.key for p in plants.records if p.can_grow_wild and "GRASS" in p.wild.get("terrains",[])},chosen)
+            import world
+            expected={p.key for p in plants.records if p.key in chosen and p.wild.get("feature")=="WILD_CROP"}
+            self.assertEqual(set(world.WILD_CROPS_BY_TERRAIN.get(world.TerrainType.GRASS,())),expected)
+            reloaded=PlantEditorService(root)
+            self.assertEqual({p.key for p in reloaded.records if p.can_grow_wild and "GRASS" in p.wild.get("terrains",[])},chosen)
+
+    def test_wild_footprint_projects_to_runtime_layout(self):
+        from subtile_layout import feature_subtile_layout
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);(root/"objects_data").mkdir();service=PlantEditorService(root);item=next(p for p in service.records if p.key=="wheat");service.select(item)
+            service.candidate.wild["footprint"]=[4];self.assertTrue(service.save()[0])
+            slots,_u,_v=feature_subtile_layout("WILD_CROP",1,1,crop_kind="wheat")
+            self.assertEqual(slots,1)
 
     def test_tree_renderer_keeps_tree_icon(self):
         import icons,pygame,ui
