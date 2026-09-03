@@ -828,6 +828,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
         "next_villager_id": game.next_villager_id,
         "next_building_id": game.next_building_id,
         "next_construction_id": game.next_construction_id,
+        "scenario": game.scenario.to_dict() if hasattr(game,"scenario") else None,
         "place_kind": game.place_kind.name if game.place_kind else None,
         "overlay_mode": game.overlay_mode.name,
         "communities": [c.to_dict() for c in getattr(game, "communities", [])],
@@ -937,6 +938,7 @@ def _migrate_building_footprints(game: Game) -> None:
         BuildingKind.FARM: FeatureType.FARM,
         BuildingKind.MILL: FeatureType.MILL,
         BuildingKind.KITCHEN: FeatureType.KITCHEN,
+        BuildingKind.FIRE: FeatureType.FIRE,
         BuildingKind.CRAFT_BENCH: FeatureType.CRAFT_BENCH,
         BuildingKind.ALCHEMIST: FeatureType.ALCHEMIST,
         BuildingKind.TAILOR: FeatureType.TAILOR,
@@ -1162,6 +1164,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             BuildingKind.FIELD: TaskType.FARM_FIELD,
             BuildingKind.MILL: TaskType.FULL_FORAGE,
             BuildingKind.KITCHEN: TaskType.FULL_FORAGE,
+            BuildingKind.FIRE: TaskType.FULL_FORAGE,
             BuildingKind.CRAFT_BENCH: TaskType.FULL_FORAGE,
             BuildingKind.ALCHEMIST: TaskType.FULL_FORAGE,
             BuildingKind.TAILOR: TaskType.FULL_FORAGE,
@@ -2054,3 +2057,8 @@ def load_from_path(game: Game, path: Path | str) -> None:
     with path.open("r", encoding="utf-8") as fh:
         data = json.load(fh)
     apply_save(game, data)
+    if hasattr(game,"scenario"):
+        if hasattr(game,"scenario_dialog"):game.scenario_dialog.close()
+        restored=isinstance(data.get("scenario"),dict)
+        if restored:game.scenario.load_dict(data.get("scenario"))
+        game.scenario.configure_after_load(game,path.stem,restored=restored)

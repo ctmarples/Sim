@@ -48,6 +48,7 @@ def _is_unassigned_worker(v: Villager) -> bool:
     return not v.assigned_to_home and not v.building_id
 
 _BUILD_ICON: dict[BuildingKind, str] = {
+    BuildingKind.FIRE: "fire",
     BuildingKind.HOME: "storehouse",
     BuildingKind.WORKSTATION: "workstation",
     BuildingKind.FORESTER: "forester",

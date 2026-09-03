@@ -397,6 +397,14 @@ class UI:
         )
         y += btn_h + 8
 
+        self._draw_labelled_tool_button(
+            content, x, y, 148, btn_h, "Add traveller", "edit_add_traveller",
+            "Choose a non-village traveller, then place them on the map",
+            active=map_edit_tool == MapEditTool.PLACE_TRAVELLER,
+            local_mouse=local_mouse,
+        )
+        y += btn_h + 8
+
         y = _blit_text(content, self.font_title, "Height", (x, y))
         tools_h = (
             (MapEditTool.HEIGHT_SET, "Set", "Paint a specific height"),
@@ -1808,6 +1816,7 @@ def draw_feature(
         ICON_HOME,
         ICON_HUNTER,
         ICON_KITCHEN,
+        ICON_FIRE,
         ICON_CRAFT_BENCH,
         ICON_ALCHEMIST,
         ICON_TAILOR,
@@ -2073,6 +2082,12 @@ def draw_feature(
                 vibrancy=vibrancy,
                 baked=True,
             ),
+        )
+    elif feature == FeatureType.FIRE:
+        blit_building(
+            surface,ICON_FIRE,cx,cy,size,variant=v,
+            recolour={"flame":(238,112,42),"flame_light":(255,205,76),
+                      "wood":(92,58,35),"stone":(92,92,88)},
         )
     elif feature == FeatureType.CRAFT_BENCH:
         blit_building(

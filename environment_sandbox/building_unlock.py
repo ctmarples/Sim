@@ -8,6 +8,7 @@ from entities import BuildingKind, TaskType
 
 # Menu order (icons left→right). Hidden until unlocked.
 BUILD_MENU_ORDER: tuple[BuildingKind, ...] = (
+    BuildingKind.FIRE,
     BuildingKind.FORAGER,
     BuildingKind.TENT,
     BuildingKind.CRAFT_BENCH,
@@ -31,7 +32,7 @@ BUILD_MENU_ORDER: tuple[BuildingKind, ...] = (
 # Sequential unlock groups: next group opens when any building in the
 # previous group has been completed (tier 0 is always available).
 UNLOCK_TIERS: tuple[frozenset[BuildingKind], ...] = (
-    frozenset({BuildingKind.FORAGER, BuildingKind.TENT}),
+    frozenset({BuildingKind.FIRE, BuildingKind.FORAGER, BuildingKind.TENT}),
     frozenset(
         {
             BuildingKind.CRAFT_BENCH,
@@ -108,6 +109,7 @@ class BuildCost:
 
 # Costs match the early-game unlock ladder.
 BUILD_COSTS: dict[BuildingKind, BuildCost] = {
+    BuildingKind.FIRE: BuildCost(wood=2, task=TaskType.FULL_FORAGE),
     BuildingKind.FORAGER: BuildCost(wood=2, rock=2, task=TaskType.FULL_FORAGE),
     BuildingKind.CRAFT_BENCH: BuildCost(wood=2, rock=2, task=TaskType.FULL_FORAGE),
     BuildingKind.HUNTER: BuildCost(wood=2, rock=2, task=TaskType.HUNT),

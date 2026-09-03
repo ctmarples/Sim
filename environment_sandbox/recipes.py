@@ -50,6 +50,7 @@ RECIPE_REGISTRY_REVISION: int = 0
 # Folder name under recipes_data → module attribute holding that building's recipes.
 _BUILDING_RECIPE_ATTR: dict[str, str] = {
     "kitchen": "KITCHEN_RECIPES",
+    "fire": "FIRE_RECIPES",
     "mill": "MILL_RECIPES",
     "craft_bench": "CRAFT_BENCH_RECIPES",
     "alchemist": "ALCHEMIST_RECIPES",
@@ -112,6 +113,7 @@ class Recipe:
 
 MILL_RECIPES: tuple[Recipe, ...] = ()
 KITCHEN_RECIPES: tuple[Recipe, ...] = ()
+FIRE_RECIPES: tuple[Recipe, ...] = ()
 CRAFT_BENCH_RECIPES: tuple[Recipe, ...] = ()
 ALCHEMIST_RECIPES: tuple[Recipe, ...] = ()
 TAILOR_RECIPES: tuple[Recipe, ...] = ()
@@ -441,7 +443,7 @@ def _append_forager_crop_produce(existing: list[Recipe], seen: set[str]) -> None
 
 def _load_directory_recipes() -> None:
     """Load ``recipes_data/<building>/recipes.csv`` (and legacy ``*.json``) into tuples."""
-    global MILL_RECIPES, KITCHEN_RECIPES, CRAFT_BENCH_RECIPES, ALCHEMIST_RECIPES
+    global MILL_RECIPES, KITCHEN_RECIPES, FIRE_RECIPES, CRAFT_BENCH_RECIPES, ALCHEMIST_RECIPES
     global TAILOR_RECIPES, COBBLER_RECIPES
     global FORESTER_RECIPES, FORESTER_PLANT_RECIPES, FORESTER_SPLIT_RECIPES
     global HUNTER_RECIPES, FORAGER_RECIPES, FISHER_RECIPES
@@ -499,6 +501,8 @@ COBBLER_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(COBBLER_RECIPES)
 COBBLER_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(COBBLER_RECIPES)
 KITCHEN_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(KITCHEN_RECIPES)
 KITCHEN_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(KITCHEN_RECIPES)
+FIRE_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(FIRE_RECIPES)
+FIRE_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(FIRE_RECIPES)
 
 # All crafted / milled goods stored as cargo.
 PROCESSED_KEYS: tuple[str, ...] = tuple(
@@ -506,6 +510,7 @@ PROCESSED_KEYS: tuple[str, ...] = tuple(
         (
             *MILL_OUTPUT_KEYS,
             *KITCHEN_OUTPUT_KEYS,
+            *FIRE_OUTPUT_KEYS,
             *CRAFT_BENCH_OUTPUT_KEYS,
             *ALCHEMIST_OUTPUT_KEYS,
             *TAILOR_OUTPUT_KEYS,
@@ -523,7 +528,7 @@ def rebuild_recipe_derived_keys() -> None:
     global MILL_INPUT_KEYS, MILL_OUTPUT_KEYS, CRAFT_BENCH_INPUT_KEYS
     global CRAFT_BENCH_OUTPUT_KEYS, ALCHEMIST_INPUT_KEYS, ALCHEMIST_OUTPUT_KEYS
     global TAILOR_INPUT_KEYS, TAILOR_OUTPUT_KEYS, COBBLER_INPUT_KEYS, COBBLER_OUTPUT_KEYS
-    global KITCHEN_INPUT_KEYS, KITCHEN_OUTPUT_KEYS, PROCESSED_KEYS
+    global KITCHEN_INPUT_KEYS, KITCHEN_OUTPUT_KEYS, FIRE_INPUT_KEYS, FIRE_OUTPUT_KEYS, PROCESSED_KEYS
     MILL_INPUT_KEYS = input_keys_for_recipes(MILL_RECIPES)
     MILL_OUTPUT_KEYS = output_keys_for_recipes(MILL_RECIPES)
     CRAFT_BENCH_INPUT_KEYS = input_keys_for_recipes(CRAFT_BENCH_RECIPES)
@@ -536,7 +541,9 @@ def rebuild_recipe_derived_keys() -> None:
     COBBLER_OUTPUT_KEYS = output_keys_for_recipes(COBBLER_RECIPES)
     KITCHEN_INPUT_KEYS = input_keys_for_recipes(KITCHEN_RECIPES)
     KITCHEN_OUTPUT_KEYS = output_keys_for_recipes(KITCHEN_RECIPES)
-    PROCESSED_KEYS = tuple(dict.fromkeys((*MILL_OUTPUT_KEYS, *KITCHEN_OUTPUT_KEYS,
+    FIRE_INPUT_KEYS = input_keys_for_recipes(FIRE_RECIPES)
+    FIRE_OUTPUT_KEYS = output_keys_for_recipes(FIRE_RECIPES)
+    PROCESSED_KEYS = tuple(dict.fromkeys((*MILL_OUTPUT_KEYS, *KITCHEN_OUTPUT_KEYS, *FIRE_OUTPUT_KEYS,
         *CRAFT_BENCH_OUTPUT_KEYS, *ALCHEMIST_OUTPUT_KEYS, *TAILOR_OUTPUT_KEYS,
         *COBBLER_OUTPUT_KEYS, *output_keys_for_recipes(FISHER_RECIPES),
         *output_keys_for_recipes(COMPOST_HEAP_RECIPES), "spoilage")))

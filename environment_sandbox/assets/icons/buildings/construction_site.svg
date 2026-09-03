@@ -1,14 +1,85 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="400" height="400"
-     data-home="0,0,40" data-anchor="20,20">
-  <title>construction_site</title>
-  <desc>Cabin style variant. Accent classes only so baked fills are preserved.</desc>
-
-  <path d="M 9.0,18.0 L 31.0,15.5 L 30.0,33.0 L 9.0,34.0 Z" fill="#6a6a50" fill-opacity="0.3"/>
-  <path class="accent" d="M 10.5,33.5 L 10.5,13.5" stroke="#b4a050" stroke-width="1.8" stroke-linecap="round"/>
-  <path class="accent" d="M 20.0,34.0 L 20.0,10.0" stroke="#b4a050" stroke-width="1.6" stroke-linecap="round"/>
-  <path class="accent" d="M 29.5,32.5 L 29.5,12.0" stroke="#b4a050" stroke-width="1.8" stroke-linecap="round"/>
-  <path d="M 10.5,13.5 L 20.0,10.0 L 29.5,12.0" stroke="#8a8040" stroke-width="1.5" stroke-linecap="round" fill="none"/>
-  <path d="M 10.5,20.5 L 29.5,18.5" stroke="#8a8040" stroke-width="1.3" stroke-linecap="round"/>
-  <path d="M 17.5,7.5 L 22.5,8.2 L 21.0,12.5 L 16.5,11.8 Z" fill="#f0a13c"/>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 40 40"
+   width="400"
+   height="400"
+   data-home="0,0,40"
+   data-anchor="20,20"
+   version="1.1"
+   id="svg7"
+   sodipodi:docname="construction_site.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs7" />
+  <sodipodi:namedview
+     id="namedview7"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="1.2836385"
+     inkscape:cx="267.5987"
+     inkscape:cy="303.82385"
+     inkscape:window-width="1470"
+     inkscape:window-height="835"
+     inkscape:window-x="0"
+     inkscape:window-y="33"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg7" />
+  <title
+     id="title1">construction_site</title>
+  <desc
+     id="desc1">Cabin style variant. Accent classes only so baked fills are preserved.</desc>
+  <path
+     d="m 10.5,17.766289 19,-2.422096 V 32.5 l -19,1 z"
+     fill="#6a6a50"
+     fill-opacity="0.3"
+     id="path1"
+     sodipodi:nodetypes="ccccc" />
+  <path
+     class="accent"
+     d="m 10.5,33.5 v -20"
+     stroke="#b4a050"
+     stroke-width="1.8"
+     stroke-linecap="round"
+     id="path2"
+     sodipodi:nodetypes="cc" />
+  <path
+     class="accent"
+     d="M 20.0,34.0 L 20.0,10.0"
+     stroke="#b4a050"
+     stroke-width="1.6"
+     stroke-linecap="round"
+     id="path3" />
+  <path
+     class="accent"
+     d="M 29.5,32.5 L 29.5,12.0"
+     stroke="#b4a050"
+     stroke-width="1.8"
+     stroke-linecap="round"
+     id="path4" />
+  <path
+     d="M 10.5,13.5 L 20.0,10.0 L 29.5,12.0"
+     stroke="#8a8040"
+     stroke-width="1.5"
+     stroke-linecap="round"
+     fill="none"
+     id="path5" />
+  <path
+     d="M 10.5,20.5 L 29.5,18.5"
+     stroke="#8a8040"
+     stroke-width="1.3"
+     stroke-linecap="round"
+     id="path6" />
+  <path
+     d="M 17.5,7.5 L 22.5,8.2 L 21.0,12.5 L 16.5,11.8 Z"
+     fill="#f0a13c"
+     id="path7" />
 </svg>

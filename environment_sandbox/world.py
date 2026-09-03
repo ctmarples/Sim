@@ -193,6 +193,7 @@ class FeatureType(Enum):
     FIELD = auto()
     MILL = auto()
     KITCHEN = auto()
+    FIRE = auto()
     CRAFT_BENCH = auto()
     ALCHEMIST = auto()
     TAILOR = auto()
@@ -233,6 +234,7 @@ STRUCTURE_FEATURES: frozenset[FeatureType] = frozenset(
         FeatureType.FIELD,
         FeatureType.MILL,
         FeatureType.KITCHEN,
+        FeatureType.FIRE,
         FeatureType.CRAFT_BENCH,
         FeatureType.ALCHEMIST,
         FeatureType.TAILOR,
@@ -287,6 +289,7 @@ class MapEditTool(Enum):
     PAINT_ROCKS = "paint_rocks"
     PAINT_BERRIES = "paint_berries"
     CROP_PAINT = "crop_paint"
+    PLACE_TRAVELLER = "place_traveller"
     PLACE_BUILDING = "place_building"
     MOVE_BUILDING = "move_building"
 

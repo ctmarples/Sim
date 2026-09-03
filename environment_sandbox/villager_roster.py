@@ -371,6 +371,7 @@ _JOB_COLOURS: dict[BuildingKind, tuple[int, int, int]] = {
     BuildingKind.FIELD: COLOUR_FARM,
     BuildingKind.MILL: COLOUR_MILL,
     BuildingKind.KITCHEN: COLOUR_KITCHEN,
+    BuildingKind.FIRE: COLOUR_KITCHEN,
     BuildingKind.CRAFT_BENCH: COLOUR_CRAFT_BENCH,
     BuildingKind.ALCHEMIST: COLOUR_ALCHEMIST,
     BuildingKind.TAILOR: COLOUR_TAILOR,
@@ -495,7 +496,7 @@ class VillagerRosterDialog:
         self.font_tiny = pygame.font.SysFont("menlo", 10, bold=True)
         self.font_title = pygame.font.SysFont("menlo", 15, bold=True)
         self._open = False
-        self.mode: str = "roster"  # roster | hire | assign
+        self.mode: str = "roster"  # roster | hire | assign | place_traveller
         self.sort_key = RosterSort.NAME
         self.sort_reverse = False
         self._scroll = 0
@@ -535,6 +536,13 @@ class VillagerRosterDialog:
     def open_assign(self, building_id: int) -> None:
         self.mode = "assign"
         self.assign_building_id = building_id
+        self._open = True
+        self._pending = None
+        self._center()
+
+    def open_traveller_place(self) -> None:
+        """Open the map-authoring picker for a non-village traveller."""
+        self.mode = "place_traveller"
         self._open = True
         self._pending = None
         self._center()
@@ -585,6 +593,8 @@ class VillagerRosterDialog:
                 if rect.collidepoint(pos):
                     if self.mode == "assign":
                         self._pending = f"assign_pick:{eid}"
+                    elif self.mode == "place_traveller":
+                        self._pending = f"place_traveller:{eid}"
                     elif self.mode == "hire":
                         self._pending = f"hire_select:{eid}"
                     else:
@@ -625,6 +635,7 @@ class VillagerRosterDialog:
             title = {
                 "hire": "Travellers",
                 "assign": "Assign villager",
+                "place_traveller": "Choose traveller to place",
                 "roster": "Villagers",
             }.get(self.mode, "Villagers")
 

@@ -75,6 +75,27 @@ class MapEditorGameTests(unittest.TestCase):
     def test_editor_building_palette_ignores_progression_unlocks(self):
         self.assertEqual(set(EDITOR_BUILDING_KINDS), set(BuildingKind))
 
+    def test_editor_places_template_as_non_village_traveller(self):
+        self.game._open_map_edit_traveller_picker()
+        choice = self.game._map_edit_traveller_choices[0]
+        self.game.map_edit_traveller_template_id = choice.template_id
+        target = next(
+            (x, y)
+            for y in range(self.game.world.rows)
+            for x in range(self.game.world.cols)
+            if self.game.world.is_walkable(x, y)
+            and all((c.x, c.y) != (x, y) for c in self.game.hire_candidates)
+            and all((v.x, v.y) != (x, y) for v in self.game.villagers)
+        )
+        village_count = len(self.game.villagers)
+        traveller_count = len(self.game.hire_candidates)
+        self.assertTrue(self.game._editor_place_traveller(*target))
+        self.assertEqual(len(self.game.villagers), village_count)
+        self.assertEqual(len(self.game.hire_candidates), traveller_count + 1)
+        placed = self.game.hire_candidates[-1]
+        self.assertEqual((placed.x, placed.y), target)
+        self.assertEqual(placed.template_id, choice.template_id)
+
     def test_tab_toggles_sidebar_visibility(self):
         import pygame
         import settings

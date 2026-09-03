@@ -37,6 +37,7 @@ PROCESSOR_KINDS = frozenset(
     {
         BuildingKind.MILL,
         BuildingKind.KITCHEN,
+        BuildingKind.FIRE,
         BuildingKind.CRAFT_BENCH,
         BuildingKind.ALCHEMIST,
         BuildingKind.TAILOR,

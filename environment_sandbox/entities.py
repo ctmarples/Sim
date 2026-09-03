@@ -23,6 +23,9 @@ from recipes import (
     FORESTER_PLANT_RECIPES,
     FORESTER_SPLIT_RECIPES,
     FISHER_RECIPES,
+    FIRE_INPUT_KEYS,
+    FIRE_OUTPUT_KEYS,
+    FIRE_RECIPES,
     FORAGER_RECIPES,
     HUNTER_RECIPES,
     KITCHEN_FUEL_KEY,
@@ -240,6 +243,7 @@ class BuildingKind(Enum):
     FIELD = auto()
     MILL = auto()
     KITCHEN = auto()
+    FIRE = auto()
     CRAFT_BENCH = auto()
     ALCHEMIST = auto()
     TAILOR = auto()
@@ -290,6 +294,7 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
     BuildingKind.FIELD: "Field",
     BuildingKind.MILL: "Mill",
     BuildingKind.KITCHEN: "Kitchen",
+    BuildingKind.FIRE: "Fire",
     BuildingKind.CRAFT_BENCH: "Craft bench",
     BuildingKind.ALCHEMIST: "Alchemist",
     BuildingKind.TAILOR: "Tailor",
@@ -312,6 +317,7 @@ def default_building_plot(kind: BuildingKind) -> tuple[int, int]:
         return 1, 1
     if kind in (
         BuildingKind.TENT,
+        BuildingKind.FIRE,
         BuildingKind.BARN,
         BuildingKind.COMPOST_HEAP,
         BuildingKind.PANTRY,
@@ -1817,6 +1823,7 @@ class Building:
         return self.kind in (
             BuildingKind.MILL,
             BuildingKind.KITCHEN,
+            BuildingKind.FIRE,
             BuildingKind.CRAFT_BENCH,
             BuildingKind.ALCHEMIST,
             BuildingKind.TAILOR,
@@ -1825,6 +1832,9 @@ class Building:
 
     def is_market(self) -> bool:
         return self.kind == BuildingKind.MARKET
+
+    def is_cooking_building(self) -> bool:
+        return self.kind in (BuildingKind.KITCHEN, BuildingKind.FIRE)
 
     def market_demand_remaining(self, key: str) -> int:
         return max(0, int(self.market_demand.get(key, 0)))
@@ -1914,6 +1924,8 @@ class Building:
             return recipe_registry.MILL_RECIPES
         if self.kind == BuildingKind.KITCHEN:
             return recipe_registry.KITCHEN_RECIPES
+        if self.kind == BuildingKind.FIRE:
+            return recipe_registry.FIRE_RECIPES
         if self.kind == BuildingKind.CRAFT_BENCH:
             return recipe_registry.CRAFT_BENCH_RECIPES
         if self.kind == BuildingKind.ALCHEMIST:
@@ -2193,7 +2205,7 @@ class Building:
             want = min(target - have, room)
             if want > 0:
                 demand[key] = max(demand.get(key, 0), want)
-        if self.kind == BuildingKind.KITCHEN:
+        if self.is_cooking_building():
             fuel_want = self.fuel_space_left()
             if fuel_want > 0:
                 demand[KITCHEN_FUEL_KEY] = max(
@@ -2439,6 +2451,8 @@ class Building:
             return MILL_INPUT_KEYS
         if self.kind == BuildingKind.KITCHEN:
             return KITCHEN_INPUT_KEYS
+        if self.kind == BuildingKind.FIRE:
+            return FIRE_INPUT_KEYS
         if self.kind == BuildingKind.CRAFT_BENCH:
             return CRAFT_BENCH_INPUT_KEYS
         if self.kind == BuildingKind.ALCHEMIST:
@@ -2454,6 +2468,8 @@ class Building:
             return MILL_OUTPUT_KEYS
         if self.kind == BuildingKind.KITCHEN:
             return KITCHEN_OUTPUT_KEYS + ("spoilage",)
+        if self.kind == BuildingKind.FIRE:
+            return FIRE_OUTPUT_KEYS + ("spoilage",)
         if self.kind == BuildingKind.CRAFT_BENCH:
             return CRAFT_BENCH_OUTPUT_KEYS
         if self.kind == BuildingKind.ALCHEMIST:
@@ -2582,7 +2598,7 @@ class Building:
                 have = int(getattr(self, "coins", 0))
                 room = min(room, max(0, int(cap) - have))
             return max(0, room)
-        if self.kind == BuildingKind.KITCHEN and key == KITCHEN_FUEL_KEY:
+        if self.is_cooking_building() and key == KITCHEN_FUEL_KEY:
             return self.fuel_space_left()
         if self.kind == BuildingKind.KITCHEN:
             if key in self.pantry_storage_keys():
@@ -2632,7 +2648,7 @@ class Building:
         Output / gather Max is village-wide, so the ceiling is high.
         """
         production_ceiling = 9999
-        if self.kind == BuildingKind.KITCHEN and key == KITCHEN_FUEL_KEY:
+        if self.is_cooking_building() and key == KITCHEN_FUEL_KEY:
             return max(1, self.fuel_capacity)
         if self.is_seed_storage_key(key):
             return max(1, self.seed_capacity)
@@ -2821,7 +2837,7 @@ class Building:
             recipe, worker=worker, worker_skill_level=worker_skill_level
         ):
             return False
-        if self.kind == BuildingKind.KITCHEN and not self.has_cooking_fuel():
+        if self.is_cooking_building() and not self.has_cooking_fuel():
             return False
         if not self._recipe_output_fits(recipe, stock_amounts=stock_amounts):
             return False
@@ -2917,7 +2933,7 @@ class Building:
         recipes = self.enabled_recipes()
         if not recipes:
             return None
-        if self.kind == BuildingKind.KITCHEN and not self.has_cooking_fuel():
+        if self.is_cooking_building() and not self.has_cooking_fuel():
             return None
         candidates: list[Recipe] = []
         for recipe in recipes:
@@ -3148,7 +3164,7 @@ class Building:
                 moved += self.deposit_key_from(inventory, key)
             if self.accepts_food_spoilage():
                 moved += self.deposit_key_from(inventory, "spoilage")
-            if self.kind == BuildingKind.KITCHEN:
+            if self.is_cooking_building():
                 while self.deposit_one_from(inventory, KITCHEN_FUEL_KEY):
                     moved += 1
             return moved
@@ -3170,12 +3186,13 @@ class Building:
             BuildingKind.FORAGER,
             BuildingKind.FARM,
             BuildingKind.KITCHEN,
+            BuildingKind.FIRE,
         )
 
     def deposit_key_from(self, inventory: Inventory, key: str) -> int:
         """Deposit as much of one key as capacity allows. Returns amount moved."""
         if (
-            self.kind == BuildingKind.KITCHEN
+            self.is_cooking_building()
             and key == KITCHEN_FUEL_KEY
         ):
             moved = 0
@@ -3196,7 +3213,7 @@ class Building:
     def deposit_one_from(self, inventory: Inventory, key: str) -> bool:
         """Deposit a single unit of ``key`` if capacity allows."""
         if (
-            self.kind == BuildingKind.KITCHEN
+            self.is_cooking_building()
             and key == KITCHEN_FUEL_KEY
             and self.fuel_space_left() > 0
             and inventory.wood > 0
@@ -3287,6 +3304,8 @@ class Building:
                 KITCHEN_FUEL_KEY,
                 "spoilage",
             )
+        if self.kind == BuildingKind.FIRE:
+            return FIRE_INPUT_KEYS + FIRE_OUTPUT_KEYS + (KITCHEN_FUEL_KEY,"spoilage")
         if self.kind == BuildingKind.CRAFT_BENCH:
             return CRAFT_BENCH_INPUT_KEYS + CRAFT_BENCH_OUTPUT_KEYS
         if self.kind == BuildingKind.ALCHEMIST:
@@ -3368,7 +3387,7 @@ class Building:
                 if int(getattr(inventory, key, 0)) > 0 and self.space_for_key(key) > 0:
                     return True
             if (
-                self.kind == BuildingKind.KITCHEN
+                self.is_cooking_building()
                 and int(getattr(inventory, KITCHEN_FUEL_KEY, 0)) > 0
                 and self.fuel_space_left() > 0
             ):
@@ -3538,6 +3557,7 @@ class Building:
             BuildingKind.WORKSTATION,
             BuildingKind.MILL,
             BuildingKind.KITCHEN,
+            BuildingKind.FIRE,
             BuildingKind.CRAFT_BENCH,
             BuildingKind.ALCHEMIST,
             BuildingKind.TAILOR,

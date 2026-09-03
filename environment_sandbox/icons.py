@@ -1725,6 +1725,7 @@ ICON_FARM = "farm"
 ICON_FIELD = "field"
 ICON_MILL = "mill"
 ICON_KITCHEN = "kitchen"
+ICON_FIRE = "fire"
 ICON_CRAFT_BENCH = "craft_bench"
 ICON_ALCHEMIST = "alchemist"
 ICON_TAILOR = "tailor"
@@ -1753,6 +1754,7 @@ BUILDING_ICON_NAMES: tuple[str, ...] = (
     ICON_FIELD,
     ICON_MILL,
     ICON_KITCHEN,
+    ICON_FIRE,
     ICON_CRAFT_BENCH,
     ICON_ALCHEMIST,
     ICON_TAILOR,
@@ -1997,6 +1999,7 @@ def icon_base_for_feature(
         FeatureType.FIELD: ICON_FIELD,
         FeatureType.MILL: ICON_MILL,
         FeatureType.KITCHEN: ICON_KITCHEN,
+        FeatureType.FIRE: ICON_FIRE,
         FeatureType.CRAFT_BENCH: ICON_CRAFT_BENCH,
         FeatureType.ALCHEMIST: ICON_ALCHEMIST,
         FeatureType.TAILOR: ICON_TAILOR,

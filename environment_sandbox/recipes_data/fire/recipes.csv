@@ -1,0 +1,4 @@
+name,label,inputs,outputs,steps,category,icon_key,extraction,farming,hunting,crafting,labour,transport,resource_group,resource_short,food_satiation,food_walk_speed,food_work_efficiency,food_hunger_rate,food_edible
+grilled_meat,Grilled meat,meat:1,grilled_meat:1,,grill,meat_marker,,,,,,,food,g.mt,2.0,1.0,1.0,0.8,
+grilled_fish,Grilled fish,fish:1,grilled_fish:1,,grill,grilled_fish,,,,,,,food,g.fh,2.0,1.0,1.0,0.8,
+grilled_mushrooms,Grilled mushrooms,mushrooms:1,grilled_mushrooms:1,,grill,grilled_mushrooms,,,,,,,food,g.msh,1.5,1.0,1.0,1.0,

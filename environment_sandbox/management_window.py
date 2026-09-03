@@ -165,6 +165,7 @@ def _uses_text(species: WildSpeciesDef | TreeDef) -> str:
     return ("; ".join(uses).capitalize() + ".") if uses else "Ecological ground cover; not harvestable."
 
 _BUILD_ICON: dict[BuildingKind, str] = {
+    BuildingKind.FIRE: "fire",
     BuildingKind.HOME: "storehouse",
     BuildingKind.WORKSTATION: "workstation",
     BuildingKind.FORAGER: "forager",

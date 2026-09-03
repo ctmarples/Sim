@@ -312,6 +312,12 @@ BUILDING_STORAGE: dict[str, BuildingStorageSpec] = {
         output_capacity=_PROC_OUT,
         fuel_capacity=_FUEL,
     ),
+    "fire": BuildingStorageSpec(
+        capacity=_PROC_IN + _PROC_OUT,
+        input_capacity=_PROC_IN,
+        output_capacity=_PROC_OUT,
+        fuel_capacity=_FUEL,
+    ),
     "craft_bench": BuildingStorageSpec(
         capacity=_PROC_IN + _PROC_OUT,
         input_capacity=_PROC_IN,

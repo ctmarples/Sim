@@ -34,6 +34,7 @@ from settings import (
 
 # Icon stem per placeable building (matches assets/icons).
 _BUILD_ICON: dict[BuildingKind, str] = {
+    BuildingKind.FIRE: "fire",
     BuildingKind.FORAGER: "forager",
     BuildingKind.CRAFT_BENCH: "craft_bench",
     BuildingKind.HUNTER: "hunter",
@@ -219,6 +220,7 @@ class Toolbar:
             BuildingKind.FARM,
             BuildingKind.MILL,
             BuildingKind.KITCHEN,
+            BuildingKind.FIRE,
             BuildingKind.CRAFT_BENCH,
             BuildingKind.ALCHEMIST,
             BuildingKind.TAILOR,

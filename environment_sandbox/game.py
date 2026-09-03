@@ -266,6 +266,8 @@ from management_window import ManagementWindow, MgmtTab
 from sound_settings_dialog import SoundSettingsDialog
 from sound_system import SoundSystem
 from player_inventory_dialog import PlayerInventoryDialog
+from scenario import ScenarioDirector
+from scenario_dialog import ScenarioDialog
 from resource_inspect_dialog import ResourceInspectDialog
 from resource_tracker import ResourceHistory
 from resource_tracker_dialog import ResourceTrackerDialog
@@ -335,6 +337,8 @@ from society import (
     skills_from_dict,
     skills_to_dict,
     spawn_travellers_from_templates,
+    hire_candidate_from_template,
+    traveller_templates,
     staple_food_available,
     tick_skill_decay,
     total_housing_beds,
@@ -406,6 +410,7 @@ FEATURE_FOR_BUILDING = {
     BuildingKind.FIELD: FeatureType.FIELD,
     BuildingKind.MILL: FeatureType.MILL,
     BuildingKind.KITCHEN: FeatureType.KITCHEN,
+    BuildingKind.FIRE: FeatureType.FIRE,
     BuildingKind.CRAFT_BENCH: FeatureType.CRAFT_BENCH,
     BuildingKind.ALCHEMIST: FeatureType.ALCHEMIST,
     BuildingKind.TAILOR: FeatureType.TAILOR,
@@ -481,6 +486,8 @@ class Game:
         self.sound_settings = SoundSettingsDialog()
         self.assign_picker = AssignPickerDialog()
         self.player_inventory = PlayerInventoryDialog()
+        self.scenario = ScenarioDirector()
+        self.scenario_dialog = ScenarioDialog()
         self.relocate_building_id: int | None = None
         self.selected_construction_id: int | None = None
         self._player_hud_tool_hits: list[tuple[pygame.Rect, str]] = []
@@ -511,6 +518,8 @@ class Game:
         self.map_edit_crop_key: str = next(iter(CROP_BY_KEY), "sage")
         self.map_edit_building_kind = BuildingKind.HOME
         self.map_edit_move_building_id: int | None = None
+        self.map_edit_traveller_template_id: str | None = None
+        self._map_edit_traveller_choices: list[HireCandidate] = []
         self.height_paint_value = 20.0
         self.height_delta_step = HEIGHT_EDIT_DELTA_DEFAULT
         self.height_brush_radius = 2
@@ -1364,6 +1373,7 @@ class Game:
         while self.running:
             dt = self.clock.get_time() / 1000.0
             self._handle_events()
+            self._update_scenario()
             self._sync_camera_height_overscan()
             # Sim first so cooldowns expire this frame; then arrows can step (matches time demo).
             # WASD pans after walk so edge-follow does not undo an active pan.
@@ -1405,7 +1415,16 @@ class Game:
             or self.management.open
             or self.sound_settings.open
             or self.villager_roster.open
+            or self.scenario_dialog.open
         )
+
+    def _update_scenario(self) -> None:
+        if self.scenario_dialog.dismissed:
+            self.scenario_dialog.dismissed=False
+            self.scenario.dismiss_dialog()
+        self.scenario.update(self)
+        text=self.scenario.take_dialog_request()
+        if text:self.scenario_dialog.show(text)
 
     def _update_player_move_input(self, dt: float) -> None:
         """Continuous arrow-key player movement (WASD is camera pan only)."""
@@ -1793,7 +1812,7 @@ class Game:
         apply_recipe(storage, recipe)
         self.sounds.emit(
             "work.cook"
-            if isinstance(storage, Building) and storage.kind == BuildingKind.KITCHEN
+            if isinstance(storage, Building) and storage.is_cooking_building()
             else "work.craft",
             x=getattr(storage,"x",self.world.home_pos[0]),
             y=getattr(storage,"y",self.world.home_pos[1]),
@@ -1818,6 +1837,9 @@ class Game:
                 continue
             elif self._launch_menu is not None:
                 self._handle_launch_event(event)
+                continue
+            elif self.scenario_dialog.open:
+                self.scenario_dialog.handle_event(event)
                 continue
             elif self._content_lab_active and self._content_lab_session.handle_event(event):
                 continue
@@ -2665,6 +2687,14 @@ class Game:
         if tool == MapEditTool.CROP_PAINT:
             crop=CROP_BY_KEY.get(self.map_edit_crop_key);label=crop.label if crop else self.map_edit_crop_key
             return f"Paint {label} in established fields  brush={brush}  (any season · drag · T exit)"
+        if tool == MapEditTool.PLACE_TRAVELLER:
+            choice = next(
+                (c for c in self._map_edit_traveller_choices
+                 if c.template_id == self.map_edit_traveller_template_id),
+                None,
+            )
+            label = choice.name if choice is not None else "traveller"
+            return f"Place {label} as a non-village traveller (click · T exit)"
         if tool == MapEditTool.PLACE_BUILDING:
             return f"Place {BUILDING_LABELS[self.map_edit_building_kind]} instantly (click · T exit)"
         if self.map_edit_move_building_id is None:
@@ -2853,6 +2883,50 @@ class Game:
         self._complete_construction(site)
         self._after_map_edit(terrain_changed=True)
         self._set_status(f"Editor placed {BUILDING_LABELS[kind]} instantly.")
+        return True
+
+    def _open_map_edit_traveller_picker(self) -> None:
+        """Build a roster from every authored traveller template."""
+        camp = Community(id=0, name="Map editor", x=0, y=0, radius=0)
+        self._map_edit_traveller_choices = [
+            hire_candidate_from_template(
+                template,
+                cand_id=-(index + 1),
+                community=camp,
+                rng=random.Random(index),
+            )
+            for index, template in enumerate(traveller_templates())
+        ]
+        if not self._map_edit_traveller_choices:
+            self._set_status("No traveller templates are available.")
+            return
+        self.villager_roster.open_traveller_place()
+
+    def _editor_place_traveller(self, x: int, y: int) -> bool:
+        """Add an authored hire candidate without making them a villager."""
+        cell = self.world.get_cell(x, y)
+        if cell is None or not self.world.is_walkable(x, y):
+            self._set_status("Travellers must be placed on walkable terrain.")
+            return False
+        if any((v.x, v.y) == (x, y) for v in self.villagers) or any(
+            (c.x, c.y) == (x, y) for c in self.hire_candidates
+        ):
+            self._set_status("That map square is already occupied by a person.")
+            return False
+        source = next(
+            (c for c in self._map_edit_traveller_choices
+             if c.template_id == self.map_edit_traveller_template_id),
+            None,
+        )
+        if source is None:
+            self._set_status("Choose a traveller from the list first.")
+            return False
+        data = source.to_dict()
+        data.update(id=self.next_hire_id, community_id=0, x=x, y=y)
+        traveller = HireCandidate.from_dict(data)
+        self.next_hire_id += 1
+        self.hire_candidates.append(traveller)
+        self._set_status(f"Placed {traveller.name} as a non-village traveller.")
         return True
 
     def _editor_place_field(self,start:tuple[int,int],end:tuple[int,int]) -> bool:
@@ -3228,6 +3302,9 @@ class Game:
             if self.map_edit_tool == MapEditTool.MOVE_BUILDING:
                 self._editor_move_building_at(*cell)
                 return
+            if self.map_edit_tool == MapEditTool.PLACE_TRAVELLER:
+                self._editor_place_traveller(*cell)
+                return
             self._height_painting = True
             self._height_paint_last = None
             self._paint_height_at(cell[0], cell[1])
@@ -3576,6 +3653,9 @@ class Game:
                 return True
             self.map_edit_tool = MapEditTool.PLACE_BUILDING
             self._set_status(self._height_edit_status())
+            return True
+        if action == "edit_add_traveller":
+            self._open_map_edit_traveller_picker()
             return True
         if action is not None and action.startswith("edit_value:"):
             raw = action.split(":", 1)[1]
@@ -4442,6 +4522,17 @@ class Game:
     def _apply_roster_action(self) -> None:
         action = self.villager_roster.take_action()
         if action is None:
+            return
+        if action.startswith("place_traveller:"):
+            choice_id = int(action.split(":")[1])
+            choice = next(
+                (c for c in self._map_edit_traveller_choices if c.id == choice_id),
+                None,
+            )
+            if choice is not None:
+                self.map_edit_traveller_template_id = choice.template_id
+                self._set_map_edit_tool(MapEditTool.PLACE_TRAVELLER)
+                self.villager_roster.close()
             return
         if action.startswith("assign_pick:"):
             vid = int(action.split(":")[1])
@@ -8560,6 +8651,7 @@ class Game:
             FeatureType.FIELD,
             FeatureType.MILL,
             FeatureType.KITCHEN,
+            FeatureType.FIRE,
             FeatureType.CRAFT_BENCH,
             FeatureType.ALCHEMIST,
             FeatureType.TAILOR,
@@ -8788,6 +8880,7 @@ class Game:
             FeatureType.FIELD,
             FeatureType.MILL,
             FeatureType.KITCHEN,
+            FeatureType.FIRE,
             FeatureType.CRAFT_BENCH,
             FeatureType.ALCHEMIST,
             FeatureType.TAILOR,
@@ -11526,8 +11619,8 @@ class Game:
                     if not building.deposit_one_from(self.player.inventory, key):
                         break
 
-        if building.kind == BuildingKind.KITCHEN and not building.has_cooking_fuel():
-            self._set_status("Kitchen needs wood fuel.")
+        if building.is_cooking_building() and not building.has_cooking_fuel():
+            self._set_status(f"{BUILDING_LABELS[building.kind]} needs wood fuel.")
             return
         inputs_ready = (
             all(
@@ -11652,9 +11745,9 @@ class Game:
                     if not building.deposit_one_from(self.player.inventory, key):
                         break
 
-        if building.kind == BuildingKind.KITCHEN and not building.has_cooking_fuel():
+        if building.is_cooking_building() and not building.has_cooking_fuel():
             self._clear_player_craft()
-            self._set_status("Craft stopped — kitchen needs wood fuel.")
+            self._set_status(f"Craft stopped — {BUILDING_LABELS[building.kind].lower()} needs wood fuel.")
             return False
         inputs_ready = (
             all(
@@ -11684,7 +11777,7 @@ class Game:
         self._finish_player_work()
         label = recipe_label(recipe)
         if done:
-            fuel = 1 if building.kind == BuildingKind.KITCHEN else 0
+            fuel = 1 if building.is_cooking_building() else 0
             if is_farm_thresh:
                 self._apply_barn_thresh_recipe(building, recipe, None)
             else:
@@ -11709,7 +11802,7 @@ class Game:
                     stock_amounts=village_stock,
                 )
                 and (
-                    building.kind != BuildingKind.KITCHEN
+                    not building.is_cooking_building()
                     or building.has_cooking_fuel()
                 )
             ):
@@ -11933,6 +12026,7 @@ class Game:
                 BuildingKind.FISHER,
                 BuildingKind.FARM,
                 BuildingKind.KITCHEN,
+                BuildingKind.FIRE,
                 BuildingKind.PANTRY,
                 BuildingKind.CELLAR,
             ):
@@ -11951,6 +12045,7 @@ class Game:
                 BuildingKind.FISHER,
                 BuildingKind.FARM,
                 BuildingKind.KITCHEN,
+                BuildingKind.FIRE,
                 BuildingKind.PANTRY,
                 BuildingKind.CELLAR,
             ) and self._food_count(building) > 0:
@@ -12253,7 +12348,7 @@ class Game:
         # Workplace helper hauling a foreign building (not own assigned transport).
         hid = villager.haul_building_id
         assigned = self.buildings.get(villager.building_id)
-        if assigned is not None and assigned.kind == BuildingKind.KITCHEN:
+        if assigned is not None and assigned.is_cooking_building():
             return False
         return hid is not None and hid != villager.building_id
 
@@ -12424,7 +12519,7 @@ class Game:
         if building.is_processor():
             keys.update(building.processor_input_keys())
             keys.update(building.processor_output_keys())
-            if building.kind == BuildingKind.KITCHEN:
+            if building.is_cooking_building():
                 keys.add(KITCHEN_FUEL_KEY)
         elif building.is_splitter():
             keys.update(("logs", "hardwood_logs", "wood"))
@@ -13230,6 +13325,7 @@ class Game:
         if building.kind in (
             BuildingKind.MILL,
             BuildingKind.KITCHEN,
+            BuildingKind.FIRE,
             BuildingKind.CRAFT_BENCH,
             BuildingKind.ALCHEMIST,
             BuildingKind.TAILOR,
@@ -14537,6 +14633,7 @@ class Game:
         if building.kind in (
             BuildingKind.MILL,
             BuildingKind.KITCHEN,
+            BuildingKind.FIRE,
             BuildingKind.CRAFT_BENCH,
             BuildingKind.ALCHEMIST,
             BuildingKind.TAILOR,
@@ -15453,7 +15550,7 @@ class Game:
             return
         self._spend_work_energy(villager)
         if building.advance_recipe_progress(recipe):
-            fuel = 1 if building.kind == BuildingKind.KITCHEN else 0
+            fuel = 1 if building.is_cooking_building() else 0
             self._apply_recipe_tracked(building, recipe, fuel_wood=fuel)
             if fuel:
                 building.fuel_wood = max(0, building.fuel_wood - 1)
@@ -16099,6 +16196,7 @@ class Game:
             FeatureType.FIELD,
             FeatureType.MILL,
             FeatureType.KITCHEN,
+            FeatureType.FIRE,
             FeatureType.CRAFT_BENCH,
             FeatureType.ALCHEMIST,
             FeatureType.TAILOR,
@@ -17898,7 +17996,7 @@ class Game:
         else:
             tier = 3
         # Prefer kitchen meals, then fisher fish (kitchen inputs), over craft/logs.
-        if building.kind == BuildingKind.KITCHEN:
+        if building.is_cooking_building():
             kind_rank = 0
         elif building.kind == BuildingKind.FISHER:
             kind_rank = 1
@@ -17936,11 +18034,11 @@ class Game:
         gap = sum(building.recipe_gap_demand().values())
         if building.kind == BuildingKind.COMPOST_HEAP:
             tier = -1
-        elif building.kind == BuildingKind.KITCHEN and gap > 0:
+        elif building.is_cooking_building() and gap > 0:
             tier = 0
         elif gap > 0:
             tier = 1
-        elif building.kind == BuildingKind.KITCHEN:
+        elif building.is_cooking_building():
             tier = 2
         else:
             tier = 3
@@ -18058,7 +18156,7 @@ class Game:
             full_hit = _useful_overlap(full)
             if b.kind == BuildingKind.COMPOST_HEAP and full_hit > 0:
                 tier = -1
-            elif b.kind == BuildingKind.KITCHEN and gap_hit > 0:
+            elif b.is_cooking_building() and gap_hit > 0:
                 tier = 0
             elif gap_hit > 0:
                 tier = 1
@@ -20261,7 +20359,15 @@ class Game:
         self.balance_dialog.draw(self.screen, self.balance, mouse_pos=mouse)
         self.wildlife_repopulate_dialog.draw(self.screen, mouse)
         if self.villager_roster.open:
-            if self.villager_roster.mode == "hire":
+            if self.villager_roster.mode == "place_traveller":
+                self.villager_roster.draw(
+                    self.screen,
+                    [entry_from_candidate(c) for c in self._map_edit_traveller_choices],
+                    mouse_pos=mouse,
+                    title="Choose traveller to place",
+                    subtitle="Select a traveller, then click a walkable map square.",
+                )
+            elif self.villager_roster.mode == "hire":
                 foods = self._village_food_amounts()
                 beds = free_housing_beds(self.buildings, self.villagers)
                 lvl = max_housing_level(self.buildings)
@@ -20299,6 +20405,7 @@ class Game:
         self.sound_settings.draw(self.screen, self.sounds)
         self.file_dialog.draw(self.screen)
         self.number_input.draw(self.screen)
+        self.scenario_dialog.draw(self.screen,self.scenario.prompt)
         if self._content_lab_active and self._content_lab_session is not None:
             self._content_lab_session.draw(self.screen)
         pygame.display.flip()
@@ -22604,6 +22711,9 @@ class Game:
                 continue
             vx, vy = draw_position
             people.append((vy, vx, "villager", villager))
+        for traveller in self.hire_candidates:
+            tx, ty = entity_draw_xy(traveller)
+            people.append((ty, tx, "traveller", traveller))
         if self._player_inside_building_id is None:
             px, py = entity_draw_xy(self.player)
             people.append((py, px, "player", self.player))
@@ -23172,6 +23282,7 @@ class Game:
             BuildingKind.FIELD: COLOUR_FIELD,
             BuildingKind.MILL: COLOUR_MILL,
             BuildingKind.KITCHEN: COLOUR_KITCHEN,
+            BuildingKind.FIRE: COLOUR_KITCHEN,
             BuildingKind.CRAFT_BENCH: COLOUR_CRAFT_BENCH,
             BuildingKind.ALCHEMIST: COLOUR_ALCHEMIST,
             BuildingKind.TAILOR: COLOUR_TAILOR,
