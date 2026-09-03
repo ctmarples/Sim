@@ -935,9 +935,10 @@ class Game:
             return [
                 (pygame.Rect(x, panel.y + 110, w, h), "continue", continue_label),
                 (pygame.Rect(x, panel.y + 158, w, h), "new", "New game"),
-                (pygame.Rect(x, panel.y + 206, w, h), "load", "Load game"),
-                (pygame.Rect(x, panel.y + 254, w, h), "developer_tools", "Developer Tools"),
-                (pygame.Rect(x, panel.y + 302, w, h), "quit", "Quit"),
+                (pygame.Rect(x, panel.y + 206, w, h), "tutorial", "Tutorial"),
+                (pygame.Rect(x, panel.y + 254, w, h), "load", "Load game"),
+                (pygame.Rect(x, panel.y + 302, w, h), "developer_tools", "Developer Tools"),
+                (pygame.Rect(x, panel.y + 350, w, h), "quit", "Quit"),
             ]
         if self._launch_menu == "new":
             return [
@@ -1098,6 +1099,26 @@ class Game:
                 self._set_status(f"Could not continue {path.name}: {exc}")
         elif action == "new":
             self._launch_menu = "new"
+        elif action == "tutorial":
+            from pathlib import Path
+
+            tutorial_path = Path(__file__).resolve().parents[1] / "saves" / "tutorial_slice.json"
+            try:
+                load_from_path(self, tutorial_path)
+                # The menu always starts a new tutorial, even if the authored
+                # template contains presentation state from an editor session.
+                self.scenario.start_tutorial(self)
+                self.scenario._ensure_scenario_deer(self)
+                self._last_save_path = None
+                self._loaded_save_name = tutorial_path.name
+                self._sync_time_knobs_from_clock()
+                self._invalidate_forage_index()
+                self._minimap_terrain = None
+                self._minimap_terrain_key = None
+                self._launch_menu = None
+                self._set_status("Tutorial started")
+            except Exception as exc:
+                self._set_status(f"Could not start tutorial: {exc}")
         elif action == "load":
             self._launch_menu = "load"
             self._pending_file_action = "launch_load"
@@ -1421,10 +1442,15 @@ class Game:
     def _update_scenario(self) -> None:
         if self.scenario_dialog.dismissed:
             self.scenario_dialog.dismissed=False
-            self.scenario.dismiss_dialog()
+            choice=self.scenario_dialog.choice
+            self.scenario_dialog.close()
+            self.scenario_dialog.choice=None
+            self.scenario.dismiss_dialog(choice)
         self.scenario.update(self)
-        text=self.scenario.take_dialog_request()
-        if text:self.scenario_dialog.show(text)
+        request=self.scenario.take_dialog_request()
+        if request:
+            text,choices=request
+            self.scenario_dialog.show(text,choices)
 
     def _update_player_move_input(self, dt: float) -> None:
         """Continuous arrow-key player movement (WASD is camera pan only)."""
@@ -10184,6 +10210,8 @@ class Game:
             return False
         inventory.add_berries(taken)
         self.record_produced("berries", taken)
+        if inventory is self.player.inventory:
+            self.scenario.note_berry_collected(self, x, y, taken)
         seed_msg = ""
         if self._drop_rng.random() < self._seed_chance(BERRY_SEED_DROP_CHANCE) and inventory.can_add(1, key="berry_seeds"):
             inventory.add_berry_seeds(1)
@@ -21657,7 +21685,7 @@ class Game:
                 )
                 draw_size = (
                     vc
-                    if cell.feature in extension_features
+                    if cell.feature in extension_features or cell.feature == FeatureType.FIRE
                     else vc * max(1, BUILDING_FOOTPRINT)
                 )
                 structure = self._building_at(x, y)

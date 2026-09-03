@@ -2057,6 +2057,15 @@ def load_from_path(game: Game, path: Path | str) -> None:
     with path.open("r", encoding="utf-8") as fh:
         data = json.load(fh)
     apply_save(game, data)
+    # Large forest animals are introduced by runtime/scenario progression, not
+    # inherited from authored map-save populations.
+    if hasattr(game, "wildlife"):
+        from wildlife import AnimalKind
+        game.wildlife.animals = [
+            animal for animal in game.wildlife.animals
+            if animal.kind not in (AnimalKind.DEER, AnimalKind.BOAR)
+        ]
+        game.wildlife._index_animals()
     if hasattr(game,"scenario"):
         if hasattr(game,"scenario_dialog"):game.scenario_dialog.close()
         restored=isinstance(data.get("scenario"),dict)

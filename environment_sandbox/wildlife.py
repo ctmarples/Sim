@@ -2427,6 +2427,10 @@ class WildlifeManager:
         for animal in self.animals:
             if animal.id in moved:
                 continue
+            # Tutorial/set-piece movement owns both the logical step and its
+            # render cooldown. Normal roaming resumes when this marker clears.
+            if getattr(animal, "_scenario_controlled", False):
+                continue
             if animal.kind in BIRD_KINDS:
                 if animal.move_cooldown > 0:
                     animal.move_cooldown -= 1
