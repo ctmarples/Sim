@@ -36,10 +36,29 @@ SIM_SPEEDS: tuple[int, ...] = (0, 1, 2, 4, 8, 16, 32, 64, 128)
 # Seconds are wall-clock at ×1 *if* the display holds 60 FPS.
 # ×1 burns PLAYBACK_TICKS_AT_X1 sim ticks each rendered frame (not extra catch-up).
 PLAYBACK_TICKS_AT_X1: int = 2  # sim ticks per displayed frame at ×1; speed ×N multiplies this
-DAY_SECONDS_AT_X1: float = 10.0  # real seconds for one calendar day at ×1 / 60 FPS
+DAY_SECONDS_AT_X1: float = 300.0  # real seconds for one calendar day at ×1 / 60 FPS
 WALK_SECONDS_AT_X1: float = 0.40  # real seconds to walk one tile at ×1 / 60 FPS
 WORK_SECONDS_AT_X1: float = 1.20  # real seconds between work actions at ×1 / 60 FPS
-DAY_SECONDS_OPTIONS: tuple[float, ...] = (1.0, 2.0, 5.0, 10.0, 20.0, 30.0)
+DAY_SECONDS_OPTIONS: tuple[float, ...] = (
+    1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0, 180.0, 300.0, 600.0
+)
+# Calendar policy: 0 keeps the historical 28-day seasons; 1 enables independently
+# configurable day/night counts. Changes are activated at a season boundary.
+CALENDAR_MODE: int = 0
+DAY_NIGHT_ENABLED: int = 1
+FLEXIBLE_DAY_SECONDS_AT_X1: float = 300.0
+WORK_START_HOUR_SPRING: float = 7.0
+WORK_END_HOUR_SPRING: float = 20.0
+WORK_START_HOUR_SUMMER: float = 5.0
+WORK_END_HOUR_SUMMER: float = 22.0
+WORK_START_HOUR_AUTUMN: float = 7.0
+WORK_END_HOUR_AUTUMN: float = 20.0
+WORK_START_HOUR_WINTER: float = 9.0
+WORK_END_HOUR_WINTER: float = 18.0
+SPRING_DAYS: int = 4
+SUMMER_DAYS: int = 4
+AUTUMN_DAYS: int = 4
+WINTER_DAYS: int = 4
 
 # Seasonal rainfall events (File → Balance → Weather & rainfall).
 WEATHER_EVENT_DAYS: int = 3

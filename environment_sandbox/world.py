@@ -2445,7 +2445,14 @@ class World:
                 elif decay_per_tick > 0 and cell.disturbance > 0:
                     cell.disturbance = max(0.0, cell.disturbance - decay_per_tick * ticks)
 
-    def tick_bulk(self, ticks: int, decay_per_tick: float = 0.0, day: float = 0.0) -> bool:
+    def tick_bulk(
+        self,
+        ticks: int,
+        decay_per_tick: float = 0.0,
+        day: float = 0.0,
+        *,
+        seasonal_crops: bool = False,
+    ) -> bool:
         """Apply `ticks` ecology steps at once (for headless fast-forward).
 
         Returns True when a farm crop first becomes ready or weeds cross the
@@ -2517,7 +2524,7 @@ class World:
                 else:
                     still_growing.append((x, y))
             elif feat == FeatureType.CROP_HERB:
-                if cell.growth_ticks > 0:
+                if cell.growth_ticks > 0 and not seasonal_crops:
                     grow_mult = disturbance_activity_multiplier(cell.disturbance)
                     prev_gt = cell.growth_ticks
                     cell.growth_ticks = max(

@@ -767,6 +767,9 @@ def serialize_game(game: Game) -> dict[str, Any]:
         "season": game.season.name,
         "calendar_day": game.calendar_day,
         "day_tick": game.day_tick,
+        "calendar_policy": getattr(game, "calendar_policy", None).to_dict()
+        if getattr(game, "calendar_policy", None) is not None
+        else None,
         "world": {
             "cells": cells,
             "home_pos": list(world.home_pos),
@@ -1882,7 +1885,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     game.ticks_per_day = set_ticks_per_day(saved_tpd)
 
     if "calendar_day" in data:
-        game.calendar_day = int(data["calendar_day"]) % YEAR_DAYS
+        game.calendar_day = float(data["calendar_day"]) % YEAR_DAYS
         game.day_tick = int(data.get("day_tick", game.ticks_per_day))
     elif "season" in data:
         # Older saves: map season (+ optional timer) onto calendar day.
@@ -1907,6 +1910,12 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
 
     # Sanity: season property should match day.
     _ = season_for_day(game.calendar_day)
+    from calendar_system import CalendarPolicy
+
+    game.calendar_policy = CalendarPolicy.from_dict(
+        data.get("calendar_policy"), season_for_day(game.calendar_day)
+    )
+
 
     overlay_name = data.get("overlay_mode", "NONE")
     if overlay_name == "PATH_TRAFFIC":

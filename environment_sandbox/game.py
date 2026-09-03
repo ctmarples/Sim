@@ -213,6 +213,14 @@ from settings import (
     OVERLAY_ALPHA,
     SIM_SPEEDS,
     DAY_SECONDS_OPTIONS,
+    WORK_START_HOUR_SPRING,
+    WORK_END_HOUR_SPRING,
+    WORK_START_HOUR_SUMMER,
+    WORK_END_HOUR_SUMMER,
+    WORK_START_HOUR_AUTUMN,
+    WORK_END_HOUR_AUTUMN,
+    WORK_START_HOUR_WINTER,
+    WORK_END_HOUR_WINTER,
     seconds_to_ticks,
     ticks_to_seconds,
     STARTING_ROCK,
@@ -269,6 +277,7 @@ from recipes import (
 )
 from bug_log import BugLog
 from save_load import load_from_path, save_to_path
+from calendar_system import CalendarMode, CalendarPolicy
 from seasons import (
     DAYS_PER_SEASON,
     TICKS_PER_DAY,
@@ -553,6 +562,8 @@ class Game:
         set_ticks_per_day(self.ticks_per_day)
         self.calendar_day = 0
         self.day_tick = self.ticks_per_day
+        self.calendar_policy = CalendarPolicy()
+        self.calendar_policy.begin(Season.SPRING)
         self._pending_file_action: str | None = None
         self._last_save_path = None  # Path | None — last successful save/load
         self._loaded_save_name: str | None = None
@@ -820,6 +831,8 @@ class Game:
         self.calendar_day = 0
         self.day_tick = self.ticks_per_day
         set_ticks_per_day(self.ticks_per_day)
+        self.calendar_policy = CalendarPolicy()
+        self.calendar_policy.begin(Season.SPRING)
         self.home_storage.reset()
         self.regional_wealth = 0
         self._give_starting_resources()
@@ -838,7 +851,7 @@ class Game:
         self._invalidate_height_sample_cache()
         self._seed_map_communities()
         self._refresh_indicators()
-        self._apply_time_balance()
+        self._apply_calendar_balance_immediately()
         self.day_tick = self.ticks_per_day
 
     def _start_fresh_game(self) -> None:
@@ -1174,6 +1187,7 @@ class Game:
         self.home_storage.reset()
         self.regional_wealth = 0
         self.calendar_day = 0
+        self._apply_calendar_balance_immediately()
         self.day_tick = self.ticks_per_day
         self.player.reset(world.start_pos[0], world.start_pos[1])
         self._player_inside_building_id = None
@@ -1594,10 +1608,12 @@ class Game:
         """Advance world growth and wake idle workers when a field changes phase."""
         if ticks <= 0:
             return
+        ecology_ticks = max(1, int(round(ticks * self._calendar_step_per_day())))
         woke = self.world.tick_bulk(
-            ticks,
+            ecology_ticks,
             decay_per_tick=self.balance.get_float("DISTURBANCE_DECAY_PER_TICK"),
             day=day,
+            seasonal_crops=self.calendar_policy.mode == CalendarMode.FLEXIBLE,
         )
         if woke:
             self.world.invalidate_movement_cache()
@@ -4628,6 +4644,129 @@ class Game:
     def season(self) -> Season:
         return season_for_day(self.calendar_day)
 
+    def _calendar_day_fraction(self) -> float:
+        return 1.0 - float(self.day_tick) / max(1, self.ticks_per_day)
+
+    def _calendar_step_per_day(self) -> float:
+        policy = getattr(self, "calendar_policy", None)
+        return policy.ecology_units_per_day if policy is not None else 1.0
+
+    def _calendar_now(self) -> float:
+        """Continuous annual coordinate; displayed day counts do not define it."""
+        return (
+            float(self.calendar_day)
+            + self._calendar_day_fraction() * self._calendar_step_per_day()
+        ) % YEAR_DAYS
+
+    def _calendar_rate_per_tick(self) -> float:
+        return self._calendar_step_per_day() / max(1, self.ticks_per_day)
+
+    def _work_hours(self) -> tuple[float, float]:
+        return {
+            Season.SPRING: (WORK_START_HOUR_SPRING, WORK_END_HOUR_SPRING),
+            Season.SUMMER: (WORK_START_HOUR_SUMMER, WORK_END_HOUR_SUMMER),
+            Season.AUTUMN: (WORK_START_HOUR_AUTUMN, WORK_END_HOUR_AUTUMN),
+            Season.WINTER: (WORK_START_HOUR_WINTER, WORK_END_HOUR_WINTER),
+        }[self.season]
+
+    def _daylight_ratio(self) -> float:
+        start, end = self._work_hours()
+        return (end - start) / 24.0
+
+    def _is_night(self) -> bool:
+        hour = self._calendar_day_fraction() * 24.0
+        start, end = self._work_hours()
+        return hour < start or hour >= end
+
+    @staticmethod
+    def _energy_speed_factor(energy: float) -> float:
+        value = max(0.0, min(1.0, float(energy)))
+        if value >= 0.25:
+            return 1.0 if value > 0.5 else 0.9
+        if value >= 0.10:
+            return 0.8
+        return 0.7
+
+    def _calendar_label(self) -> str:
+        policy = getattr(self, "calendar_policy", None)
+        if policy is None or policy.mode == CalendarMode.LEGACY:
+            base = format_date(int(self._calendar_now()))
+            phase = self._calendar_day_fraction()
+            minutes = int(phase * 24 * 60) % (24 * 60)
+            return f"{base}  {minutes // 60:02d}:{minutes % 60:02d}"
+        snap = policy.snapshot(self._calendar_now(), self._calendar_day_fraction())
+        minutes = int(snap["time_of_day"] * 24 * 60) % (24 * 60)
+        return (
+            f"{snap['season'].name.title()}  "
+            f"Day {snap['day_in_season'] + 1}/{snap['days_in_season']}  "
+            f"{minutes // 60:02d}:{minutes % 60:02d}"
+        )
+
+    def _draw_day_night(self) -> None:
+        """Tint the playable viewport while leaving interface chrome readable."""
+        if not self.balance.get_int("DAY_NIGHT_ENABLED"):
+            return
+        phase = self._calendar_day_fraction()
+        start_h, end_h = self._work_hours()
+        dawn, dusk = start_h / 24.0, end_h / 24.0
+        if dawn <= phase < dusk:
+            edge = min(phase - dawn, dusk - phase) / max(0.01, (dusk - dawn) * 0.08)
+            darkness = max(0.0, 1.0 - min(1.0, edge)) * 0.35
+        else:
+            elapsed = phase - dusk if phase >= dusk else phase + (1.0 - dusk)
+            night_pos = elapsed / max(0.01, 1.0 - (dusk - dawn))
+            darkness = 0.72 + 0.28 * math.sin(math.pi * night_pos)
+        alpha = int(round(12 + 133 * darkness))
+        overlay = pygame.Surface(
+            (map_view_width(), WINDOW_HEIGHT - MAP_OFFSET_Y), pygame.SRCALPHA
+        )
+        overlay.fill((9, 18, 46, alpha))
+        self.screen.blit(overlay, (0, MAP_OFFSET_Y))
+
+    def _queue_calendar_balance(self) -> None:
+        policy = getattr(self, "calendar_policy", None)
+        if policy is None:
+            return
+        mode = (
+            CalendarMode.FLEXIBLE
+            if self.balance.get_int("CALENDAR_MODE")
+            else CalendarMode.LEGACY
+        )
+        policy.queue(
+            mode,
+            {
+                Season.SPRING: self.balance.get_int("SPRING_DAYS"),
+                Season.SUMMER: self.balance.get_int("SUMMER_DAYS"),
+                Season.AUTUMN: self.balance.get_int("AUTUMN_DAYS"),
+                Season.WINTER: self.balance.get_int("WINTER_DAYS"),
+            },
+        )
+
+    def _apply_calendar_balance_immediately(self) -> None:
+        """Apply preferences at a fresh-game boundary rather than queueing them."""
+        mode = (
+            CalendarMode.FLEXIBLE
+            if self.balance.get_int("CALENDAR_MODE")
+            else CalendarMode.LEGACY
+        )
+        policy = CalendarPolicy(mode=mode)
+        policy.season_days.update(
+            {
+                Season.SPRING: self.balance.get_int("SPRING_DAYS"),
+                Season.SUMMER: self.balance.get_int("SUMMER_DAYS"),
+                Season.AUTUMN: self.balance.get_int("AUTUMN_DAYS"),
+                Season.WINTER: self.balance.get_int("WINTER_DAYS"),
+            }
+        )
+        policy.begin(Season.SPRING)
+        self.calendar_policy = policy
+        day_s = self.balance.get_float(
+            "FLEXIBLE_DAY_SECONDS_AT_X1"
+            if mode == CalendarMode.FLEXIBLE
+            else "DAY_SECONDS_AT_X1"
+        )
+        self._set_ticks_per_day(seconds_to_ticks(day_s, self._playback_ticks()))
+
     def _open_time_demo(self) -> None:
         """Open the ticks/cooldown demo in a second process."""
         import subprocess
@@ -4706,13 +4845,8 @@ class Game:
             return max(1, PLAYBACK_TICKS_AT_X1)
 
     def _satiation_decay(self) -> float:
-        try:
-            days = self.balance.get_float("VILLAGER_SATIATION_DAYS")
-            return 1.0 / max(1.0, days * self.ticks_per_day)
-        except Exception:
-            return satiation_decay_per_tick(
-                self._playback_ticks(), ticks_per_day=self.ticks_per_day
-            )
+        """Two full-meal equivalents per visible day, independent of buffs."""
+        return 2.0 / max(1, self.ticks_per_day)
 
     def _legacy_per_tick(self, amount: float) -> float:
         """Rates authored at 1 sim tick per frame."""
@@ -4721,10 +4855,30 @@ class Game:
     def _sync_time_knobs_from_clock(self) -> None:
         """Keep Balance day-seconds honest after loading a save's tick count."""
         try:
+            policy = self.calendar_policy
             self.balance.set(
-                "DAY_SECONDS_AT_X1",
+                "FLEXIBLE_DAY_SECONDS_AT_X1"
+                if policy.mode == CalendarMode.FLEXIBLE
+                else "DAY_SECONDS_AT_X1",
                 ticks_to_seconds(self.ticks_per_day, self._playback_ticks()),
             )
+            selected_mode = policy.pending_mode or policy.mode
+            self.balance.set(
+                "CALENDAR_MODE",
+                1 if selected_mode == CalendarMode.FLEXIBLE else 0,
+                autosave=False,
+            )
+            for season, key in (
+                (Season.SPRING, "SPRING_DAYS"),
+                (Season.SUMMER, "SUMMER_DAYS"),
+                (Season.AUTUMN, "AUTUMN_DAYS"),
+                (Season.WINTER, "WINTER_DAYS"),
+            ):
+                self.balance.set(
+                    key,
+                    policy.pending_season_days.get(season, policy.season_days[season]),
+                    autosave=season == Season.WINTER,
+                )
         except Exception:
             pass
 
@@ -4776,7 +4930,12 @@ class Game:
 
     def _apply_time_balance(self) -> None:
         """Keep calendar ticks in sync with day length in real seconds at ×1."""
-        day_s = self.balance.get_float("DAY_SECONDS_AT_X1")
+        self._queue_calendar_balance()
+        day_s = self.balance.get_float(
+            "FLEXIBLE_DAY_SECONDS_AT_X1"
+            if self.calendar_policy.mode == CalendarMode.FLEXIBLE
+            else "DAY_SECONDS_AT_X1"
+        )
         target = seconds_to_ticks(day_s, self._playback_ticks())
         if target != self.ticks_per_day:
             self._set_ticks_per_day(target)
@@ -4829,7 +4988,12 @@ class Game:
         current = ticks_to_seconds(self.ticks_per_day, self._playback_ticks())
         opts = DAY_SECONDS_OPTIONS
         idx = min(range(len(opts)), key=lambda i: abs(opts[i] - current))
-        self.balance.set("DAY_SECONDS_AT_X1", opts[(idx + delta) % len(opts)])
+        key = (
+            "FLEXIBLE_DAY_SECONDS_AT_X1"
+            if self.calendar_policy.mode == CalendarMode.FLEXIBLE
+            else "DAY_SECONDS_AT_X1"
+        )
+        self.balance.set(key, opts[(idx + delta) % len(opts)])
         self._apply_time_balance()
 
     def _toggle_pause(self) -> None:
@@ -5054,7 +5218,7 @@ class Game:
 
         if steps <= 0:
             return
-        day_frac = float(steps) / max(1, self.ticks_per_day)
+        day_frac = float(steps) * self._calendar_rate_per_tick()
         days = self.balance.get_float("FOOD_SPOILAGE_DAYS")
         carried_rate = self.balance.get_float("FOOD_SPOILAGE_CARRIED_RATE")
         tick_storage_spoilage(self.home_storage, day_frac, days)
@@ -5071,13 +5235,21 @@ class Game:
 
     def _advance_day(self) -> None:
         prev = self.season
-        self.calendar_day = (self.calendar_day + 1) % YEAR_DAYS
-        self.weather.advance_day(self.calendar_day)
+        old_position = float(self.calendar_day)
+        step = self._calendar_step_per_day()
+        self.calendar_day = (old_position + step) % YEAR_DAYS
         self._bump_work_gen()
-        self.resource_history.record_stock(self._village_stock_amounts())
-        self.resource_history.advance_day()
         season_changed = self.season != prev
         if season_changed:
+            old_mode = self.calendar_policy.mode
+            self.calendar_policy.enter_season(self.season)
+            if self.calendar_policy.mode != old_mode:
+                day_s = self.balance.get_float(
+                    "FLEXIBLE_DAY_SECONDS_AT_X1"
+                    if self.calendar_policy.mode == CalendarMode.FLEXIBLE
+                    else "DAY_SECONDS_AT_X1"
+                )
+                self._set_ticks_per_day(seconds_to_ticks(day_s, self._playback_ticks()))
             self._convert_seasonal_compost()
             self._expire_unharvested_crops(prev)
             self._start_perennial_regrowth()
@@ -5092,11 +5264,28 @@ class Game:
             self._check_seasonal_happiness_leaves()
             self._top_up_hire_candidates()
             self._refresh_market_demands()
-            self._set_status(f"{format_date(self.calendar_day)} begins.")
+            self._set_status(f"{self._calendar_label()} begins.")
             self._apply_path_fertility_drain()
+        # Weather/history retain their established annual cadence regardless of
+        # how many visible day/night cycles make up this season.
+        crossed_units = max(
+            1,
+            int(math.floor(old_position + step + 1e-9))
+            - int(math.floor(old_position + 1e-9)),
+        )
+        for offset in range(1, crossed_units + 1):
+            sample_position = (math.floor(old_position + 1e-9) + offset) % YEAR_DAYS
+            self.weather.advance_day(int(sample_position))
+            self.resource_history.record_stock(self._village_stock_amounts())
+            self.resource_history.advance_day()
         # Temperature follows the annual cosine each day; slower ecological
         # layers (habitats, forest floor, paths, urban) remain at ≤8×/year.
-        sample_day = is_env_sample_day(self.calendar_day)
+        # Environment layers sample twice per ecological season even when a
+        # flexible visible day jumps across the old integer sample coordinate.
+        sample_day = (
+            int(math.floor((old_position + step) / (DAYS_PER_SEASON / 2)))
+            != int(math.floor(old_position / (DAYS_PER_SEASON / 2)))
+        )
         if sample_day:
             self._sample_environment()
             self._sync_habitat_selection()
@@ -5250,6 +5439,8 @@ class Game:
 
     def _autosave_season_start(self) -> None:
         """Overwrite only the dedicated autosave, preserving the manual save target."""
+        if self.headless:
+            return
         from save_load import save_to_path, saves_dir
 
         try:
@@ -8969,6 +9160,15 @@ class Game:
 
     def _update_villager_wellbeing(self, villager: Villager, day_frac: float) -> None:
         """Energy drain, happiness drift, skill decay, leave check."""
+        night = self._is_night()
+        if night and villager.state != VillagerState.SLEEPING:
+            house = self.buildings.get(villager.housing_id or -1)
+            if villager.housed and house is not None:
+                villager.state = VillagerState.SLEEPING
+                villager.target = house.center_cell()
+                villager._sleep_position = house.center_cell()  # type: ignore[attr-defined]
+                villager._slept_through_night = False  # type: ignore[attr-defined]
+                villager.seeking_food = False
         if villager.state == VillagerState.SLEEPING:
             house = self.buildings.get(villager.housing_id or -1)
             sleep_position = self._villager_sleep_position(villager, house)
@@ -8978,10 +9178,11 @@ class Game:
                 and (villager.x, villager.y) == sleep_position
             )
             if at_home:
-                villager.energy = min(
-                    1.0, villager.energy + self._legacy_per_tick(ENERGY_SLEEP_GAIN)
-                )
-                if villager.energy >= 0.95:
+                if night:
+                    villager.energy = 1.0
+                    villager._slept_through_night = True  # type: ignore[attr-defined]
+                elif bool(getattr(villager, "_slept_through_night", False)):
+                    villager.energy = 1.0
                     villager.state = VillagerState.IDLE
                     villager.target = None
                     villager._sleep_position = None  # type: ignore[attr-defined]
@@ -8993,13 +9194,39 @@ class Game:
                 villager.target = None
                 villager._sleep_position = None  # type: ignore[attr-defined]
         else:
-            # Energy is spent only when work ticks fire (_spend_work_energy).
-            if villager.energy <= ENERGY_SLEEP_THRESHOLD:
+            if not night:
+                # Full → 50% across the 07:00–20:00 Spring/Autumn workday.
+                # Summer and winter use this same per-tick rate over their
+                # respectively longer and shorter work windows.
+                base = 0.5 / max(1.0, (13.0 / 24.0) * self.ticks_per_day)
+                tick_count = max(
+                    1.0, day_frac / max(1e-12, self._calendar_rate_per_tick())
+                )
+                worked = bool(getattr(villager, "_worked_this_tick", False)) or (
+                    villager.state
+                    in (
+                        VillagerState.WORKING,
+                        VillagerState.BUILDING,
+                        VillagerState.HAULING,
+                        VillagerState.DELIVERING,
+                    )
+                )
+                villager.energy = max(
+                    0.0,
+                    villager.energy
+                    - base
+                    * tick_count
+                    * (2.0 if worked else 1.0)
+                    * self._temp_energy_mult(villager.inventory),
+                )
+            villager._worked_this_tick = False  # type: ignore[attr-defined]
+            if villager.energy <= 0.0:
                 house = self.buildings.get(villager.housing_id or -1)
                 if villager.housed and house is not None:
                     villager.state = VillagerState.SLEEPING
                     villager.target = house.center_cell()
                     villager._sleep_position = house.center_cell()  # type: ignore[attr-defined]
+                    villager._slept_through_night = False  # type: ignore[attr-defined]
                     villager.seeking_food = False
                     return
 
@@ -9248,9 +9475,8 @@ class Game:
             )
 
     def _spend_work_energy(self, villager: Villager) -> None:
-        """Spend energy on an actual work tick (extract / process / build)."""
-        drain = ENERGY_WORK_DRAIN * self._temp_energy_mult(villager.inventory)
-        villager.energy = max(0.0, villager.energy - drain)
+        """Mark work so the continuous daily drain uses its 2x rate."""
+        villager._worked_this_tick = True  # type: ignore[attr-defined]
 
     def _gain_job_skill(self, villager: Villager, kind_name: str) -> None:
         skill, _ = skill_for_building(kind_name)
@@ -10400,7 +10626,7 @@ class Game:
             self._reset_tick_claims()
 
         for villager in list(self.villagers):
-            day_frac = 1.0 / max(1, self.ticks_per_day)
+            day_frac = self._calendar_rate_per_tick()
             if villager is not getattr(self, "_god_dog_villager", None):
                 self._update_villager_wellbeing(villager, day_frac)
             if villager.id not in {v.id for v in self.villagers}:
@@ -10429,7 +10655,7 @@ class Game:
             villager.satiation = max(
                 0.0,
                 villager.satiation
-                - self._satiation_decay() * villager.food_hunger_mult,
+                - self._satiation_decay(),
             )
 
             if self._idle_decision_pending(villager):
@@ -10636,9 +10862,9 @@ class Game:
             villager.state = VillagerState.IDLE
 
     def _satiation_speed_factor(self, satiation: float) -> float:
-        """1.0 when full, down to 0.4 when starving — scales move/work pace."""
-        s = max(0.0, min(1.0, float(satiation)))
-        return 0.4 + 0.6 * s
+        """Satiation no longer changes movement or work speed."""
+        del satiation
+        return 1.0
 
     def _move_interval_for(
         self,
@@ -10653,7 +10879,7 @@ class Game:
             self._satiation_speed_factor(satiation)
             * max(0.1, float(food_walk_mult))
             * (0.7 + 0.3 * max(0.0, min(1.0, happiness)))
-            * (0.55 + 0.45 * max(0.0, min(1.0, energy)))
+            * self._energy_speed_factor(energy)
         )
         base = self._walk_interval_ticks()
         return max(4, int(round(base / max(0.15, factor))))
@@ -10673,7 +10899,7 @@ class Game:
             * max(0.1, float(food_work_mult))
             * max(0.15, float(skill_mult))
             * (0.65 + 0.35 * max(0.0, min(1.0, happiness)))
-            * (0.5 + 0.5 * max(0.0, min(1.0, energy)))
+            * self._energy_speed_factor(energy)
         )
         base = self._work_interval_ticks()
         return max(6, int(round(base / max(0.15, factor))))
@@ -11163,7 +11389,7 @@ class Game:
         p.work_cooldown = max(0, p.work_cooldown - ticks)
         p.satiation = max(
             0.0,
-            p.satiation - self._satiation_decay() * p.food_hunger_mult * ticks,
+            p.satiation - self._satiation_decay() * ticks,
         )
         # Idle recovery (no sleep bed) — slower than villager sleep.
         p.energy = min(
@@ -18782,11 +19008,6 @@ class Game:
         self._record_path_traffic(step[0], step[1])
         villager.move_cooldown = interval
         arm_cell_step_visual(villager, interval)
-        villager.energy = max(
-            0.0,
-            villager.energy
-            - ENERGY_MOVE_DRAIN * self._temp_energy_mult(villager.inventory),
-        )
         return True
 
     def _clear_villager_path(self, villager: Villager) -> None:
@@ -18867,9 +19088,7 @@ class Game:
         self._maybe_invalidate_forage_index()
         self.day_tick -= 1
         if self.day_tick <= 0:
-            day = float(self.calendar_day) + (
-                1.0 / max(1, self.ticks_per_day)
-            )
+            day = float(self.calendar_day) + self._calendar_rate_per_tick()
             pending = getattr(self, "_eco_pending", 0) + 1
             self._tick_world_ecology(pending, day=day)
             self._eco_pending = 0
@@ -18877,7 +19096,7 @@ class Game:
             self._advance_day()
             day = float(self.calendar_day)
         else:
-            day = float(self.calendar_day) + (1.0 - self.day_tick / self.ticks_per_day)
+            day = self._calendar_now()
             self._eco_pending = getattr(self, "_eco_pending", 0) + 1
             if self._eco_pending >= 16:
                 self._tick_world_ecology(self._eco_pending, day=day)
@@ -18925,7 +19144,7 @@ class Game:
 
         while remaining > 0:
             skip = self._idle_cooldown_skip(remaining)
-            day = float(self.calendar_day) + (1.0 - self.day_tick / self.ticks_per_day)
+            day = self._calendar_now()
 
             if skip > 1:
                 self._idle_skip_events += 1
@@ -18945,33 +19164,15 @@ class Game:
                     search_cd = int(getattr(villager, "_work_search_cd", 0) or 0)
                     if search_cd > 0:
                         villager._work_search_cd = max(0, search_cd - skip)  # type: ignore[attr-defined]
-                    if villager.state == VillagerState.SLEEPING:
-                        house = self.buildings.get(villager.housing_id or -1)
-                        sleep_position = self._villager_sleep_position(
-                            villager, house
-                        )
-                        at_home = (
-                            house is not None
-                            and sleep_position is not None
-                            and (villager.x, villager.y) == sleep_position
-                        )
-                        if at_home:
-                            villager.energy = min(
-                                1.0,
-                                villager.energy
-                                + self._legacy_per_tick(ENERGY_SLEEP_GAIN) * skip,
-                            )
-                            if villager.energy >= 0.95:
-                                villager.state = VillagerState.IDLE
-                                villager.target = None
-                                villager._sleep_position = None  # type: ignore[attr-defined]
-                    else:
+                    was_sleeping = villager.state == VillagerState.SLEEPING
+                    self._update_villager_wellbeing(
+                        villager, self._calendar_rate_per_tick() * skip
+                    )
+                    if not was_sleeping and villager.state != VillagerState.SLEEPING:
                         villager.satiation = max(
                             0.0,
                             villager.satiation
-                            - self._satiation_decay()
-                            * villager.food_hunger_mult
-                            * skip,
+                            - self._satiation_decay() * skip,
                         )
                 self._tick_player(skip)
                 self._tick_food_spoilage(skip)
@@ -19002,7 +19203,7 @@ class Game:
                 self._advance_day()
                 day = float(self.calendar_day)
             else:
-                day = float(self.calendar_day) + (1.0 - self.day_tick / self.ticks_per_day)
+                day = self._calendar_now()
 
             eco_pending += 1
             wildlife_pending += 1
@@ -19021,7 +19222,7 @@ class Game:
         self._eco_pending = eco_pending
         self._wildlife_pending = wildlife_pending
         if flush:
-            day = float(self.calendar_day) + (1.0 - self.day_tick / self.ticks_per_day)
+            day = self._calendar_now()
             flush_eco(day)
             self._eco_pending = 0
             if self._wildlife_pending:
@@ -19082,7 +19283,7 @@ class Game:
         return cache or None
 
     def _hunger_cap_ticks(self, villager: Villager, wait: int) -> int:
-        decay = self._satiation_decay() * villager.food_hunger_mult
+        decay = self._satiation_decay()
         if decay <= 0:
             return max(1, wait)
         headroom = villager.satiation - villager.eat_threshold()
@@ -19124,7 +19325,6 @@ class Game:
         if not chasing and not path:
             villager.move_cooldown = max(0, villager.move_cooldown - ticks)
             return True
-        drain = ENERGY_MOVE_DRAIN * self._temp_energy_mult(villager.inventory)
         goal = self._villager_travel_goal(villager)
         for _ in range(ticks):
             if villager.move_cooldown > 0:
@@ -19184,7 +19384,6 @@ class Game:
                 self._record_path_traffic(step[0], step[1])
                 villager.move_cooldown = interval
                 arm_cell_step_visual(villager, interval)
-                villager.energy = max(0.0, villager.energy - drain)
                 self._travel_skip_steps += 1
         return True
 
@@ -19214,12 +19413,16 @@ class Game:
                 if traveling:
                     return self._travel_ticks_to_arrive(villager)
                 return 1 if villager.move_cooldown <= 0 else villager.move_cooldown
-            remain = 0.95 - villager.energy
-            if remain <= 0:
+            phase = self._calendar_day_fraction()
+            dawn = self._work_hours()[0] / 24.0
+            if self._is_night():
+                boundary = dawn if phase < dawn else 1.0
+                return max(1, math.ceil((boundary - phase) * self.ticks_per_day))
+            if bool(getattr(villager, "_slept_through_night", False)):
                 return 1
-            return max(
-                1, math.ceil(remain / max(1e-9, self._legacy_per_tick(ENERGY_SLEEP_GAIN)))
-            )
+            # Exhausted during daylight: wait for the coming night.
+            dusk = self._work_hours()[1] / 24.0
+            return max(1, math.ceil((dusk - phase) * self.ticks_per_day))
 
         if self._idle_decision_pending(villager):
             return self._hunger_cap_ticks(villager, max(1, villager.decision_cooldown))
@@ -19265,6 +19468,11 @@ class Game:
         ):
             return 1
         skip = min(limit, max(1, self.day_tick))
+        phase = self._calendar_day_fraction()
+        start_h, end_h = self._work_hours()
+        dawn, dusk = start_h / 24.0, end_h / 24.0
+        boundary = dawn if phase < dawn else dusk if phase < dusk else 1.0
+        skip = min(skip, max(1, math.ceil((boundary - phase) * self.ticks_per_day)))
         for villager in self.villagers:
             wait = self._ticks_until_villager_action(villager)
             if wait <= 1:
@@ -19423,6 +19631,7 @@ class Game:
         self._draw_selection_highlights()
         self._draw_object_footprints()
         self._draw_map_shroud()
+        self._draw_day_night()
         self._draw_player_status_hud()
         self._draw_minimap()
         self._draw_autotile_diag_overlay()
@@ -19451,6 +19660,7 @@ class Game:
             mouse_pos=mouse,
             season=self.season,
             calendar_day=self.calendar_day,
+            calendar_label=self._calendar_label(),
             selected_habitat_kind=self.selected_habitat_kind,
             selected_habitat_id=self.selected_habitat_id,
             map_edit_mode=self.height_edit_mode,
@@ -20807,7 +21017,7 @@ class Game:
 
     def _draw_world(self) -> None:
         """Draw tiled terrain under camera, then features for visible cells."""
-        day = float(self.calendar_day) + (1.0 - self.day_tick / self.ticks_per_day)
+        day = self._calendar_now()
         freeze = freeze_amount(day)
         vibrancy = terrain_vibrancy(day)
         map_clip = pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())

@@ -3,19 +3,48 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import json
 from pathlib import Path
+import time
 
 
 _OBJECTS_PATH = Path(__file__).resolve().parent / "objects_data" / "objects.json"
+_JSON_CACHE: dict[Path, tuple[float, int, dict]] = {}
+
+
+def _json_rows(path: Path) -> dict:
+    """Load editor JSON with a cheap, throttled mtime check.
+
+    Footprints are queried hundreds of thousands of times during habitat
+    rebuilding. Reading and decoding the same file for every query made large
+    saves appear to hang. A one-second check interval still lets Developer
+    Tools changes appear live without putting filesystem I/O in the hot path.
+    """
+    now = time.monotonic()
+    cached = _JSON_CACHE.get(path)
+    if cached is not None and now - cached[0] < 1.0:
+        return cached[2]
+    try:
+        stamp = path.stat().st_mtime_ns
+    except OSError:
+        stamp = -1
+    if cached is not None and cached[1] == stamp:
+        _JSON_CACHE[path] = (now, stamp, cached[2])
+        return cached[2]
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        rows = {}
+    if not isinstance(rows, dict):
+        rows = {}
+    _JSON_CACHE[path] = (now, stamp, rows)
+    return rows
 
 
 def editor_icon_key(feature_name: str, *, crop_kind: str | None = None, object_key: str | None = None) -> str | None:
     """Return the icon override authored for a concrete map object."""
-    try:
-        rows = json.loads(_OBJECTS_PATH.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return None
+    rows = _json_rows(_OBJECTS_PATH)
     name = str(feature_name).upper()
     identifiers: list[str] = []
     if object_key:
@@ -40,10 +69,7 @@ def _editor_slots(feature_name: str, *, crop_kind: str | None = None, object_key
             value=getattr(crops,"CROP_FOOTPRINTS",{}).get(crop_kind)
             if value:return tuple(value)
         except (ImportError,AttributeError):pass
-    try:
-        rows = json.loads(_OBJECTS_PATH.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return None
+    rows = _json_rows(_OBJECTS_PATH)
     identifiers: list[str] = []
     if object_key:
         identifiers.extend((f"tree:{object_key}", f"wild:{object_key}", f"crop:{object_key}"))
@@ -54,8 +80,7 @@ def _editor_slots(feature_name: str, *, crop_kind: str | None = None, object_key
     # file for wild records.
     if name in {"HERB","WILD_CROP","REED","BERRY_BUSH","MUSHROOM","WOOD_BUSH"}:
         wild_path=_OBJECTS_PATH.with_name("wild_species_overrides.json")
-        try:wild_rows=json.loads(wild_path.read_text(encoding="utf-8"))
-        except (FileNotFoundError,json.JSONDecodeError,OSError):wild_rows={}
+        wild_rows = _json_rows(wild_path)
         for key in (object_key,crop_kind):
             value=wild_rows.get(str(key),{}).get("_footprint_slots") if key else None
             if isinstance(value,list) and value:return tuple(sorted({max(0,min(8,int(slot))) for slot in value}))
@@ -181,6 +206,7 @@ def _covered_parent_slots(centre_u: float, centre_v: float, scale: float) -> fro
     return frozenset(covered)
 
 
+@lru_cache(maxsize=65536)
 def object_footprint(
     feature_name: str,
     x: int,
@@ -235,6 +261,12 @@ def object_footprint(
         max_per_cell=maximum,
         floor_layer=floor_layer,
     )
+
+
+def invalidate_layout_cache() -> None:
+    """Call after applying object-authoring changes in the current process."""
+    _JSON_CACHE.clear()
+    object_footprint.cache_clear()
 
 
 def placement_allowed(candidate: ObjectFootprint, existing: list[ObjectFootprint]) -> bool:

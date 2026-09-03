@@ -733,7 +733,8 @@ class UI:
         assign_workplace_mode: bool,
         local_mouse: tuple[int, int] | None,
         season: Season,
-        calendar_day: int,
+        calendar_day: float,
+        calendar_label: str | None,
         selected_habitat_kind: AnimalKind | None,
         selected_habitat_id: int | None,
     ) -> int:
@@ -766,7 +767,7 @@ class UI:
         y = _blit_text(
             content,
             self.font_small,
-            format_date(calendar_day),
+            calendar_label or format_date(int(calendar_day)),
             (x, y),
             COLOUR_STATUS,
         )
@@ -1078,7 +1079,8 @@ class UI:
         assign_workplace_mode: bool = False,
         mouse_pos: tuple[int, int] | None = None,
         season: Season = Season.SPRING,
-        calendar_day: int = 0,
+        calendar_day: float = 0,
+        calendar_label: str | None = None,
         selected_field_id: int | None = None,
         selected_habitat_kind: AnimalKind | None = None,
         selected_habitat_id: int | None = None,
@@ -1217,6 +1219,7 @@ class UI:
                 local_mouse=local_mouse,
                 season=season,
                 calendar_day=calendar_day,
+                calendar_label=calendar_label,
                 selected_habitat_kind=selected_habitat_kind,
                 selected_habitat_id=selected_habitat_id,
             )

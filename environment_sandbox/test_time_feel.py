@@ -74,7 +74,7 @@ def test_seconds_match_ticks_per_frame() -> None:
     assert _frames_for_day(10.0) == FPS * 10
     assert _frames_for_day(1.0, speed=2) == FPS // 2
     assert abs(ticks_to_seconds(seconds_to_ticks(10.0, pb), pb) - 10.0) < 1e-9
-    assert DAY_SECONDS_AT_X1 == 10.0
+    assert DAY_SECONDS_AT_X1 == 300.0
     assert sim_hz_at_x1(pb) == FPS * pb
     # Ignoring playback (seconds * FPS only) made 1s last half a second.
     assert seconds_to_ticks(1.0, pb) != FPS
