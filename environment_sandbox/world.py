@@ -278,12 +278,15 @@ TERRAIN_EDIT_LABELS: dict[TerrainType, str] = {
 class MapEditTool(Enum):
     """Side-panel tools available while map/object edit mode (T) is active."""
 
+    SELECT = "select"
     HEIGHT_SET = "height_set"
     HEIGHT_RAISE = "height_raise"
     HEIGHT_LOWER = "height_lower"
     TERRAIN_PAINT = "terrain_paint"
     SEED_FOREST = "seed_forest"
     PAINT_ROCKS = "paint_rocks"
+    PAINT_BERRIES = "paint_berries"
+    CROP_PAINT = "crop_paint"
     PLACE_BUILDING = "place_building"
     MOVE_BUILDING = "move_building"
 

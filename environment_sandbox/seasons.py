@@ -9,7 +9,6 @@ from enum import Enum, auto
 from wild_species import (
     WILD_BY_KEY,
     species_despawn_rate,
-    species_fruiting,
     species_spawn_rate,
     spawn_group_leader,
 )
@@ -283,8 +282,9 @@ def berry_spawn_rate(day: float, x: int, y: int) -> float:
 
 
 def berry_fruiting(day: float, x: int = 0, y: int = 0) -> bool:
-    """True while bushes carry pickable berries (late spring → early summer)."""
-    return species_fruiting(WILD_BY_KEY["berry_bush"], local_day(day, x, y))
+    """True throughout spring and summer; bush coordinates do not shift it."""
+    del x, y
+    return season_for_day(int(day)) in (Season.SPRING, Season.SUMMER)
 
 
 def berry_despawn_rate(day: float, x: int, y: int) -> float:

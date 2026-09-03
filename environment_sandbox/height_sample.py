@@ -173,7 +173,7 @@ def corner_shade_factor(
     *,
     strength: float = HEIGHT_SAMPLE_LIGHT_NW,
 ) -> float:
-    """NW-light shade at a heightfield corner (local corner indices)."""
+    """WSW-light shade at a heightfield corner (local corner indices)."""
     h = sample.corner_at_local(lx, ly)
     he = sample.corner_at_local(lx + 1, ly) if lx < sample.width else h
     hw = sample.corner_at_local(lx - 1, ly) if lx > 0 else h
@@ -192,8 +192,13 @@ def corner_shade_factor(
     else:
         gy = (hs - hn) * 0.5
     # Normalise by typical valley gradient so shade stays readable.
-    lit = (-gx - gy) * 0.5 / max(8.0, sample.max_height * 0.15)
-    return max(0.70, min(1.10, 1.0 + lit * strength * 4.0))
+    # Light arrives from west-southwest, so relief shadows fall mostly east
+    # and slightly north (east-northeast on the map).
+    lit = (gx - gy * 0.35) / 1.35 / max(8.0, sample.max_height * 0.15)
+    response = lit * strength * 4.0
+    if response < 0.0:
+        response *= 1.5
+    return max(0.55, min(1.10, 1.0 + response))
 
 
 def cell_corner_shades(

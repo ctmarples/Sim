@@ -505,9 +505,10 @@ class Game:
         self._height_cache_bounds: tuple[int, int, int, int] | None = None
         self.height_edit_mode = False
         self._height_warp_before_edit = HEIGHT_SAMPLE_ENABLED_DEFAULT
-        self.map_edit_tool = MapEditTool.HEIGHT_SET
+        self.map_edit_tool = MapEditTool.SELECT
         self.map_edit_terrain = TerrainType.GRASS
         self.map_edit_tree_species: str | None = None
+        self.map_edit_crop_key: str = next(iter(CROP_BY_KEY), "sage")
         self.map_edit_building_kind = BuildingKind.HOME
         self.map_edit_move_building_id: int | None = None
         self.height_paint_value = 20.0
@@ -2507,11 +2508,9 @@ class Game:
             return None
         fx, fy = flat
         ix, iy = int(fx), int(fy)
-        # Height-edit forces warp off; keep flat picking there.
         if (
             not self.height_sample_enabled
             or self.height_sample is None
-            or self.height_edit_mode
         ):
             if not self.world.in_bounds(ix, iy):
                 return None
@@ -2622,16 +2621,20 @@ class Game:
                 corners=self.world.height_corners,
             )
             self._invalidate_height_sample_cache()
+            suffix = " — use the sidebar toggle" if self.height_edit_mode else " — H to toggle"
             self._set_status(
-                f"Height warp ON (full map, head={int(self.height_sample.max_height)}) — H to toggle"
+                f"Height warp ON (full map, head={int(self.height_sample.max_height)}){suffix}"
             )
         else:
             self._invalidate_height_sample_cache()
-            self._set_status("Height warp OFF — H to toggle")
+            suffix = "use the sidebar toggle" if self.height_edit_mode else "H to toggle"
+            self._set_status(f"Height warp OFF — {suffix}")
 
     def _height_edit_status(self) -> str:
         tool = self.map_edit_tool
         brush = self.height_brush_radius
+        if tool == MapEditTool.SELECT:
+            return "Select / inspect: click a building or villager (no painting · T exit)"
         if tool == MapEditTool.HEIGHT_SET:
             return (
                 f"Set height={self.height_paint_value:.0f}  brush={brush}  "
@@ -2657,6 +2660,11 @@ class Game:
             return f"Seed {species} forest  brush={brush}  (drag · T exit)"
         if tool == MapEditTool.PAINT_ROCKS:
             return f"Paint mixed rocks  brush={brush}  (drag · T exit)"
+        if tool == MapEditTool.PAINT_BERRIES:
+            return f"Place permanent berry bushes  brush={brush}  (grass · drag · T exit)"
+        if tool == MapEditTool.CROP_PAINT:
+            crop=CROP_BY_KEY.get(self.map_edit_crop_key);label=crop.label if crop else self.map_edit_crop_key
+            return f"Paint {label} in established fields  brush={brush}  (any season · drag · T exit)"
         if tool == MapEditTool.PLACE_BUILDING:
             return f"Place {BUILDING_LABELS[self.map_edit_building_kind]} instantly (click · T exit)"
         if self.map_edit_move_building_id is None:
@@ -2691,8 +2699,6 @@ class Game:
         self.height_edit_mode = not self.height_edit_mode
         if self.height_edit_mode:
             self._height_warp_before_edit = self.height_sample_enabled
-            self.height_sample_enabled = False
-            self._invalidate_height_sample_cache()
             self.place_kind = None
             self.map_edit_move_building_id = None
             self._clear_selection()
@@ -2702,10 +2708,9 @@ class Game:
             self._height_painting = False
             self._sync_height_sample_from_world()
             self._flush_map_edit_environment()
-            self.height_sample_enabled = self._height_warp_before_edit
             if self.height_sample_enabled:
                 self._invalidate_height_sample_cache()
-                self._set_status("Map edit OFF — warp restored (H to toggle)")
+                self._set_status("Map edit OFF — height view on (H to toggle)")
             else:
                 self._set_status("Map/object edit OFF — T to edit, H for habitat view")
 
@@ -2800,6 +2805,10 @@ class Game:
                 x, y, r, self._edit_paint_rng, bump_revision=False
             ):
                 self._after_map_edit(terrain_changed=True)
+        elif tool == MapEditTool.PAINT_BERRIES:
+            self._editor_paint_berry_bushes(x,y,r)
+        elif tool == MapEditTool.CROP_PAINT:
+            self._editor_paint_crop(x,y,r)
 
     def _after_map_edit(self, *, terrain_changed: bool = False) -> None:
         """Refresh simulation and baked visual state after an editor mutation."""
@@ -2844,6 +2853,113 @@ class Game:
         self._complete_construction(site)
         self._after_map_edit(terrain_changed=True)
         self._set_status(f"Editor placed {BUILDING_LABELS[kind]} instantly.")
+        return True
+
+    def _editor_place_field(self,start:tuple[int,int],end:tuple[int,int]) -> bool:
+        """Draw a normal field plot, then complete it immediately for free."""
+        before=set(self.construction_sites)
+        if not self._place_field_site(start,end):return False
+        site=next((site for sid,site in self.construction_sites.items() if sid not in before and site.kind==BuildingKind.FIELD),None)
+        if site is None:return False
+        building_id=self.next_building_id
+        self._complete_construction(site)
+        field=self.buildings.get(building_id)
+        if field is not None:self._select_building(field,detail_only=True)
+        self._after_map_edit(terrain_changed=True)
+        self._set_status(f"Editor placed Field #{building_id} instantly; field planner is ready.")
+        return True
+
+    def _editor_paint_crop(self,x:int,y:int,radius:int) -> int:
+        """Paint the chosen cultivated crop only inside completed field plots."""
+        crop=CROP_BY_KEY.get(self.map_edit_crop_key)
+        if crop is None:return 0
+        phase=phase_for_crop(crop,self.season)
+        ripe=phase in (SeasonPhase.HARVEST,SeasonPhase.HARVEST_PLOUGH_PLANT)
+        changed=0
+        for py in range(max(0,y-radius),min(self.world.rows,y+radius+1)):
+            for px in range(max(0,x-radius),min(self.world.cols,x+radius+1)):
+                if self._field_building_at(px,py) is None:continue
+                cell=self.world.get_cell(px,py)
+                if cell is None:continue
+                cell.terrain=TerrainType.SOIL;cell.feature=FeatureType.CROP_HERB;cell.crop_kind=crop.key
+                cell.growth_ticks=0 if ripe else growth_ticks_for(crop,self.ticks_per_day)
+                cell.deposit=0;cell.tree_species=None;cell.weeds=0.0
+                self.world.note_growth_cell(px,py);changed+=1
+        if changed:
+            self._after_map_edit(terrain_changed=True);self._wake_all_farm_workers();self._refresh_indicators()
+            self._set_status(f"Painted {changed} {crop.label} field square{'s' if changed!=1 else ''} with {self.season.name.title()} visuals.")
+        else:self._set_status("Crop brush only paints inside established fields.")
+        return changed
+
+    def _editor_paint_berry_bushes(self,x:int,y:int,radius:int) -> int:
+        """Place permanent bushes, with fruit determined by the current season."""
+        from seasons import berry_fruiting
+        from wild_species import WILD_BY_KEY
+
+        berry=WILD_BY_KEY["berry_bush"]
+        allowed={TerrainType[name] for name in berry.terrains if name in TerrainType.__members__}
+        fruiting=berry_fruiting(self.calendar_day)
+        changed=0
+        for py in range(max(0,y-radius),min(self.world.rows,y+radius+1)):
+            for px in range(max(0,x-radius),min(self.world.cols,x+radius+1)):
+                cell=self.world.get_cell(px,py)
+                if cell is None or cell.feature!=FeatureType.NONE or cell.terrain not in allowed:continue
+                cell.feature=FeatureType.BERRY_BUSH;cell.crop_kind=berry.key
+                cell.deposit=int(berry.yield_amount) if fruiting else 0
+                cell.growth_ticks=0;cell.tree_species=None
+                changed+=1
+        if changed:
+            self._after_map_edit();self._refresh_indicators()
+            state="fruiting" if fruiting else "non-fruiting"
+            self._set_status(f"Placed {changed} permanent berry bush{'es' if changed!=1 else ''} ({state} in {self.season.name.title()}).")
+        else:self._set_status("Berry bushes require empty matching terrain (currently grass).")
+        return changed
+
+    def _editor_remove_selected_building(self) -> bool:
+        building=self._selected_building()
+        if building is None:
+            return self._editor_remove_selected_construction()
+        if building.kind==BuildingKind.FIELD:
+            self._delete_field_building(building.id);return True
+        for child in list(self.buildings.values()):
+            if child.parent_building_id==building.id:
+                self.selected_building_id=child.id;self._editor_remove_selected_building()
+        for villager in self.villagers:
+            if villager.building_id==building.id:villager.building_id=None;villager.state=VillagerState.IDLE
+        self.world.clear_structure_footprint(building.x,building.y,max(1,building.plot_w),max(1,building.plot_h))
+        del self.buildings[building.id]
+        self.selected_building_id=None;self.building_inspect.close();self.management.selected_building_id=None
+        self._sync_building_collision();self._refresh_hardscape_terrain();self._after_map_edit(terrain_changed=True);self._bump_work_gen()
+        self._set_status(f"Editor removed {BUILDING_LABELS[building.kind]} #{building.id}.")
+        return True
+
+    def _editor_remove_selected_construction(self) -> bool:
+        site=self.construction_sites.get(self.selected_construction_id or -1)
+        if site is None:return False
+        sites=[site]
+        pair=self.construction_sites.get(site.relocate_pair_id or -1)
+        if pair is not None:sites.append(pair)
+        removed_ids={item.id for item in sites}
+        for item in sites:
+            if item.fence_field_id is None:
+                self.world.clear_structure_footprint(item.x,item.y,max(1,item.plot_w),max(1,item.plot_h))
+            self.construction_sites.pop(item.id,None)
+        for villager in self.villagers:
+            if villager.construction_id in removed_ids:
+                villager.construction_id=None;villager.state=VillagerState.IDLE
+        self.selected_construction_id=None;self.management.selected_construction_id=None
+        self._sync_field_fences();self._sync_building_collision();self._refresh_hardscape_terrain()
+        self._after_map_edit(terrain_changed=True);self._bump_work_gen();self._refresh_indicators()
+        suffix=" and its relocation pair" if len(sites)>1 else ""
+        self._set_status(f"Editor removed {BUILDING_LABELS[site.kind]} construction #{site.id}{suffix}.")
+        return True
+
+    def _editor_remove_selected_villager(self) -> bool:
+        villager=self._get_villager(self.selected_villager_id or -1)
+        if villager is None:return False
+        self.villagers=[item for item in self.villagers if item.id!=villager.id]
+        self.selected_villager_id=None;self.villager_inspect.close();self.management.selected_villager_id=None;self.assign_workplace_mode=False;self._bump_work_gen()
+        self._set_status(f"Editor removed villager #{villager.id}.")
         return True
 
     def _editor_move_building_at(self, x: int, y: int) -> bool:
@@ -3098,7 +3214,15 @@ class Game:
             return
         self._mouse_down_cell = cell
         if self.height_edit_mode:
+            if self.map_edit_tool == MapEditTool.SELECT:
+                return
             if self.map_edit_tool == MapEditTool.PLACE_BUILDING:
+                if self.map_edit_building_kind == BuildingKind.FIELD:
+                    self.drawing = True
+                    self._placing_field = True
+                    self.draw_start = cell
+                    self.draw_current = cell
+                    return
                 self._editor_place_building(self.map_edit_building_kind, *cell)
                 return
             if self.map_edit_tool == MapEditTool.MOVE_BUILDING:
@@ -3157,8 +3281,9 @@ class Game:
         if end is None or start is None or down is None:
             return
 
-        if placing_field and self.place_kind == BuildingKind.FIELD:
-            self._place_field_site(start, end)
+        if placing_field and (self.place_kind == BuildingKind.FIELD or (self.height_edit_mode and self.map_edit_tool == MapEditTool.PLACE_BUILDING and self.map_edit_building_kind == BuildingKind.FIELD)):
+            if self.height_edit_mode:self._editor_place_field(start,end)
+            else:self._place_field_site(start, end)
             return
 
         # Click (same cell): selection / assignment.
@@ -3435,6 +3560,14 @@ class Game:
             self.map_edit_tool = MapEditTool.SEED_FOREST
             self._set_status(self._height_edit_status())
             return True
+        if action is not None and action.startswith("edit_crop:"):
+            choices=tuple(CROP_BY_KEY)
+            if choices:
+                index=choices.index(self.map_edit_crop_key) if self.map_edit_crop_key in choices else 0
+                self.map_edit_crop_key=choices[(index+int(action.split(":",1)[1]))%len(choices)]
+                self.map_edit_tool=MapEditTool.CROP_PAINT
+                self._set_status(self._height_edit_status())
+            return True
         if action is not None and action.startswith("edit_building:"):
             name = action.split(":", 1)[1]
             try:
@@ -3457,6 +3590,17 @@ class Game:
             return True
         if action is not None and action.startswith("edit_brush:"):
             self._adjust_height_brush(int(action.split(":", 1)[1]))
+            return True
+        if action == "edit_height_view":
+            self._toggle_height_sample();return True
+        if action == "edit_remove_building":
+            self._editor_remove_selected_building();return True
+        if action == "edit_remove_villager":
+            self._editor_remove_selected_villager();return True
+        if action == "edit_open_field_plan":
+            building=self._selected_building()
+            if building is not None and building.kind==BuildingKind.FIELD:self._open_field_plan(building)
+            else:self._set_status("Select an established field first.")
             return True
         if action is not None and action.startswith("prio:"):
             parts = action.split(":")
@@ -6287,8 +6431,7 @@ class Game:
         if action.startswith("file_"):
             self.toolbar.file_menu_open = False
         if action == "file_save":
-            self._pending_file_action = "save"
-            self.file_dialog.open_save("savegame")
+            self._save_game()
         elif action == "file_load":
             self._pending_file_action = "load"
             self.file_dialog.open_load()
@@ -7785,7 +7928,10 @@ class Game:
 
     def _save_game(self) -> None:
         self._pending_file_action = "save"
-        self.file_dialog.open_save("savegame")
+        last_name = self._loaded_save_name
+        if not last_name and self._last_save_path is not None:
+            last_name = self._last_save_path.name
+        self.file_dialog.open_save(last_name or "savegame")
 
     def _load_game(self) -> None:
         self._pending_file_action = "load"
@@ -19857,6 +20003,7 @@ class Game:
             work_seconds=self._work_seconds(),
             fish_manager=self.fish,
             construction_sites=self.construction_sites,
+            selected_construction_id=self.selected_construction_id,
             assign_workplace_mode=self.assign_workplace_mode,
             mouse_pos=mouse,
             season=self.season,
@@ -19871,10 +20018,12 @@ class Game:
                 "Mixed" if self.map_edit_tree_species is None else
                 __import__("trees").resolve_tree(self.map_edit_tree_species).label
             ),
+            map_edit_crop_label=(CROP_BY_KEY[self.map_edit_crop_key].label if self.map_edit_crop_key in CROP_BY_KEY else self.map_edit_crop_key),
             map_edit_building_kind=self.map_edit_building_kind,
             height_paint_value=self.height_paint_value,
             height_delta_step=self.height_delta_step,
             height_brush_radius=self.height_brush_radius,
+            height_view_enabled=self.height_sample_enabled,
         )
         residents = [
             v for v in self.villagers

@@ -539,7 +539,7 @@ HEIGHT_VALLEY_RISE_MAX: float = 36.0
 HEIGHT_LIFT_PX: float = 1.0
 # Legacy alias used by older call sites.
 HEIGHT_SAMPLE_PX: float = HEIGHT_LIFT_PX
-HEIGHT_SAMPLE_LIGHT_NW: float = 0.28  # slope response; highlights kept gentle
+HEIGHT_SAMPLE_LIGHT_NW: float = 0.28  # WSW light; shadows fall east-northeast
 # Per-pixel shade tint: highlights → light yellow, shadows → dark brown.
 HEIGHT_SAMPLE_SHADE_LIT: tuple[int, int, int] = (248, 228, 175)
 HEIGHT_SAMPLE_SHADE_SHADOW: tuple[int, int, int] = (72, 46, 28)
@@ -547,7 +547,7 @@ HEIGHT_SAMPLE_SHADE_SHADOW: tuple[int, int, int] = (72, 46, 28)
 HEIGHT_SAMPLE_SHADE_MIX: float = 0.48
 # Highlight mix is separate — light was too strong at full SHADE_MIX.
 HEIGHT_SAMPLE_SHADE_LIT_MIX: float = 0.16
-# Map edit tools (Y). Flat map; warp stays off while editing.
+# Map edit tools (T). Height rendering can be toggled while editing.
 HEIGHT_EDIT_BRUSH_MIN: int = 0
 HEIGHT_EDIT_BRUSH_MAX: int = 10
 HEIGHT_EDIT_VALUE_MAX: float = 80.0

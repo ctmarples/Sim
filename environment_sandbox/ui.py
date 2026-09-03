@@ -357,11 +357,16 @@ class UI:
         map_edit_tool: MapEditTool,
         map_edit_terrain: TerrainType,
         map_edit_tree_label: str,
+        map_edit_crop_label: str,
         map_edit_building_kind: BuildingKind,
+        selected_building_id: int | None,
+        selected_villager_id: int | None,
+        selected_construction_id: int | None,
         overlay_mode: OverlayMode,
         height_paint_value: float,
         height_delta_step: float,
         height_brush_radius: int,
+        height_view_enabled: bool,
         local_mouse: tuple[int, int] | None,
     ) -> int:
         """Tool palette shown instead of the entity list while map-edit is on."""
@@ -374,10 +379,25 @@ class UI:
             COLOUR_TEXT_DIM,
         )
         y += 6
-
-        y = _blit_text(content, self.font_title, "Height", (x, y))
         btn_h = 22
         gap = 4
+
+        height_label = "Height view: On" if height_view_enabled else "Height view: Off"
+        self._draw_labelled_tool_button(
+            content,x,y,148,btn_h,height_label,"edit_height_view",
+            "Toggle terrain height rendering while map editing",
+            active=height_view_enabled,local_mouse=local_mouse,
+        )
+        y += btn_h + 4
+
+        self._draw_labelled_tool_button(
+            content,x,y,148,btn_h,"Select / inspect",f"edit_tool:{MapEditTool.SELECT.value}",
+            "Select buildings and villagers without painting",active=map_edit_tool==MapEditTool.SELECT,
+            local_mouse=local_mouse,
+        )
+        y += btn_h + 8
+
+        y = _blit_text(content, self.font_title, "Height", (x, y))
         tools_h = (
             (MapEditTool.HEIGHT_SET, "Set", "Paint a specific height"),
             (MapEditTool.HEIGHT_RAISE, "Raise", "Raise terrain under the brush"),
@@ -469,14 +489,17 @@ class UI:
             (MapEditTool.TERRAIN_PAINT, "Paint", "Paint the selected terrain type"),
             (MapEditTool.SEED_FOREST, "Forest", "Seed selected trees + forest floor"),
             (MapEditTool.PAINT_ROCKS, "Rocks", "Paint mixed small and large rocks"),
+            (MapEditTool.PAINT_BERRIES, "Berries", "Place permanent berry bushes"),
+            (MapEditTool.CROP_PAINT, "Crops", "Paint the selected crop inside established fields"),
         )
-        bx = x
-        for tool, label, tip in tools_t:
+        for index, (tool, label, tip) in enumerate(tools_t):
+            bx = x + (index % 4) * 52
+            by = y + (index // 4) * (btn_h + gap)
             self._draw_labelled_tool_button(
                 content,
                 bx,
-                y,
-                52,
+                by,
+                48,
                 btn_h,
                 label,
                 f"edit_tool:{tool.value}",
@@ -484,8 +507,7 @@ class UI:
                 active=map_edit_tool == tool,
                 local_mouse=local_mouse,
             )
-            bx += 56
-        y += btn_h + 8
+        y += ((len(tools_t) + 3) // 4) * (btn_h + gap) + 4
 
         if map_edit_tool == MapEditTool.TERRAIN_PAINT:
             y = _blit_text(content, self.font_small, "Terrain type", (x, y), COLOUR_TEXT_DIM)
@@ -527,6 +549,12 @@ class UI:
             x -= 64
             y += 28
 
+        if map_edit_tool == MapEditTool.CROP_PAINT:
+            y = _blit_text(content,self.font_small,f"Crop: {map_edit_crop_label}",(x,y),COLOUR_TEXT)
+            for glyph,action,tip in (("<","edit_crop:-1","Previous cultivatable crop"),(">","edit_crop:+1","Next cultivatable crop")):
+                self._register_tool_button(content,pygame.Rect(x,y,28,22),glyph,action,tip,active=False,local_mouse=local_mouse);x+=32
+            x-=64;y+=28
+
         y = _blit_text(content, self.font_title, "Buildings", (x, y))
         for tool, label, tip in (
             (MapEditTool.PLACE_BUILDING, "Place", "Place a completed building for free"),
@@ -557,6 +585,15 @@ class UI:
                 )
             rows = (len(BuildingKind) + 1) // 2
             y += rows * (btn_h + gap) + 4
+
+        if map_edit_tool == MapEditTool.SELECT:
+            if selected_building_id is not None:
+                self._draw_labelled_tool_button(content,x,y,148,btn_h,"Remove building","edit_remove_building","Remove the selected building immediately",active=False,local_mouse=local_mouse);y+=btn_h+4
+                self._draw_labelled_tool_button(content,x,y,148,btn_h,"Open field planner","edit_open_field_plan","Open planner when the selected building is a field",active=False,local_mouse=local_mouse);y+=btn_h+6
+            elif selected_construction_id is not None:
+                self._draw_labelled_tool_button(content,x,y,148,btn_h,"Remove construction","edit_remove_building","Remove the selected construction site immediately",active=False,local_mouse=local_mouse);y+=btn_h+6
+            elif selected_villager_id is not None:
+                self._draw_labelled_tool_button(content,x,y,148,btn_h,"Remove villager","edit_remove_villager","Remove the selected villager immediately",active=False,local_mouse=local_mouse);y+=btn_h+6
 
         y = _blit_text(
             content,
@@ -1142,6 +1179,7 @@ class UI:
         work_seconds: float = WORK_SECONDS_AT_X1,
         fish_manager: FishManager | None = None,
         construction_sites: dict[int, ConstructionSite] | None = None,
+        selected_construction_id: int | None = None,
         assign_workplace_mode: bool = False,
         mouse_pos: tuple[int, int] | None = None,
         season: Season = Season.SPRING,
@@ -1154,10 +1192,12 @@ class UI:
         map_edit_tool: MapEditTool = MapEditTool.HEIGHT_SET,
         map_edit_terrain: TerrainType = TerrainType.GRASS,
         map_edit_tree_label: str = "Mixed",
+        map_edit_crop_label: str = "Crop",
         map_edit_building_kind: BuildingKind = BuildingKind.HOME,
         height_paint_value: float = 20.0,
         height_delta_step: float = 2.0,
         height_brush_radius: int = 2,
+        height_view_enabled: bool = False,
     ) -> None:
         panel_x = map_view_width()
         panel_h = _panel_height()
@@ -1252,11 +1292,16 @@ class UI:
                 map_edit_tool=map_edit_tool,
                 map_edit_terrain=map_edit_terrain,
                 map_edit_tree_label=map_edit_tree_label,
+                map_edit_crop_label=map_edit_crop_label,
                 map_edit_building_kind=map_edit_building_kind,
+                selected_building_id=selected_building_id,
+                selected_villager_id=selected_villager_id,
+                selected_construction_id=selected_construction_id,
                 overlay_mode=overlay_mode,
                 height_paint_value=height_paint_value,
                 height_delta_step=height_delta_step,
                 height_brush_radius=height_brush_radius,
+                height_view_enabled=height_view_enabled,
                 local_mouse=local_mouse,
             )
             msg = status_message if status_message else "—"
