@@ -2066,7 +2066,7 @@ class Game:
                             self.building_inspect.handle_mousedown(event.pos)
                             self._apply_building_inspect_action()
                         elif (
-                            self.management.tab == MgmtTab.PEOPLE
+                            self.management.tab in (MgmtTab.PEOPLE, MgmtTab.PLAYER)
                             and self.villager_inspect.open
                         ):
                             self.villager_inspect.handle_mousedown(event.pos)
@@ -2118,8 +2118,6 @@ class Game:
                     event.pos
                 ):
                     self.habitat_inspect.handle_mousedown(event.pos)
-                    continue
-                if self._handle_player_hud_click(event.pos):
                     continue
                 if self.ui.hit_action(event.pos) == "toggle_panel":
                     collapsed = toggle_panel_collapsed()
@@ -2281,7 +2279,7 @@ class Game:
                         ):
                             self.building_inspect.handle_mousewheel(event.y, mouse)
                         elif (
-                            self.management.tab == MgmtTab.PEOPLE
+                            self.management.tab in (MgmtTab.PEOPLE, MgmtTab.PLAYER)
                             and self.villager_inspect.open
                         ):
                             self.villager_inspect.handle_mousewheel(event.y, mouse)
@@ -4739,6 +4737,17 @@ class Game:
             self.field_plan_dialog.close()
             if self.management.selected_flora_key is None:
                 self.management.selected_flora_key = "wild:berry_bush"
+            return
+        if action == "tab_player":
+            self.management.tab = MgmtTab.PLAYER
+            self.management.show_player = True
+            self.management.show_detail = True
+            self.management.show_list = False
+            self.management._scroll = 0
+            self.management._layout_panel()
+            self.field_plan_dialog.close()
+            self.building_inspect.close()
+            self.villager_inspect.open_for(self._player_inspect_model())
             return
         if action == "toggle_detail":
             if self.management.show_detail and not self.management.show_list:
@@ -7477,9 +7486,44 @@ class Game:
                 f"Set priorities & ration in Management."
             )
 
+    def _player_inspect_model(self) -> Villager:
+        """Present Player through the shared villager-inspector layout."""
+        p = self.player
+        model = Villager(
+            id=-1,
+            x=p.x,
+            y=p.y,
+            inventory=p.inventory,
+            name="Player",
+            energy=p.energy,
+            satiation=p.satiation,
+            happiness=p.happiness,
+            ration_mode=p.ration_mode,
+            last_meal=p.last_meal,
+            food_walk_mult=p.food_walk_mult,
+            food_work_mult=p.food_work_mult,
+            food_hunger_mult=p.food_hunger_mult,
+            skills={},
+        )
+        return model
+
     def _apply_villager_inspect_action(self) -> None:
         action = self.villager_inspect.take_action()
         if action is None:
+            return
+        if self.management.tab == MgmtTab.PLAYER:
+            inv = self.player.inventory
+            if action == "tool_equip":
+                self._player_cycle_tool()
+            elif action.startswith("tool_unequip:"):
+                inv.unequip_tool(action.split(":", 1)[1])
+            elif action.startswith("clothing_unequip:"):
+                inv.unequip_clothing(action.split(":", 1)[1])
+            elif action.startswith("ration_"):
+                try:
+                    self.player.ration_mode = RationMode[action[len("ration_") :]]
+                except KeyError:
+                    pass
             return
         if action.startswith("xfer_to_player:"):
             self._transfer_villager_to_player(action.split(":", 1)[1])
@@ -20261,7 +20305,6 @@ class Game:
         if not self.height_edit_mode:
             self._draw_map_shroud()
         self._draw_day_night()
-        self._draw_player_status_hud()
         self._draw_minimap()
         self._draw_autotile_diag_overlay()
         mouse = pygame.mouse.get_pos()
@@ -20458,7 +20501,13 @@ class Game:
             )
 
         def _draw_villager_detail(surf: pygame.Surface, rect: pygame.Rect) -> None:
-            inspect_v = self._get_villager(self.management.selected_villager_id or -1)
+            inspect_v = (
+                self._player_inspect_model()
+                if self.management.tab == MgmtTab.PLAYER
+                else self._get_villager(
+                    self.management.selected_villager_id or -1
+                )
+            )
             if inspect_v is None:
                 return
             self.villager_inspect.configure_embed(rect)
@@ -20470,14 +20519,26 @@ class Game:
                 current_season=self.season,
                 calendar_day=self.calendar_day,
                 mouse_pos=mouse,
-                player_inventory=self.player.inventory,
-                requirement_rows=villager_requirement_rows(
-                    inspect_v,
-                    self.buildings,
-                    self._village_food_amounts(),
-                    housing_icon=self._villager_housing_icon(inspect_v),
+                player_inventory=(
+                    None
+                    if self.management.tab == MgmtTab.PLAYER
+                    else self.player.inventory
                 ),
-                activity_label=self._villager_activity_label(inspect_v),
+                requirement_rows=(
+                    []
+                    if self.management.tab == MgmtTab.PLAYER
+                    else villager_requirement_rows(
+                        inspect_v,
+                        self.buildings,
+                        self._village_food_amounts(),
+                        housing_icon=self._villager_housing_icon(inspect_v),
+                    )
+                ),
+                activity_label=(
+                    "Exploring"
+                    if self.management.tab == MgmtTab.PLAYER
+                    else self._villager_activity_label(inspect_v)
+                ),
             )
 
         hire_entries = None

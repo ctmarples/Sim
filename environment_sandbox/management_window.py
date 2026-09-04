@@ -103,6 +103,9 @@ _BOOK_TAB_POLYGONS = (
     ((57.7, 7.0), (83.1, 6.3), (83.4, 28.0), (56.3, 28.9)),
     ((83.1, 6.3), (110.8, 6.5), (109.6, 28.3), (83.4, 28.0)),
 )
+_PLAYER_TAB_POLYGON = (
+    (110.8, 6.5), (141.5, 8.5), (141.5, 32.0), (109.6, 28.3)
+)
 
 
 class MgmtTab(Enum):
@@ -110,6 +113,7 @@ class MgmtTab(Enum):
     BUILDINGS = auto()
     WILDLIFE = auto()
     FLORA = auto()
+    PLAYER = auto()
 
 
 _TAB_META: dict[MgmtTab, tuple[str, str]] = {
@@ -117,6 +121,7 @@ _TAB_META: dict[MgmtTab, tuple[str, str]] = {
     MgmtTab.BUILDINGS: ("construction_site", "Buildings"),
     MgmtTab.WILDLIFE: ("deer_male", "Wildlife"),
     MgmtTab.FLORA: ("flower_plant", "Flora"),
+    MgmtTab.PLAYER: ("player_portrait", "Player"),
 }
 
 
@@ -625,6 +630,8 @@ class ManagementWindow:
                     self._layout_panel()
                     return True
                 if action == "toggle_list":
+                    if self.tab == MgmtTab.PLAYER:
+                        return True
                     if self.show_list and not self.show_detail:
                         return True
                     self.show_list = not self.show_list
@@ -884,6 +891,7 @@ class ManagementWindow:
             MgmtTab.BUILDINGS: "Management — Buildings",
             MgmtTab.WILDLIFE: "Management — Wildlife",
             MgmtTab.FLORA: "Management — Flora",
+            MgmtTab.PLAYER: "Management — Player",
         }[self.tab]
         surface.blit(self.font_title.render(title, True, (74, 47, 30)),
                      (panel.centerx + 12, panel.y + 8))
@@ -894,8 +902,13 @@ class ManagementWindow:
         # Tabs + pane toggles
         y = panel.y + TITLE_BAR_H
         if self._book_mode() != "list":
-            for tab, polygon in zip(MgmtTab, _BOOK_TAB_POLYGONS):
+            for tab, polygon in zip(tuple(MgmtTab)[:4], _BOOK_TAB_POLYGONS):
                 self._book_tab(surface, panel, tab, polygon, mouse_pos)
+            self._book_tab(
+                surface, panel, MgmtTab.PLAYER, _PLAYER_TAB_POLYGON, mouse_pos
+            )
+            px, py = self._book_point(panel, (125.5, 18.5))
+            blit_icon(surface, "player_portrait", px, py, max(18, panel.w // 22))
         bx = panel.centerx - 66
         self._glyph_btn(
             surface,
@@ -934,7 +947,7 @@ class ManagementWindow:
         if self.show_detail and self._detail_rect.w > 0:
             pane_clip = surface.get_clip()
             surface.set_clip(self._detail_rect)
-            if self.tab == MgmtTab.PEOPLE and draw_villager_detail is not None:
+            if self.tab in (MgmtTab.PEOPLE, MgmtTab.PLAYER) and draw_villager_detail is not None:
                 draw_villager_detail(surface, self._detail_rect)
             elif self.tab == MgmtTab.BUILDINGS:
                 site = (
