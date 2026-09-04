@@ -6,6 +6,8 @@ menu was opened while the player stands on the building (transfer mode).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pygame
 
 from entities import (
@@ -48,6 +50,12 @@ from settings import (
 from society import housing_beds_of, housing_level_of, is_housing_kind
 
 TITLE_BAR_H = 28
+COLOUR_TEXT = (72, 48, 31)
+COLOUR_TEXT_DIM = (112, 84, 58)
+_BOOK_FONT_PATH = (
+    Path(__file__).resolve().parent
+    / "assets/fonts/Gloria_Hallelujah/GloriaHallelujah-Regular.ttf"
+)
 PAD = 12
 BTN_H = 24
 ROW_H = 22
@@ -70,10 +78,10 @@ class BuildingInspectDialog:
     """Movable floating inspector: options, workers, inventory grid(s)."""
 
     def __init__(self) -> None:
-        self.font = pygame.font.SysFont("menlo", 14)
-        self.font_small = pygame.font.SysFont("menlo", 12)
-        self.font_tiny = pygame.font.SysFont("menlo", 11, bold=True)
-        self.font_title = pygame.font.SysFont("menlo", 15, bold=True)
+        self.font = pygame.font.Font(str(_BOOK_FONT_PATH), 14)
+        self.font_small = pygame.font.Font(str(_BOOK_FONT_PATH), 12)
+        self.font_tiny = pygame.font.Font(str(_BOOK_FONT_PATH), 11)
+        self.font_title = pygame.font.Font(str(_BOOK_FONT_PATH), 15)
         self.building_id: int | None = None
         self.show_player: bool = False
         self.allow_player_craft: bool = False
@@ -884,8 +892,9 @@ class BuildingInspectDialog:
             colour = COLOUR_TOOLBAR_BTN_HOVER
         else:
             colour = COLOUR_TOOLBAR_BTN
-        pygame.draw.rect(surface, colour, rect, border_radius=4)
-        pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1, border_radius=4)
+        if not self.embedded:
+            pygame.draw.rect(surface, colour, rect, border_radius=4)
+            pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1, border_radius=4)
         text = self.font_small.render(label, True, COLOUR_TEXT)
         surface.blit(
             text,
@@ -911,8 +920,9 @@ class BuildingInspectDialog:
             colour = COLOUR_TOOLBAR_BTN_HOVER
         else:
             colour = COLOUR_TOOLBAR_BTN
-        pygame.draw.rect(surface, colour, rect, border_radius=4)
-        pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1, border_radius=4)
+        if not self.embedded or label is None:
+            pygame.draw.rect(surface, colour, rect, border_radius=4)
+            pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1, border_radius=4)
         if icons:
             pad = 4
             slot_w = max(1, (rect.w - pad * 2) // max(1, len(icons)))
@@ -1197,17 +1207,18 @@ class BuildingInspectDialog:
             pygame.draw.rect(surface, COLOUR_MENU_BG, panel, border_radius=6)
             pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, panel, 2, border_radius=6)
 
-        if body_h > client_h:
+        if body_h > client_h and not self.embedded:
             pygame.draw.rect(surface, (43, 45, 53), client_rect)
 
         title_bar = pygame.Rect(panel.x, panel.y, panel.w, TITLE_BAR_H)
-        pygame.draw.rect(
-            surface,
-            (48, 50, 58),
-            title_bar,
-            border_top_left_radius=6,
-            border_top_right_radius=6,
-        )
+        if not self.embedded:
+            pygame.draw.rect(
+                surface,
+                (48, 50, 58),
+                title_bar,
+                border_top_left_radius=6,
+                border_top_right_radius=6,
+            )
         self._title_rect = pygame.Rect(panel.x, panel.y, panel.w - 32, TITLE_BAR_H)
         title = f"{BUILDING_LABELS[building.kind]} #{building.id}"
         surface.blit(

@@ -76,12 +76,27 @@ LIST_ROW_H = 36
 # overlays.  Keep its copy legible while controls/tooltips retain UI colours.
 COLOUR_TEXT = (72, 48, 31)
 COLOUR_TEXT_DIM = (112, 84, 58)
+_BOOK_FONT_PATH = (
+    Path(__file__).resolve().parent
+    / "assets/fonts/Gloria_Hallelujah/GloriaHallelujah-Regular.ttf"
+)
 
-# book.svg is authored on a 320 x 250 canvas (viewBox y starts at -40).  Keep
-# these coordinates here so the interaction geometry follows the artwork when
-# the management window is resized.
-_BOOK_PATH = Path(__file__).resolve().parent / "assets" / "UI" / "book.svg"
+# The three book variants use the same authored coordinate system and spine at
+# x=160.  The single-page SVGs are positioned relative to that line rather than
+# stretched edge-to-edge; this keeps the spine on the pane boundary.
+_BOOK_DIR = Path(__file__).resolve().parent / "assets" / "UI"
+_BOOK_PATHS = {
+    "both": _BOOK_DIR / "book.svg",
+    "detail": _BOOK_DIR / "book_left.svg",
+    "list": _BOOK_DIR / "book_right.svg",
+}
 _BOOK_NATIVE_SIZE = (320, 250)
+_BOOK_VIEWBOX_Y = -40
+_BOOK_SPINE_X = 160
+_BOOK_PAGE_BOUNDS = {
+    "detail": (15, -5, 135, 190),
+    "list": (175, -5, 135, 190),
+}
 _BOOK_TAB_POLYGONS = (
     ((12.9, 12.2), (32.7, 9.0), (32.6, 31.7), (12.8, 35.8)),
     ((32.7, 9.0), (57.7, 7.0), (56.3, 28.9), (32.6, 31.7)),
@@ -343,10 +358,10 @@ class ManagementWindow:
     """Anchored central panel with tabs and dual panes."""
 
     def __init__(self) -> None:
-        self.font = pygame.font.SysFont("menlo", 14)
-        self.font_small = pygame.font.SysFont("menlo", 12)
-        self.font_tiny = pygame.font.SysFont("menlo", 11, bold=True)
-        self.font_title = pygame.font.SysFont("menlo", 15, bold=True)
+        self.font = pygame.font.Font(str(_BOOK_FONT_PATH), 14)
+        self.font_small = pygame.font.Font(str(_BOOK_FONT_PATH), 12)
+        self.font_tiny = pygame.font.Font(str(_BOOK_FONT_PATH), 11)
+        self.font_title = pygame.font.Font(str(_BOOK_FONT_PATH), 15)
         self.open = False
         self.tab = MgmtTab.PEOPLE
         self.show_detail: bool = True
@@ -375,7 +390,7 @@ class ManagementWindow:
         self._title_rect = pygame.Rect(0, 0, 0, 0)
         self._roster_sort = RosterSort.NAME
         self._roster_asc = True
-        self._book_scaled: tuple[tuple[int, int], pygame.Surface] | None = None
+        self._book_scaled: tuple[str, tuple[int, int], pygame.Surface] | None = None
         # Nested inspect dialogs draw into detail pane when set by Game.
         self.embed_building_inspect = True
         self.embed_villager_inspect = True
@@ -656,15 +671,8 @@ class ManagementWindow:
         active: bool = False,
         hovered: bool = False,
     ) -> None:
-        if active:
-            colour = COLOUR_TOOLBAR_BTN_ACTIVE
-        elif hovered:
-            colour = COLOUR_TOOLBAR_BTN_HOVER
-        else:
-            colour = COLOUR_TOOLBAR_BTN
-        pygame.draw.rect(surface, colour, rect, border_radius=4)
-        pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1, border_radius=4)
-        text = self.font_small.render(label, True, UI_TEXT)
+        text_colour = COLOUR_TEXT if active or hovered else COLOUR_TEXT_DIM
+        text = self.font_small.render(label, True, text_colour)
         surface.blit(
             text,
             (
@@ -699,30 +707,84 @@ class ManagementWindow:
         if hovered:
             self._tooltip = (tip, (rect.centerx, rect.top))
 
-    def _book_surface(self, size: tuple[int, int]) -> pygame.Surface:
-        """Return book.svg rendered and cached at the current panel size."""
-        if self._book_scaled is None or self._book_scaled[0] != size:
-            # Render from SVG at the panel's full horizontal resolution.  SDL's
-            # SVG loader preserves aspect ratio, so only the vertical dimension
-            # needs adapting to the resizable management panel afterwards.
-            source_h = max(1, round(size[0] * _BOOK_NATIVE_SIZE[1]
-                                    / _BOOK_NATIVE_SIZE[0]))
-            rendered = pygame.image.load_sized_svg(
-                str(_BOOK_PATH), (size[0], source_h)
-            ).convert_alpha()
-            self._book_scaled = (
-                size,
-                rendered if rendered.get_size() == size
-                else pygame.transform.smoothscale(rendered, size),
-            )
-        return self._book_scaled[1]
+    def _book_mode(self) -> str:
+        if self.show_detail and self.show_list:
+            return "both"
+        return "detail" if self.show_detail else "list"
 
-    @staticmethod
-    def _book_point(panel: pygame.Rect, point: tuple[float, float]) -> tuple[int, int]:
+    def _book_x(self, panel: pygame.Rect, authored_x: float) -> int:
+        """Map an SVG x coordinate while pinning x=160 to the pane boundary."""
+        mode = self._book_mode()
+        if mode == "detail":
+            return panel.x + round(authored_x * panel.w / _BOOK_SPINE_X)
+        if mode == "list":
+            right_w = _BOOK_NATIVE_SIZE[0] - _BOOK_SPINE_X
+            return panel.x + round((authored_x - _BOOK_SPINE_X) * panel.w / right_w)
+        return panel.x + round(authored_x * panel.w / _BOOK_NATIVE_SIZE[0])
+
+    def _book_surface(self, size: tuple[int, int]) -> pygame.Surface:
+        """Render the active SVG with its single-page binding overhang intact."""
+        mode = self._book_mode()
+        if (
+            self._book_scaled is None
+            or self._book_scaled[0] != mode
+            or self._book_scaled[1] != size
+        ):
+            if mode == "detail":
+                scale_w = size[0] / _BOOK_SPINE_X
+                rendered_w = round(_BOOK_NATIVE_SIZE[0] * scale_w)
+            elif mode == "list":
+                right_w = _BOOK_NATIVE_SIZE[0] - _BOOK_SPINE_X
+                scale_w = size[0] / right_w
+                rendered_w = round(_BOOK_NATIVE_SIZE[0] * scale_w)
+            else:
+                rendered_w = size[0]
+            # Render at the SVG's aspect ratio first, then adapt only its
+            # height, matching the established resizable-book behaviour.
+            source_h = max(
+                1,
+                round(
+                    rendered_w * _BOOK_NATIVE_SIZE[1]
+                    / _BOOK_NATIVE_SIZE[0]
+                ),
+            )
+            rendered = pygame.image.load_sized_svg(
+                str(_BOOK_PATHS[mode]), (max(1, rendered_w), source_h)
+            ).convert_alpha()
+            if rendered.get_size() != (rendered_w, size[1]):
+                rendered = pygame.transform.smoothscale(rendered, (rendered_w, size[1]))
+            self._book_scaled = (mode, size, rendered)
+        return self._book_scaled[2]
+
+    def _book_blit_offset(self, panel: pygame.Rect) -> int:
+        """Place x=160 at the panel's left edge for the right-page variant."""
+        if self._book_mode() != "list":
+            return 0
+        right_w = _BOOK_NATIVE_SIZE[0] - _BOOK_SPINE_X
+        return -round(_BOOK_SPINE_X * panel.w / right_w)
+
+    def _book_point(
+        self, panel: pygame.Rect, point: tuple[float, float]
+    ) -> tuple[int, int]:
         return (
-            panel.x + round(point[0] * panel.w / _BOOK_NATIVE_SIZE[0]),
+            self._book_x(panel, point[0]),
             panel.y + round(point[1] * panel.h / _BOOK_NATIVE_SIZE[1]),
         )
+
+    def _book_rect(
+        self, panel: pygame.Rect, bounds: tuple[int, int, int, int]
+    ) -> pygame.Rect:
+        """Transform an authored transparent page bounding box to the screen."""
+        x, y, width, height = bounds
+        left = self._book_x(panel, x)
+        right = self._book_x(panel, x + width)
+        top = panel.y + round(
+            (y - _BOOK_VIEWBOX_Y) * panel.h / _BOOK_NATIVE_SIZE[1]
+        )
+        bottom = panel.y + round(
+            (y + height - _BOOK_VIEWBOX_Y) * panel.h / _BOOK_NATIVE_SIZE[1]
+        )
+        return pygame.Rect(left, top, right - left, bottom - top)
 
     def _book_tab(
         self,
@@ -806,7 +868,10 @@ class ManagementWindow:
         self._tooltip = None
 
         panel = self._panel
-        surface.blit(self._book_surface(panel.size), panel.topleft)
+        surface.blit(
+            self._book_surface(panel.size),
+            (panel.x + self._book_blit_offset(panel), panel.y),
+        )
 
         # Title
         # Reserve the illustrated tabs on the left and the close control on the
@@ -828,8 +893,9 @@ class ManagementWindow:
 
         # Tabs + pane toggles
         y = panel.y + TITLE_BAR_H
-        for tab, polygon in zip(MgmtTab, _BOOK_TAB_POLYGONS):
-            self._book_tab(surface, panel, tab, polygon, mouse_pos)
+        if self._book_mode() != "list":
+            for tab, polygon in zip(MgmtTab, _BOOK_TAB_POLYGONS):
+                self._book_tab(surface, panel, tab, polygon, mouse_pos)
         bx = panel.centerx - 66
         self._glyph_btn(
             surface,
@@ -851,39 +917,21 @@ class ManagementWindow:
             action="toggle_list",
         )
 
-        body_top = y + TAB_H
-        page_pad_x = max(PAD, round(panel.w * 0.035))
-        page_pad_bottom = max(PAD, round(panel.h * 0.055))
-        body = pygame.Rect(
-            panel.x + page_pad_x,
-            body_top,
-            panel.w - 2 * page_pad_x,
-            panel.bottom - body_top - page_pad_bottom,
-        )
-
         if self.show_detail and self.show_list:
-            # The SVG spine is always at 50%; page contents must meet it even
-            # when the book has been resized to a different aspect ratio.
-            gap = max(8, round(panel.w * 0.025))
-            spine_x = panel.centerx
-            self._detail_rect = pygame.Rect(
-                body.x, body.y, spine_x - gap // 2 - body.x, body.h
+            self._detail_rect = self._book_rect(
+                panel, _BOOK_PAGE_BOUNDS["detail"]
             )
-            self._list_rect = pygame.Rect(
-                spine_x + (gap - gap // 2), body.y,
-                body.right - spine_x - (gap - gap // 2), body.h,
-            )
+            self._list_rect = self._book_rect(panel, _BOOK_PAGE_BOUNDS["list"])
         elif self.show_detail:
-            self._detail_rect = body.copy()
+            self._detail_rect = self._book_rect(
+                panel, _BOOK_PAGE_BOUNDS["detail"]
+            )
             self._list_rect = pygame.Rect(0, 0, 0, 0)
         else:
-            self._list_rect = body.copy()
+            self._list_rect = self._book_rect(panel, _BOOK_PAGE_BOUNDS["list"])
             self._detail_rect = pygame.Rect(0, 0, 0, 0)
 
         if self.show_detail and self._detail_rect.w > 0:
-            pygame.draw.rect(
-                surface, COLOUR_TOOLBAR_BORDER, self._detail_rect, 1, border_radius=6
-            )
             pane_clip = surface.get_clip()
             surface.set_clip(self._detail_rect)
             if self.tab == MgmtTab.PEOPLE and draw_villager_detail is not None:
@@ -907,9 +955,6 @@ class ManagementWindow:
             surface.set_clip(pane_clip)
 
         if self.show_list and self._list_rect.w > 0:
-            pygame.draw.rect(
-                surface, COLOUR_TOOLBAR_BORDER, self._list_rect, 1, border_radius=6
-            )
             pane_clip = surface.get_clip()
             surface.set_clip(self._list_rect)
             if self.tab == MgmtTab.PEOPLE:
@@ -938,13 +983,11 @@ class ManagementWindow:
 
         if self._tooltip is not None:
             tip, (tx, ty) = self._tooltip
-            text = self.font_tiny.render(tip, True, UI_TEXT)
+            text = self.font_tiny.render(tip, True, COLOUR_TEXT)
             tip_r = text.get_rect()
             tip_r.midbottom = (tx, ty - 4)
             tip_r.x = max(4, min(tip_r.x, WINDOW_WIDTH - tip_r.w - 4))
             bg = tip_r.inflate(8, 4)
-            pygame.draw.rect(surface, (30, 32, 38), bg, border_radius=4)
-            pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, bg, 1, border_radius=4)
             surface.blit(text, tip_r)
 
     def _blit_dim(self, surface: pygame.Surface, rect: pygame.Rect, msg: str) -> None:
@@ -1260,16 +1303,7 @@ class ManagementWindow:
                 self.people_mode != "hire" and self.selected_villager_id == entry.id
             )
             hovered = mouse_pos is not None and row.collidepoint(mouse_pos)
-            if selected:
-                pygame.draw.rect(surface, (55, 70, 55), row, border_radius=4)
-                pygame.draw.rect(
-                    surface, COLOUR_SELECTED_ENTITY, row, 1, border_radius=4
-                )
-            elif hovered:
-                pygame.draw.rect(surface, (55, 58, 66), row, border_radius=4)
-                pygame.draw.rect(surface, (60, 62, 70), row, 1, border_radius=4)
-            else:
-                pygame.draw.rect(surface, (60, 62, 70), row, 1, border_radius=4)
+            del selected, hovered
 
             draw_portrait(
                 surface,
@@ -1480,11 +1514,7 @@ class ManagementWindow:
             pad = 10 * indent
             row = pygame.Rect(view.x + 2 + pad, y, view.w - 8 - pad, LIST_ROW_H)
             selected = self.selected_construction_id == site.id
-            if selected:
-                pygame.draw.rect(surface, (55, 70, 55), row, border_radius=3)
-                pygame.draw.rect(
-                    surface, COLOUR_SELECTED_ENTITY, row, 1, border_radius=3
-                )
+            del selected
             icon = _BUILD_ICON.get(site.kind, "construction_site")
             blit_icon(surface, icon, row.x + 14, row.centery, 24 if indent else 28)
             label = f"{BUILDING_LABELS[site.kind]} (site)"
@@ -1514,11 +1544,7 @@ class ManagementWindow:
             pad = 10 * indent
             row = pygame.Rect(view.x + 2 + pad, y, view.w - 8 - pad, LIST_ROW_H)
             selected = self.selected_building_id == b.id
-            if selected:
-                pygame.draw.rect(surface, (55, 70, 55), row, border_radius=3)
-                pygame.draw.rect(
-                    surface, COLOUR_SELECTED_ENTITY, row, 1, border_radius=3
-                )
+            del selected
             icon = _BUILD_ICON.get(b.kind, "construction_site")
             blit_icon(surface, icon, row.x + 14, row.centery, 24 if indent else 28)
             if b.kind == BuildingKind.FIELD:
@@ -1591,11 +1617,7 @@ class ManagementWindow:
                 continue
             row = pygame.Rect(view.x + 2, y, view.w - 8, LIST_ROW_H)
             selected = self.selected_habitat == (kind, patch_id)
-            if selected:
-                pygame.draw.rect(surface, (55, 70, 55), row, border_radius=3)
-                pygame.draw.rect(
-                    surface, COLOUR_SELECTED_ENTITY, row, 1, border_radius=3
-                )
+            del selected
             blit_icon(
                 surface, icon_for.get(name, "deer_male"), row.x + 18, row.centery, 28
             )
@@ -1636,9 +1658,6 @@ class ManagementWindow:
         surface.set_clip(view)
         for key, species in self._flora_rows(allowed):
             row = pygame.Rect(view.x + 2, y, view.w - 8, LIST_ROW_H)
-            if self.selected_flora_key == key:
-                pygame.draw.rect(surface, (55, 70, 55), row, border_radius=3)
-                pygame.draw.rect(surface, COLOUR_SELECTED_ENTITY, row, 1, border_radius=3)
             blit_icon(surface, _flora_icon(species), row.x + 18, row.centery, 28)
             surface.blit(self.font_small.render(species.label, True, COLOUR_TEXT),
                          (row.x + 38, row.y + 4))
@@ -1709,8 +1728,6 @@ class ManagementWindow:
         rect: pygame.Rect,
         mouse_pos: tuple[int, int] | None,
     ) -> None:
-        pygame.draw.rect(surface, (32, 34, 40), rect, border_radius=4)
-        pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1, border_radius=4)
         x = rect.x + 6
         y = rect.y + 6
         for label, action, active in (

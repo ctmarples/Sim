@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from enum import Enum
+from pathlib import Path
 
 import pygame
 
@@ -58,6 +59,13 @@ from status_effects_ui import (
     resolve_hover_state,
 )
 
+COLOUR_TEXT = (72, 48, 31)
+COLOUR_TEXT_DIM = (112, 84, 58)
+_BOOK_FONT_PATH = (
+    Path(__file__).resolve().parent
+    / "assets/fonts/Gloria_Hallelujah/GloriaHallelujah-Regular.ttf"
+)
+
 from villager_priority_ui import (
     SLOT_GAP,
     SLOT_SIZE,
@@ -97,10 +105,10 @@ class VillagerInspectDialog:
     """Movable floating inspector: status, work options, inventory grid(s)."""
 
     def __init__(self) -> None:
-        self.font = pygame.font.SysFont("menlo", 14)
-        self.font_small = pygame.font.SysFont("menlo", 12)
-        self.font_tiny = pygame.font.SysFont("menlo", 11, bold=True)
-        self.font_title = pygame.font.SysFont("menlo", 15, bold=True)
+        self.font = pygame.font.Font(str(_BOOK_FONT_PATH), 14)
+        self.font_small = pygame.font.Font(str(_BOOK_FONT_PATH), 12)
+        self.font_tiny = pygame.font.Font(str(_BOOK_FONT_PATH), 11)
+        self.font_title = pygame.font.Font(str(_BOOK_FONT_PATH), 15)
         self.villager_id: int | None = None
         self.show_player: bool = False
         self._buttons: list[tuple[str, pygame.Rect]] = []
@@ -359,8 +367,9 @@ class VillagerInspectDialog:
             colour = COLOUR_TOOLBAR_BTN_HOVER
         else:
             colour = COLOUR_TOOLBAR_BTN
-        pygame.draw.rect(surface, colour, rect, border_radius=4)
-        pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1, border_radius=4)
+        if not self.embedded:
+            pygame.draw.rect(surface, colour, rect, border_radius=4)
+            pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1, border_radius=4)
         text = self.font_small.render(label, True, COLOUR_TEXT)
         surface.blit(
             text,
@@ -426,8 +435,15 @@ class VillagerInspectDialog:
         else:
             colour = COLOUR_TOOLBAR_BTN
         edge = border if border is not None else COLOUR_TOOLBAR_BORDER
-        pygame.draw.rect(surface, colour, rect, border_radius=4)
-        pygame.draw.rect(surface, edge, rect, 2 if border is not None else 1, border_radius=4)
+        if not self.embedded or label is None:
+            pygame.draw.rect(surface, colour, rect, border_radius=4)
+            pygame.draw.rect(
+                surface,
+                edge,
+                rect,
+                2 if border is not None else 1,
+                border_radius=4,
+            )
         if icon:
             blit_icon(surface, icon, rect.centerx, rect.centery, min(rect.w, rect.h) - 6)
         elif label:
@@ -554,17 +570,18 @@ class VillagerInspectDialog:
             pygame.draw.rect(surface, COLOUR_MENU_BG, panel, border_radius=6)
             pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, panel, 2, border_radius=6)
 
-        if body_h > client_h:
+        if body_h > client_h and not self.embedded:
             pygame.draw.rect(surface, (43, 45, 53), client_rect)
 
         title_bar = pygame.Rect(panel.x, panel.y, panel.w, TITLE_BAR_H)
-        pygame.draw.rect(
-            surface,
-            (48, 50, 58),
-            title_bar,
-            border_top_left_radius=6,
-            border_top_right_radius=6,
-        )
+        if not self.embedded:
+            pygame.draw.rect(
+                surface,
+                (48, 50, 58),
+                title_bar,
+                border_top_left_radius=6,
+                border_top_right_radius=6,
+            )
         self._title_rect = pygame.Rect(panel.x, panel.y, panel.w - 32, TITLE_BAR_H)
         surface.blit(
             self.font_title.render(
@@ -1178,4 +1195,5 @@ class VillagerInspectDialog:
                 surface, mouse_pos=mouse_pos, key=self._tooltip_key, font=self.font_small
             )
 
-        pygame.draw.rect(surface, COLOUR_SELECTED_ENTITY, panel, 1, border_radius=6)
+        if not self.embedded:
+            pygame.draw.rect(surface, COLOUR_SELECTED_ENTITY, panel, 1, border_radius=6)

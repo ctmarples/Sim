@@ -14,8 +14,29 @@ from settings import (
 
 CHIP_H = 26
 CHIP_GAP = 4
-OVERVIEW_ROW_H = 18
-SECTION_GAP = 10
+OVERVIEW_ROW_H = 22
+SECTION_GAP = 16
+COLOUR_TEXT = (72, 48, 31)
+COLOUR_TEXT_DIM = (112, 84, 58)
+
+
+def _scribble_highlight(
+    surface: pygame.Surface, rect: pygame.Rect, colour: tuple[int, int, int]
+) -> None:
+    layer = pygame.Surface(rect.size, pygame.SRCALPHA)
+    pygame.draw.polygon(
+        layer,
+        (*colour, 62),
+        [(1, 3), (rect.w - 2, 1), (rect.w - 1, rect.h - 3), (3, rect.h - 1)],
+    )
+    pygame.draw.line(
+        layer,
+        (*colour, 34),
+        (3, rect.h // 2 + 1),
+        (rect.w - 4, rect.h // 2 - 1),
+        max(2, rect.h // 3),
+    )
+    surface.blit(layer, rect.topleft)
 
 
 def traffic_colour(t: float) -> tuple[int, int, int]:
@@ -49,7 +70,7 @@ def draw_crop_overview(
     """Season × crop grid with max / estimated harvest yields. Returns next y."""
     font, _font_small, font_tiny = fonts
     surface.blit(font.render(title, True, COLOUR_TEXT), (x, y))
-    y += 18
+    y += font.get_height() + 7
     season_w = 32
     num_w = 40
     crop_w = max(56, inner_w - 4 * season_w - 2 * num_w - 8)
@@ -61,18 +82,13 @@ def draw_crop_overview(
     )
     for i, (head, w) in enumerate(zip(headers, widths)):
         if i == cur_i + 1 and cur_i >= 0:
-            pygame.draw.rect(
-                surface,
-                (55, 70, 55),
-                pygame.Rect(col_x, y - 1, w, 16),
-                border_radius=2,
-            )
+            _scribble_highlight(surface, pygame.Rect(col_x, y - 1, w, 18), (221, 174, 73))
         surface.blit(
             font_tiny.render(head, True, COLOUR_TEXT_DIM),
             (col_x + 2, y),
         )
         col_x += w
-    y += 16
+    y += 20
     if not rows:
         surface.blit(font_tiny.render(empty_label, True, COLOUR_TEXT_DIM), (x, y))
         return y + OVERVIEW_ROW_H + SECTION_GAP
@@ -94,11 +110,8 @@ def draw_crop_overview(
                 pass
         for i, (text, w) in enumerate(zip(cells, widths)):
             if i == cur_i + 1 and cur_i >= 0:
-                pygame.draw.rect(
-                    surface,
-                    (48, 58, 48),
-                    pygame.Rect(col_x, y - 1, w, 16),
-                    border_radius=2,
+                _scribble_highlight(
+                    surface, pygame.Rect(col_x, y - 1, w, 19), (229, 204, 139)
                 )
             tx = col_x + (14 if i == 0 and key else 2)
             surface.blit(font_tiny.render(text, True, COLOUR_TEXT), (tx, y))
@@ -109,7 +122,8 @@ def draw_crop_overview(
 
 def overview_height(n_rows: int) -> int:
     n = max(1, int(n_rows))
-    return 18 + 16 + n * OVERVIEW_ROW_H + SECTION_GAP
+    # Allow for the taller handwritten heading used by the book UI.
+    return 32 + 20 + n * OVERVIEW_ROW_H + SECTION_GAP
 
 
 def env_factors_height(inner_w: int, n_chips: int = 9) -> int:
@@ -181,8 +195,7 @@ def draw_env_hover(
         tip_rect.x = mouse_pos[0] - tip_rect.w - 8
     if tip_rect.bottom > surface.get_height() - 4:
         tip_rect.y = mouse_pos[1] - tip_rect.h - 8
-    pygame.draw.rect(surface, (28, 30, 36), tip_rect, border_radius=3)
-    pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, tip_rect, 1, border_radius=3)
+    _scribble_highlight(surface, tip_rect, (238, 218, 164))
     for i, line in enumerate(lines):
         surface.blit(
             font.render(line, True, COLOUR_TEXT),

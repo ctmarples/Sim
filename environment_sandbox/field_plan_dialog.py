@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pygame
 
 from crops import (
@@ -43,12 +45,44 @@ from settings import (
 )
 
 TITLE_BAR_H = 28
+COLOUR_TEXT = (72, 48, 31)
+COLOUR_TEXT_DIM = (112, 84, 58)
+_BOOK_FONT_PATH = (
+    Path(__file__).resolve().parent
+    / "assets/fonts/Gloria_Hallelujah/GloriaHallelujah-Regular.ttf"
+)
 PAD = 12
-BTN_H = 24
-TAB_H = 24
-ROW_H = 22
-SECTION_GAP = 10
+BTN_H = 28
+TAB_H = 28
+ROW_H = 26
+SECTION_GAP = 16
 SCROLL_STEP = 28
+
+
+def _scribble_highlight(
+    surface: pygame.Surface,
+    rect: pygame.Rect,
+    colour: tuple[int, int, int],
+    *,
+    alpha: int = 58,
+) -> None:
+    """Paint an intentionally uneven, translucent marker stroke."""
+    if rect.w <= 0 or rect.h <= 0:
+        return
+    layer = pygame.Surface(rect.size, pygame.SRCALPHA)
+    points = [
+        (1, 3), (rect.w - 3, 1), (rect.w - 1, rect.h - 4),
+        (rect.w // 2, rect.h - 2), (2, rect.h - 1),
+    ]
+    pygame.draw.polygon(layer, (*colour, alpha), points)
+    pygame.draw.line(
+        layer,
+        (*colour, max(18, alpha // 2)),
+        (4, rect.h // 2 + 2),
+        (rect.w - 5, rect.h // 2 - 1),
+        max(2, rect.h // 3),
+    )
+    surface.blit(layer, rect.topleft)
 
 
 def _draw_crop_glyph(
@@ -86,10 +120,10 @@ class FieldPlanDialog:
     """Field inspect + crop planner. Status tab by default; Rotation holds plans."""
 
     def __init__(self) -> None:
-        self.font = pygame.font.SysFont("menlo", 14)
-        self.font_small = pygame.font.SysFont("menlo", 12)
-        self.font_tiny = pygame.font.SysFont("menlo", 11, bold=True)
-        self.font_title = pygame.font.SysFont("menlo", 15, bold=True)
+        self.font = pygame.font.Font(str(_BOOK_FONT_PATH), 17)
+        self.font_small = pygame.font.Font(str(_BOOK_FONT_PATH), 14)
+        self.font_tiny = pygame.font.Font(str(_BOOK_FONT_PATH), 12)
+        self.font_title = pygame.font.Font(str(_BOOK_FONT_PATH), 19)
         self.building_id: int | None = None
         self._crop_overview: list[dict] = []
         self._env_status: dict | None = None
@@ -207,29 +241,9 @@ class FieldPlanDialog:
         pw, ph = max(1, building.plot_w), max(1, building.plot_h)
         if self.embedded:
             if self.tab == "rotation":
-                inner_w = max(40, self._panel_w - PAD * 2)
-                crop_rows = self._crop_row_count(inner_w)
-                n = max(1, len(self._crop_overview))
-                chrome = (
-                    TITLE_BAR_H
-                    + TAB_H
-                    + 8
-                    + PAD
-                    + 18
-                    + 16
-                    + n * 18
-                    + 10
-                    + BTN_H
-                    + 6
-                    + crop_rows * (BTN_H + 4)
-                    + 8
-                    + 22
-                    + PAD
-                )
-                avail_h = max(24, self._panel_h - chrome)
-                cell_w = max(8, inner_w // pw)
-                cell_h = max(8, avail_h // ph)
-                self._cell_px = min(28, cell_w, cell_h)
+                # Keep a stable, comfortably draggable grid. Extra controls
+                # belong to the scrolling page, not the grid-size calculation.
+                self._cell_px = 28
             else:
                 self._cell_px = 16
             return
@@ -337,7 +351,7 @@ class FieldPlanDialog:
             self._drag_current = None
 
     def handle_scroll(self, pos: tuple[int, int], dy: int) -> bool:
-        if not self.open or self.tab != "status":
+        if not self.open:
             return False
         if not self._view_rect.collidepoint(pos):
             return False
@@ -354,6 +368,7 @@ class FieldPlanDialog:
         elif action == "tab_rotation":
             self.tab = "rotation"
             self.expanded_factor = None
+            self._scroll = 0
             self._layout_for(building)
         elif action == "clear_plans":
             self._result = "cleared"
@@ -443,13 +458,14 @@ class FieldPlanDialog:
             pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, panel, 2, border_radius=6)
 
         title_bar = pygame.Rect(panel.x, panel.y, panel.w, TITLE_BAR_H)
-        pygame.draw.rect(
-            surface,
-            (48, 50, 58),
-            title_bar,
-            border_top_left_radius=6,
-            border_top_right_radius=6,
-        )
+        if not self.embedded:
+            pygame.draw.rect(
+                surface,
+                (48, 50, 58),
+                title_bar,
+                border_top_left_radius=6,
+                border_top_right_radius=6,
+            )
         self._title_rect = pygame.Rect(panel.x, panel.y, panel.w - 32, TITLE_BAR_H)
         title = f"Field #{building.id} · {building.plot_size_label()}"
         surface.blit(
@@ -483,11 +499,16 @@ class FieldPlanDialog:
         inner_w = max(40, inner_right - inner_left)
 
         # Tabs
+        tab_x = inner_left
         for label, key in (("Status", "status"), ("Rotation", "rotation")):
             w = max(64, 12 + self.font_small.size(label)[0])
-            rect = pygame.Rect(inner_left if key == "status" else inner_left + 72, y, w, TAB_H)
-            self._draw_btn(surface, rect, label, self.tab == key)
+            rect = pygame.Rect(tab_x, y, w, TAB_H)
+            hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+            self._draw_btn(
+                surface, rect, label, self.tab == key, hovered=hovered
+            )
             self._buttons.append((f"tab_{key}", rect))
+            tab_x += w + 8
         y += TAB_H + 8
 
         hover_tip = ""
@@ -504,15 +525,48 @@ class FieldPlanDialog:
                 yield_map_active=yield_map_active,
             )
         else:
-            self._draw_rotation(
+            view = pygame.Rect(
+                inner_left,
+                y,
+                max(40, inner_w - 12),
+                max(40, panel.bottom - PAD - y),
+            )
+            self._view_rect = view
+            max_scroll = max(0, self._content_h - view.h)
+            self._scroll = max(0, min(max_scroll, self._scroll))
+            rotation_clip = surface.get_clip()
+            surface.set_clip(view.clip(rotation_clip))
+            content_top = view.y - self._scroll
+            content_bottom = self._draw_rotation(
                 surface,
                 building,
                 x=inner_left,
-                y=y,
-                inner_w=inner_w,
+                y=content_top,
+                inner_w=view.w,
                 mouse_pos=mouse_pos,
                 current_season=current_season or self.season,
             )
+            surface.set_clip(rotation_clip)
+            self._content_h = content_bottom - content_top
+            max_scroll = max(0, self._content_h - view.h)
+            self._buttons = [
+                (action, rect)
+                for action, rect in self._buttons
+                if action.startswith("tab_") or rect.colliderect(view)
+            ]
+            if max_scroll > 0:
+                track = pygame.Rect(view.right + 4, view.y, 5, view.h)
+                pygame.draw.rect(surface, (126, 91, 52), track, border_radius=2)
+                thumb_h = max(16, int(view.h * view.h / self._content_h))
+                thumb_y = view.y + int(
+                    (view.h - thumb_h) * (self._scroll / max_scroll)
+                )
+                pygame.draw.rect(
+                    surface,
+                    (218, 119, 55),
+                    pygame.Rect(track.x, thumb_y, 5, thumb_h),
+                    border_radius=2,
+                )
 
         surface.set_clip(old_clip)
         draw_env_hover(surface, mouse_pos, hover_tip, self.font_small)
@@ -532,7 +586,9 @@ class FieldPlanDialog:
     ) -> str:
         from icons import blit_icon
 
-        view = pygame.Rect(x, y, inner_w, max(40, bottom - y))
+        # Reserve a paper margin between content and the scrollbar.
+        view = pygame.Rect(x, y, max(40, inner_w - 12), max(40, bottom - y))
+        inner_w = view.w
         self._view_rect = view
         hover_tip = ""
         summary = self._yield_summary
@@ -545,7 +601,7 @@ class FieldPlanDialog:
         def _expanded_h(fac: FieldFactorDisplay) -> int:
             if self.expanded_factor != fac.key:
                 return 0
-            h = len(fac.detail_lines) * 13
+            h = len(fac.detail_lines) * self.font_tiny.get_linesize()
             if fac.overlay_key:
                 h += BTN_H + 2
             return h + 2
@@ -561,7 +617,7 @@ class FieldPlanDialog:
             rows = [f for f in self._factors if f.section == sec]
             if not rows:
                 continue
-            cy += 16
+            cy += self.font.get_height() + 16
             for fac in rows:
                 cy += ROW_H + 2 + _expanded_h(fac)
             cy += 4
@@ -570,7 +626,10 @@ class FieldPlanDialog:
             if getattr(self, "_debug", False) and self._env_status:
                 cy += 4 + 14 + 12 + 12
         cy += BTN_H * 2 + 10
-        self._content_h = cy
+        # Retain the prior measured height until this frame establishes the
+        # exact rendered bottom below. This avoids clamping away the last part
+        # of the page while font-dependent layout is being measured.
+        self._content_h = max(cy, self._content_h)
         max_scroll = max(0, self._content_h - view.h)
         self._scroll = max(0, min(max_scroll, self._scroll))
 
@@ -583,13 +642,13 @@ class FieldPlanDialog:
 
         if self._headline:
             _blit(self.font_title, self._headline, COLOUR_TEXT, 0, sy)
-            sy += 20
+            sy += self.font_title.get_linesize() + 4
         else:
             _blit(self.font_small, "No active crop on this field", COLOUR_TEXT_DIM, 0, sy)
-            sy += 18
+            sy += self.font_small.get_linesize() + 4
 
         _blit(self.font, "EXPECTED HARVEST", COLOUR_TEXT, 0, sy)
-        sy += 16
+        sy += self.font.get_linesize() + 6
         if summary is None or summary.tile_count <= 0:
             _blit(
                 self.font_small,
@@ -632,7 +691,7 @@ class FieldPlanDialog:
                             "Harvest varies by tile "
                             "(local disturbance, fertility, weeds)."
                         )
-            sy += 14
+            sy += self.font_small.get_linesize() + 5
             bar = pygame.Rect(view.x, sy, inner_w, 8)
             pygame.draw.rect(surface, (40, 42, 48), bar, border_radius=3)
             fill = pygame.Rect(view.x, sy, max(2, int(inner_w * ratio)), 8)
@@ -642,7 +701,7 @@ class FieldPlanDialog:
                 else ((200, 160, 60) if ratio >= 0.45 else (200, 80, 60))
             )
             pygame.draw.rect(surface, colour, fill, border_radius=3)
-            sy += 12
+            sy += 14
             limit = main_limitation(self._factors)
             if limit:
                 _blit(
@@ -660,14 +719,23 @@ class FieldPlanDialog:
                     0,
                     sy,
                 )
-            sy += 16
+            sy += self.font_small.get_linesize() + 10
 
         for title, sec in sections:
             rows = [f for f in self._factors if f.section == sec]
             if not rows:
                 continue
+            if sy > view.y - self._scroll:
+                pygame.draw.line(
+                    surface,
+                    (151, 119, 76),
+                    (view.x, sy),
+                    (view.right - 8, sy + 1),
+                    1,
+                )
+                sy += 8
             _blit(self.font, title, COLOUR_TEXT, 0, sy)
-            sy += 16
+            sy += self.font.get_height() + 8
             for fac in rows:
                 colour = SEVERITY_COLOUR[fac.severity]
                 expanded = self.expanded_factor == fac.key
@@ -675,12 +743,8 @@ class FieldPlanDialog:
                 accent = pygame.Rect(view.x, sy + 2, 3, ROW_H - 4)
                 pygame.draw.rect(surface, colour, accent, border_radius=1)
                 if expanded:
-                    soft = (
-                        colour[0] // 8 + 28,
-                        colour[1] // 8 + 28,
-                        colour[2] // 8 + 28,
-                    )
-                    pygame.draw.rect(surface, soft, rect, border_radius=3)
+                    soft = tuple(min(255, channel + 70) for channel in colour)
+                    _scribble_highlight(surface, rect, soft, alpha=48)
                 try:
                     blit_icon(surface, fac.icon, view.x + 14, sy + ROW_H // 2, 13)
                 except Exception:
@@ -730,7 +794,7 @@ class FieldPlanDialog:
                             self.font_tiny.render(line, True, COLOUR_TEXT_DIM),
                             (inset_x, sy),
                         )
-                        sy += 13
+                        sy += self.font_tiny.get_linesize()
                     if fac.overlay_key:
                         btn = pygame.Rect(
                             inset_x, sy, min(140, inner_w - 16), BTN_H - 2
@@ -738,7 +802,9 @@ class FieldPlanDialog:
                         hovered = (
                             mouse_pos is not None and btn.collidepoint(mouse_pos)
                         )
-                        self._draw_btn(surface, btn, "Show layer", hovered)
+                        self._draw_btn(
+                            surface, btn, "Show layer", False, hovered=hovered
+                        )
                         if view.colliderect(btn):
                             self._buttons.append(
                                 (f"overlay_{fac.overlay_key}", btn)
@@ -753,7 +819,13 @@ class FieldPlanDialog:
         map_label = "Hide yield map" if yield_map_active else "Show yield map"
         map_rect = pygame.Rect(view.x, sy, min(150, inner_w), BTN_H)
         hovered = mouse_pos is not None and map_rect.collidepoint(mouse_pos)
-        self._draw_btn(surface, map_rect, map_label, yield_map_active or hovered)
+        self._draw_btn(
+            surface,
+            map_rect,
+            map_label,
+            yield_map_active,
+            hovered=hovered,
+        )
         if view.colliderect(map_rect):
             self._buttons.append(("show_yield_map", map_rect))
         sy += BTN_H + 4
@@ -761,21 +833,26 @@ class FieldPlanDialog:
         planned = bool(building.fence_edges or building.fence_gates)
         fence_label = "Add / place gates" if planned else "Add field fencing"
         hovered = mouse_pos is not None and fence_rect.collidepoint(mouse_pos)
-        self._draw_btn(surface, fence_rect, fence_label, hovered)
+        self._draw_btn(surface, fence_rect, fence_label, False, hovered=hovered)
         if view.colliderect(fence_rect):
             self._buttons.append(("add_fence", fence_rect))
+
+        content_bottom = fence_rect.bottom + 10
+        self._content_h = content_bottom - (view.y - self._scroll)
+        max_scroll = max(0, self._content_h - view.h)
+        self._scroll = min(self._scroll, max_scroll)
 
         surface.set_clip(old)
 
         if max_scroll > 0:
-            track = pygame.Rect(view.right - 4, view.y, 3, view.h)
-            pygame.draw.rect(surface, (50, 52, 58), track, border_radius=2)
+            track = pygame.Rect(view.right + 4, view.y, 5, view.h)
+            pygame.draw.rect(surface, (126, 91, 52), track, border_radius=2)
             thumb_h = max(16, int(view.h * view.h / max(1, self._content_h)))
             thumb_y = view.y + int((view.h - thumb_h) * (self._scroll / max_scroll))
             pygame.draw.rect(
                 surface,
-                COLOUR_TOOLBAR_BORDER,
-                pygame.Rect(track.x, thumb_y, 3, thumb_h),
+                (218, 119, 55),
+                pygame.Rect(track.x, thumb_y, 5, thumb_h),
                 border_radius=2,
             )
         return hover_tip
@@ -798,7 +875,8 @@ class FieldPlanDialog:
             self.font.render("YIELD BREAKDOWN", True, COLOUR_TEXT),
             (x, y),
         )
-        y += 16
+        pygame.draw.line(surface, (151, 119, 76), (x, y - 7), (x + inner_w - 8, y - 6), 1)
+        y += self.font.get_height() + 6
         stages = [
             ("Base potential", None, base),
             ("Landscape", stage_effect_pct(base, after_land), after_land),
@@ -851,7 +929,7 @@ class FieldPlanDialog:
         inner_w: int,
         mouse_pos: tuple[int, int] | None,
         current_season: Season,
-    ) -> None:
+    ) -> int:
         fonts = self._fonts()
         y = draw_crop_overview(
             surface,
@@ -864,7 +942,17 @@ class FieldPlanDialog:
             empty_label="No crop plans on this field",
             title="ROTATION PLAN",
         )
+        fertility_top = y
+        fertility_block_h = 3 * self.font_small.get_linesize() + 18
         if self._env_status:
+            pygame.draw.line(
+                surface,
+                (151, 119, 76),
+                (x, y),
+                (x + inner_w - 8, y + 1),
+                1,
+            )
+            y += 10
             fert = float(self._env_status.get("fertility") or 0.0)
             pot = float(self._env_status.get("fertility_potential") or fert or 1.0)
             surface.blit(
@@ -875,7 +963,7 @@ class FieldPlanDialog:
                 ),
                 (x, y),
             )
-            y += 16
+            y += self.font_small.get_linesize()
             crop = CROP_BY_KEY.get(self.crop_kind)
             effect = getattr(crop, "fertility_effect", None) if crop else None
             if effect is not None:
@@ -888,7 +976,7 @@ class FieldPlanDialog:
                     ),
                     (x, y),
                 )
-                y += 14
+                y += self.font_small.get_linesize()
                 surface.blit(
                     self.font_small.render(
                         f"Projected after crop  {projected:.2f}",
@@ -897,7 +985,7 @@ class FieldPlanDialog:
                     ),
                     (x, y),
                 )
-                y += 16
+                y += self.font_small.get_linesize()
             else:
                 surface.blit(
                     self.font_tiny.render(
@@ -907,7 +995,11 @@ class FieldPlanDialog:
                     ),
                     (x, y),
                 )
-                y += 14
+                y += self.font_tiny.get_linesize()
+
+        # Every crop option gets the same fertility area, so selecting a crop
+        # cannot shift or resize the season controls and field grid below it.
+        y = fertility_top + fertility_block_h
 
         # Season row
         sx = x
@@ -915,15 +1007,23 @@ class FieldPlanDialog:
             label = SEASON_LABELS[season][:3]
             w = max(44, 10 + self.font_small.size(label)[0])
             rect = pygame.Rect(sx, y, w, BTN_H)
-            self._draw_btn(surface, rect, label, season == self.season)
+            hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+            self._draw_btn(
+                surface,
+                rect,
+                label,
+                season == self.season,
+                hovered=hovered,
+            )
             self._buttons.append((f"season_{season.name}", rect))
             sx += w + 4
         ax = x + inner_w
-        for label, action in (("Clr plans", "clear_plans"), ("Delete", "delete_field")):
+        for label, action in (("Clr plans", "clear_plans"),):
             w = max(56, 10 + self.font_small.size(label)[0])
             ax -= w
             rect = pygame.Rect(ax, y, w, BTN_H)
-            self._draw_btn(surface, rect, label, False)
+            hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+            self._draw_btn(surface, rect, label, False, hovered=hovered)
             self._buttons.append((action, rect))
             ax -= 4
         y += BTN_H + 6
@@ -946,7 +1046,14 @@ class FieldPlanDialog:
                     y += BTN_H + 4
                     cx = x
                 rect = pygame.Rect(cx, y, w, BTN_H)
-                self._draw_btn(surface, rect, label, crop.key == self.crop_kind)
+                hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+                self._draw_btn(
+                    surface,
+                    rect,
+                    label,
+                    crop.key == self.crop_kind,
+                    hovered=hovered,
+                )
                 self._buttons.append((f"crop_{crop.key}", rect))
                 cx += w + 4
             y += BTN_H + 8
@@ -1020,6 +1127,7 @@ class FieldPlanDialog:
             self.font_small.render(tip, True, COLOUR_TEXT_DIM),
             (x, gy + grid_h + 6),
         )
+        return gy + grid_h + 6 + self.font_small.get_linesize() + 10
 
     def _paint_split_cell(
         self,
@@ -1084,11 +1192,25 @@ class FieldPlanDialog:
         )
 
     def _draw_btn(
-        self, surface: pygame.Surface, rect: pygame.Rect, label: str, active: bool
+        self,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        label: str,
+        active: bool,
+        *,
+        hovered: bool = False,
     ) -> None:
-        colour = COLOUR_TOOLBAR_BTN_ACTIVE if active else COLOUR_TOOLBAR_BTN
-        pygame.draw.rect(surface, colour, rect, border_radius=4)
-        pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1, border_radius=4)
+        if self.embedded:
+            if active:
+                _scribble_highlight(surface, rect.inflate(-2, -2), (221, 174, 73), alpha=82)
+            elif hovered:
+                _scribble_highlight(surface, rect.inflate(-2, -2), (225, 202, 139), alpha=55)
+        else:
+            colour = COLOUR_TOOLBAR_BTN_ACTIVE if active else (
+                COLOUR_TOOLBAR_BTN_HOVER if hovered else COLOUR_TOOLBAR_BTN
+            )
+            pygame.draw.rect(surface, colour, rect, border_radius=4)
+            pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1, border_radius=4)
         text = self.font_small.render(label, True, COLOUR_TEXT)
         surface.blit(
             text,
