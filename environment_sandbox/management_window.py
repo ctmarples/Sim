@@ -996,11 +996,14 @@ class ManagementWindow:
 
         if self._tooltip is not None:
             tip, (tx, ty) = self._tooltip
-            text = self.font_tiny.render(tip, True, COLOUR_TEXT)
+            text = self.font_tiny.render(tip, True, (0, 0, 0))
             tip_r = text.get_rect()
             tip_r.midbottom = (tx, ty - 4)
             tip_r.x = max(4, min(tip_r.x, WINDOW_WIDTH - tip_r.w - 4))
             bg = tip_r.inflate(8, 4)
+            tip_bg = pygame.Surface(bg.size, pygame.SRCALPHA)
+            tip_bg.fill((105, 46, 44, 50))
+            surface.blit(tip_bg, bg.topleft)
             surface.blit(text, tip_r)
 
     def _blit_dim(self, surface: pygame.Surface, rect: pygame.Rect, msg: str) -> None:

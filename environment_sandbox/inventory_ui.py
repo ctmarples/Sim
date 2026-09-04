@@ -18,6 +18,15 @@ GRID_CELL = 52
 GRID_GAP = 4
 GRID_COLS = 6
 INV_PANEL_GAP = 10
+COLOUR_TEXT = (72, 48, 31)
+COLOUR_TEXT_DIM = (112, 84, 58)
+SLOT_BG_RGBA = (105, 46, 44, 50)
+
+
+def _slot_background(surface: pygame.Surface, rect: pygame.Rect) -> None:
+    layer = pygame.Surface(rect.size, pygame.SRCALPHA)
+    layer.fill(SLOT_BG_RGBA)
+    surface.blit(layer, rect.topleft)
 
 
 def present_keys(
@@ -58,7 +67,7 @@ def draw_resource_cell(
     else:
         bg = (42, 44, 52)
         border = COLOUR_TOOLBAR_BORDER
-    pygame.draw.rect(surface, bg, cell, border_radius=4)
+    _slot_background(surface, cell)
     pygame.draw.rect(surface, border, cell, 1, border_radius=4)
 
     # Food quality: full bar at top; depletes right→left (empty grows from the right).
@@ -179,9 +188,9 @@ def draw_inv_grid(
     x0, y0 = origin
     y = y0
     surface.blit(font.render(title, True, COLOUR_TEXT), (x0, y))
-    y += 18
+    y += font.get_linesize() + 4
     surface.blit(font_small.render(subtitle, True, COLOUR_TEXT_DIM), (x0, y))
-    y += 16
+    y += font_small.get_linesize() + 5
 
     hits: list[tuple[pygame.Rect, str, str]] = []
     tip_hits: list[tuple[pygame.Rect, str, str]] = []
@@ -211,8 +220,6 @@ def draw_inv_grid(
 
     # A distinct plane separates paired inventories and clearly marks the
     # portion of the inspector that can contain more items.
-    pygame.draw.rect(surface, (23, 26, 32), body, border_radius=4)
-    pygame.draw.rect(surface, (66, 70, 80), body, 1, border_radius=4)
 
     old_clip = surface.get_clip()
     clipped = body.clip(old_clip) if old_clip.width > 0 else body
@@ -246,7 +253,7 @@ def draw_inv_grid(
         else:
             bg = (42, 44, 52)
             border = COLOUR_TOOLBAR_BORDER
-        pygame.draw.rect(surface, bg, cell, border_radius=4)
+        _slot_background(surface, cell)
         pygame.draw.rect(surface, border, cell, 1, border_radius=4)
 
         count = int(amounts.get(key, 0))
@@ -368,7 +375,7 @@ def draw_hover_tooltip(
     """Draw a free-text tooltip near the cursor."""
     if not text:
         return
-    rendered = font.render(text, True, COLOUR_TEXT)
+    rendered = font.render(text, True, (0, 0, 0))
     pad = 4
     tip = pygame.Rect(
         mouse_pos[0] + 14,
@@ -380,8 +387,7 @@ def draw_hover_tooltip(
         tip.x = mouse_pos[0] - tip.w - 8
     if tip.bottom > surface.get_height() - 4:
         tip.y = mouse_pos[1] - tip.h - 8
-    pygame.draw.rect(surface, (28, 30, 36), tip, border_radius=3)
-    pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, tip, 1, border_radius=3)
+    _slot_background(surface, tip)
     surface.blit(rendered, (tip.x + pad, tip.y + pad))
 
 
@@ -405,7 +411,7 @@ def draw_tool_slot(
     if equipped_tool and equipped_tool not in tools:
         tools.insert(0, equipped_tool)
     surface.blit(font.render("Tools", True, COLOUR_TEXT), (x0, y))
-    y += 18
+    y += font.get_linesize() + 6
     hits: list[tuple[pygame.Rect, str]] = []
     tip_key: str | None = None
     for i in range(TOOL_SLOT_MAX):
@@ -424,7 +430,7 @@ def draw_tool_slot(
         else:
             bg = (55, 62, 50) if hovered else (36, 38, 44)
             border = COLOUR_SELECTED_ENTITY if hovered else COLOUR_TOOLBAR_BORDER
-            pygame.draw.rect(surface, bg, cell, border_radius=4)
+            _slot_background(surface, cell)
             pygame.draw.rect(surface, border, cell, 1, border_radius=4)
             dash = font_small.render("—", True, COLOUR_TEXT_DIM)
             surface.blit(
@@ -463,25 +469,32 @@ def draw_clothing_slots(
     y = y0
     worn = dict(equipped_clothing or {})
     surface.blit(font.render("Clothes", True, COLOUR_TEXT), (x0, y))
-    y += 18
+    y += font.get_linesize() + 6
     hits: list[tuple[pygame.Rect, str]] = []
     tip_key: str | None = None
+    label_h = font_small.get_linesize()
     for i, slot in enumerate(CLOTHING_SLOTS):
         col = i % max(1, cols)
         row = i // max(1, cols)
         cell = pygame.Rect(
             x0 + col * (GRID_CELL + GRID_GAP),
-            y + row * (GRID_CELL + GRID_GAP + 12),
+            y + label_h + 5 + row * (GRID_CELL + GRID_GAP + label_h + 5),
             GRID_CELL,
             GRID_CELL,
         )
         key = worn.get(slot)
         hovered = mouse_pos is not None and cell.collidepoint(mouse_pos)
-        label = CLOTHING_SLOT_LABELS.get(slot, slot)
-        lab = font_small.render(label[:3], True, COLOUR_TEXT_DIM)
+        label = {
+            "hat": "Hat",
+            "shirt": "Shirt",
+            "trousers": "Pants",
+            "shoes": "Shoes",
+            "bag": "Bag",
+        }.get(slot, CLOTHING_SLOT_LABELS.get(slot, slot).title())
+        lab = font_small.render(label, True, COLOUR_TEXT_DIM)
         surface.blit(
             lab,
-            (cell.centerx - lab.get_width() // 2, cell.y - 12),
+            (cell.centerx - lab.get_width() // 2, cell.y - label_h - 5),
         )
         if key:
             draw_resource_cell(
@@ -495,7 +508,7 @@ def draw_clothing_slots(
         else:
             bg = (55, 62, 50) if hovered else (36, 38, 44)
             border = COLOUR_SELECTED_ENTITY if hovered else COLOUR_TOOLBAR_BORDER
-            pygame.draw.rect(surface, bg, cell, border_radius=4)
+            _slot_background(surface, cell)
             pygame.draw.rect(surface, border, cell, 1, border_radius=4)
             dash = font_small.render("—", True, COLOUR_TEXT_DIM)
             surface.blit(
@@ -513,4 +526,4 @@ def draw_clothing_slots(
         if hovered:
             tip_key = key if key else f"_empty_{slot}_"
     rows = (len(CLOTHING_SLOTS) + cols - 1) // cols
-    return rows * (GRID_CELL + GRID_GAP + 12) + 8, hits, tip_key
+    return rows * (GRID_CELL + GRID_GAP + label_h + 5) + 8, hits, tip_key

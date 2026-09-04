@@ -2169,7 +2169,10 @@ class Game:
                 if self.building_inspect.open and self.building_inspect._moving:
                     self.building_inspect.handle_mouseup(event.pos)
                     continue
-                if self.villager_inspect.open and self.villager_inspect._moving:
+                if self.villager_inspect.open and (
+                    self.villager_inspect._moving
+                    or self.villager_inspect._scroll_dragging
+                ):
                     self.villager_inspect.handle_mouseup(event.pos)
                     continue
                 if self.resource_inspect.open and self.resource_inspect._moving:
@@ -2224,7 +2227,10 @@ class Game:
                 if self.building_inspect.open and self.building_inspect._moving:
                     self.building_inspect.handle_mousemotion(event.pos)
                     continue
-                if self.villager_inspect.open and self.villager_inspect._moving:
+                if self.villager_inspect.open and (
+                    self.villager_inspect._moving
+                    or self.villager_inspect._scroll_dragging
+                ):
                     self.villager_inspect.handle_mousemotion(event.pos)
                     continue
                 if self.resource_inspect.open and self.resource_inspect._moving:

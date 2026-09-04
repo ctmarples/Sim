@@ -38,6 +38,10 @@ from settings import (
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
 )
+
+# Paper/diary widgets use dark ink even though the legacy roster chrome is dark.
+COLOUR_TEXT = (72, 48, 31)
+COLOUR_TEXT_DIM = (112, 84, 58)
 from society import (
     SKILL_ICONS,
     SKILL_LABELS,
@@ -428,6 +432,7 @@ def draw_skill_cell(
     level: int,
     font: pygame.font.Font,
     *,
+    potential: int | None = None,
     icon_size: int = 14,
     col_w: int = SKILL_COL_W,
     highlighted: bool = False,
@@ -446,7 +451,10 @@ def draw_skill_cell(
         text = font.render(label, True, COLOUR_TEXT_DIM)
         surface.blit(text, (cx - text.get_width() // 2, y))
     lvl_col = COLOUR_TEXT if highlighted else COLOUR_TEXT
-    lvl = font.render(str(int(level)), True, lvl_col)
+    level_text = str(int(level))
+    if potential is not None:
+        level_text = f"{int(level)} / {int(potential)}"
+    lvl = font.render(level_text, True, lvl_col)
     surface.blit(lvl, (cx - lvl.get_width() // 2, y + icon_size + 1))
 
 
@@ -458,6 +466,7 @@ def draw_skill_icons(
     font: pygame.font.Font,
     *,
     icon_size: int = 14,
+    col_w: int = SKILL_COL_W,
     highlight: frozenset | set | None = None,
 ) -> tuple[int, list[tuple[pygame.Rect, str]]]:
     """Draw skills in fixed-width columns. Returns (width used, tip hits)."""
@@ -469,6 +478,7 @@ def draw_skill_icons(
     for sk in SKILL_ORDER:
         st = skills.get(sk)
         lvl = int(getattr(st, "level", 1) or 1)
+        potential = int(getattr(st, "potential", 10) or 10)
         draw_skill_cell(
             surface,
             cur,
@@ -476,14 +486,16 @@ def draw_skill_icons(
             sk,
             lvl,
             font,
+            potential=potential,
             icon_size=icon_size,
+            col_w=col_w,
             highlighted=sk in hi,
         )
-        tip_rect = pygame.Rect(cur, y, SKILL_COL_W, icon_size + 14)
+        tip_rect = pygame.Rect(cur, y, col_w, icon_size + font.get_linesize())
         label = SKILL_LABELS.get(sk, sk.name)
-        tip = f"{label} {lvl}" + (" · used here" if sk in hi else "")
+        tip = f"{label} {lvl} / {potential}" + (" · used here" if sk in hi else "")
         tips.append((tip_rect, tip))
-        cur += SKILL_COL_W
+        cur += col_w
     return cur - x, tips
 
 

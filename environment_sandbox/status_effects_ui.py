@@ -27,6 +27,9 @@ from villager_roster import SKILL_COL_W
 # Compound mod tiles match inventory grid cells.
 MOD_CELL = GRID_CELL
 MOD_GAP = GRID_GAP
+COLOUR_TEXT = (72, 48, 31)
+COLOUR_TEXT_DIM = (112, 84, 58)
+_SLOT_BG_RGBA = (105, 46, 44, 50)
 
 # Dedicated effect glyph icons (bottom-right of compound mods).
 _EFFECT_ICON_NAMES: dict[str, str] = {
@@ -320,7 +323,9 @@ def draw_compound_mod_icon(
         colour = COLOUR_TOOLBAR_BTN_HOVER
     else:
         colour = COLOUR_TOOLBAR_BTN
-    pygame.draw.rect(surface, colour, rect, border_radius=4)
+    layer = pygame.Surface(rect.size, pygame.SRCALPHA)
+    layer.fill(_SLOT_BG_RGBA)
+    surface.blit(layer, rect.topleft)
     edge = HIGHLIGHT_BORDER if highlighted else COLOUR_TOOLBAR_BORDER
     width = 2 if highlighted else 1
     pygame.draw.rect(surface, edge, rect, width, border_radius=4)

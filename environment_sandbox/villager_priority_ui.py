@@ -21,9 +21,12 @@ from settings import (
     COLOUR_TOOLBAR_BTN_HOVER,
 )
 
-SLOT_SIZE = 28
+SLOT_SIZE = 52
 SLOT_GAP = 4
-SEASON_LABEL_W = 52
+SEASON_LABEL_W = 66
+COLOUR_TEXT = (72, 48, 31)
+COLOUR_TEXT_DIM = (112, 84, 58)
+_SLOT_BG_RGBA = (105, 46, 44, 50)
 
 
 def _slot_bg(*, hovered: bool) -> tuple[int, int, int]:
@@ -41,7 +44,9 @@ def draw_workplace_slot(
     hovered: bool = False,
     empty_glyph: str = "+",
 ) -> None:
-    pygame.draw.rect(surface, _slot_bg(hovered=hovered), rect, border_radius=4)
+    layer = pygame.Surface(rect.size, pygame.SRCALPHA)
+    layer.fill(_SLOT_BG_RGBA)
+    surface.blit(layer, rect.topleft)
     pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1, border_radius=4)
     if icon:
         blit_icon(surface, icon, rect.centerx, rect.centery, min(rect.w, rect.h) - 6)

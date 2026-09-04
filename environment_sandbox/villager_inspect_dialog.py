@@ -89,15 +89,20 @@ CAT_TAB_H = BTN_H
 
 
 class DetailCategory(str, Enum):
+    OVERVIEW = "overview"
+    WORK = "work"
     SKILLS = "skills"
-    TOOLS = "tools"
     BUFFS = "buffs"
+    INVENTORY = "inventory"
+    TOOLS = "inventory"  # compatibility with the former standalone layout
 
 
 _DETAIL_TABS: tuple[tuple[DetailCategory, str, str], ...] = (
+    (DetailCategory.OVERVIEW, "Overview", "Status, home, and expectations"),
+    (DetailCategory.WORK, "Work", "Workplace and seasonal assignments"),
     (DetailCategory.SKILLS, "Skills", "Skills and effect totals"),
-    (DetailCategory.TOOLS, "Tools", "Equipped tools and clothing"),
     (DetailCategory.BUFFS, "Buffs", "Meals, buffs, debuffs, and events"),
+    (DetailCategory.INVENTORY, "Inventory", "Tools, clothing, and carried items"),
 )
 
 
@@ -130,12 +135,17 @@ class VillagerInspectDialog:
         self._tooltip_key: str | None = None
         self._tooltip_text: str | None = None
         self.embedded = False
-        self.detail_category = DetailCategory.SKILLS
+        self.detail_category = DetailCategory.OVERVIEW
         self._scroll: dict[str, float] = {}
         self._scroll_velocity: dict[str, float] = {}
         self._scroll_tick = pygame.time.get_ticks()
         self._measured_body_h = 0
         self._scroll_areas: dict[str, tuple[pygame.Rect, int, int]] = {}
+        self._section_anchors: dict[DetailCategory, int] = {}
+        self._scrollbar_track = pygame.Rect(0, 0, 0, 0)
+        self._scrollbar_thumb = pygame.Rect(0, 0, 0, 0)
+        self._scroll_dragging = False
+        self._scroll_drag_offset = 0
 
     @property
     def open(self) -> bool:
@@ -250,20 +260,25 @@ class VillagerInspectDialog:
         scroll: int,
     ) -> None:
         if content_h <= view.h:
+            self._scrollbar_track = pygame.Rect(0, 0, 0, 0)
+            self._scrollbar_thumb = pygame.Rect(0, 0, 0, 0)
             return
-        track = pygame.Rect(view.right - 5, view.y, 4, view.h)
-        pygame.draw.rect(surface, (40, 42, 48), track, border_radius=2)
+        track = pygame.Rect(view.right + 3, view.y, 5, view.h)
+        pygame.draw.rect(surface, (126, 91, 52), track, border_radius=2)
         ratio = view.h / content_h
         thumb_h = max(12, int(view.h * ratio))
         thumb_y = view.y + int(
             (view.h - thumb_h) * (scroll / max(1, content_h - view.h))
         )
+        thumb = pygame.Rect(track.x, thumb_y, track.w, thumb_h)
         pygame.draw.rect(
             surface,
-            (120, 130, 140),
-            pygame.Rect(track.x, thumb_y, track.w, thumb_h),
+            (218, 119, 55),
+            thumb,
             border_radius=2,
         )
+        self._scrollbar_track = track
+        self._scrollbar_thumb = thumb
 
     def handle_mousewheel(self, dy: int, pos: tuple[int, int]) -> bool:
         if not self.open or not self.contains(pos):
@@ -289,12 +304,28 @@ class VillagerInspectDialog:
         if self._close_rect.collidepoint(pos):
             self.close()
             return True
+        if self._scrollbar_thumb.collidepoint(pos):
+            self._scroll_dragging = True
+            self._scroll_drag_offset = pos[1] - self._scrollbar_thumb.y
+            self._scroll_velocity["panel_body"] = 0.0
+            return True
         if not self.embedded and self._title_rect.collidepoint(pos):
             self._moving = True
             self._move_offset = (pos[0] - self._panel_x, pos[1] - self._panel_y)
             return True
         for action, rect in self._buttons:
             if rect.collidepoint(pos):
+                if action.startswith("diary_link:"):
+                    try:
+                        category = DetailCategory(action.split(":", 1)[1])
+                    except ValueError:
+                        return True
+                    self.detail_category = category
+                    self._scroll["panel_body"] = float(
+                        self._section_anchors.get(category, 0)
+                    )
+                    self._scroll_velocity["panel_body"] = 0.0
+                    return True
                 if action.startswith("detail_cat:"):
                     try:
                         self.detail_category = DetailCategory(action.split(":", 1)[1])
@@ -323,6 +354,21 @@ class VillagerInspectDialog:
     def handle_mousemotion(self, pos: tuple[int, int]) -> bool:
         if not self.open:
             return False
+        if self._scroll_dragging:
+            area = self._scroll_areas.get("panel_body")
+            if area is not None:
+                _view, content_h, view_h = area
+                travel = max(1, self._scrollbar_track.h - self._scrollbar_thumb.h)
+                thumb_y = max(
+                    self._scrollbar_track.y,
+                    min(
+                        pos[1] - self._scroll_drag_offset,
+                        self._scrollbar_track.bottom - self._scrollbar_thumb.h,
+                    ),
+                )
+                ratio = (thumb_y - self._scrollbar_track.y) / travel
+                self._scroll["panel_body"] = ratio * max(0, content_h - view_h)
+            return True
         if self._moving:
             self._panel_x = pos[0] - self._move_offset[0]
             self._panel_y = pos[1] - self._move_offset[1]
@@ -346,6 +392,9 @@ class VillagerInspectDialog:
     def handle_mouseup(self, pos: tuple[int, int]) -> bool:
         if not self.open:
             return False
+        if self._scroll_dragging:
+            self._scroll_dragging = False
+            return True
         if self._moving:
             self._moving = False
             self._clamp_panel()
@@ -456,6 +505,269 @@ class VillagerInspectDialog:
                 ),
             )
 
+    def _draw_diary_page(
+        self,
+        surface: pygame.Surface,
+        villager: Villager,
+        *,
+        building_icon_for: Callable[[int | None], str | None],
+        housing_icon: str,
+        current_season: Season | None,
+        calendar_day: int,
+        mouse_pos: tuple[int, int] | None,
+        requirement_rows: list[dict] | None,
+        activity_label: str | None,
+    ) -> None:
+        """Focused, paper-native inspect pages modelled on the field inspector."""
+        panel = self.panel_rect()
+        pad = 10
+        x = panel.x + pad
+        inner_w = panel.w - pad * 2 - 10
+        old_clip = surface.get_clip()
+        panel_clip = panel.clip(old_clip) if old_clip.width else panel
+        surface.set_clip(panel_clip)
+
+        self._buttons = []
+        self._inv_hits = []
+        self._tool_hits = []
+        self._clothing_hits = []
+        self._inv_tip_hits = []
+        self._icon_tips = []
+        self._tooltip_key = None
+        self._tooltip_text = None
+
+        is_player = villager.id < 0
+        header_y = panel.y
+        title = (
+            "PLAYER"
+            if is_player
+            else (villager.name or f"VILLAGER #{villager.id}").upper()
+        )
+        surface.blit(self.font_title.render(title, True, COLOUR_TEXT), (x, header_y))
+        header_y += self.font_title.get_linesize() + 5
+
+        # Page navigation uses the same marker treatment as the field planner.
+        tx = x
+        for category, label, tip in _DETAIL_TABS:
+            width = self.font_small.size(label)[0] + 8
+            if tx + width > panel.right - pad - 10 and tx > x:
+                tx = x
+                header_y += CAT_TAB_H + 3
+            rect = pygame.Rect(tx, header_y, width, CAT_TAB_H)
+            active = self.detail_category == category
+            hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+            if active or hovered:
+                marker = pygame.Surface(rect.size, pygame.SRCALPHA)
+                colour = (221, 174, 73, 76 if active else 42)
+                pygame.draw.polygon(
+                    marker,
+                    colour,
+                    [(1, 4), (rect.w - 2, 2), (rect.w - 1, rect.h - 3), (2, rect.h - 1)],
+                )
+                surface.blit(marker, rect.topleft)
+            label_s = self.font_small.render(label, True, COLOUR_TEXT)
+            surface.blit(label_s, (rect.x + 4, rect.y + 2))
+            self._buttons.append((f"diary_link:{category.value}", rect))
+            if hovered:
+                self._icon_tips.append((rect, tip))
+            tx += width + 3
+        body_top = header_y + CAT_TAB_H + 8
+        view = pygame.Rect(x, body_top, inner_w, max(1, panel.bottom - body_top))
+        scroll = int(self._scroll_value("panel_body", self._measured_body_h, view.h))
+        for category, anchor in sorted(
+            self._section_anchors.items(), key=lambda item: item[1]
+        ):
+            if scroll + 12 >= anchor:
+                self.detail_category = category
+        if self._measured_body_h > view.h and scroll >= self._measured_body_h - view.h - 2:
+            self.detail_category = DetailCategory.INVENTORY
+        surface.set_clip(view.clip(panel_clip))
+        y = view.y - scroll
+
+        def heading(label: str) -> None:
+            nonlocal y
+            pygame.draw.line(
+                surface, (151, 119, 76), (x, y), (view.right - 4, y + 1), 1
+            )
+            y += 7
+            surface.blit(self.font.render(label, True, COLOUR_TEXT), (x, y))
+            y += self.font.get_linesize() + 7
+
+        self._section_anchors = {}
+        self._section_anchors[DetailCategory.OVERVIEW] = y + scroll - view.y
+        if True:
+            heading("STATUS")
+            state = activity_label or (
+                "Exploring" if is_player else villager.state.name.replace("_", " ").title()
+            )
+            surface.blit(self.font_small.render(state, True, COLOUR_TEXT), (x, y))
+            y += self.font_small.get_linesize() + 8
+            for label, kind, value in (
+                ("Energy", "energy", villager.energy),
+                ("Satiation", "sat", villager.satiation),
+                ("Happiness", "happy", villager.happiness),
+            ):
+                surface.blit(self.font_small.render(label, True, COLOUR_TEXT_DIM), (x, y))
+                draw_status_bar(surface, x + 92, y + 5, max(70, inner_w - 104), 10, value, kind=kind)
+                y += self.font_small.get_linesize() + 5
+
+            if not is_player:
+                y += 6
+                heading("HOME & EXPECTATIONS")
+                home = housing_icon.replace("_", " ").title() if villager.housed else "No home"
+                mark = "✓" if villager.housed else "×"
+                blit_icon(surface, housing_icon, x + 12, y + 11, 22)
+                surface.blit(self.font_small.render(f"{home}  {mark}", True, COLOUR_TEXT), (x + 28, y))
+                y += self.font_small.get_linesize() + 4
+                for row in list(requirement_rows or []):
+                    label = str(row.get("label") or "Expectation")
+                    met = bool(row.get("met"))
+                    coins = int(row.get("coins", 0) or 0)
+                    suffix = "✓" if met else "×"
+                    if not met and coins:
+                        suffix += f"  pay {coins} coin{'s' if coins != 1 else ''}"
+                    blit_icon(surface, str(row.get("icon") or "meat"), x + 12, y + 11, 20)
+                    surface.blit(self.font_small.render(f"{label}  {suffix}", True, COLOUR_TEXT_DIM), (x + 28, y))
+                    y += self.font_small.get_linesize() + 3
+
+        self._section_anchors[DetailCategory.WORK] = y + scroll - view.y
+        if True:
+            heading("WORK")
+            if is_player:
+                surface.blit(self.font_small.render("Free / player controlled", True, COLOUR_TEXT), (x, y))
+                y += self.font_small.get_linesize()
+            else:
+                label = activity_label or "Free / Unassigned"
+                surface.blit(self.font_small.render(label, True, COLOUR_TEXT), (x, y))
+                y += self.font_small.get_linesize() + 8
+                assign = pygame.Rect(x, y, min(145, inner_w - 80), BTN_H)
+                self._draw_button(surface, assign, "Assign workplace")
+                self._buttons.append(("assign_workplace", assign))
+                seasonal = pygame.Rect(assign.right + 7, y, min(82, view.right - assign.right - 7), BTN_H)
+                self._draw_button(surface, seasonal, "Seasonal", active=villager.seasonal_priorities)
+                self._buttons.append(("seasonal_toggle", seasonal))
+                y += BTN_H + 12
+                if villager.seasonal_priorities:
+                    villager.ensure_season_workplace_plan(
+                        copy_from=villager.ensure_workplace_plan()
+                    )
+                    hits, grid_h = draw_seasonal_workplace_plan_grid(
+                        surface, x, y, villager.season_workplace_plan,
+                        icon_for_building=building_icon_for,
+                        font=self.font_small, font_small=self.font_tiny,
+                        current_season=current_season, mouse_pos=mouse_pos,
+                    )
+                else:
+                    villager.ensure_workplace_plan()
+                    hits, grid_h = draw_workplace_plan_row(
+                        surface, x, y, list(villager.workplace_plan),
+                        icon_for_building=building_icon_for,
+                        font=self.font_small, mouse_pos=mouse_pos,
+                    )
+                self._buttons.extend(hits)
+                y += grid_h + 10
+
+        self._section_anchors[DetailCategory.SKILLS] = y + scroll - view.y
+        if True:
+            heading("SKILLS")
+            traits = (
+                list(getattr(villager, "virtues", []) or [])
+                + list(getattr(villager, "vices", []) or [])
+            )
+            if traits and not is_player:
+                surface.blit(
+                    self.font_small.render(" · ".join(traits), True, COLOUR_TEXT),
+                    (x, y),
+                )
+                y += self.font_small.get_linesize() + 8
+            if is_player or not villager.skills:
+                surface.blit(self.font_small.render("No trained village skills", True, COLOUR_TEXT_DIM), (x, y))
+                y += self.font_small.get_linesize()
+            else:
+                _width, tips = draw_skill_icons(
+                    surface, x, y, villager.skills, self.font_small,
+                    icon_size=26, col_w=62,
+                )
+                self._icon_tips.extend(tips)
+                y += 48
+            y += 8
+            heading("EFFECTS")
+            walk, work, hunger = effect_totals(
+                food_walk=villager.food_walk_mult,
+                food_work=villager.food_work_mult,
+                food_hunger=villager.food_hunger_mult,
+                inventory=villager.inventory,
+                calendar_day=calendar_day,
+            )
+            _w, tips = draw_effect_total_columns(
+                surface, x, y, walk=walk, work=work, hunger=hunger,
+                font=self.font_small, icon_size=26, col_w=82,
+            )
+            self._icon_tips.extend(tips)
+            y += 50
+
+        self._section_anchors[DetailCategory.BUFFS] = y + scroll - view.y
+        if True:
+            heading("BUFFS")
+            mods = collect_status_mods(
+                last_meal=list(villager.last_meal), inventory=villager.inventory,
+                calendar_day=calendar_day,
+            )
+            positive = [mod for mod in mods if mod.is_buff]
+            negative = [mod for mod in mods if mod.is_debuff]
+            for rows, edge in ((positive, (66, 145, 72)), (negative, (181, 66, 58))):
+                if rows:
+                    _end, hits, _ = draw_mod_row(surface, x, y, rows, mouse_pos=mouse_pos, icon_size=MOD_CELL, gap=MOD_GAP)
+                    for rect, _mod in hits:
+                        pygame.draw.rect(surface, edge, rect, 2, border_radius=4)
+                    self._icon_tips.extend((rect, mod.tip) for rect, mod in hits)
+                else:
+                    surface.blit(self.font_small.render("—", True, COLOUR_TEXT_DIM), (x, y + 8))
+                y += MOD_CELL + 8
+
+        self._section_anchors[DetailCategory.INVENTORY] = y + scroll - view.y
+        if True:
+            heading("INVENTORY")
+            tool_h, tool_hits, tool_tip = draw_tool_slot(
+                surface, origin=(x, y), equipped_tools=list(villager.inventory.equipped_tools),
+                mouse_pos=mouse_pos, fonts=self._fonts(), interactive=True,
+            )
+            self._tool_hits = tool_hits
+            y += tool_h + 7
+            clothes_h, clothes_hits, clothes_tip = draw_clothing_slots(
+                surface, origin=(x, y), equipped_clothing=dict(villager.inventory.equipped_clothing),
+                mouse_pos=mouse_pos, fonts=self._fonts(), interactive=True,
+            )
+            self._clothing_hits = clothes_hits
+            y += clothes_h + 12
+            amounts = amounts_from_obj(villager.inventory)
+            from food_spoilage import qualities_for_display
+            inv_h, _hits, tips, hovered_item, *_ = draw_inv_grid(
+                surface, origin=(x, y), width=inner_w, title="Carried",
+                subtitle=f"{villager.inventory.cargo_total}/{villager.inventory.effective_capacity}",
+                amounts=amounts, allowed=None, side="villager", mouse_pos=mouse_pos,
+                fonts=self._fonts(), interactive=False, hover_inv=self._hover_inv,
+                qualities=qualities_for_display(villager.inventory),
+            )
+            self._inv_tip_hits.extend(tips)
+            self._tooltip_key = (hovered_item[1] if hovered_item else tool_tip or clothes_tip)
+            y += inv_h
+
+        content_h = max(1, y + scroll - view.y + pad)
+        self._measured_body_h = content_h
+        measured_scroll = self._register_scroll("panel_body", view, content_h, view.h)
+        surface.set_clip(old_clip)
+        self._draw_scrollbar(surface, view, content_h, int(measured_scroll))
+        if mouse_pos is not None:
+            for rect, text in self._icon_tips:
+                if rect.collidepoint(mouse_pos):
+                    self._tooltip_text = text
+                    break
+        if self._tooltip_text:
+            draw_hover_tooltip(surface, mouse_pos=mouse_pos, text=self._tooltip_text, font=self.font_small)
+        elif self._tooltip_key:
+            draw_item_tooltip(surface, mouse_pos=mouse_pos, key=self._tooltip_key, font=self.font_small)
+
     def draw(
         self,
         surface: pygame.Surface,
@@ -475,6 +787,19 @@ class VillagerInspectDialog:
         if villager.id != self.villager_id:
             return
         self._advance_scroll()
+        if self.embedded:
+            self._draw_diary_page(
+                surface,
+                villager,
+                building_icon_for=building_icon_for,
+                housing_icon=housing_icon,
+                current_season=current_season,
+                calendar_day=calendar_day,
+                mouse_pos=mouse_pos,
+                requirement_rows=requirement_rows,
+                activity_label=activity_label,
+            )
+            return
 
         villager_amounts = amounts_from_obj(villager.inventory)
         player_amounts = (

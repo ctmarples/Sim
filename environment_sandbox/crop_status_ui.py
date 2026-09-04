@@ -195,10 +195,12 @@ def draw_env_hover(
         tip_rect.x = mouse_pos[0] - tip_rect.w - 8
     if tip_rect.bottom > surface.get_height() - 4:
         tip_rect.y = mouse_pos[1] - tip_rect.h - 8
-    _scribble_highlight(surface, tip_rect, (238, 218, 164))
+    tip_bg = pygame.Surface(tip_rect.size, pygame.SRCALPHA)
+    tip_bg.fill((105, 46, 44, 50))
+    surface.blit(tip_bg, tip_rect.topleft)
     for i, line in enumerate(lines):
         surface.blit(
-            font.render(line, True, COLOUR_TEXT),
+            font.render(line, True, (0, 0, 0)),
             (tip_rect.x + pad, tip_rect.y + pad + i * line_h),
         )
 
