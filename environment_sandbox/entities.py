@@ -558,6 +558,7 @@ class Inventory:
     cedar_saplings: int = 0
     mushrooms: int = 0
     honey: int = 0
+    book: int = 0
     berries: int = 0
     berry_seeds: int = 0
     reeds: int = 0
@@ -700,6 +701,7 @@ class Inventory:
             + self.saplings
             + self.mushrooms
             + self.honey
+            + self.book
             + self.berries
             + self.reeds
             + self.straw
@@ -981,6 +983,7 @@ class Inventory:
             "fish": self.fish,
             "mushrooms": self.mushrooms,
             "honey": self.honey,
+            "book": self.book,
             "berries": self.berries,
             "berry_seeds": self.berry_seeds,
             "reeds": self.reeds,
@@ -1008,7 +1011,7 @@ class Inventory:
 
     def reset(self) -> None:
         self.logs = self.hardwood_logs = self.wood = self.rock = self.meat = self.fish = 0
-        self.mushrooms = self.honey = self.berries = self.berry_seeds = self.reeds = 0
+        self.mushrooms = self.honey = self.book = self.berries = self.berry_seeds = self.reeds = 0
         self.straw = self.fur = self.feathers = self.hide = self.leather = 0
         self.twine = self.coins = 0
         for key in TOOL_KEYS:

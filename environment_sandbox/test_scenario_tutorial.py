@@ -242,6 +242,44 @@ class TutorialScenarioTests(unittest.TestCase):
         for _ in range(20):game._update_villagers()
         self.assertEqual((rhea.x,rhea.y,rhea.world_x,rhea.world_y),start)
 
+    def test_farm_history_interviews_unlock_book_and_field_planner(self):
+        game=Game(headless=True)
+        load_from_path(game,Path(__file__).resolve().parents[1]/"saves"/"tutorial_intro_9.json")
+        game.scenario.state.step="weeds_complete_dialog"
+        dialogs=("more abundant","enough to feed four","other villagers")
+        for expected in dialogs:
+            game.scenario.dismiss_dialog()
+            self.assertIn(expected,game.scenario.take_dialog_request()[0])
+        game.scenario.dismiss_dialog()
+        self.assertEqual(game.scenario.state.step,"ask_villagers")
+        self.assertEqual(game.scenario.tutorial_management_flora(),{"wild:wheat","wild:dandelion","wild:daisy"})
+        gwen=next(v for v in game.villagers if v.name=="Gwen Hill")
+        joss=next(v for v in game.villagers if v.name=="Joss Fern")
+        self.assertTrue(game.scenario.interact_villager(game,gwen))
+        self.assertEqual(game.player.inventory.honey,1)
+        for _ in range(3):game.scenario.dismiss_dialog();game.scenario.take_dialog_request()
+        game.scenario.update(game)
+        self.assertTrue(game.scenario.state.gwen_asked)
+        self.assertTrue(game.scenario.interact_villager(game,joss))
+        for _ in range(5):game.scenario.dismiss_dialog();game.scenario.take_dialog_request()
+        game.scenario.update(game)
+        self.assertEqual(game.scenario.state.step,"enter_farmhouse")
+        farm=game.scenario._village_field(game)
+        farmhouse=next(b for b in game.buildings.values() if b.kind.name=="FARM")
+        self.assertIn(farmhouse.id,game.scenario.tutorial_management_buildings(game))
+        game._player_inside_building_id=farmhouse.id
+        game.scenario.update(game)
+        self.assertEqual(game.player.inventory.book,1)
+        self.assertTrue(game.scenario.use_inventory_item(game,"book"))
+        self.assertEqual(game.player.inventory.book,0)
+        self.assertTrue(game.scenario.state.field_planner_unlocked)
+        self.assertEqual(game.field_plan_dialog.building_id,farm.id)
+        visible=game.scenario.tutorial_management_buildings(game)
+        from management_window import _iter_building_list_rows
+        rows=_iter_building_list_rows(visible,{})
+        self.assertIn(("building",farm,1),rows)
+        self.assertEqual(game._tutorial_unlock_popup[0],"Field Planner added under the Farmhouse")
+
     def test_bug_save_discards_unrelated_seasonal_travellers(self):
         path=Path(__file__).resolve().parents[1]/"saves"/"tutorial_slice_bug.json"
         if not path.exists():self.skipTest("tutorial_slice_bug save is not present")

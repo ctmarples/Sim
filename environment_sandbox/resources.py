@@ -67,6 +67,7 @@ RESOURCES: list[ResourceDef] = [
     ResourceDef("berries", "Berries", "food", "berr"),
     ResourceDef("mushrooms", "Mushrooms", "food", "mush"),
     ResourceDef("honey", "Honey", "food", "hone"),
+    ResourceDef("book", "Old farm book", "wares", "book", "book_inventory"),
     *_CROP_PRODUCE_FOOD,
     ResourceDef("bread", "Bread", "food", "bread"),
     ResourceDef("stew", "Stew", "food", "stew"),

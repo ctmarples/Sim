@@ -119,6 +119,9 @@ def _icon_path_index() -> dict[tuple[str, str], Path]:
                 and not any(part.startswith("_") for part in relative_parts)
             ):
                 index.setdefault((path.stem, suffix), path)
+        book_path = _ICONS_DIR.parent / "UI" / "book.svg"
+        if book_path.is_file():
+            index.setdefault(("book", ".svg"), book_path)
         _ICON_PATH_INDEX = index
     return _ICON_PATH_INDEX
 

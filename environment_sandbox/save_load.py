@@ -49,6 +49,7 @@ _BASE_STORAGE_KEYS = (
     *SAPLING_ITEM_KEYS,
     "mushrooms",
     "honey",
+    "book",
     "berries",
     "berry_seeds",
     "reeds",

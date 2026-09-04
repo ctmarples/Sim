@@ -795,6 +795,7 @@ class ManagementWindow:
         food_amounts: dict[str, int] | None = None,
         draw_villager_detail: Callable[[pygame.Surface, pygame.Rect], None] | None = None,
         draw_building_detail: Callable[[pygame.Surface, pygame.Rect], None] | None = None,
+        flora_keys: set[str] | None = None,
     ) -> None:
         if not self.open:
             return
@@ -902,7 +903,7 @@ class ManagementWindow:
             elif self.tab == MgmtTab.WILDLIFE:
                 self._draw_wildlife_detail(surface, self._detail_rect, habitat_view)
             elif self.tab == MgmtTab.FLORA:
-                self._draw_flora_detail(surface, self._detail_rect)
+                self._draw_flora_detail(surface, self._detail_rect, flora_keys)
             surface.set_clip(pane_clip)
 
         if self.show_list and self._list_rect.w > 0:
@@ -932,7 +933,7 @@ class ManagementWindow:
             elif self.tab == MgmtTab.WILDLIFE:
                 self._draw_wildlife_list(surface, wildlife_rows, mouse_pos)
             else:
-                self._draw_flora_list(surface)
+                self._draw_flora_list(surface, flora_keys)
             surface.set_clip(pane_clip)
 
         if self._tooltip is not None:
@@ -1521,7 +1522,8 @@ class ManagementWindow:
             icon = _BUILD_ICON.get(b.kind, "construction_site")
             blit_icon(surface, icon, row.x + 14, row.centery, 24 if indent else 28)
             if b.kind == BuildingKind.FIELD:
-                name = f"Field #{b.id} · {b.plot_size_label()}"
+                label = "Field Planner" if getattr(b, "_tutorial_planner_entry", False) else f"Field #{b.id}"
+                name = f"{label} · {b.plot_size_label()}"
             else:
                 name = f"{BUILDING_LABELS[b.kind]} #{b.id}"
             surface.blit(
@@ -1617,20 +1619,22 @@ class ManagementWindow:
             )
         surface.set_clip(old)
 
-    def _flora_rows(self) -> list[tuple[str, WildSpeciesDef | TreeDef]]:
+    def _flora_rows(self, allowed: set[str] | None = None) -> list[tuple[str, WildSpeciesDef | TreeDef]]:
         rows: list[tuple[str, WildSpeciesDef | TreeDef]] = [
             (f"wild:{species.key}", species) for species in WILD_SPECIES
         ]
         rows.extend((f"tree:{tree.key}", tree) for tree in TREES)
+        if allowed is not None:
+            rows = [row for row in rows if row[0] in allowed]
         return sorted(rows, key=lambda item: item[1].label)
 
-    def _draw_flora_list(self, surface: pygame.Surface) -> None:
+    def _draw_flora_list(self, surface: pygame.Surface, allowed: set[str] | None = None) -> None:
         rect = self._list_rect
         view = pygame.Rect(rect.x + 2, rect.y + 2, rect.w - 4, rect.h - 4)
         y = view.y + 4 - self._scroll
         old = surface.get_clip()
         surface.set_clip(view)
-        for key, species in self._flora_rows():
+        for key, species in self._flora_rows(allowed):
             row = pygame.Rect(view.x + 2, y, view.w - 8, LIST_ROW_H)
             if self.selected_flora_key == key:
                 pygame.draw.rect(surface, (55, 70, 55), row, border_radius=3)
@@ -1660,12 +1664,13 @@ class ManagementWindow:
             lines.append(line)
         return lines
 
-    def _draw_flora_detail(self, surface: pygame.Surface, rect: pygame.Rect) -> None:
+    def _draw_flora_detail(self, surface: pygame.Surface, rect: pygame.Rect, allowed: set[str] | None = None) -> None:
         lookup: dict[str, WildSpeciesDef | TreeDef] = {
             **{f"wild:{key}": value for key, value in WILD_BY_KEY.items()},
             **{f"tree:{key}": value for key, value in TREE_BY_KEY.items()},
         }
-        species = lookup.get(self.selected_flora_key or "")
+        selected = self.selected_flora_key or ""
+        species = lookup.get(selected) if allowed is None or selected in allowed else None
         if species is None:
             self._blit_dim(surface, rect, "Select a flora species")
             return

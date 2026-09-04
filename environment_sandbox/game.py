@@ -490,6 +490,7 @@ class Game:
         self.scenario_dialog = ScenarioDialog()
         self._tutorial_sleep_started: float | None = None
         self._tutorial_sleep_finished = False
+        self._tutorial_unlock_popup: tuple[str, str, str] | None = None
         self.relocate_building_id: int | None = None
         self.selected_construction_id: int | None = None
         self._player_hud_tool_hits: list[tuple[pygame.Rect, str]] = []
@@ -1929,6 +1930,8 @@ class Game:
                 continue
             elif self.scenario_dialog.open:
                 self.scenario_dialog.handle_event(event)
+                continue
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self._handle_tutorial_unlock_click(event.pos):
                 continue
             elif self._content_lab_active and self._content_lab_session.handle_event(event):
                 continue
@@ -8705,9 +8708,6 @@ class Game:
                 if not self.scenario.can_player_interact_building(building):
                     self._set_status("This building is not available in the current scenario.")
                     return
-                if not self.scenario.can_player_interact_building(building):
-                    self._set_status("This building is not available in the current scenario.")
-                    return
                 if not self._at_building_entrance(
                     building, float(self.player.world_x), float(self.player.world_y)
                 ):
@@ -8797,6 +8797,9 @@ class Game:
                 return
             building = self._building_at(x, y)
             if building is not None:
+                if not self.scenario.can_player_interact_building(building):
+                    self._set_status("This building is not available in the current scenario.")
+                    return
                 if not self._at_building_entrance(
                     building,
                     float(self.player.world_x),
@@ -12124,6 +12127,11 @@ class Game:
             return
         if action.startswith("eat:"):
             self._player_eat_item(action.split(":", 1)[1])
+            return
+        if action.startswith("use:"):
+            key = action.split(":", 1)[1]
+            if not self.scenario.use_inventory_item(self, key):
+                self._set_status(f"Cannot use {resource_label(key)} right now.")
             return
         if action == "toggle_auto_eat":
             self.player.auto_eat = not self.player.auto_eat
@@ -20498,7 +20506,7 @@ class Game:
                 villagers=self.scenario.tutorial_management_villagers(self),
                 buildings=self.scenario.tutorial_management_buildings(self),
                 construction_sites={} if self.scenario.state.key == "tutorial_slice" else self.construction_sites,
-                wildlife_rows=self._wildlife_management_rows(),
+                wildlife_rows=[] if self.scenario.state.key == "tutorial_slice" else self._wildlife_management_rows(),
                 habitat_view=self._habitat_inspect_view(),
                 mouse_pos=mouse,
                 hire_entries=hire_entries,
@@ -20506,6 +20514,7 @@ class Game:
                 food_amounts=self._village_food_amounts(),
                 draw_villager_detail=_draw_villager_detail,
                 draw_building_detail=_draw_building_detail,
+                flora_keys=self.scenario.tutorial_management_flora() if self.scenario.state.key == "tutorial_slice" else None,
             )
         else:
             # Villager/building inspect only live inside Management — never float.
@@ -20585,10 +20594,56 @@ class Game:
         self.file_dialog.draw(self.screen)
         self.number_input.draw(self.screen)
         self.scenario_dialog.draw(self.screen,self.scenario.prompt)
+        self._draw_tutorial_unlock_popup()
         if self._content_lab_active and self._content_lab_session is not None:
             self._content_lab_session.draw(self.screen)
         self._draw_tutorial_sleep_transition()
         pygame.display.flip()
+
+    def _tutorial_unlock_rect(self) -> pygame.Rect:
+        return pygame.Rect(max(12, map_view_width() - 330), MAP_OFFSET_Y + 14, 316, 72)
+
+    def _handle_tutorial_unlock_click(self, pos: tuple[int, int]) -> bool:
+        popup = self._tutorial_unlock_popup
+        if popup is None or not self._tutorial_unlock_rect().collidepoint(pos):
+            return False
+        rect = self._tutorial_unlock_rect()
+        if pygame.Rect(rect.right - 28, rect.y + 4, 22, 22).collidepoint(pos):
+            self._tutorial_unlock_popup = None
+            return True
+        _label, _icon, target = popup
+        if target == "people":
+            self.management.open_window(MgmtTab.PEOPLE)
+        elif target == "buildings":
+            self.management.open_window(MgmtTab.BUILDINGS)
+        elif target.startswith("flora:"):
+            self.management.open_window(MgmtTab.FLORA)
+            self.management.selected_flora_key = target.split(":", 1)[1]
+        elif target.startswith("building:"):
+            building = self.buildings.get(int(target.split(":", 1)[1]))
+            if building is not None:
+                self._select_building(building, show_player=True, detail_only=True)
+        self._tutorial_unlock_popup = None
+        return True
+
+    def _draw_tutorial_unlock_popup(self) -> None:
+        if self._tutorial_unlock_popup is None:
+            return
+        from icons import blit_icon
+        label, icon, _target = self._tutorial_unlock_popup
+        rect = self._tutorial_unlock_rect()
+        pygame.draw.rect(self.screen, (46, 50, 42), rect, border_radius=7)
+        pygame.draw.rect(self.screen, COLOUR_SELECTED_ENTITY, rect, 2, border_radius=7)
+        try:
+            blit_icon(self.screen, icon, rect.x + 34, rect.centery, 44)
+        except (KeyError, ValueError):
+            pass
+        font = pygame.font.SysFont("menlo", 13, bold=True)
+        self.screen.blit(font.render(label, True, COLOUR_TEXT), (rect.x + 64, rect.y + 18))
+        hint = pygame.font.SysFont("menlo", 10).render("Click to open Management", True, COLOUR_TEXT_DIM)
+        self.screen.blit(hint, (rect.x + 64, rect.y + 42))
+        close = font.render("×", True, COLOUR_TEXT)
+        self.screen.blit(close, (rect.right - 23, rect.y + 6))
 
     def _farm_field_cells(self) -> set[tuple[int, int]]:
         """No fake soil: field plots stay grass until workers plough each tile."""

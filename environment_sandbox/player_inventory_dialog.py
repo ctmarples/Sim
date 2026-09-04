@@ -133,7 +133,7 @@ class PlayerInventoryDialog:
             for rect, _side, key in self._inv_hits:
                 if rect.collidepoint(pos):
                     self.selected_key = key
-                    self._pending_action = f"eat:{key}"
+                    self._pending_action = f"use:{key}" if key == "book" else f"eat:{key}"
                     return True
             return True
         if button != 1:

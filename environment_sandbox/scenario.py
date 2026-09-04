@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import json
 import math
 import os
@@ -39,6 +39,10 @@ class ScenarioState:
     rhea_villager_id: int | None = None
     berry_villager_id: int | None = None
     intro_clock_released: bool = False
+    gwen_asked: bool = False
+    joss_asked: bool = False
+    announced_unlocks: list[str] = field(default_factory=list)
+    field_planner_unlocked: bool = False
 
 
 class ScenarioDirector:
@@ -212,7 +216,40 @@ class ScenarioDirector:
         elif step == "hoe_gift":
             self.state.step, self.prompt = "give_hoe", None
         elif step == "weeds_complete_dialog":
-            self.state.step, self.prompt = "release_rhea", None
+            self.state.step = "farm_question"
+            self._request_dialog("You said this field used to be more abundant... what happened?")
+        elif step == "farm_question":
+            self.state.step = "rhea_abundance"
+            self._request_dialog("Yes, we used to have enough to feed four of us here and surplus to sell to travellers who pass through. But now... well, I don't know exactly. The land just looks lifeless. No insects. No birds. Just these damn dandelions and daisies!")
+        elif step == "rhea_abundance":
+            self.state.step = "ask_villagers_intro"
+            self._request_dialog("Try asking the other villagers if they remember anything about the old farm.")
+        elif step == "ask_villagers_intro":
+            self.state.step, self.prompt = "ask_villagers", "Ask villagers about the farm"
+        elif step == "gwen_intro":
+            self.state.step = "gwen_player"
+            self._request_dialog("Thanks! I wanted to ask you about the farm.")
+        elif step == "gwen_player":
+            self.state.step = "gwen_history"
+            self._request_dialog("Haha, that old field is hardly a farm these days... lifeless! Even the shrubs and trees were cleared by the old forester to gather wood to build the village.")
+        elif step == "gwen_history":
+            self.state.gwen_asked = True
+            self.state.step, self.prompt = "finish_interview", None
+        elif step == "joss_intro":
+            self.state.step = "joss_help"
+            self._request_dialog("Uh, can I help?")
+        elif step == "joss_help":
+            self.state.step = "joss_doubt"
+            self._request_dialog("You? You look about as useless as me. What do you know?")
+        elif step == "joss_doubt":
+            self.state.step = "joss_learn"
+            self._request_dialog("Well... I learn fast!")
+        elif step == "joss_learn":
+            self.state.step = "joss_books"
+            self._request_dialog("Fine. Go over to the Farmhouse. There are some old books in there... maybe you can make more sense of them than I can.")
+        elif step == "joss_books":
+            self.state.joss_asked = True
+            self.state.step, self.prompt = "finish_interview", None
 
     def note_berry_collected(self, game, x: int, y: int, amount: int) -> None:
         if not self.active or self.state.step != "pick_berries" or int(amount) <= 0:
@@ -230,6 +267,7 @@ class ScenarioDirector:
     def update(self, game) -> None:
         if not self.active:
             return
+        self._sync_management_unlocks(game)
         step = self.state.step
         if step == "found_berries_dialog" and self.state.bush_x is not None:
             self._pan_camera_toward(game, self.state.bush_x+.5, self.state.bush_y+.5)
@@ -338,6 +376,18 @@ class ScenarioDirector:
         elif step == "release_rhea":
             self._release_villager_control(self._rhea_villager(game))
             self.state.step, self.state.completed, self.prompt = "complete", True, None
+        elif step == "finish_interview":
+            for villager in game.villagers:
+                self._release_villager_control(villager)
+            if self.state.gwen_asked and self.state.joss_asked:
+                self.state.step, self.prompt = "enter_farmhouse", "Enter the Farmhouse and find the old book"
+            else:
+                self.state.step, self.prompt = "ask_villagers", "Ask villagers about the farm"
+        elif step == "enter_farmhouse":
+            farm = next((b for b in game.buildings.values() if b.kind.name == "FARM"), None)
+            if farm is not None and getattr(game, "_player_inside_building_id", None) == farm.id:
+                game.player.inventory.add_item("book", 1)
+                self.state.step, self.prompt = "open_book", "Open the old book — right-click it in your inventory"
 
     def _tutorial_traveller(self, game):
         candidates = list(getattr(game, "hire_candidates", ()))
@@ -367,6 +417,7 @@ class ScenarioDirector:
         villagers = sorted(game.villagers, key=lambda villager: villager.id)[:len(workplaces)]
         game.villagers = villagers
         for villager, building in zip(villagers, workplaces):
+            villager.name = "Gwen Hill" if building.kind == BuildingKind.FORAGER else "Joss Fern"
             villager.clear_assignment()
             villager.inventory.reset()
             villager.state = VillagerState.IDLE
@@ -549,17 +600,77 @@ class ScenarioDirector:
             game._bump_work_gen()
 
     def tutorial_management_villagers(self, game) -> list:
-        """The player has not joined the village, so its people remain private."""
-        return [] if self.state.key == TUTORIAL_KEY else list(game.villagers)
+        if self.state.key != TUTORIAL_KEY:
+            return list(game.villagers)
+        visible = {self.state.rhea_villager_id}
+        if self.state.gwen_asked:
+            visible.update(v.id for v in game.villagers if v.name == "Gwen Hill")
+        if self.state.joss_asked:
+            visible.update(v.id for v in game.villagers if v.name == "Joss Fern")
+        return [v for v in game.villagers if v.id in visible]
 
     def tutorial_management_buildings(self, game) -> dict:
-        """Only player-owned buildings belong in management; tutorial has none yet."""
-        return {} if self.state.key == TUTORIAL_KEY else dict(game.buildings)
+        if self.state.key != TUTORIAL_KEY:
+            return dict(game.buildings)
+        allowed = {self.state.repaired_tent_id}
+        if self.state.joss_asked:
+            allowed.update(b.id for b in game.buildings.values() if b.kind.name == "FARM")
+        if self.state.field_planner_unlocked:
+            for building in game.buildings.values():
+                if building.kind.name == "FIELD":
+                    building._tutorial_planner_entry = True
+                    allowed.add(building.id)
+        return {bid: b for bid, b in game.buildings.items() if bid in allowed}
+
+    def tutorial_management_flora(self) -> set[str]:
+        """Return only plant catalogue entries introduced by the narrative."""
+        if self.state.key != TUTORIAL_KEY:
+            return set()
+        wheat_steps = {
+            "clear_weeds", "rhea_weeds_approaches", "weeds_complete_dialog",
+            "farm_question", "rhea_abundance", "ask_villagers_intro", "ask_villagers",
+            "gwen_intro", "gwen_player", "gwen_history", "joss_intro", "joss_help",
+            "joss_doubt", "joss_learn", "joss_books", "finish_interview",
+            "enter_farmhouse", "open_book", "complete",
+        }
+        keys = {"wild:wheat"} if self.state.step in wheat_steps else set()
+        if self.state.step in wheat_steps - {
+            "clear_weeds", "rhea_weeds_approaches", "weeds_complete_dialog", "farm_question"
+        }:
+            keys.update(("wild:dandelion", "wild:daisy"))
+        return keys
+
+    def _sync_management_unlocks(self, game) -> None:
+        """Show one replaceable discovery card when tutorial catalogue entries unlock."""
+        candidates: list[tuple[str, str, str, str]] = []
+        if self.state.rhea_villager_id is not None:
+            candidates.append(("rhea", "Rhea added to People", "villager", "people"))
+        if self.state.repaired_tent_id is not None:
+            candidates.append(("tent", "Personal tent added to Buildings", "tent", "buildings"))
+        flora = self.tutorial_management_flora()
+        if "wild:wheat" in flora:
+            candidates.append(("wheat", "Wheat added to Flora", "crop_plant", "flora:wild:wheat"))
+        if "wild:dandelion" in flora:
+            candidates.append(("flowers", "Dandelion and Daisy added to Flora", "flower_plant", "flora:wild:dandelion"))
+        if self.state.gwen_asked:
+            candidates.append(("gwen", "Gwen Hill added to People", "villager", "people"))
+        if self.state.joss_asked:
+            candidates.extend((("joss", "Joss Fern added to People", "villager", "people"),
+                               ("farm", "Farmhouse added to Buildings", "farm", "buildings")))
+        announced = self.state.announced_unlocks
+        for key, label, icon, target in candidates:
+            if key not in announced:
+                announced.append(key)
+                game._tutorial_unlock_popup = (label, icon, target)
 
     def can_player_interact_building(self, building) -> bool:
         if self.state.key != TUTORIAL_KEY:
             return True
-        return building.id == self.state.repaired_tent_id
+        if building.id == self.state.repaired_tent_id:
+            return True
+        if self.state.joss_asked and building.kind.name == "FARM":
+            return True
+        return self.state.field_planner_unlocked and building.kind.name == "FIELD"
 
     def can_player_interact_site(self, site) -> bool:
         if self.state.key != TUTORIAL_KEY:
@@ -1042,13 +1153,44 @@ class ScenarioDirector:
 
     def interact_villager(self, game, villager) -> bool:
         """Consume scenario dialogue interactions before opening management."""
-        if self.state.key != TUTORIAL_KEY or villager.id != self.state.rhea_villager_id:
+        if self.state.key != TUTORIAL_KEY:
             return False
-        if self.state.step != "talk_to_rhea":
+        if villager.id == self.state.rhea_villager_id and self.state.step == "talk_to_rhea":
+            self._take_control_of_villager(game, villager)
+            self.state.step, self.prompt = "morning_greeting", None
+            self._request_dialog("Hey there, can I help you?")
+            return True
+        if self.state.step != "ask_villagers":
             return False
         self._take_control_of_villager(game, villager)
-        self.state.step, self.prompt = "morning_greeting", None
-        self._request_dialog("Hey there, can I help you?")
+        if villager.name == "Gwen Hill" and not self.state.gwen_asked:
+            game.player.inventory.add_item("honey", 1)
+            self.state.step, self.prompt = "gwen_intro", None
+            self._request_dialog("Hi, I'm Gwen, the forager here. Although it's slim pickings right now. But here, try some honey.")
+            return True
+        if villager.name == "Joss Fern" and not self.state.joss_asked:
+            self.state.step, self.prompt = "joss_intro", None
+            self._request_dialog("Hey there, I'm Joss. I'm the farmer... well, to be honest, I have no idea what I am doing.")
+            return True
+        self._release_villager_control(villager)
+        return False
+
+    def use_inventory_item(self, game, key: str) -> bool:
+        if self.state.key != TUTORIAL_KEY or key != "book" or self.state.step != "open_book":
+            return False
+        field = self._village_field(game)
+        if field is None:
+            return False
+        if not game.player.inventory.consume_item("book", 1):
+            return False
+        game.player_inventory.close()
+        self.state.field_planner_unlocked = True
+        field._tutorial_planner_entry = True
+        game._select_building(field, show_player=True, detail_only=True)
+        game._tutorial_unlock_popup = (
+            "Field Planner added under the Farmhouse", "field", f"building:{field.id}"
+        )
+        self.state.step, self.state.completed, self.prompt = "complete", True, None
         return True
 
     @staticmethod
@@ -1124,6 +1266,9 @@ class ScenarioDirector:
             "equip_hoe":"Equip the Hoe in Inventory",
             "clear_weeds":"Clear the field of weeds",
             "rhea_weeds_approaches":"Rhea is coming to speak with you...",
+            "ask_villagers":"Ask villagers about the farm",
+            "enter_farmhouse":"Enter the Farmhouse and find the old book",
+            "open_book":"Open the old book — right-click it in your inventory",
         }
         dialogs = {
             "hunger_dialog":"(Stomach rumble) ... uhhh I'm getting hungry, I need to eat. I'll check what is in my bag",
@@ -1159,7 +1304,11 @@ class ScenarioDirector:
         game.player.reset(int(position[0]), int(position[1]))
         game.discovered_cells = set()
         game._reveal_around_player()
-        post_sleep = step in {"talk_to_rhea", "morning_greeting", "walk_to_field", "equip_hoe", "clear_weeds"}
+        post_sleep = step in {
+            "talk_to_rhea", "morning_greeting", "walk_to_field", "equip_hoe", "clear_weeds",
+            "weeds_complete_dialog", "ask_villagers", "gwen_intro", "joss_intro",
+            "enter_farmhouse", "open_book", "complete",
+        }
         if step in {"fix_tent", "go_to_sleep"} or post_sleep:
             self._join_rhea_to_village(game)
         if step in {"follow_deer", "find_tent", "fix_tent", "go_to_sleep"} or post_sleep:
@@ -1184,8 +1333,13 @@ class ScenarioDirector:
             game.player.inventory.add_item("hoe", 1)
         if step == "clear_weeds":
             game.player.inventory.equip_tool("hoe")
+        self.state.gwen_asked = bool(checkpoint.get("gwen_asked", False))
+        self.state.joss_asked = bool(checkpoint.get("joss_asked", False))
+        self.state.field_planner_unlocked = bool(checkpoint.get("field_planner_unlocked", False))
+        if bool(checkpoint.get("has_book", False)):
+            game.player.inventory.add_item("book", 1)
         self.state.step = step
-        self.state.completed = False
+        self.state.completed = step == "complete"
         self._restore_presentation()
         px, py = game._player_camera_point()
         game.camera.center_on(px, py, game.world.cols, game.world.rows)
