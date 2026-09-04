@@ -11,6 +11,7 @@ from game import Game
 from save_load import load_from_path,serialize_game
 from world import FeatureType
 from wildlife import AnimalKind,AnimalSex,animal_roam_interval
+from entities import BuildingKind,VillagerState
 
 
 class TutorialScenarioTests(unittest.TestCase):
@@ -38,8 +39,12 @@ class TutorialScenarioTests(unittest.TestCase):
         self.assertEqual(len(game.villagers),2)
         jobs={game.buildings[v.building_id].kind.name for v in game.villagers}
         self.assertEqual(jobs,{"FORAGER","FARM"})
-        self.assertEqual(len(game.hire_candidates),1)
-        self.assertEqual((game.hire_candidates[0].x,game.hire_candidates[0].y),(62,63))
+        self.assertEqual(len(game.hire_candidates),2)
+        traveller=game.scenario._tutorial_traveller(game)
+        rhea=game.scenario._tutorial_rhea(game)
+        self.assertEqual((traveller.x,traveller.y),(62,63))
+        field=next(b for b in game.buildings.values() if b.kind==BuildingKind.FIELD)
+        self.assertEqual((rhea.name,rhea.x,rhea.y),("Rhea",field.x,field.y))
         game._update_scenario();self.assertTrue(game.scenario_dialog.open)
         game.scenario_dialog.dismissed=True;game._update_scenario()
         self.assertEqual(game.scenario.prompt,"Press I to open inventory")
@@ -73,6 +78,178 @@ class TutorialScenarioTests(unittest.TestCase):
         self.assertEqual(payload["scenario"]["key"],"tutorial_slice")
         self.assertEqual(payload["scenario"]["step"],self.game.scenario.state.step)
         self.assertIn("completed",payload["scenario"])
+
+    def test_broken_tent_and_northern_wood_are_seeded(self):
+        game=Game(headless=True)
+        load_from_path(game,Path(__file__).resolve().parents[1]/"saves"/"tutorial_slice.json")
+        game.scenario.start_tutorial(game)
+        state=game.scenario.state
+        rhea=game.scenario._tutorial_rhea(game)
+        rhea_start=(rhea.x,rhea.y,rhea.world_x,rhea.world_y)
+        game.scenario.state.step="find_tent"
+        for _ in range(20):game.scenario.update(game)
+        self.assertEqual((rhea.x,rhea.y,rhea.world_x,rhea.world_y),rhea_start)
+        self.assertNotIn(15,game.buildings)
+        site=game.construction_sites[state.broken_tent_site_id]
+        self.assertEqual((site.kind,site.need_wood,site.source_building_id),(BuildingKind.TENT,1,15))
+        woods=[]
+        for y,row in enumerate(game.world.cells):
+            for x,cell in enumerate(row):
+                if cell.feature==FeatureType.WOOD_BUSH and y < state.broken_tent_y:
+                    woods.append((x,y))
+        self.assertGreaterEqual(len(woods),1)
+        self.assertTrue(any(
+            game.world.get_cell(x+dx,y+dy) is not None
+            and game.world.get_cell(x+dx,y+dy).feature==FeatureType.TREE
+            for x,y in woods for dx,dy in ((-1,0),(1,0),(0,-1),(0,1))
+        ))
+
+    def test_rhea_offers_tent_repair_then_player_sleeps(self):
+        game=Game(headless=True)
+        load_from_path(game,Path(__file__).resolve().parents[1]/"saves"/"tutorial_slice.json")
+        game.scenario.start_tutorial(game)
+        occupied=game.buildings[9]
+        game.scenario.state.step="find_tent"
+        game.discovered_cells.add((occupied.x,occupied.y))
+        game.scenario.update(game)
+        self.assertEqual(game.scenario.state.step,"rhea_approaches")
+        rhea=game.scenario._tutorial_rhea(game)
+        rhea.x,rhea.y=game.player.x,game.player.y
+        rhea.world_x,rhea.world_y=float(rhea.x),float(rhea.y)
+        game.scenario.update(game)
+        self.assertEqual(game.scenario.take_dialog_request()[0],"Hi there, can I help you?")
+        game.scenario.dismiss_dialog()
+        self.assertEqual(game.scenario.take_dialog_request()[0],"I'm looking for a place to stay for the night")
+        game.scenario.dismiss_dialog()
+        offer=game.scenario.take_dialog_request()[0]
+        self.assertIn("old collapsed tent",offer)
+        game.scenario.dismiss_dialog()
+        game.scenario.update(game)
+        self.assertEqual(game.scenario.prompt,"Fix the tent")
+        self.assertIsNone(game.scenario._tutorial_rhea(game))
+        joined=game._get_villager(game.scenario.state.rhea_villager_id)
+        self.assertIsNotNone(joined)
+        self.assertIsNone(joined.building_id)
+        site=game.construction_sites[game.scenario.state.broken_tent_site_id]
+        site.have_wood=site.need_wood
+        site.build_progress=site.build_required_ticks()
+        game._complete_construction(site)
+        game.scenario.update(game)
+        joined=game._get_villager(game.scenario.state.rhea_villager_id)
+        joined.x,joined.y=game.player.x,game.player.y
+        joined.world_x,joined.world_y=float(joined.x),float(joined.y)
+        game.scenario.update(game)
+        self.assertEqual(game.scenario.state.step,"tent_repaired_dialog")
+        self.assertIn("talk in the morning",game.scenario.take_dialog_request()[0])
+        game.scenario.dismiss_dialog()
+        tent=game.buildings[game.scenario.state.repaired_tent_id]
+        entrance=game.world.building_entrance_position((tent.x,tent.y,tent.plot_w,tent.plot_h))
+        game.player.x,game.player.y=tent.center_cell()
+        game.player.world_x,game.player.world_y=entrance
+        game._interact_at_player()
+        game.scenario.update(game)
+        game.scenario.update(game)
+        self.assertEqual(game.scenario.state.step,"talk_to_rhea")
+        self.assertFalse(game.scenario.state.completed)
+        self.assertEqual(game.player.energy,1.0)
+        self.assertTrue(all(v.energy==1.0 for v in game.villagers if v.housed))
+
+    def test_intro_clock_freezes_and_checkpoint_files_load(self):
+        game=Game(headless=True)
+        path=Path(__file__).resolve().parents[1]/"saves"/"tutorial_intro_5.json"
+        load_from_path(game,path)
+        self.assertEqual(game.scenario.state.step,"fix_tent")
+        self.assertEqual((game.player.x,game.player.y),(22,23))
+        before=(game.calendar_day,game.day_tick)
+        game._step_sim()
+        self.assertEqual((game.calendar_day,game.day_tick),before)
+
+    def test_checkpoint_residents_keep_separate_homes(self):
+        root=Path(__file__).resolve().parents[1]/"saves"
+        game=Game(headless=True);load_from_path(game,root/"tutorial_intro_3.json")
+        berry=game._get_villager(game.scenario.state.berry_villager_id)
+        self.assertIsNotNone(berry)
+        self.assertEqual((berry.community_id,berry.building_id,berry.housing_id),(1001,None,12))
+        self.assertEqual(game.buildings[9].kind,BuildingKind.HOUSE)
+        game=Game(headless=True);load_from_path(game,root/"tutorial_intro_5.json")
+        village=[v for v in game.villagers if v.community_id==0]
+        self.assertEqual(len(village),3)
+        self.assertTrue(all(v.housed and v.housing_id==9 for v in village))
+        berry=game._get_villager(game.scenario.state.berry_villager_id)
+        self.assertEqual(berry.housing_id,12)
+
+    def test_settlement_logistics_reject_cross_group_claims(self):
+        game=Game(headless=True)
+        load_from_path(game,Path(__file__).resolve().parents[1]/"saves"/"tutorial_intro_5.json")
+        rhea=game._get_villager(game.scenario.state.rhea_villager_id)
+        berry_fire=game.buildings[14]
+        self.assertFalse(game.scenario.can_villager_use_building(rhea,berry_fire))
+        rhea.haul_building_id=berry_fire.id
+        rhea.state=VillagerState.HAULING
+        rhea.target=berry_fire.center_cell()
+        start=(rhea.x,rhea.y)
+        game._update_hauler(rhea)
+        self.assertIsNone(rhea.haul_building_id)
+        self.assertEqual(rhea.state,VillagerState.IDLE)
+        self.assertEqual((rhea.x,rhea.y),start)
+        berry=game._get_villager(game.scenario.state.berry_villager_id)
+        self.assertFalse(game.scenario.can_villager_use_village_storehouse(berry))
+
+    def test_morning_rhea_weed_tutorial(self):
+        game=Game(headless=True)
+        load_from_path(game,Path(__file__).resolve().parents[1]/"saves"/"tutorial_intro_7.json")
+        rhea=game._get_villager(game.scenario.state.rhea_villager_id)
+        self.assertTrue(game.scenario.interact_villager(game,rhea))
+        self.assertIn("can I help",game.scenario.take_dialog_request()[0])
+        expected=("Thanks for the place","small community","Sure!","prosperous village","Weeds!")
+        for text in expected:
+            game.scenario.dismiss_dialog()
+            self.assertIn(text,game.scenario.take_dialog_request()[0])
+        game.scenario.dismiss_dialog()
+        field=game.scenario._village_field(game)
+        rhea.x,rhea.y=field.x,field.y
+        rhea.world_x,rhea.world_y=float(rhea.x),float(rhea.y)
+        game.player.move_to(field.x+1,field.y)
+        game.scenario.update(game)
+        self.assertEqual(game.scenario.state.step,"field_reaction")
+        game.scenario.take_dialog_request()
+        game.scenario.dismiss_dialog();game.scenario.take_dialog_request()
+        game.scenario.dismiss_dialog();game.scenario.update(game)
+        self.assertEqual(game.scenario.state.step,"equip_hoe")
+        self.assertEqual(game.player.inventory.hoe,1)
+        game.player.inventory.equip_tool("hoe");game.scenario.update(game)
+        self.assertEqual(game.scenario.state.step,"clear_weeds")
+        for x,y in field.plot_cells():game.world.get_cell(x,y).weeds=0.0
+        game.scenario.update(game)
+        rhea.x,rhea.y=game.player.x,game.player.y
+        rhea.world_x,rhea.world_y=float(rhea.x),float(rhea.y)
+        game.scenario.update(game)
+        self.assertIn("light work",game.scenario.take_dialog_request()[0])
+
+    def test_talking_to_rhea_stops_ai_and_unifies_position(self):
+        game=Game(headless=True)
+        load_from_path(game,Path(__file__).resolve().parents[1]/"saves"/"tutorial_intro_7.json")
+        rhea=game._get_villager(game.scenario.state.rhea_villager_id)
+        rhea.world_x,rhea.world_y=rhea.x+.45,rhea.y+.35
+        rhea.target=(rhea.x+5,rhea.y+5)
+        rhea._path_cache=[(rhea.x+1,rhea.y+1)]
+        self.assertTrue(game.scenario.interact_villager(game,rhea))
+        self.assertTrue(rhea._scenario_controlled)
+        self.assertIsNone(rhea.target)
+        self.assertIsNone(rhea._path_cache)
+        self.assertEqual((rhea.world_x,rhea.world_y),(float(rhea.x),float(rhea.y)))
+        start=(rhea.x,rhea.y,rhea.world_x,rhea.world_y)
+        for _ in range(20):game._update_villagers()
+        self.assertEqual((rhea.x,rhea.y,rhea.world_x,rhea.world_y),start)
+
+    def test_bug_save_discards_unrelated_seasonal_travellers(self):
+        path=Path(__file__).resolve().parents[1]/"saves"/"tutorial_slice_bug.json"
+        if not path.exists():self.skipTest("tutorial_slice_bug save is not present")
+        game=Game(headless=True);load_from_path(game,path)
+        self.assertEqual([candidate.name for candidate in game.hire_candidates],["Rhea"])
+        before=list(game.hire_candidates)
+        game._top_up_hire_candidates()
+        self.assertEqual(game.hire_candidates,before)
 
     def test_tutorial_slice_1_follow_deer_moves(self):
         path=Path(__file__).resolve().parents[1]/"saves"/"tutorial_slice_1.json"

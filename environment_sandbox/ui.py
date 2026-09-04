@@ -362,6 +362,10 @@ class UI:
         selected_building_id: int | None,
         selected_villager_id: int | None,
         selected_construction_id: int | None,
+        villagers: list[Villager],
+        travellers: list,
+        building_groups: dict[int, str],
+        person_groups: dict[str, str],
         overlay_mode: OverlayMode,
         height_paint_value: float,
         height_delta_step: float,
@@ -596,12 +600,28 @@ class UI:
 
         if map_edit_tool == MapEditTool.SELECT:
             if selected_building_id is not None:
+                y = _blit_text(content,self.font_small,"Settlement",(x,y),COLOUR_TEXT_DIM)
+                for index,(label,group) in enumerate((("P","personal"),("V","village"),("F","fisher"),("B","berry_camp"))):
+                    self._draw_labelled_tool_button(content,x+index*37,y,33,btn_h,label,f"edit_settlement:building:{selected_building_id}:{group}",group.replace("_"," ").title(),active=building_groups.get(selected_building_id)==group,local_mouse=local_mouse)
+                y+=btn_h+5
                 self._draw_labelled_tool_button(content,x,y,148,btn_h,"Remove building","edit_remove_building","Remove the selected building immediately",active=False,local_mouse=local_mouse);y+=btn_h+4
                 self._draw_labelled_tool_button(content,x,y,148,btn_h,"Open field planner","edit_open_field_plan","Open planner when the selected building is a field",active=False,local_mouse=local_mouse);y+=btn_h+6
             elif selected_construction_id is not None:
                 self._draw_labelled_tool_button(content,x,y,148,btn_h,"Remove construction","edit_remove_building","Remove the selected construction site immediately",active=False,local_mouse=local_mouse);y+=btn_h+6
             elif selected_villager_id is not None:
                 self._draw_labelled_tool_button(content,x,y,148,btn_h,"Remove villager","edit_remove_villager","Remove the selected villager immediately",active=False,local_mouse=local_mouse);y+=btn_h+6
+
+        y = _blit_text(content,self.font_title,"Travellers / villagers",(x,y))
+        people = [("villager",v.id,v.name) for v in villagers] + [("traveller",v.id,v.name) for v in travellers]
+        for kind,person_id,name in people:
+            y = _blit_text(content,self.font_small,name,(x,y),COLOUR_TEXT_DIM)
+            key=f"{kind}:{person_id}"
+            for index,(label,group) in enumerate((("P","personal"),("V","village"),("F","fisher"),("B","berry_camp"))):
+                self._draw_labelled_tool_button(content,x+index*37,y,33,btn_h,label,f"edit_settlement:{kind}:{person_id}:{group}",group.replace("_"," ").title(),active=person_groups.get(key)==group,local_mouse=local_mouse)
+            y+=btn_h+5
+
+        self._draw_labelled_tool_button(content,x,y,148,btn_h,"Save scenario layout","edit_save_scenario_layout","Write positions and settlement assignments to tutorial_layout.json",active=False,local_mouse=local_mouse)
+        y+=btn_h+8
 
         y = _blit_text(
             content,
@@ -1206,6 +1226,9 @@ class UI:
         height_delta_step: float = 2.0,
         height_brush_radius: int = 2,
         height_view_enabled: bool = False,
+        map_edit_building_groups: dict[int, str] | None = None,
+        map_edit_person_groups: dict[str, str] | None = None,
+        map_edit_travellers: list | None = None,
     ) -> None:
         panel_x = map_view_width()
         panel_h = _panel_height()
@@ -1305,6 +1328,10 @@ class UI:
                 selected_building_id=selected_building_id,
                 selected_villager_id=selected_villager_id,
                 selected_construction_id=selected_construction_id,
+                villagers=villagers,
+                travellers=map_edit_travellers or [],
+                building_groups=map_edit_building_groups or {},
+                person_groups=map_edit_person_groups or {},
                 overlay_mode=overlay_mode,
                 height_paint_value=height_paint_value,
                 height_delta_step=height_delta_step,
@@ -1383,6 +1410,10 @@ class UI:
                 height_paint_value=height_paint_value,
                 height_delta_step=height_delta_step,
                 height_brush_radius=height_brush_radius,
+                height_view_enabled=height_view_enabled,
+                map_edit_building_groups=map_edit_building_groups,
+                map_edit_person_groups=map_edit_person_groups,
+                map_edit_travellers=map_edit_travellers,
             )
 
         self.content_height = max(panel_h, y)

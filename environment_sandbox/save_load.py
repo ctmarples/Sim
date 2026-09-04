@@ -2056,6 +2056,13 @@ def load_from_path(game: Game, path: Path | str) -> None:
     path = Path(path)
     with path.open("r", encoding="utf-8") as fh:
         data = json.load(fh)
+    checkpoint = data.get("tutorial_checkpoint") if isinstance(data, dict) else None
+    if isinstance(checkpoint, dict):
+        base = Path(__file__).resolve().parents[1] / "saves" / "tutorial_slice.json"
+        load_from_path(game, base)
+        game.scenario.start_tutorial(game)
+        game.scenario.apply_checkpoint(game, checkpoint)
+        return
     apply_save(game, data)
     # Large forest animals are introduced by runtime/scenario progression, not
     # inherited from authored map-save populations.

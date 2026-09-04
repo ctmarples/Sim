@@ -1,0 +1,136 @@
+{
+  "notes": "Coordinates are map cells. Building x/y are top-left footprint cells. Edit this file, save it, then start a new Tutorial.",
+  "player_start": [
+    90,
+    69
+  ],
+  "buildings": {
+    "1": {
+      "role": "village_storehouse",
+      "group": "village",
+      "x": 18,
+      "y": 24,
+      "kind": "HOME"
+    },
+    "3": {
+      "role": "village_farm",
+      "group": "village",
+      "x": 14,
+      "y": 26,
+      "kind": "FARM"
+    },
+    "4": {
+      "role": "other_fisher",
+      "group": "fisher",
+      "x": 50,
+      "y": 28,
+      "kind": "FISHER"
+    },
+    "9": {
+      "role": "village_house",
+      "group": "village",
+      "kind": "HOUSE",
+      "x": 16,
+      "y": 22
+    },
+    "10": {
+      "role": "village_field",
+      "group": "village",
+      "x": 9,
+      "y": 23,
+      "kind": "FIELD"
+    },
+    "11": {
+      "role": "village_forager",
+      "group": "village",
+      "x": 23,
+      "y": 18,
+      "kind": "FORAGER"
+    },
+    "12": {
+      "role": "traveller_tent",
+      "group": "berry_camp",
+      "x": 64,
+      "y": 64,
+      "kind": "TENT"
+    },
+    "14": {
+      "role": "traveller_fire",
+      "group": "berry_camp",
+      "x": 66,
+      "y": 62,
+      "kind": "FIRE"
+    },
+    "15": {
+      "role": "broken_tent",
+      "group": "personal",
+      "x": 22,
+      "y": 22
+    }
+  },
+  "people": {
+    "berry_traveller": {
+      "group": "berry_camp",
+      "x": 62,
+      "y": 63
+    },
+    "rhea": {
+      "group": "village",
+      "position": "field_top_left"
+    },
+    "farm_villager": {
+      "group": "village"
+    },
+    "forager_villager": {
+      "group": "village"
+    }
+  },
+  "scenario_objects": {
+    "guide_deer": [
+      36,
+      60
+    ],
+    "loose_wood": [
+      [
+        22,
+        15
+      ],
+      [
+        21,
+        16
+      ],
+      [
+        23,
+        16
+      ]
+    ]
+  },
+  "player_building_access": [
+    "broken_tent",
+    "repaired_tent"
+  ],
+  "people_assignments": {
+    "villager:1": "village",
+    "villager:2": "village",
+    "villager:3": "village",
+    "villager:4": "berry_camp"
+  },
+  "people_positions": {
+    "villager:1": [
+      17,
+      19
+    ],
+    "villager:2": [
+      15,
+      27
+    ],
+    "villager:3": [
+      19,
+      25
+    ],
+    "villager:4": [
+      62,
+      63
+    ]
+  }
+}

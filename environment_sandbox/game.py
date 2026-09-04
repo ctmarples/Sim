@@ -488,6 +488,8 @@ class Game:
         self.player_inventory = PlayerInventoryDialog()
         self.scenario = ScenarioDirector()
         self.scenario_dialog = ScenarioDialog()
+        self._tutorial_sleep_started: float | None = None
+        self._tutorial_sleep_finished = False
         self.relocate_building_id: int | None = None
         self.selected_construction_id: int | None = None
         self._player_hud_tool_hits: list[tuple[pygame.Rect, str]] = []
@@ -1452,6 +1454,65 @@ class Game:
             text,choices=request
             self.scenario_dialog.show(text,choices)
 
+    def begin_tutorial_sleep(self) -> None:
+        if self._tutorial_sleep_started is not None:
+            return
+        self._tutorial_sleep_started = time.monotonic()
+        self._tutorial_sleep_finished = False
+        for villager in self.villagers:
+            house = self.buildings.get(villager.housing_id or -1)
+            if house is None:
+                continue
+            villager.state = VillagerState.SLEEPING
+            villager.target = house.center_cell()
+            villager.haul_building_id = None
+            villager.construction_id = None
+        if pygame.mixer.get_init() is not None:
+            pygame.mixer.pause()
+
+    def finish_tutorial_village_sleep(self) -> None:
+        for villager in self.villagers:
+            house = self.buildings.get(villager.housing_id or -1)
+            if house is None:
+                continue
+            villager.energy = 1.0
+            villager.state = VillagerState.IDLE
+            villager.target = None
+            villager.x, villager.y = house.center_cell()
+            villager.world_x, villager.world_y = self.world.building_entrance_position(
+                (house.x, house.y, house.plot_w, house.plot_h)
+            )
+
+    def tutorial_sleep_complete(self) -> bool:
+        if self._tutorial_sleep_started is None:
+            return False
+        if self.headless or time.monotonic() - self._tutorial_sleep_started >= 2.0:
+            if not self._tutorial_sleep_finished:
+                self._tutorial_sleep_finished = True
+                if pygame.mixer.get_init() is not None:
+                    pygame.mixer.unpause()
+            return True
+        return False
+
+    def _draw_tutorial_sleep_transition(self) -> None:
+        started = self._tutorial_sleep_started
+        if started is None or self._tutorial_sleep_finished:
+            return
+        elapsed = max(0.0, time.monotonic() - started)
+        if elapsed < 0.5:
+            openness = 1.0 - elapsed / 0.5
+        elif elapsed < 1.5:
+            openness = 0.0
+        else:
+            openness = min(1.0, (elapsed - 1.5) / 0.5)
+        veil = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+        veil.fill((0, 0, 0, 255))
+        if openness > 0:
+            hole = pygame.Rect(0, 0, int(WINDOW_WIDTH * 1.35 * openness), int(WINDOW_HEIGHT * openness))
+            hole.center = (WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2)
+            pygame.draw.ellipse(veil, (0, 0, 0, 0), hole)
+        self.screen.blit(veil, (0, 0))
+
     def _update_player_move_input(self, dt: float) -> None:
         """Continuous arrow-key player movement (WASD is camera pan only)."""
         self.player._continuous_moving = False
@@ -1697,6 +1758,8 @@ class Game:
 
     def _villager_needs_ai_pass(self, villager: Villager) -> bool:
         """Whether this villager will run food/work selection this tick."""
+        if getattr(villager, "_scenario_controlled", False):
+            return False
         if villager.state == VillagerState.SLEEPING:
             return False
         if villager.job_change_deposit:
@@ -3481,16 +3544,25 @@ class Game:
 
         villager = self._villager_at(x, y)
         if villager is not None:
+            if self.scenario.state.key == "tutorial_slice" and not self.height_edit_mode:
+                self._set_status("You have not joined this village; its people are not manageable yet.")
+                return
             self._open_villager_inspect(villager, detail_only=True)
             return
 
         building = self._building_at(x, y)
         if building is not None:
+            if not self.height_edit_mode and not self.scenario.can_player_interact_building(building):
+                self._set_status("This building is not available in the current scenario.")
+                return
             self._select_building(building, detail_only=True)
             return
 
         site = self._construction_at(x, y)
         if site is not None:
+            if not self.height_edit_mode and not self.scenario.can_player_interact_site(site):
+                self._set_status("This construction belongs to another group.")
+                return
             self._select_construction(site, detail_only=True)
             return
 
@@ -3707,6 +3779,15 @@ class Game:
             building=self._selected_building()
             if building is not None and building.kind==BuildingKind.FIELD:self._open_field_plan(building)
             else:self._set_status("Select an established field first.")
+            return True
+        if action is not None and action.startswith("edit_settlement:"):
+            _prefix, kind, raw_id, group = action.split(":", 3)
+            if self.scenario.assign_settlement(self, kind, int(raw_id), group):
+                self._set_status(f"Assigned {kind} #{raw_id} to {group.replace('_', ' ')}.")
+            return True
+        if action == "edit_save_scenario_layout":
+            path = self.scenario.save_layout(self)
+            self._set_status(f"Saved scenario layout: {path.name}")
             return True
         if action is not None and action.startswith("prio:"):
             parts = action.split(":")
@@ -5140,7 +5221,7 @@ class Game:
             elapsed = phase - dusk if phase >= dusk else phase + (1.0 - dusk)
             night_pos = elapsed / max(0.01, 1.0 - (dusk - dawn))
             darkness = 0.72 + 0.28 * math.sin(math.pi * night_pos)
-        alpha = int(round(12 + 133 * darkness))
+        alpha = 145 if self.scenario.forces_night() else int(round(12 + 133 * darkness))
         overlay = pygame.Surface(
             (map_view_width(), WINDOW_HEIGHT - MAP_OFFSET_Y), pygame.SRCALPHA
         )
@@ -5366,7 +5447,11 @@ class Game:
         """Advance exactly speed × playback ticks this displayed frame."""
         n = 0 if self.sim_speed <= 0 else self.sim_speed * self._playback_ticks()
         if n:
+            frozen_clock = self.scenario.freezes_calendar()
+            frozen_day, frozen_tick = self.calendar_day, self.day_tick
             self._advance_sim_ticks(n, flush=False)
+            if frozen_clock:
+                self.calendar_day, self.day_tick = frozen_day, frozen_tick
             if self.overlay_mode not in (
                 OverlayMode.NONE,
                 OverlayMode.BIODIVERSITY,
@@ -8617,6 +8702,12 @@ class Game:
         if cell.feature == FeatureType.WORKSTATION:
             building = self._building_at(x, y)
             if building is not None:
+                if not self.scenario.can_player_interact_building(building):
+                    self._set_status("This building is not available in the current scenario.")
+                    return
+                if not self.scenario.can_player_interact_building(building):
+                    self._set_status("This building is not available in the current scenario.")
+                    return
                 if not self._at_building_entrance(
                     building, float(self.player.world_x), float(self.player.world_y)
                 ):
@@ -8629,6 +8720,9 @@ class Game:
         if cell.feature == FeatureType.HOME:
             building = self._building_at(x, y)
             if building is not None:
+                if not self.scenario.can_player_interact_building(building):
+                    self._set_status("This building is not available in the current scenario.")
+                    return
                 if not self._at_building_entrance(
                     building, float(self.player.world_x), float(self.player.world_y)
                 ):
@@ -8656,6 +8750,9 @@ class Game:
             in (FeatureType.CONSTRUCTION_SITE, FeatureType.STRUCTURE_PAD)
             or site.contains_plot(x, y)
         ):
+            if not self.scenario.can_player_interact_site(site):
+                self._set_status("This construction belongs to another group.")
+                return
             self._player_work_construction(site)
             return
 
@@ -8684,6 +8781,7 @@ class Game:
             FeatureType.COBBLER,
             FeatureType.MARKET,
             FeatureType.WORKSTATION,
+            FeatureType.TENT,
             FeatureType.STRUCTURE_PAD,
             FeatureType.BARN,
             FeatureType.COMPOST_HEAP,
@@ -8759,6 +8857,8 @@ class Game:
         # Talk / trade with a villager on this cell (or adjacent).
         villager = self._villager_at(x, y) or self._adjacent_villager(x, y)
         if villager is not None:
+            if self.scenario.interact_villager(self, villager):
+                return
             self._open_villager_inspect(villager, show_player=True, detail_only=True)
             return
 
@@ -9814,6 +9914,11 @@ class Game:
 
     def _top_up_hire_candidates(self) -> None:
         """Keep the traveller list topped up to MAX_TRAVELLERS each season."""
+        # Tutorial travellers are authored actors. Seasonal population upkeep
+        # must not add unrelated figures to the scripted map.
+        if getattr(getattr(self, "scenario", None), "state", None) is not None:
+            if self.scenario.state.key == "tutorial_slice":
+                return
         if not self.communities:
             return
         need = MAX_TRAVELLERS - len(self.hire_candidates)
@@ -11074,6 +11179,8 @@ class Game:
     # ------------------------------------------------------------------
     def _update_villagers(self) -> None:
         for villager in self.villagers:
+            if getattr(villager, "_scenario_controlled", False):
+                continue
             self._tick_villager_building_transition(villager)
             if villager.move_cooldown > 0:
                 villager.move_cooldown -= 1
@@ -11092,6 +11199,8 @@ class Game:
             self._reset_tick_claims()
 
         for villager in list(self.villagers):
+            if getattr(villager, "_scenario_controlled", False):
+                continue
             day_frac = self._calendar_rate_per_tick()
             if villager is not getattr(self, "_god_dog_villager", None):
                 self._update_villager_wellbeing(villager, day_frac)
@@ -12085,6 +12194,11 @@ class Game:
     ) -> tuple[int, int] | None:
         """Best village food stockpile: meal quality first, then distance."""
         options = self._food_store_options()
+        options = [
+            pos for pos in options
+            if (store_building := self._building_at(*pos)) is None
+            or self.scenario.can_villager_use_building(villager, store_building)
+        ]
         if not options:
             return None
 
@@ -12132,6 +12246,10 @@ class Game:
         candidates: list[tuple[int, int]] = []
         for key in VILLAGER_FOOD_KEYS:
             candidates.extend(self._forage_cells_for_key(key))
+        candidates = [
+            pos for pos in candidates
+            if self.scenario.villager_foraging_near_home(villager, pos)
+        ]
         return self._pick_nearest_reachable(
             (villager.x, villager.y),
             candidates,
@@ -14278,7 +14396,7 @@ class Game:
 
         if villager.construction_id is not None:
             site = self.construction_sites.get(villager.construction_id)
-            if site is None or site.is_complete:
+            if site is None or site.is_complete or not self.scenario.site_available_to_villagers(site):
                 villager.construction_id = None
             elif site.materials_ready:
                 return True
@@ -14294,6 +14412,8 @@ class Game:
                 villager.construction_id = None
 
         for site in self.construction_sites.values():
+            if not self.scenario.site_available_to_villagers(site):
+                continue
             if not site.materials_ready:
                 if site.wood_needed > 0 and self._material_available("wood"):
                     return True
@@ -14490,6 +14610,7 @@ class Game:
             s
             for s in self.construction_sites.values()
             if not s.is_deconstruct
+            and self.scenario.site_available_to_villagers(s)
             and (
                 (s.wood_needed > 0 and inv.wood > 0)
                 or (s.logs_needed > 0 and inv.logs > 0)
@@ -14506,7 +14627,7 @@ class Game:
         )
 
     def _find_best_construction_site(self, villager: Villager) -> ConstructionSite | None:
-        ready = [s for s in self.construction_sites.values() if s.materials_ready and not s.is_complete]
+        ready = [s for s in self.construction_sites.values() if s.materials_ready and not s.is_complete and self.scenario.site_available_to_villagers(s)]
         if ready:
             return min(
                 ready,
@@ -14517,6 +14638,7 @@ class Game:
             s
             for s in self.construction_sites.values()
             if not s.is_deconstruct
+            and self.scenario.site_available_to_villagers(s)
             and not s.materials_ready
             and (
                 (s.wood_needed > 0 and self._material_available("wood"))
@@ -17672,6 +17794,7 @@ class Game:
             if (
                 villager.state == VillagerState.HAULING
                 and current is not None
+                and self.scenario.can_villager_use_building(villager, current)
                 and self._workplace_can_accept_cargo(current, villager.inventory)
             ):
                 demand = self._building_supply_demand(current)
@@ -17691,10 +17814,19 @@ class Game:
                     villager.state = VillagerState.HAULING
                 elif villager.state != VillagerState.DELIVERING:
                     villager.haul_building_id = None
-                    villager.state = VillagerState.DELIVERING
-                    villager.target = home
+                    if self.scenario.can_villager_use_village_storehouse(villager):
+                        villager.state = VillagerState.DELIVERING
+                        villager.target = home
+                    else:
+                        villager.state = VillagerState.IDLE
+                        villager.target = None
 
         if villager.state == VillagerState.DELIVERING:
+            if not self.scenario.can_villager_use_village_storehouse(villager):
+                villager.haul_building_id = None
+                villager.state = VillagerState.IDLE
+                villager.target = None
+                return
             if villager.inventory.is_empty:
                 villager.haul_building_id = None
                 villager.state = VillagerState.IDLE
@@ -17712,6 +17844,11 @@ class Game:
 
         if villager.state == VillagerState.HAULING and villager.haul_building_id is not None:
             claimed = self.buildings.get(villager.haul_building_id)
+            if claimed is not None and not self.scenario.can_villager_use_building(villager, claimed):
+                villager.haul_building_id = None
+                villager.state = VillagerState.IDLE
+                villager.target = None
+                return
             # Empty pack + haulable stock: clear the workplace (farm produce, etc.).
             # Farms always ``needs_supplied()`` for seed top-ups — that must not
             # steal a clear-stock claim before we withdraw.
@@ -18044,6 +18181,7 @@ class Game:
             b
             for b in self.buildings.values()
             if b.haulable_total() > 0
+            and self.scenario.can_villager_use_building(villager, b)
             and b.id not in claimed
             and not (
                 villager.building_id == b.id
@@ -18082,11 +18220,17 @@ class Game:
     def _find_processor_needing_supply_for(
         self, villager: Villager | None
     ) -> Building | None:
+        if villager is not None and not self.scenario.can_villager_use_village_storehouse(villager):
+            # Camps without their own storehouse must never source ingredients
+            # from the player's/village's global HomeStorage pool.
+            return None
         claimed = (
             self._claimed_haul_targets(villager.id) if villager is not None else set()
         )
         needy: list[Building] = []
         for building in self.buildings.values():
+            if villager is not None and not self.scenario.can_villager_use_building(villager, building):
+                continue
             if not self._building_needs_supply(building):
                 continue
             if villager is not None and building.id in claimed:
@@ -18114,6 +18258,7 @@ class Game:
             b
             for b in self.buildings.values()
             if b.id != primary.id
+            and self.scenario.can_villager_use_building(villager, b)
             and b.id not in claimed
             and self._building_needs_supply(b)
             and self._processor_can_be_supplied(b)
@@ -18125,6 +18270,7 @@ class Game:
                 b
                 for b in self.buildings.values()
                 if b.id != primary.id
+                and self.scenario.can_villager_use_building(villager, b)
                 and b.id not in claimed
                 and self._building_needs_supply(b)
                 and self._processor_can_be_supplied(b)
@@ -18153,6 +18299,8 @@ class Game:
         sinks: list[Building] = []
         for building in self.buildings.values():
             if building.id in exclude:
+                continue
+            if not self.scenario.can_villager_use_building(villager, building):
                 continue
             if not self._building_needs_supply(building):
                 continue
@@ -20150,6 +20298,9 @@ class Game:
             height_delta_step=self.height_delta_step,
             height_brush_radius=self.height_brush_radius,
             height_view_enabled=self.height_sample_enabled,
+            map_edit_building_groups=self.scenario.building_groups,
+            map_edit_person_groups=self.scenario.person_groups,
+            map_edit_travellers=self.hire_candidates,
         )
         residents = [
             v for v in self.villagers
@@ -20344,9 +20495,9 @@ class Game:
                     self.selected_habitat_id = pid
             self.management.draw(
                 self.screen,
-                villagers=self.villagers,
-                buildings=self.buildings,
-                construction_sites=self.construction_sites,
+                villagers=self.scenario.tutorial_management_villagers(self),
+                buildings=self.scenario.tutorial_management_buildings(self),
+                construction_sites={} if self.scenario.state.key == "tutorial_slice" else self.construction_sites,
                 wildlife_rows=self._wildlife_management_rows(),
                 habitat_view=self._habitat_inspect_view(),
                 mouse_pos=mouse,
@@ -20436,6 +20587,7 @@ class Game:
         self.scenario_dialog.draw(self.screen,self.scenario.prompt)
         if self._content_lab_active and self._content_lab_session is not None:
             self._content_lab_session.draw(self.screen)
+        self._draw_tutorial_sleep_transition()
         pygame.display.flip()
 
     def _farm_field_cells(self) -> set[tuple[int, int]]:
@@ -21709,7 +21861,13 @@ class Game:
                 icon_variant=cell.icon_variant,
                 deposit=cell.deposit,
                 growth_ticks=cell.growth_ticks,
-                icon_base_override=editor_icon_key(cell.feature.name, crop_kind=cell.crop_kind, object_key=cell.tree_species or cell.crop_kind),
+                icon_base_override=(
+                    "tent_broken"
+                    if cell.feature == FeatureType.CONSTRUCTION_SITE
+                    and (tutorial_site := self._construction_at(x, y)) is not None
+                    and tutorial_site.source_building_id == 15
+                    else editor_icon_key(cell.feature.name, crop_kind=cell.crop_kind, object_key=cell.tree_species or cell.crop_kind)
+                ),
                 season_name=self.season.name,
             )
             weeds = float(getattr(cell, "weeds", 0.0))
@@ -23167,7 +23325,8 @@ class Game:
         if self.selected_villager_id is not None:
             villager = self._get_villager(self.selected_villager_id)
             if villager is not None:
-                pts = self._cell_quad_points(villager.x, villager.y)
+                vx, vy = entity_draw_xy(villager)
+                pts = self._cell_quad_points(vx, vy)
                 pygame.draw.lines(self.screen, COLOUR_SELECTED_ENTITY, True, pts, 3)
         if self.selected_building_id is not None:
             building = self.buildings.get(self.selected_building_id)
