@@ -377,6 +377,11 @@ class ManagementWindow:
         self.selected_habitat: tuple[Any, int] | None = None  # (AnimalKind, id)
         self.selected_flora_key: str | None = None
         self.show_player = False
+        self.objectives_filter = "current"
+        self.expanded_objective: str | None = None
+        self._objective_scroll = 0
+        self._objective_max_scroll = 0
+        self._objective_focus: str | None = None
         # hire / assign / roster modes for people tab list actions
         self.people_mode: str = "roster"  # roster | hire | assign
         self.assign_building_id: int | None = None
@@ -538,6 +543,8 @@ class ManagementWindow:
         return self.people_mode in ("hire", "assign")
 
     def _layout_panel(self) -> None:
+        if self.tab == MgmtTab.PLAYER:
+            self.show_detail = self.show_list = True
         map_w = map_view_width()
         h = min(520, max(360, WINDOW_HEIGHT - MAP_OFFSET_Y - 48))
         list_need = _table_width(actions=self._people_actions()) + 48
@@ -594,6 +601,10 @@ class ManagementWindow:
             return True
         if event.type == pygame.MOUSEWHEEL and self.contains(pygame.mouse.get_pos()):
             pos = pygame.mouse.get_pos()
+            if self.tab == MgmtTab.PLAYER and self._list_rect.collidepoint(pos):
+                self._objective_scroll = max(0, min(self._objective_max_scroll,
+                                                   self._objective_scroll - event.y * LIST_ROW_H))
+                return True
             # Only scroll the list pane — detail/inspect has its own scroll.
             if self._list_rect.w > 0 and self._list_rect.collidepoint(pos):
                 step = ROW_H if self.tab == MgmtTab.PEOPLE else LIST_ROW_H
@@ -623,6 +634,14 @@ class ManagementWindow:
                 return True
         for action, rect in self._buttons:
             if rect.collidepoint(pos):
+                if action.startswith("objectives_filter:"):
+                    self.objectives_filter = action.split(":", 1)[1]
+                    self._objective_scroll = 0
+                    return True
+                if action.startswith("objective:"):
+                    key = action.split(":", 1)[1]
+                    self.expanded_objective = None if self.expanded_objective == key else key
+                    return True
                 if action == "toggle_detail":
                     if self.show_detail and not self.show_list:
                         return True
@@ -865,6 +884,7 @@ class ManagementWindow:
         draw_villager_detail: Callable[[pygame.Surface, pygame.Rect], None] | None = None,
         draw_building_detail: Callable[[pygame.Surface, pygame.Rect], None] | None = None,
         flora_keys: set[str] | None = None,
+        objectives: list[dict] | None = None,
     ) -> None:
         if not self.open:
             return
@@ -970,7 +990,9 @@ class ManagementWindow:
         if self.show_list and self._list_rect.w > 0:
             pane_clip = surface.get_clip()
             surface.set_clip(self._list_rect)
-            if self.tab == MgmtTab.PEOPLE:
+            if self.tab == MgmtTab.PLAYER:
+                self._draw_objectives(surface, objectives or [])
+            elif self.tab == MgmtTab.PEOPLE:
                 self._draw_people_list(
                     surface,
                     villagers,
@@ -1005,6 +1027,81 @@ class ManagementWindow:
             tip_bg.fill((105, 46, 44, 50))
             surface.blit(tip_bg, bg.topleft)
             surface.blit(text, tip_r)
+
+    def focus_objective(self, objective_id: str) -> None:
+        self.objectives_filter = "current"
+        self.expanded_objective = objective_id
+        self._objective_focus = objective_id
+        self._objective_scroll = 0
+
+    def _draw_objectives(self, surface: pygame.Surface, objectives: list[dict]) -> None:
+        pane = self._list_rect
+        x, y = pane.x + PAD, pane.y + PAD
+        width = max(40, pane.w - 2 * PAD)
+        surface.blit(self.font_title.render("Objectives", True, COLOUR_TEXT), (x, y))
+        y += self.font_title.get_linesize() + 8
+        for index, (label, key) in enumerate((("Current", "current"), ("All", "all"))):
+            rect = pygame.Rect(x + index * 84, y, 80, 28)
+            self._draw_btn(surface, rect, label, active=self.objectives_filter == key)
+            if self.objectives_filter == key:
+                pygame.draw.line(surface, COLOUR_TEXT, rect.bottomleft, rect.bottomright)
+            self._buttons.append((f"objectives_filter:{key}", rect))
+        y += 38
+        view = pygame.Rect(x, y, width, max(1, pane.bottom - PAD - y))
+        rows = [row for row in objectives if row["completed"] == (self.objectives_filter == "all")]
+        # Lay out before drawing so a headline link can reveal an offscreen entry immediately.
+        layouts = []
+        offset = 0
+        for row in rows:
+            lines = []
+            if self.expanded_objective == row["id"]:
+                line = ""
+                for word in row["explanation"].split():
+                    trial = (line + " " + word).strip()
+                    if line and self.font_small.size(trial)[0] > width - 14:
+                        lines.append(line)
+                        line = word
+                    else:
+                        line = trial
+                if line:
+                    lines.append(line)
+            headline_h = self.font.get_linesize() + 12
+            height = headline_h + len(lines) * self.font_small.get_linesize() + 12
+            layouts.append((row, offset, headline_h, lines))
+            offset += height
+        content_height = offset
+        self._objective_max_scroll = max(0, content_height - view.h)
+        if self._objective_focus:
+            target = next((offset for row, offset, _, _ in layouts if row["id"] == self._objective_focus), None)
+            if target is not None:
+                self._objective_scroll = target
+            self._objective_focus = None
+        self._objective_scroll = min(self._objective_scroll, self._objective_max_scroll)
+        old = surface.get_clip()
+        surface.set_clip(view.clip(old))
+        if not rows:
+            message = "No completed objectives yet." if self.objectives_filter == "all" else "No current objectives."
+            surface.blit(self.font_small.render(message, True, COLOUR_TEXT_DIM), view.topleft)
+        for row, offset, headline_h, lines in layouts:
+            top = view.y + offset - self._objective_scroll
+            rect = pygame.Rect(x, top, width, headline_h)
+            marker = "−" if row["id"] == self.expanded_objective else "+"
+            text = f"{marker} {row['headline']}"
+            surface.blit(self.font.render(text, True, COLOUR_TEXT), (x, top + 4))
+            clipped = rect.clip(view)
+            if clipped.height:
+                self._buttons.append((f"objective:{row['id']}", clipped))
+            ly = top + headline_h
+            for line in lines:
+                surface.blit(self.font_small.render(line, True, COLOUR_TEXT_DIM), (x + 8, ly))
+                ly += self.font_small.get_linesize()
+            pygame.draw.line(surface, COLOUR_TEXT_DIM, (x, ly + 5), (view.right, ly + 5))
+        surface.set_clip(old)
+        if self._objective_max_scroll:
+            track = pygame.Rect(pane.right - 6, view.y, 3, view.h)
+            thumb_h = max(16, view.h * view.h // max(1, content_height))
+            thumb_y = view.y + (view.h - thumb_h) * self._objective_scroll // self._objective_max_scroll
+            pygame.draw.rect(surface, COLOUR_TEXT_DIM, (track.x, thumb_y, 3, thumb_h))
 
     def _blit_dim(self, surface: pygame.Surface, rect: pygame.Rect, msg: str) -> None:
         t = self.font_small.render(msg, True, COLOUR_TEXT_DIM)

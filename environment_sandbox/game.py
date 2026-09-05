@@ -1931,6 +1931,9 @@ class Game:
             elif self.scenario_dialog.open:
                 self.scenario_dialog.handle_event(event)
                 continue
+            elif (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
+                  and self._handle_objective_click(event.pos)):
+                continue
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self._handle_tutorial_unlock_click(event.pos):
                 continue
             elif self._content_lab_active and self._content_lab_session.handle_event(event):
@@ -4748,7 +4751,7 @@ class Game:
             self.management.tab = MgmtTab.PLAYER
             self.management.show_player = True
             self.management.show_detail = True
-            self.management.show_list = False
+            self.management.show_list = True
             self.management._scroll = 0
             self.management._layout_panel()
             self.field_plan_dialog.close()
@@ -6896,6 +6899,11 @@ class Game:
         self.resource_inspect.close()
         self.selected_building_id = building.id
         self.selected_construction_id = None
+        self.field_plan_dialog.handbook_stage = (
+            self.scenario.state.handbook_completed
+            if self.scenario.state.key == "tutorial_slice" and self.scenario.state.field_planner_unlocked
+            else None
+        )
         self.field_plan_dialog.open_for(building, season=self.season)
         self.management.select_building(
             building.id, show_player=show_player, detail_only=detail_only
@@ -8325,6 +8333,11 @@ class Game:
         return px, py
 
     def _set_overlay(self, mode: OverlayMode) -> None:
+        state = self.scenario.state
+        required = {"BIODIVERSITY": 1, "POLLINATION": 1, "DISTURBANCE": 3, "FERTILITY": 4, "SOIL_MOISTURE": 4, "EROSION": 4, "FIELD_YIELD": 5}
+        if state.key == "tutorial_slice" and state.handbook_completed < required.get(mode.name, 0):
+            self._set_status("Complete the field handbook objective to reveal this layer.")
+            return
         self.overlay_mode = mode
         self._refresh_indicators()
         self._set_status(f"Overlay: {OVERLAY_LABELS[mode]}")
@@ -16580,6 +16593,11 @@ class Game:
             effective_disturbance_at(self.world, x, y) for x, y in cells
         ] or [0.0]
         dist = sum(dist_vals) / len(dist_vals)
+        radius = self.balance.get_int("DISTURBANCE_RADIUS")
+        neighbours = {(nx, ny) for x, y in cells
+                      for ny, nx in self.world.neighbourhood(x, y, radius=radius)}
+        urban_fraction = sum(self.world.get_cell(x, y).terrain == TerrainType.URBAN
+                             for x, y in neighbours) / max(1, len(neighbours))
         ecology = disturbance_activity_multiplier(dist)
         from soil import fertility_base_for, overlay_fertility, weed_yield_multiplier
 
@@ -16628,6 +16646,9 @@ class Game:
             "pest_hi": self.balance.get_float("PEST_CONTROL_MULT_HIGH"),
             "health": health,
             "health_cap": cap,
+            "moisture": self.env_maps.farm_soil_moisture(cells),
+            "settlement_disturbance": urban_fraction * self.balance.get_float("DISTURBANCE_URBAN_LEVEL"),
+            "foot_traffic": sum(min(1.0, self._path_traffic.get((x, y), 0.0) / max(1e-6, self.balance.get_float("PATH_TRAFFIC_OVERLAY_MAX"))) for x, y in cells) / max(1, len(cells)),
             "health_min": crop_health_min(),
             "health_drop": crop_health_max_drop(),
             "poll_coverage": poll,
@@ -20579,6 +20600,7 @@ class Game:
                 hire_entries=hire_entries,
                 can_hire=can_hire_fn,
                 food_amounts=self._village_food_amounts(),
+                objectives=self.scenario.objectives(),
                 draw_villager_detail=_draw_villager_detail,
                 draw_building_detail=_draw_building_detail,
                 flora_keys=self.scenario.tutorial_management_flora() if self.scenario.state.key == "tutorial_slice" else None,
@@ -20660,12 +20682,25 @@ class Game:
         self.sound_settings.draw(self.screen, self.sounds)
         self.file_dialog.draw(self.screen)
         self.number_input.draw(self.screen)
-        self.scenario_dialog.draw(self.screen,self.scenario.prompt)
+        current_objectives = [row for row in self.scenario.objectives() if not row["completed"]]
+        self.scenario_dialog.draw(self.screen, current_objectives[0]["headline"] if current_objectives else None)
         self._draw_tutorial_unlock_popup()
         if self._content_lab_active and self._content_lab_session is not None:
             self._content_lab_session.draw(self.screen)
         self._draw_tutorial_sleep_transition()
         pygame.display.flip()
+
+    def _handle_objective_click(self, pos: tuple[int, int]) -> bool:
+        if not self.scenario_dialog.objective_rect.collidepoint(pos):
+            return False
+        current = [row for row in self.scenario.objectives() if not row["completed"]]
+        if not current:
+            return False
+        self.management.open_window(MgmtTab.PLAYER)
+        self.management._pending_action = "tab_player"
+        self._apply_management_action()
+        self.management.focus_objective(current[0]["id"])
+        return True
 
     def _tutorial_unlock_rect(self) -> pygame.Rect:
         return pygame.Rect(max(12, map_view_width() - 330), MAP_OFFSET_Y + 14, 316, 72)

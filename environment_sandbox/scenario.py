@@ -43,6 +43,7 @@ class ScenarioState:
     joss_asked: bool = False
     announced_unlocks: list[str] = field(default_factory=list)
     field_planner_unlocked: bool = False
+    handbook_completed: int = 0
 
 
 class ScenarioDirector:
@@ -55,6 +56,10 @@ class ScenarioDirector:
         self.layout: dict = {}
         self.building_groups: dict[int, str] = {}
         self.person_groups: dict[str, str] = {}
+
+    def objectives(self) -> list[dict]:
+        from objectives import scenario_objectives
+        return scenario_objectives(self.state)
 
     @property
     def active(self) -> bool:
@@ -269,6 +274,22 @@ class ScenarioDirector:
             return
         self._sync_management_unlocks(game)
         step = self.state.step
+        if step == "field_handbook":
+            panel = game.field_plan_dialog
+            panel.handbook_stage = self.state.handbook_completed
+            if panel.take_handbook_completion():
+                self.state.handbook_completed = min(5, self.state.handbook_completed + 1)
+                panel.handbook_stage = self.state.handbook_completed
+                panel.tab = "rotation" if self.state.handbook_completed == 5 else "status"
+                panel._scroll = 0
+                if self.state.handbook_completed == 5:
+                    self.state.completed = True
+                    self.state.step = "complete"
+                    self.prompt = None
+                    self._request_dialog("I'll draw in the current crop: Wheat. Perhaps next we should plant something to restore the soil.")
+                else:
+                    self._restore_presentation()
+            return
         if step == "found_berries_dialog" and self.state.bush_x is not None:
             self._pan_camera_toward(game, self.state.bush_x+.5, self.state.bush_y+.5)
         if step == "open_inventory" and game.player_inventory.open:
@@ -1190,7 +1211,10 @@ class ScenarioDirector:
         game._tutorial_unlock_popup = (
             "Field Planner added under the Farmhouse", "field", f"building:{field.id}"
         )
-        self.state.step, self.state.completed, self.prompt = "complete", True, None
+        self.state.step, self.state.completed = "field_handbook", False
+        game.field_plan_dialog.handbook_stage = 0
+        game.field_plan_dialog.tab = "handbook"
+        self._restore_presentation()
         return True
 
     @staticmethod
@@ -1291,6 +1315,9 @@ class ScenarioDirector:
             "weeds_complete_dialog":"Wow, you made light work of that. We'll have to find something else for you to do to keep you around!",
         }
         self.prompt = prompts.get(self.state.step)
+        if self.state.step == "field_handbook":
+            from field_handbook import HANDBOOK_STEPS
+            self.prompt = HANDBOOK_STEPS[min(4, self.state.handbook_completed)][2]
         if self.state.step == "traveller_accuses":
             self._request_dialog("Hey! You're eating all my berries!", (
                 "I'm sorry, I didn't know they belonged to anyone", "Get lost! I'm hungry"))

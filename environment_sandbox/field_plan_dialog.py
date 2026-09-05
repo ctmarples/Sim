@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from field_handbook import HANDBOOK_STEPS
 
 import pygame
 
@@ -130,6 +131,8 @@ class FieldPlanDialog:
         self._yield_summary: FieldYieldSummary | None = None
         self._headline: str = ""
         self._factors: list[FieldFactorDisplay] = []
+        self.handbook_stage: int | None = None
+        self._handbook_completion = False
         self.tab: str = "status"  # status | rotation
         self.expanded_factor: str | None = None
         self._scroll = 0
@@ -210,6 +213,11 @@ class FieldPlanDialog:
         self._moving = False
         self.embedded = False
         self._result = "closed"
+
+    def take_handbook_completion(self) -> bool:
+        result = self._handbook_completion
+        self._handbook_completion = False
+        return result
 
     def take_result(self) -> str | None:
         result = self._result
@@ -360,12 +368,18 @@ class FieldPlanDialog:
         return True
 
     def _on_action(self, action: str, building: Building) -> None:
-        if action == "tab_status":
+        if action == "record_observations":
+            if self.handbook_stage is not None and self.handbook_stage < 5:
+                self._handbook_completion = True
+        elif action == "tab_handbook":
+            self.tab = "handbook"
+            self._scroll = 0
+        elif action == "tab_status":
             self.tab = "status"
             self._scroll = 0
             self._drag_start = None
             self._drag_current = None
-        elif action == "tab_rotation":
+        elif action == "tab_rotation" and (self.handbook_stage is None or self.handbook_stage >= 5):
             self.tab = "rotation"
             self.expanded_factor = None
             self._scroll = 0
@@ -438,6 +452,11 @@ class FieldPlanDialog:
         self._yield_summary = yield_summary
         self._headline = headline
         self._factors = build_field_factors(env_status) if env_status else []
+        if self.handbook_stage is not None:
+            stages = {"pollination": 1, "pest": 1, "health": 2, "weeds": 2, "disturbance": 3, "fertility": 4, "erosion": 4, "moisture": 4}
+            self._factors = [f for f in self._factors if stages.get(f.key, 5) <= self.handbook_stage]
+            if self.tab == "rotation" and self.handbook_stage < 5:
+                self.tab = "handbook"
         self._debug = debug
         self._layout_for(building)
         if not self.embedded:
@@ -500,7 +519,12 @@ class FieldPlanDialog:
 
         # Tabs
         tab_x = inner_left
-        for label, key in (("Status", "status"), ("Rotation", "rotation")):
+        tabs = [("Status", "status")]
+        if self.handbook_stage is None or self.handbook_stage >= 5:
+            tabs.append(("Rotation", "rotation"))
+        if self.handbook_stage is not None:
+            tabs.append(("Old Field Handbook", "handbook"))
+        for label, key in tabs:
             w = max(64, 12 + self.font_small.size(label)[0])
             rect = pygame.Rect(tab_x, y, w, TAB_H)
             hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
@@ -512,7 +536,9 @@ class FieldPlanDialog:
         y += TAB_H + 8
 
         hover_tip = ""
-        if self.tab == "status":
+        if self.tab == "handbook":
+            self._draw_handbook(surface, inner_left, y, inner_w, panel.bottom - PAD)
+        elif self.tab == "status":
             hover_tip = self._draw_status(
                 surface,
                 building,
@@ -593,8 +619,8 @@ class FieldPlanDialog:
         hover_tip = ""
         summary = self._yield_summary
         sections = (
-            ("LANDSCAPE", "landscape"),
-            ("FIELD CONDITION", "condition"),
+            ("SURROUNDINGS", "landscape"),
+            ("CROP / FIELD CONDITION" if self.handbook_stage is None or self.handbook_stage >= 3 else "CROP CONDITION", "condition"),
             ("SOIL", "soil"),
         )
 
@@ -702,7 +728,7 @@ class FieldPlanDialog:
             )
             pygame.draw.rect(surface, colour, fill, border_radius=3)
             sy += 14
-            limit = main_limitation(self._factors)
+            limit = main_limitation(self._factors) if self.handbook_stage is None else None
             if limit:
                 _blit(
                     self.font_small,
@@ -711,7 +737,7 @@ class FieldPlanDialog:
                     0,
                     sy,
                 )
-            else:
+            elif self.handbook_stage is None:
                 _blit(
                     self.font_small,
                     "No major limitations",
@@ -754,12 +780,14 @@ class FieldPlanDialog:
                     (view.x + 26, sy + (ROW_H - self.font_small.get_height()) // 2),
                 )
                 if fac.key == "fertility":
-                    mid = f"{fac.state_text}  {fac.value_text}"
+                    mid = fac.state_text
+                elif fac.key == "health":
+                    mid = fac.value_text
                 else:
                     mid = fac.state_text
                 surface.blit(
                     self.font_small.render(mid, True, COLOUR_TEXT_DIM),
-                    (view.x + 128, sy + (ROW_H - self.font_small.get_height()) // 2),
+                    (view.x + max(128, self.font_small.size(fac.label)[0] + 34), sy + (ROW_H - self.font_small.get_height()) // 2),
                 )
                 if fac.effect_text and fac.effect_text.startswith("+"):
                     right = f"▲ {fac.effect_text}"
@@ -787,6 +815,14 @@ class FieldPlanDialog:
                         bits.append(f"yield {fac.effect_text}")
                     hover_tip = " · ".join(bits)
                 sy += ROW_H + 2
+                note = None
+                if fac.key == "pest":
+                    note = f"  health cap {float((self._env_status or {}).get('health_cap', 1)) * 100:.0f}%"
+                elif fac.key == "fertility":
+                    note = f"  {fac.value_text} potential"
+                if note:
+                    surface.blit(self.font_tiny.render(note, True, COLOUR_TEXT_DIM), (view.x + 26, sy))
+                    sy += self.font_tiny.get_linesize()
                 if expanded:
                     inset_x = view.x + 10
                     for line in fac.detail_lines:
@@ -812,6 +848,11 @@ class FieldPlanDialog:
                         sy += BTN_H
                     sy += 2
             sy += 4
+
+        if self.handbook_stage is not None:
+            self._content_h = sy - (view.y - self._scroll)
+            surface.set_clip(old)
+            return hover_tip
 
         if summary is not None and summary.tile_count > 0:
             sy = self._draw_why_block(surface, view.x, sy, inner_w)
@@ -856,6 +897,44 @@ class FieldPlanDialog:
                 border_radius=2,
             )
         return hover_tip
+
+    def _draw_handbook(self, surface, x, y, width, bottom):
+        view = pygame.Rect(x, y, width, max(40, bottom - y))
+        self._view_rect = view
+        self._scroll = min(self._scroll, max(0, self._content_h - view.h))
+        old = surface.get_clip()
+        surface.set_clip(view.clip(old))
+        top = y - self._scroll
+        cy = top
+        if self.handbook_stage < 5:
+            rect = pygame.Rect(x, cy, min(width, 290), BTN_H)
+            label = "Record current crop: Wheat" if self.handbook_stage == 4 else f"Record Step {self.handbook_stage + 1} observations"
+            self._draw_btn(surface, rect, label, False)
+            clipped = rect.clip(view)
+            if clipped.height:
+                self._buttons.append(("record_observations", clipped))
+            cy += BTN_H + 10
+        step_width = min(135, width // 3)
+        for index, (title, narrative, _) in enumerate(HANDBOOK_STEPS):
+            row_top = cy
+            ends = []
+            for text, left, available in ((title, x, step_width - 10), (narrative, x + step_width, width - step_width)):
+                ly = row_top
+                line = ""
+                for word in text.split():
+                    candidate = (line + " " + word).strip()
+                    if line and self.font_small.size(candidate)[0] > available:
+                        surface.blit(self.font_small.render(line, True, COLOUR_TEXT), (left, ly))
+                        ly += self.font_small.get_linesize()
+                        line = word
+                    else:
+                        line = candidate
+                surface.blit(self.font_small.render(line, True, COLOUR_TEXT), (left, ly))
+                ends.append(ly + self.font_small.get_linesize())
+            cy = max(ends) + 18
+            pygame.draw.line(surface, COLOUR_TEXT_DIM, (x, cy - 8), (x + width, cy - 8))
+        self._content_h = cy - top
+        surface.set_clip(old)
 
     def _draw_why_block(
         self, surface: pygame.Surface, x: int, y: int, inner_w: int

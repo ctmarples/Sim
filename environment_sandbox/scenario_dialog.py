@@ -16,6 +16,7 @@ class ScenarioDialog:
         self.choice: int | None=None
         self._choice_rects: list[pygame.Rect]=[]
         self.dismissed=False
+        self.objective_rect = pygame.Rect(0, 0, 0, 0)
 
     @property
     def open(self) -> bool:return self.text is not None
@@ -51,19 +52,14 @@ class ScenarioDialog:
         return lines
 
     def draw(self,surface:pygame.Surface,prompt:str|None=None) -> None:
+        self.objective_rect = pygame.Rect(0, 0, 0, 0)
         if prompt:
-            label=self.small.render(prompt,True,COLOUR_TEXT)
-            # Scenario directions are objectives in the playable viewport, not
-            # transient messages in the application top bar.
-            rect=label.get_rect(topright=(map_view_width()-18,MAP_OFFSET_Y+18)).inflate(24,14)
-            pygame.draw.rect(surface,(32,37,40),rect,border_radius=5)
-            pygame.draw.rect(surface,COLOUR_TOOLBAR_BORDER,rect,1,border_radius=5)
-            title=self.small.render("OBJECTIVE",True,(224,190,92))
-            rect.h += title.get_height()+5
-            pygame.draw.rect(surface,(32,37,40),rect,border_radius=5)
-            pygame.draw.rect(surface,COLOUR_TOOLBAR_BORDER,rect,1,border_radius=5)
-            surface.blit(title,(rect.x+12,rect.y+7))
-            surface.blit(label,(rect.x+12,rect.y+11+title.get_height()))
+            label = self.small.render(prompt, True, COLOUR_TEXT)
+            rect = label.get_rect(topright=(map_view_width() - 18, MAP_OFFSET_Y + 18)).inflate(24, 14)
+            self.objective_rect = rect
+            pygame.draw.rect(surface, (32, 37, 40), rect, border_radius=5)
+            pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1, border_radius=5)
+            surface.blit(label, label.get_rect(center=rect.center))
         if not self.open:return
         shade=pygame.Surface((WINDOW_WIDTH,WINDOW_HEIGHT),pygame.SRCALPHA);shade.fill((0,0,0,105));surface.blit(shade,(0,0))
         panel_h=250 if self.choices else 190

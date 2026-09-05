@@ -366,7 +366,7 @@ def build_field_factors(status: dict) -> list[FieldFactorDisplay]:
         ),
         FieldFactorDisplay(
             key="pest",
-            label="Pest control",
+            label="Natural pest control",
             icon="insect_repellant",
             section="landscape",
             state_text=label_pest(pest),
@@ -387,7 +387,7 @@ def build_field_factors(status: dict) -> list[FieldFactorDisplay]:
             key="disturbance",
             label="Disturbance",
             icon="tree_round_1",
-            section="landscape",
+            section="condition",
             state_text=label_disturbance(dist),
             value_text=f"{dist * 100:.0f}%",
             effect_text=effect_pct_text(ecology),
@@ -398,7 +398,9 @@ def build_field_factors(status: dict) -> list[FieldFactorDisplay]:
             hint=dist_hint,
             detail_lines=[
                 f"Mean {dist * 100:.0f}% · multiplier {ecology:.2f}×",
-                "Settlement, paths, extraction",
+                f"Foot traffic: {label_disturbance(float(status.get('foot_traffic') or 0))}",
+                f"Nearby settlement: {label_disturbance(float(status.get('settlement_disturbance') or 0))}",
+                f"Overall: {label_disturbance(dist)}",
                 dist_hint,
             ],
         ),
@@ -424,7 +426,7 @@ def build_field_factors(status: dict) -> list[FieldFactorDisplay]:
             key="fertility",
             label="Fertility",
             icon="mineral_powder",
-            section="condition",
+            section="soil",
             state_text=label_fertility_relative(fert_rel),
             value_text=f"{fertility:.2f}/{fert_pot:.2f}",
             # At local potential, do not present a yield penalty (avoids
@@ -479,6 +481,15 @@ def build_field_factors(status: dict) -> list[FieldFactorDisplay]:
             ],
         ),
     ]
+    if "moisture" in status:
+        moisture = float(status["moisture"])
+        rows.insert(-1, FieldFactorDisplay(
+            key="moisture", label="Moisture", icon="water", section="soil",
+            state_text="Dry" if moisture < .3 else "Good" if moisture < .75 else "Wet",
+            value_text=f"{moisture * 100:.0f}%", effect_text=None,
+            severity=Severity.POSITIVE, overlay_key="SOIL_MOISTURE",
+            detail_lines=["Soil moisture is observational; it does not affect yield yet."],
+        ))
     return rows
 
 
