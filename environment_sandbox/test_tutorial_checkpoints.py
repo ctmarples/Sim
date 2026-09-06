@@ -13,11 +13,11 @@ from tutorial_checkpoints import CHECKPOINTS, available, checkpoint_path
 class TutorialCheckpointTests(unittest.TestCase):
     def test_all_files_and_new_field_stages(self):
         root=Path(__file__).resolve().parents[1]/'saves'
-        for number in range(1,22):
+        for number in range(1,25):
             self.assertIn('tutorial_checkpoint',json.loads((root/f'tutorial_intro_{number}.json').read_text()))
         pygame.init()
         game=Game(headless=True)
-        for number in range(15,22):
+        for number in range(15,25):
             with self.subTest(checkpoint=number):
                 path=root/f'tutorial_intro_{number}.json'
                 config=json.loads(path.read_text())['tutorial_checkpoint']
@@ -39,9 +39,21 @@ class TutorialCheckpointTests(unittest.TestCase):
                 if stage>=1:
                     self.assertTrue(state.quest_shroud_checked)
                     self.assertEqual(len(state.inspected_species),4)
+                current=[q['id'] for q in game.scenario.objectives() if not q['completed']]
                 if number<21:
                     self.assertFalse(ready(state))
-                    self.assertEqual([q['id'] for q in game.scenario.objectives() if not q['completed']], [f'handbook_{stage+1}'])
+                    self.assertEqual(current, [f'handbook_{stage+1}'])
+                elif number==21:
+                    self.assertFalse(state.completed)
+                    self.assertEqual(current, [])
+                elif number==22:
+                    self.assertFalse(state.completed)
+                    self.assertEqual(current, ['equip_satchel'])
+                    self.assertGreater(int(getattr(game.player.inventory,'leather_satchel',0)),0)
+                elif number==23:
+                    self.assertFalse(state.completed)
+                    self.assertEqual(current, ['forage_meadow'])
+                    self.assertEqual(game.player.inventory.equipped_in_slot('bag'),'leather_satchel')
                 else:
                     self.assertTrue(state.completed)
                     self.assertTrue(all(q['completed'] for q in game.scenario.objectives()))
@@ -52,7 +64,7 @@ class TutorialCheckpointTests(unittest.TestCase):
                     self.assertIn('handbook_5:wheat',state.quest_checks)
 
     def test_named_catalog_matches_files(self):
-        self.assertEqual([number for number, _, _ in CHECKPOINTS], list(range(1, 22)))
+        self.assertEqual([number for number, _, _ in CHECKPOINTS], list(range(1, 25)))
         self.assertTrue(all(isinstance(label, str) and not label.isdigit() for _, _, label in CHECKPOINTS))
         self.assertEqual({label for _, _, label in available('land')},
                          {label for number, group, label in CHECKPOINTS

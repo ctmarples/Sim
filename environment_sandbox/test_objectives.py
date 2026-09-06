@@ -36,8 +36,25 @@ class ObjectiveTests(unittest.TestCase):
             self.assertEqual([r['id'] for r in rows if not r['completed']], [f'handbook_{stage+1}'])
         rows = scenario_objectives(self.state('complete', completed=True, field_planner_unlocked=True, handbook_completed=5))
         self.assertTrue(all(r['completed'] for r in rows))
-        self.assertEqual(rows[-1]['id'], 'handbook_5')
+        self.assertEqual(rows[-1]['id'], 'forage_meadow')
+        self.assertIn('handbook_5', [r['id'] for r in rows])
         self.assertEqual(scenario_objectives(ScenarioState()), [])
+
+    def test_forage_quest_follows_handbook(self):
+        rows = scenario_objectives(self.state(
+            'equip_satchel', field_planner_unlocked=True, handbook_completed=5))
+        self.assertTrue(all(r['completed'] for r in rows if r['id'].startswith('handbook_')))
+        self.assertEqual([r['id'] for r in rows if not r['completed']], ['equip_satchel'])
+        self.assertEqual(rows[-1]['group_title'], 'Lay of the Land')
+        forage = scenario_objectives(self.state(
+            'forage_meadow', field_planner_unlocked=True, handbook_completed=5,
+            foraged_species=['plant:sage'], forage_food=3, forage_herbs=2))[-1]
+        self.assertEqual(forage['id'], 'forage_meadow')
+        self.assertEqual([item['id'] for item in forage['objectives']],
+                         ['forage_species', 'forage_food', 'forage_herbs'])
+        self.assertIn('(1/6)', forage['objectives'][0]['label'])
+        self.assertFalse(forage['objectives'][0]['completed'])
+
 
     def test_page_filters_expand_and_scroll(self):
         pygame.init()

@@ -51,6 +51,11 @@ class ScenarioState:
     quest_shroud_checked: bool = False
     quest_cells: dict[str, list] = field(default_factory=dict)
     discovered_flora: list[str] = field(default_factory=list)
+    forager_unlocked: bool = False
+    forage_known: list[str] = field(default_factory=list)
+    foraged_species: list[str] = field(default_factory=list)
+    forage_food: int = 0
+    forage_herbs: int = 0
 
 
 class ScenarioDirector:
@@ -278,6 +283,26 @@ class ScenarioDirector:
         elif step == "joss_books":
             self.state.joss_asked = True
             self.state.step, self.prompt = "finish_interview", None
+        elif step == "rhea_forage_intro":
+            self.state.step = "rhea_forage_reply"
+            self._request_dialog("Sure! I've been waiting all day for someone to take me for a walk")
+        elif step == "rhea_forage_reply":
+            self.state.step, self.prompt = "gwen_forage_approaches", "Gwen is coming to speak with you..."
+        elif step == "gwen_forager_intro":
+            self.state.forager_unlocked = True
+            self.state.step = "gwen_forager_haulers"
+            self._request_dialog(
+                "The haulers will then transport all the resources back to the Storehouse. "
+                "Let's head out to the meadow and I'll show you what to collect"
+            )
+        elif step == "gwen_forager_haulers":
+            self.state.step, self.prompt = "walk_to_meadow", "Follow Gwen to the meadow"
+        elif step == "gwen_meadow_intro":
+            self.state.step, self.prompt = "give_satchel", None
+        elif step == "gwen_forage_ready":
+            from quest_progress import begin_forage
+            begin_forage(self.state)
+            self.state.step, self.prompt = "forage_meadow", "Find 6 new wild plants and gather food for dinner"
 
     def note_berry_collected(self, game, x: int, y: int, amount: int) -> None:
         if not self.active or self.state.step != "pick_berries" or int(amount) <= 0:
@@ -318,10 +343,9 @@ class ScenarioDirector:
                 panel.tab = "rotation" if self.state.handbook_completed == 5 else "status"
                 panel._scroll = 0
                 if self.state.handbook_completed == 5:
-                    self.state.completed = True
-                    self.state.step = "complete"
-                    self.prompt = None
-                    self._request_dialog("Wheat is in the Rotation planner. Perhaps next we should plant something to restore the soil.")
+                    rhea = self._rhea_villager(game)
+                    self._take_control_of_villager(game, rhea)
+                    self.state.step, self.prompt = "rhea_forage_approaches", "Rhea is coming to speak with you..."
                 else:
                     self._restore_presentation()
             return
@@ -444,6 +468,60 @@ class ScenarioDirector:
             if farm is not None and getattr(game, "_player_inside_building_id", None) == farm.id:
                 game.player.inventory.add_item("book", 1)
                 self.state.step, self.prompt = "open_book", "Open the old book — right-click it in your inventory"
+        elif step == "rhea_forage_approaches":
+            rhea = self._rhea_villager(game)
+            self._take_control_of_villager(game, rhea)
+            if rhea is None or self._walk_toward_player(rhea, game.player):
+                self.state.step, self.prompt = "rhea_forage_intro", None
+                self._request_dialog(
+                    "Great to see you're getting to know the old farm. We need all the help we can get. "
+                    "Say... would you mind helping Gwen with the foraging? We're running low on provisions "
+                    "and need to gather enough food for dinner."
+                )
+        elif step == "gwen_forage_approaches":
+            self._release_villager_control(self._rhea_villager(game))
+            gwen = self._gwen_villager(game)
+            self._take_control_of_villager(game, gwen)
+            if gwen is None or self._walk_toward_player(gwen, game.player):
+                self.state.step, self.prompt = "walk_to_forager", "Follow Gwen to the forager hut"
+        elif step == "walk_to_forager":
+            gwen = self._gwen_villager(game)
+            hut = self._village_forager(game)
+            self._take_control_of_villager(game, gwen)
+            if gwen is not None and hut is not None:
+                hx, hy = hut.center_cell()
+                gwen_done = self._walk_toward_point(gwen, hx, hy)
+                player_done = self._walk_player_with_camera(game, hx + 1, hy)
+                if gwen_done and player_done:
+                    self.state.step, self.prompt = "gwen_forager_intro", None
+                    self._request_dialog("This is where we bring all our foraged goods together.")
+            elif hut is None:
+                self.state.step, self.prompt = "gwen_forager_intro", None
+                self._request_dialog("This is where we bring all our foraged goods together.")
+        elif step == "walk_to_meadow":
+            from quest_progress import MEADOW_CELL
+            gwen = self._gwen_villager(game)
+            self._take_control_of_villager(game, gwen)
+            mx, my = MEADOW_CELL
+            gwen_done = gwen is None or self._walk_toward_point(gwen, mx - 1, my)
+            player_done = self._walk_player_with_camera(game, mx, my)
+            if gwen_done and player_done:
+                self.state.step, self.prompt = "gwen_meadow_intro", None
+                self._request_dialog(
+                    "Here is the local meadow I come to forage. The soils here are very fertile and moist, "
+                    "so you'll find many different wild plants here. Here, take this."
+                )
+        elif step == "give_satchel":
+            game.player.inventory.add_item("leather_satchel", 1)
+            self.state.step, self.prompt = "equip_satchel", "Wear the leather satchel — right-click it in your inventory"
+        elif step == "equip_satchel" and game.player.inventory.equipped_in_slot("bag") == "leather_satchel":
+            self._release_villager_control(self._gwen_villager(game))
+            self.state.step, self.prompt = "gwen_forage_ready", None
+            self._request_dialog("Great, now you're set to forage! Let's see what you can find.")
+        elif step == "forage_meadow":
+            from quest_progress import forage_ready
+            if forage_ready(self.state):
+                self.state.step, self.state.completed, self.prompt = "complete", True, None
 
     def _tutorial_traveller(self, game):
         candidates = list(getattr(game, "hire_candidates", ()))
@@ -676,6 +754,8 @@ class ScenarioDirector:
                 if building.kind.name == "FIELD":
                     building._tutorial_planner_entry = True
                     allowed.add(building.id)
+        if self.state.forager_unlocked:
+            allowed.update(b.id for b in game.buildings.values() if b.kind.name == "FORAGER")
         return {bid: b for bid, b in game.buildings.items() if bid in allowed}
 
     def tutorial_management_flora(self) -> set[str]:
@@ -689,6 +769,8 @@ class ScenarioDirector:
             "joss_doubt", "joss_learn", "joss_books", "finish_interview",
             "enter_farmhouse", "open_book", "field_handbook", "complete",
         }
+        from objectives import FORAGE_STEPS
+        wheat_steps.update(FORAGE_STEPS)
         keys = {"wild:wheat"} if self.state.step in wheat_steps else set()
         if self.state.step in wheat_steps - {
             "clear_weeds", "rhea_weeds_approaches", "weeds_complete_dialog", "farm_question"
@@ -725,6 +807,10 @@ class ScenarioDirector:
         if self.state.joss_asked:
             candidates.extend((("joss", "Joss Fern added to People", "villager", "people"),
                                ("farm", "Farmhouse added to Buildings", "farm", "buildings")))
+        if self.state.forager_unlocked:
+            hut = self._village_forager(game)
+            target = f"building:{hut.id}" if hut is not None else "buildings"
+            candidates.append(("forager", "Forager huts unlocked", "forager", target))
         announced = self.state.announced_unlocks
         for key, label, icon, target in candidates:
             if key not in announced:
@@ -739,6 +825,8 @@ class ScenarioDirector:
         if building.id == self.state.repaired_tent_id:
             return True
         if self.state.joss_asked and building.kind.name == "FARM":
+            return True
+        if self.state.forager_unlocked and building.kind.name == "FORAGER":
             return True
         return self.state.field_planner_unlocked and building.kind.name == "FIELD"
 
@@ -1166,13 +1254,31 @@ class ScenarioDirector:
         target.x, target.y = x, y
         return ScenarioDirector._walk_toward_player(actor, target)
 
+    def _walk_player_with_camera(self, game, x: float, y: float) -> bool:
+        done = self._walk_toward_point(game.player, x, y)
+        if hasattr(game, "_reveal_around_player"):
+            game._reveal_around_player()
+        if hasattr(game, "_ensure_player_in_view"):
+            game._ensure_player_in_view()
+        return done
+
     def _rhea_villager(self, game):
-        return next((v for v in game.villagers if v.id == self.state.rhea_villager_id), None)
+        return next((v for v in getattr(game, "villagers", ()) if v.id == self.state.rhea_villager_id), None)
+
+    def _gwen_villager(self, game):
+        return next((v for v in getattr(game, "villagers", ()) if v.name == "Gwen Hill"), None)
+
+    @staticmethod
+    def _village_forager(game):
+        from entities import BuildingKind
+        return next((b for b in getattr(game, "buildings", {}).values() if b.kind == BuildingKind.FORAGER), None)
 
     @staticmethod
     def _take_control_of_villager(game, villager) -> None:
         """Stop ordinary AI and collapse all visual/logical motion to one point."""
         if villager is None:
+            return
+        if getattr(villager, "_scenario_controlled", False):
             return
         from entities import VillagerState, snap_entity_visual
 
@@ -1350,6 +1456,12 @@ class ScenarioDirector:
             "ask_villagers":"Ask villagers about the farm",
             "enter_farmhouse":"Enter the Farmhouse and find the old book",
             "open_book":"Open the old book — right-click it in your inventory",
+            "rhea_forage_approaches":"Rhea is coming to speak with you...",
+            "gwen_forage_approaches":"Gwen is coming to speak with you...",
+            "walk_to_forager":"Follow Gwen to the forager hut",
+            "walk_to_meadow":"Follow Gwen to the meadow",
+            "equip_satchel":"Wear the leather satchel — right-click it in your inventory",
+            "forage_meadow":"Find 6 new wild plants and gather food for dinner",
         }
         dialogs = {
             "hunger_dialog":"(Stomach rumble) ... uhhh I'm getting hungry, I need to eat. I'll check what is in my bag",
@@ -1370,6 +1482,22 @@ class ScenarioDirector:
             "field_reaction":"Oh wow. Yes, this needs some work. I'll be glad to help.",
             "hoe_gift":"Here, take this.",
             "weeds_complete_dialog":"Wow, you made light work of that. We'll have to find something else for you to do to keep you around!",
+            "rhea_forage_intro":(
+                "Great to see you're getting to know the old farm. We need all the help we can get. "
+                "Say... would you mind helping Gwen with the foraging? We're running low on provisions "
+                "and need to gather enough food for dinner."
+            ),
+            "rhea_forage_reply":"Sure! I've been waiting all day for someone to take me for a walk",
+            "gwen_forager_intro":"This is where we bring all our foraged goods together.",
+            "gwen_forager_haulers":(
+                "The haulers will then transport all the resources back to the Storehouse. "
+                "Let's head out to the meadow and I'll show you what to collect"
+            ),
+            "gwen_meadow_intro":(
+                "Here is the local meadow I come to forage. The soils here are very fertile and moist, "
+                "so you'll find many different wild plants here. Here, take this."
+            ),
+            "gwen_forage_ready":"Great, now you're set to forage! Let's see what you can find.",
         }
         self.prompt = prompts.get(self.state.step)
         if self.state.step == "field_handbook":
@@ -1392,6 +1520,8 @@ class ScenarioDirector:
             "talk_to_rhea", "morning_greeting", "walk_to_field", "equip_hoe", "clear_weeds",
             "weeds_complete_dialog", "ask_villagers", "gwen_intro", "joss_intro",
             "enter_farmhouse", "open_book", "field_handbook", "complete",
+            "rhea_forage_approaches", "walk_to_forager", "walk_to_meadow",
+            "equip_satchel", "forage_meadow",
         }
         if step in {"fix_tent", "go_to_sleep"} or post_sleep:
             self._join_rhea_to_village(game)
@@ -1423,6 +1553,8 @@ class ScenarioDirector:
         after_weeding = step in {
             "weeds_complete_dialog", "ask_villagers", "gwen_intro", "joss_intro",
             "enter_farmhouse", "open_book", "field_handbook", "complete",
+            "rhea_forage_approaches", "walk_to_forager", "walk_to_meadow",
+            "equip_satchel", "forage_meadow",
         }
         field = self._village_field(game)
         if after_weeding:
@@ -1436,12 +1568,20 @@ class ScenarioDirector:
         self.state.gwen_asked = bool(checkpoint.get("gwen_asked", False))
         self.state.joss_asked = bool(checkpoint.get("joss_asked", False))
         self.state.field_planner_unlocked = bool(checkpoint.get("field_planner_unlocked", False))
+        self.state.forager_unlocked = bool(checkpoint.get("forager_unlocked", False))
         if bool(checkpoint.get("has_book", False)):
             game.player.inventory.add_item("book", 1)
+        if bool(checkpoint.get("has_satchel", False)) or bool(checkpoint.get("satchel_equipped", False)):
+            game.player.inventory.add_item("leather_satchel", 1)
+        if bool(checkpoint.get("satchel_equipped", False)):
+            game.player.inventory.equip_clothing("leather_satchel")
         self.state.step = step
         self.state.completed = step == "complete"
         if self.state.field_planner_unlocked:
             self._apply_field_checkpoint(game, checkpoint)
+        if step == "forage_meadow":
+            from quest_progress import begin_forage
+            begin_forage(self.state)
         self._restore_presentation()
         # Historical discoveries are already recorded; don't flood a checkpoint
         # with notifications for every preceding tutorial event.

@@ -332,5 +332,72 @@ class TutorialScenarioTests(unittest.TestCase):
         self.assertTrue(game.scenario_dialog.open)
         self.assertIn("Oh look it's a farm",game.scenario_dialog.text)
 
+    def test_wheat_makes_rhea_walk_from_afar(self):
+        game=Game(headless=True)
+        load_from_path(game,Path(__file__).resolve().parents[1]/"saves"/"tutorial_intro_20.json")
+        field=game.scenario._village_field(game)
+        game.field_plan_dialog._on_action('add_current_wheat',field)
+        game._apply_pending_field_plan()
+        game.scenario.quest_feedback.until=0
+        game._update_scenario()
+        self.assertEqual(game.scenario.state.step,"rhea_forage_approaches")
+        rhea=game._get_villager(game.scenario.state.rhea_villager_id)
+        rhea.world_x,rhea.world_y=game.player.x+8.0,float(game.player.y)
+        rhea.x,rhea.y=round(rhea.world_x),round(rhea.world_y)
+        start=rhea.world_x
+        for _ in range(12):
+            game.scenario.update(game)
+        self.assertLess(rhea.world_x,start)
+        self.assertEqual(game.scenario.state.step,"rhea_forage_approaches")
+
+    def test_wheat_leads_to_gwen_forage_and_unlocks_hut(self):
+        game=Game(headless=True)
+        load_from_path(game,Path(__file__).resolve().parents[1]/"saves"/"tutorial_intro_21.json")
+        self.assertEqual(game.scenario.state.step,"rhea_forage_approaches")
+        self.assertFalse(game.scenario.state.completed)
+        rhea=game._get_villager(game.scenario.state.rhea_villager_id)
+        rhea.x,rhea.y=game.player.x,game.player.y
+        rhea.world_x,rhea.world_y=float(rhea.x),float(rhea.y)
+        game.scenario.update(game)
+        self.assertIn("helping Gwen with the foraging",game.scenario.take_dialog_request()[0])
+        game.scenario.dismiss_dialog()
+        self.assertEqual(game.scenario.take_dialog_request()[0],"Sure! I've been waiting all day for someone to take me for a walk")
+        game.scenario.dismiss_dialog()
+        game.scenario.update(game)
+        gwen=next(v for v in game.villagers if v.name=="Gwen Hill")
+        gwen.x,gwen.y=game.player.x,game.player.y
+        gwen.world_x,gwen.world_y=float(gwen.x),float(gwen.y)
+        game.scenario.update(game)
+        self.assertEqual(game.scenario.state.step,"walk_to_forager")
+        hut=game.scenario._village_forager(game)
+        hx,hy=hut.center_cell()
+        gwen.x,gwen.y=hx,hy
+        gwen.world_x,gwen.world_y=float(hx),float(hy)
+        game.player.x,game.player.y=hx+1,hy
+        game.player.world_x,game.player.world_y=float(hx+1),float(hy)
+        game.scenario.update(game)
+        self.assertIn("foraged goods together",game.scenario.take_dialog_request()[0])
+        game.scenario.dismiss_dialog()
+        game.scenario.update(game)
+        self.assertTrue(game.scenario.state.forager_unlocked)
+        self.assertIn(hut.id,game.scenario.tutorial_management_buildings(game))
+        alerts=([game._tutorial_unlock_popup] if game._tutorial_unlock_popup else [])+game._tutorial_alert_queue
+        self.assertTrue(any(alert[0]=="Forager huts unlocked" for alert in alerts))
+        self.assertIn("haulers will then transport",game.scenario.take_dialog_request()[0])
+        game.scenario.dismiss_dialog()
+        game.scenario.update(game)
+        self.assertEqual(game.scenario.state.step,"walk_to_meadow")
+
+    def test_satchel_equip_starts_forage_objectives(self):
+        game=Game(headless=True)
+        load_from_path(game,Path(__file__).resolve().parents[1]/"saves"/"tutorial_intro_22.json")
+        self.assertEqual(game.scenario.state.step,"equip_satchel")
+        self.assertTrue(game.player.inventory.equip_clothing("leather_satchel"))
+        game.scenario.update(game)
+        self.assertIn("set to forage",game.scenario.take_dialog_request()[0])
+        game.scenario.dismiss_dialog()
+        self.assertEqual(game.scenario.state.step,"forage_meadow")
+        self.assertEqual([q['id'] for q in game.scenario.objectives() if not q['completed']],['forage_meadow'])
+
 
 if __name__=="__main__":unittest.main()

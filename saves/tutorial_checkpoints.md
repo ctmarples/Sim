@@ -24,6 +24,9 @@ Load these JSON files through the game’s load menu. Each checkpoint starts fro
 | 18 | [Know the ground](tutorial_intro_18.json) |
 | 19 | [Thinking past this harvest](tutorial_intro_19.json) |
 | 20 | [Add Wheat to Rotation](tutorial_intro_20.json) |
-| 21 | [Lay of the Land complete](tutorial_intro_21.json) |
+| 21 | [Help Gwen forage](tutorial_intro_21.json) |
+| 22 | [Wear the leather satchel](tutorial_intro_22.json) |
+| 23 | [Forage for dinner](tutorial_intro_23.json) |
+| 24 | [Lay of the Land complete](tutorial_intro_24.json) |
 
-Files 1–6 cover Shelter from the Storm; 7–21 cover Lay of the Land. File 15 replaces the former early “complete” checkpoint. In 20 the seasonal example has been viewed and Rotation is open, but adding Wheat is still unfinished.
+Files 1–6 cover Shelter from the Storm; 7–24 cover Lay of the Land. File 15 replaces the former early “complete” checkpoint. In 20 the seasonal example has been viewed and Rotation is open, but adding Wheat is still unfinished. In 21 Wheat is in the Rotation planner and Rhea is about to ask you to help Gwen forage.

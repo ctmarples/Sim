@@ -46,14 +46,30 @@ MILESTONES = (
     ('open_book', 'Open the old handbook', 'Right-click the old book in your inventory. Its pages become the Field Planner under the Farmhouse in Management.'),
 )
 
+FORAGE_MILESTONES = (
+    ('rhea_forage_approaches rhea_forage_intro rhea_forage_reply gwen_forage_approaches', None, ''),
+    ('walk_to_forager', 'Follow Gwen to the forager hut', 'Walk with Gwen to the village forager hut.'),
+    ('gwen_forager_intro gwen_forager_haulers', None, ''),
+    ('walk_to_meadow', 'Follow Gwen to the meadow', 'Walk with Gwen to the local meadow.'),
+    ('gwen_meadow_intro give_satchel', None, ''),
+    ('equip_satchel', 'Wear the leather satchel', 'Open your inventory and right-click the leather satchel to add it to your bag slot.'),
+    ('gwen_forage_ready', None, ''),
+    ('forage_meadow', 'Forage for dinner', 'Find 6 new species of wild plants (inspect with click or collect). Collect at least 15 food and 10 herbs.'),
+)
+
+FORAGE_STEPS = {step for steps, _, _ in FORAGE_MILESTONES for step in steps.split()}
+
 
 def scenario_objectives(state):
     """Return only completed or unlocked tasks, in story chronology."""
     if state.key != 'tutorial_slice':
         return []
+    forage_index = next((i for i, (steps, _, _) in enumerate(FORAGE_MILESTONES)
+                         if state.step in steps.split()), None)
     stage = next((i for i, (steps, _, _) in enumerate(MILESTONES)
                   if state.step in steps.split()), None)
-    if state.step == 'field_handbook' or (state.completed and state.field_planner_unlocked):
+    if (state.step == 'field_handbook' or forage_index is not None
+            or (state.completed and state.field_planner_unlocked)):
         stage = len(MILESTONES)
     if stage is None and (state.step == 'release_rhea' or state.completed):
         stage = next(i for i, (steps, _, _) in enumerate(MILESTONES) if 'rhea_weeds_approaches' in steps.split())
@@ -74,10 +90,23 @@ def scenario_objectives(state):
             explanation = HANDBOOK_EXPLANATIONS[index]
             rows.append(dict(id=f'handbook_{index + 1}', headline=title.split('. ', 1)[-1],
                              explanation=explanation, completed=index < completed))
+        forage_limit = -1
+        if state.completed and state.handbook_completed >= 5:
+            forage_limit = len(FORAGE_MILESTONES)
+        elif forage_index is not None:
+            forage_limit = forage_index
+        for index, (steps, headline, explanation) in enumerate(FORAGE_MILESTONES):
+            if index > forage_limit:
+                break
+            if headline:
+                rows.append(dict(id=steps.split()[0], headline=headline,
+                                 explanation=explanation,
+                                 completed=index < forage_limit or bool(state.completed)))
     from quest_navigation import GROUP_TITLES
     land_ids = {steps.split()[0] for steps, headline, _ in MILESTONES[
         next(i for i, (steps, _, _) in enumerate(MILESTONES) if steps == 'talk_to_rhea'):]
         if headline}
+    land_ids.update(steps.split()[0] for steps, headline, _ in FORAGE_MILESTONES if headline)
     for quest in rows:
         quest['group'] = 'land' if quest['id'] in land_ids or quest['id'].startswith('handbook_') else 'shelter'
         quest['group_title'] = GROUP_TITLES[quest['group']]
@@ -88,6 +117,10 @@ def scenario_objectives(state):
 
 
 OBJECTIVE_TIPS = {
+    'satchel': 'Tip: right-click the leather satchel in your inventory.',
+    'forage_species': 'Tip: inspect wild plants with a cursor click, or collect them.',
+    'forage_food': 'Tip: berries, mushrooms, and wild vegetables count as food.',
+    'forage_herbs': 'Tip: sage, mint, flax, and hemp count as herbs.',
     'species': 'Tip: inspect species with a cursor click.',
     'species_layer': 'Tip: open Layers (top right) and choose Species diversity.',
     'hive': 'Tip: uncover all shroud within 10 squares of the field.',
@@ -149,4 +182,23 @@ def quest_items(state, quest):
     if key == "ask_villagers":
         return [dict(id="gwen", label="Speak with Gwen", completed=quest["completed"] or state.gwen_asked),
                 dict(id="joss", label="Speak with Joss", completed=quest["completed"] or state.joss_asked)]
+    if key == "equip_satchel":
+        return [dict(id="satchel", label="Equip the leather satchel",
+                     completed=quest["completed"], tip=OBJECTIVE_TIPS.get('satchel', ''))]
+    if key == "forage_meadow":
+        from quest_progress import FORAGE_FOOD_GOAL, FORAGE_HERB_GOAL, FORAGE_SPECIES_GOAL
+        species = FORAGE_SPECIES_GOAL if quest["completed"] else min(FORAGE_SPECIES_GOAL, len(state.foraged_species))
+        food = FORAGE_FOOD_GOAL if quest["completed"] else min(FORAGE_FOOD_GOAL, state.forage_food)
+        herbs = FORAGE_HERB_GOAL if quest["completed"] else min(FORAGE_HERB_GOAL, state.forage_herbs)
+        return [
+            dict(id="forage_species", label=f"Find 6 new wild plant species ({species}/{FORAGE_SPECIES_GOAL})",
+                 completed=quest["completed"] or species >= FORAGE_SPECIES_GOAL,
+                 tip=OBJECTIVE_TIPS.get('forage_species', ''), children=[]),
+            dict(id="forage_food", label=f"Collect 15 food ({food}/{FORAGE_FOOD_GOAL})",
+                 completed=quest["completed"] or food >= FORAGE_FOOD_GOAL,
+                 tip=OBJECTIVE_TIPS.get('forage_food', ''), children=[]),
+            dict(id="forage_herbs", label=f"Collect 10 herbs ({herbs}/{FORAGE_HERB_GOAL})",
+                 completed=quest["completed"] or herbs >= FORAGE_HERB_GOAL,
+                 tip=OBJECTIVE_TIPS.get('forage_herbs', ''), children=[]),
+        ]
     return [dict(id=key, label=quest["headline"], completed=quest["completed"])]

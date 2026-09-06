@@ -25,7 +25,10 @@ CHECKPOINTS = (
     (18, 'land', 'Know the ground'),
     (19, 'land', 'Thinking past this harvest'),
     (20, 'land', 'Add Wheat to Rotation'),
-    (21, 'land', 'Lay of the Land complete'),
+    (21, 'land', 'Help Gwen forage'),
+    (22, 'land', 'Wear the leather satchel'),
+    (23, 'land', 'Forage for dinner'),
+    (24, 'land', 'Lay of the Land complete'),
 )
 
 GROUP_LABELS = {'shelter': 'Shelter', 'land': 'Land'}

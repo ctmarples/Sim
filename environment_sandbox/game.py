@@ -10423,6 +10423,15 @@ class Game:
             self._set_status("Planted a berry bush.")
         return True
 
+    def _note_player_forage(self, inventory, x, y, species, key=None, amount=0) -> None:
+        if inventory is not self.player.inventory:
+            return
+        from quest_progress import inspect_species, note_forage_collect
+        if species:
+            inspect_species(self, x, y, species)
+        if key and amount:
+            note_forage_collect(self, inventory, key, amount)
+
     def _collect_mushroom(self, x: int, y: int, inventory: Inventory, status: bool = False) -> bool:
         if inventory.is_full:
             if status:
@@ -10440,6 +10449,7 @@ class Game:
             return False
         inventory.add_mushrooms(MUSHROOM_YIELD)
         self.record_produced("mushrooms", MUSHROOM_YIELD)
+        self._note_player_forage(inventory, x, y, "plant:mushroom", "mushrooms", MUSHROOM_YIELD)
         self.world.apply_extraction_disturbance(x, y)
         self._refresh_indicators()
         if status:
@@ -10481,6 +10491,7 @@ class Game:
             return False
         inventory.add_berries(taken)
         self.record_produced("berries", taken)
+        self._note_player_forage(inventory, x, y, "plant:berry_bush", "berries", taken)
         if inventory is self.player.inventory:
             self.scenario.note_berry_collected(self, x, y, taken)
         seed_msg = ""
@@ -10506,6 +10517,13 @@ class Game:
             if status:
                 self._set_status("No wild plants here.")
             return False
+        forage_species = None
+        if inventory is self.player.inventory:
+            from wild_species import resolve_species
+            species = resolve_species(cell.feature.name, getattr(cell, "crop_kind", None))
+            if species is not None:
+                forage_species = f"plant:{species.key}"
+                self._note_player_forage(inventory, x, y, forage_species)
         # Check cargo room before clearing the tile (seeds use a separate bag).
         if cell.feature == FeatureType.REED:
             from wild_species import resolve_species
@@ -10572,6 +10590,7 @@ class Game:
         wild_max=max(1,int(wild.yield_amount if wild is not None else 3));wild_amount=self._drop_rng.randint(1,wild_max)
         inventory.add_item(crop.produce_key, wild_amount)
         self.record_produced(crop.produce_key, wild_amount)
+        self._note_player_forage(inventory, x, y, None, crop.produce_key, wild_amount)
         seed_msg = ""
         # Forage: flat chance of a single seed (see resource_balance.WILD_SEED_CHANCE).
         seed_drop_chance=wild.seed_drop_chance if wild is not None else WILD_SEED_CHANCE

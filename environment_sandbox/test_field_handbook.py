@@ -40,6 +40,6 @@ class HandbookTests(unittest.TestCase):
             restored = ScenarioDirector()
             restored.load_dict(director.to_dict())
             self.assertEqual(restored.state.handbook_completed, stage + 1)
-        self.assertTrue(director.state.completed)
+        self.assertFalse(director.state.completed)
+        self.assertEqual(director.state.step, 'rhea_forage_approaches')
         self.assertEqual(panel.tab, 'rotation')
-        self.assertIn("Wheat is in the Rotation planner", director.take_dialog_request()[0])

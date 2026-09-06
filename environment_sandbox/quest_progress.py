@@ -70,6 +70,60 @@ LAYER_QUEST_MARKS = {
 }
 
 
+FORAGE_SPECIES_GOAL = 6
+FORAGE_FOOD_GOAL = 15
+FORAGE_HERB_GOAL = 10
+HERB_FORAGE_KEYS = frozenset({'sage', 'mint', 'hemp', 'flax'})
+MEADOW_CELL = (45, 8)
+
+
+def forage_ready(state):
+    return (len(state.foraged_species) >= FORAGE_SPECIES_GOAL
+            and state.forage_food >= FORAGE_FOOD_GOAL
+            and state.forage_herbs >= FORAGE_HERB_GOAL)
+
+
+def _known_forage_plants(state):
+    known = {key for key in state.forage_known if key.startswith('plant:')}
+    if known:
+        return known
+    known = {key for key in state.inspected_species if key.startswith('plant:')}
+    known.update('plant:' + key.split(':', 1)[1] for key in state.discovered_flora
+                 if key.startswith(('wild:', 'plant:')))
+    return known
+
+
+def begin_forage(state):
+    if state.forage_known:
+        return
+    state.forage_known = sorted(_known_forage_plants(state))
+
+
+def note_forage_species(game, species):
+    state = game.scenario.state
+    if getattr(state, 'key', None) != 'tutorial_slice' or state.step != 'forage_meadow':
+        return
+    if not species.startswith('plant:') or species in state.foraged_species:
+        return
+    if species in _known_forage_plants(state):
+        return
+    state.foraged_species.append(species)
+
+
+def note_forage_collect(game, inventory, key, amount):
+    state = game.scenario.state
+    if getattr(state, 'key', None) != 'tutorial_slice' or state.step != 'forage_meadow':
+        return
+    player = getattr(game, 'player', None)
+    if player is None or inventory is not player.inventory or int(amount) <= 0:
+        return
+    from resource_balance import VILLAGER_FOOD_KEYS
+    if key in VILLAGER_FOOD_KEYS:
+        state.forage_food += int(amount)
+    elif key in HERB_FORAGE_KEYS:
+        state.forage_herbs += int(amount)
+
+
 def check_key(stage, key):
     return f'handbook_{stage + 1}:{key}'
 
@@ -180,6 +234,7 @@ def inspect_species(game, x, y, species):
         if flora_key and flora_key not in game.scenario.tutorial_management_flora():
             state.discovered_flora.append(flora_key)
             game.scenario._sync_management_unlocks(game)
+    note_forage_species(game, species)
     if getattr(game.scenario, 'quest_feedback', None) and game.scenario.quest_feedback.holding:
         return
     if (state.step != 'field_handbook' or state.handbook_completed != 0

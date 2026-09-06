@@ -90,3 +90,44 @@ class QuestProgressTests(unittest.TestCase):
         rows=self.game.scenario.objectives()
         self.assertTrue(all(i['completed'] for q in rows[:-1] for i in q['objectives']))
         self.assertEqual([i['completed'] for i in rows[-1]['objectives']],[True,False])
+
+    def test_forage_counts_new_plants_and_yields(self):
+        from quest_progress import (
+            begin_forage, forage_ready, inspect_species, note_forage_collect,
+            FORAGE_FOOD_GOAL, FORAGE_HERB_GOAL, FORAGE_SPECIES_GOAL,
+        )
+        self.state.step='forage_meadow'
+        self.state.handbook_completed=5
+        self.state.inspected_species=['plant:daisy','plant:dandelion','tree:oak','plant:wheat']
+        self.state.discovered_flora=['wild:wheat','wild:dandelion','wild:daisy']
+        self.game.player=NS(inventory=NS())
+        begin_forage(self.state)
+        inspect_species(self.game,1,1,'plant:daisy')
+        inspect_species(self.game,1,1,'plant:sage')
+        inspect_species(self.game,1,1,'tree:oak')
+        inspect_species(self.game,1,1,'plant:mint')
+        self.assertEqual(self.state.foraged_species,['plant:sage','plant:mint'])
+        note_forage_collect(self.game,self.game.player.inventory,'sage',4)
+        note_forage_collect(self.game,self.game.player.inventory,'berries',6)
+        note_forage_collect(self.game,NS(),'berries',20)
+        self.assertEqual(self.state.forage_herbs,4)
+        self.assertEqual(self.state.forage_food,6)
+        self.assertFalse(forage_ready(self.state))
+        for key in ('plant:clover','plant:flax','plant:peas','plant:yarrow'):
+            inspect_species(self.game,1,1,key)
+        note_forage_collect(self.game,self.game.player.inventory,'berries',FORAGE_FOOD_GOAL)
+        note_forage_collect(self.game,self.game.player.inventory,'mint',FORAGE_HERB_GOAL)
+        self.assertGreaterEqual(len(self.state.foraged_species),FORAGE_SPECIES_GOAL)
+        self.assertTrue(forage_ready(self.state))
+
+    def test_forage_completion_ends_lay_of_the_land(self):
+        from quest_progress import FORAGE_FOOD_GOAL, FORAGE_HERB_GOAL
+        self.state.step='forage_meadow'
+        self.state.handbook_completed=5
+        self.state.foraged_species=['plant:sage','plant:mint','plant:flax','plant:peas','plant:clover','plant:yarrow']
+        self.state.forage_food=FORAGE_FOOD_GOAL
+        self.state.forage_herbs=FORAGE_HERB_GOAL
+        self.game.scenario._sync_management_unlocks=lambda game: None
+        self.game.scenario.update(self.game)
+        self.assertTrue(self.state.completed)
+        self.assertEqual(self.state.step,'complete')
