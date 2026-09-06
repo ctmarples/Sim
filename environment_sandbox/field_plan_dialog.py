@@ -133,6 +133,8 @@ class FieldPlanDialog:
         self._factors: list[FieldFactorDisplay] = []
         self.handbook_stage: int | None = None
         self._handbook_completion = False
+        self.rotation_unlocked = False
+        self._example_seen_seasons = set()
         self.tab: str = "status"  # status | rotation
         self.expanded_factor: str | None = None
         self._scroll = 0
@@ -174,6 +176,7 @@ class FieldPlanDialog:
     def open_for(self, building: Building, *, season: Season | None = None) -> None:
         if building.kind != BuildingKind.FIELD:
             return
+        self._example_seen_seasons = set()
         self.building_id = building.id
         self.season = season or Season.SPRING
         self.tab = "status"
@@ -368,9 +371,10 @@ class FieldPlanDialog:
         return True
 
     def _on_action(self, action: str, building: Building) -> None:
-        if action == "record_observations":
-            if self.handbook_stage is not None and self.handbook_stage < 5:
-                self._handbook_completion = True
+        if action == "add_current_wheat" and self.rotation_unlocked and self.tab == "rotation":
+            self._pending_plan = (*building.plot_bounds(), 'wheat')
+        elif action == "record_observations":
+            return
         elif action == "tab_handbook":
             self.tab = "handbook"
             self._scroll = 0
@@ -379,7 +383,7 @@ class FieldPlanDialog:
             self._scroll = 0
             self._drag_start = None
             self._drag_current = None
-        elif action == "tab_rotation" and (self.handbook_stage is None or self.handbook_stage >= 5):
+        elif action == "tab_rotation" and (self.handbook_stage is None or self.handbook_stage >= 5 or self.rotation_unlocked):
             self.tab = "rotation"
             self.expanded_factor = None
             self._scroll = 0
@@ -455,7 +459,7 @@ class FieldPlanDialog:
         if self.handbook_stage is not None:
             stages = {"pollination": 1, "pest": 1, "health": 2, "weeds": 2, "disturbance": 3, "fertility": 4, "erosion": 4, "moisture": 4}
             self._factors = [f for f in self._factors if stages.get(f.key, 5) <= self.handbook_stage]
-            if self.tab == "rotation" and self.handbook_stage < 5:
+            if self.tab == "rotation" and self.handbook_stage < 5 and not self.rotation_unlocked:
                 self.tab = "handbook"
         self._debug = debug
         self._layout_for(building)
@@ -520,7 +524,7 @@ class FieldPlanDialog:
         # Tabs
         tab_x = inner_left
         tabs = [("Status", "status")]
-        if self.handbook_stage is None or self.handbook_stage >= 5:
+        if self.handbook_stage is None or self.handbook_stage >= 5 or self.rotation_unlocked:
             tabs.append(("Rotation", "rotation"))
         if self.handbook_stage is not None:
             tabs.append(("Old Field Handbook", "handbook"))
@@ -537,7 +541,7 @@ class FieldPlanDialog:
 
         hover_tip = ""
         if self.tab == "handbook":
-            self._draw_handbook(surface, inner_left, y, inner_w, panel.bottom - PAD)
+            self._draw_handbook(surface, inner_left, y, inner_w, panel.bottom - PAD, building)
         elif self.tab == "status":
             hover_tip = self._draw_status(
                 surface,
@@ -898,7 +902,7 @@ class FieldPlanDialog:
             )
         return hover_tip
 
-    def _draw_handbook(self, surface, x, y, width, bottom):
+    def _draw_handbook(self, surface, x, y, width, bottom, building):
         view = pygame.Rect(x, y, width, max(40, bottom - y))
         self._view_rect = view
         self._scroll = min(self._scroll, max(0, self._content_h - view.h))
@@ -906,14 +910,6 @@ class FieldPlanDialog:
         surface.set_clip(view.clip(old))
         top = y - self._scroll
         cy = top
-        if self.handbook_stage < 5:
-            rect = pygame.Rect(x, cy, min(width, 290), BTN_H)
-            label = "Record current crop: Wheat" if self.handbook_stage == 4 else f"Record Step {self.handbook_stage + 1} observations"
-            self._draw_btn(surface, rect, label, False)
-            clipped = rect.clip(view)
-            if clipped.height:
-                self._buttons.append(("record_observations", clipped))
-            cy += BTN_H + 10
         step_width = min(135, width // 3)
         for index, (title, narrative, _) in enumerate(HANDBOOK_STEPS):
             row_top = cy
@@ -933,8 +929,29 @@ class FieldPlanDialog:
                 ends.append(ly + self.font_small.get_linesize())
             cy = max(ends) + 18
             pygame.draw.line(surface, COLOUR_TEXT_DIM, (x, cy - 8), (x + width, cy - 8))
+        surface.blit(self.font_small.render('Wheat through the seasons', True, COLOUR_TEXT), (x, cy))
+        cy += self.font.get_linesize() + 12
+        crop = CROP_BY_KEY['wheat']
+        size = max(10, min(24, width // max(1, building.plot_w)))
+        for season in (Season.SPRING, Season.SUMMER, Season.AUTUMN, Season.WINTER):
+            surface.blit(self.font_small.render(SEASON_LABELS[season], True, COLOUR_TEXT), (x, cy))
+            cy += self.font_small.get_linesize() + 4
+            grid = pygame.Rect(x, cy, building.plot_w*size, building.plot_h*size)
+            for ly in range(building.plot_h):
+                for lx in range(building.plot_w):
+                    tile = pygame.Rect(x+lx*size, cy+ly*size, size, size)
+                    self._paint_cell(surface, tile, crop, phase_for_crop(crop, season))
+                    pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, tile, 1)
+            if view.clip(grid).height >= min(grid.height, view.height // 2):
+                self._example_seen_seasons.add(season)
+            cy += grid.height + 20
         self._content_h = cy - top
         surface.set_clip(old)
+        maximum = max(0, self._content_h - view.h)
+        if maximum:
+            thumb_h = max(16, view.h * view.h // self._content_h)
+            thumb_y = view.y + (view.h-thumb_h)*min(self._scroll,maximum)//maximum
+            pygame.draw.rect(surface, COLOUR_TEXT_DIM, (view.right-4,thumb_y,3,thumb_h))
 
     def _draw_why_block(
         self, surface: pygame.Surface, x: int, y: int, inner_w: int
@@ -1009,6 +1026,11 @@ class FieldPlanDialog:
         mouse_pos: tuple[int, int] | None,
         current_season: Season,
     ) -> int:
+        if self.handbook_stage == 4 and self.rotation_unlocked:
+            button = pygame.Rect(x, y, min(inner_w, 280), BTN_H)
+            self._draw_btn(surface, button, 'Add current crop: Wheat', False)
+            self._buttons.append(('add_current_wheat', button))
+            y += BTN_H + 12
         fonts = self._fonts()
         y = draw_crop_overview(
             surface,

@@ -24,6 +24,11 @@ class TutorialScenarioTests(unittest.TestCase):
 
     def test_tutorial_flow_and_shroud_reset(self):
         game=self.game
+        def update():
+            game._update_scenario()
+            while game.scenario.quest_feedback.holding:
+                game.scenario.quest_feedback.until = 0
+                game._update_scenario()
         self.assertEqual(game.scenario.state.key,"tutorial_slice")
         self.assertEqual(game.player.inventory.berries,1)
         self.assertEqual((game.player.x,game.player.y),(game.world.cols-6,game.world.rows-3))
@@ -45,20 +50,20 @@ class TutorialScenarioTests(unittest.TestCase):
         self.assertEqual((traveller.x,traveller.y),(62,63))
         field=next(b for b in game.buildings.values() if b.kind==BuildingKind.FIELD)
         self.assertEqual((rhea.name,rhea.x,rhea.y),("Rhea",field.x,field.y))
-        game._update_scenario();self.assertTrue(game.scenario_dialog.open)
-        game.scenario_dialog.dismissed=True;game._update_scenario()
+        update();self.assertTrue(game.scenario_dialog.open)
+        game.scenario_dialog.dismissed=True;update()
         self.assertEqual(game.scenario.prompt,"Press I to open inventory")
-        game.player_inventory.open_window();game._update_scenario()
+        game.player_inventory.open_window();update()
         self.assertEqual(game.scenario.prompt,"Right click on the berries to eat.")
-        game._player_eat_item("berries");game._update_scenario()
+        game._player_eat_item("berries");update()
         self.assertTrue(game.scenario_dialog.open)
-        game.scenario_dialog.dismissed=True;game._update_scenario()
+        game.scenario_dialog.dismissed=True;update()
         self.assertEqual(game.scenario.prompt,"Look around for some more food")
         bushes=[(x,y) for y,row in enumerate(game.world.cells) for x,cell in enumerate(row) if cell.feature==FeatureType.BERRY_BUSH and cell.deposit>0 and (x,y) not in game.discovered_cells]
         bush=min(bushes,key=lambda p:(p[0]-62)**2+(p[1]-63)**2)
-        game.discovered_cells.add(bush);game._update_scenario()
+        game.discovered_cells.add(bush);update()
         self.assertIn("where they come from",game.scenario_dialog.text)
-        game.scenario_dialog.dismissed=True;game._update_scenario()
+        game.scenario_dialog.dismissed=True;update()
         self.assertEqual(game.scenario.state.step,"pick_berries")
         self.assertIn("Enter",game.scenario.prompt)
         self.assertEqual((game.scenario.state.bush_x,game.scenario.state.bush_y),bush)
@@ -69,7 +74,7 @@ class TutorialScenarioTests(unittest.TestCase):
         game.player.move_to(bx,by)
         game.scenario.note_berry_collected(game,bx,by,1)
         self.assertEqual(game.scenario.state.step,"traveller_approaches")
-        for _ in range(120):game._update_scenario()
+        for _ in range(120):update()
         self.assertTrue(game.scenario_dialog.open)
         self.assertEqual(len(game.scenario_dialog.choices),2)
 
@@ -278,7 +283,8 @@ class TutorialScenarioTests(unittest.TestCase):
         from management_window import _iter_building_list_rows
         rows=_iter_building_list_rows(visible,{})
         self.assertIn(("building",farm,1),rows)
-        self.assertEqual(game._tutorial_unlock_popup[0],"Field Planner added under the Farmhouse")
+        alerts = ([game._tutorial_unlock_popup] if game._tutorial_unlock_popup else []) + game._tutorial_alert_queue
+        self.assertIn(("Field Planner added under the Farmhouse", "field", f"building:{farm.id}"), alerts)
 
     def test_bug_save_discards_unrelated_seasonal_travellers(self):
         path=Path(__file__).resolve().parents[1]/"saves"/"tutorial_slice_bug.json"
@@ -319,6 +325,10 @@ class TutorialScenarioTests(unittest.TestCase):
         game._update_scenario()
         self.assertEqual(game.scenario.state.step,"deer_flee")
         self.assertEqual(game.scenario.prompt,"Find a tent")
+        self.assertTrue(game.scenario.quest_feedback.holding)
+        self.assertFalse(game.scenario_dialog.open)
+        game.scenario.quest_feedback.until = 0
+        game._update_scenario()
         self.assertTrue(game.scenario_dialog.open)
         self.assertIn("Oh look it's a farm",game.scenario_dialog.text)
 

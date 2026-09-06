@@ -187,6 +187,7 @@ class UI:
         self._tooltip: tuple[str, tuple[int, int]] | None = None
         # Screen-space tab when the sidebar is collapsed (Tab / click to restore).
         self.expand_tab_rect: pygame.Rect | None = None
+        self.quest_load_group = 'land'
 
     def _local_pos(self, pos: tuple[int, int]) -> tuple[int, int]:
         panel_x = map_view_width()
@@ -435,7 +436,8 @@ class UI:
 
         y = _blit_text(content, self.font_title, "Layer views", (x, y))
         layer_modes = (OverlayMode.NONE,) + tuple(
-            mode for mode in OverlayMode if mode != OverlayMode.NONE
+            mode for mode in OverlayMode
+            if mode not in (OverlayMode.NONE, OverlayMode.SPECIES_DIVERSITY)
         )
         col_w = (PANEL_WIDTH - 28) // 2
         for index, mode in enumerate(layer_modes):
@@ -837,6 +839,41 @@ class UI:
                 self._tooltip = (tip, (rect.centerx, rect.top))
         return y + row_h + 2
 
+    def _draw_quest_loader(
+        self,
+        content: pygame.Surface,
+        x: int,
+        y: int,
+        local_mouse: tuple[int, int] | None,
+    ) -> int:
+        from tutorial_checkpoints import GROUP_LABELS, available
+        from quest_navigation import GROUP_TITLES
+
+        rows = available(self.quest_load_group)
+        if not available():
+            return y
+        y = _blit_text(content, self.font_title, "Quest load", (x, y))
+        btn_x = x
+        for key, short in GROUP_LABELS.items():
+            width = 70
+            self._draw_labelled_tool_button(
+                content, btn_x, y, width, 22, short, f"quest_load_group:{key}",
+                GROUP_TITLES[key], active=self.quest_load_group == key, local_mouse=local_mouse,
+            )
+            btn_x += width + 6
+        y += 28
+        for number, _group, label in rows:
+            row = pygame.Rect(x - 4, y - 1, PANEL_WIDTH - 20, 18)
+            hovered = local_mouse is not None and row.collidepoint(local_mouse)
+            colour = COLOUR_STATUS if hovered else COLOUR_TEXT
+            text = self.font_small.render(label, True, colour)
+            content.blit(text, (x, y))
+            self.action_hits.append((row, f"tutorial_load:{number}", f"Load {label}"))
+            if hovered:
+                self._tooltip = (f"Load {label}", (row.centerx, row.top))
+            y += 16
+        return y + 8
+
     def _draw_normal_panel_body(
         self,
         content: pygame.Surface,
@@ -869,6 +906,7 @@ class UI:
         selected_habitat_id: int | None,
     ) -> int:
         y = _blit_text(content, self.font_title, "Environment Sandbox", (x, y))
+        y = self._draw_quest_loader(content, x, y, local_mouse)
         y = _blit_text(content, self.font_small, "WASD · Enter/E · T map edit · H habitats", (x, y), COLOUR_TEXT_DIM)
         y = _blit_text(content, self.font_small, "Tab hides / shows sidebar", (x, y), COLOUR_TEXT_DIM)
         y = _blit_text(content, self.font_small, f"Speed x{sim_speed}" if sim_speed else "Paused", (x, y), COLOUR_TEXT_DIM)
@@ -1279,6 +1317,7 @@ class UI:
             status_message,
             map_edit_mode,
             place_kind,
+            self.quest_load_group,
         )
         wait = getattr(self, "_panel_rebuild_wait", 0)
         if (

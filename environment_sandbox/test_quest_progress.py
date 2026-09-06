@@ -1,0 +1,92 @@
+import unittest
+from types import SimpleNamespace as NS
+from unittest.mock import Mock
+from scenario import ScenarioDirector, ScenarioState, TUTORIAL_KEY
+from quest_progress import (
+    inspect_species, inspect_field, check_shroud, ready, mark,
+    active_objectives, overlay_unlocked, mark_overlay_enabled,
+)
+from world import TerrainType
+
+class QuestProgressTests(unittest.TestCase):
+    def setUp(self):
+        d=ScenarioDirector();d.state=ScenarioState(key=TUTORIAL_KEY,step='field_handbook',field_planner_unlocked=True)
+        self.state=d.state
+        coords=[(20,20),(21,20),(22,20),(23,20)]
+        f=NS(plot_cells=lambda:coords,contains_plot=lambda x,y:(x,y) in coords)
+        d._village_field=lambda game:f
+        cells={(x,y):NS(terrain=TerrainType.GRASS,fertility=.8,weeds=.04,crop_kind='wheat') for y in range(45) for x in range(45)}
+        self.game=NS(scenario=d,wildlife=NS(colonies=[]),discovered_cells=set(coords),
+            world=NS(rows=45,cols=45,get_cell=lambda x,y:cells[x,y],ensure_height_corners=lambda:None,
+                     height_corners=[[0.]*46 for _ in range(46)],height_at_cell=lambda x,y:0.),
+            _building_at=lambda x,y:None,_path_traffic={},
+            _field_env_status=lambda field:dict(health=.9,health_cap=.85),
+            env_maps=NS(soil_moisture=[[.5]*45 for _ in range(45)]))
+
+    def test_species_and_full_shroud_are_separate_conditions(self):
+        for key in ['tree:oak','tree:oak','tree:pine','plant:daisy','plant:berry_bush']:
+            inspect_species(self.game,20,20,key)
+        self.assertEqual(len(self.state.inspected_species),4)
+        self.assertIn('handbook_1:species', self.state.quest_checks)
+        self.assertEqual([k for k,_ in active_objectives(self.state)],
+                         ['species','species_layer','hive'])
+        self.assertTrue(overlay_unlocked(self.state, 'BIODIVERSITY'))
+        self.assertFalse(overlay_unlocked(self.state, 'POLLINATION'))
+        mark_overlay_enabled(self.state, 'BIODIVERSITY')
+        check_shroud(self.game);self.assertFalse(ready(self.state))
+        self.game.discovered_cells={(x,y) for y in range(10,31) for x in range(10,34)}
+        self.game.discovered_cells.remove((10,10))
+        check_shroud(self.game);self.assertFalse(ready(self.state))
+        self.game.discovered_cells.add((10,10));check_shroud(self.game)
+        self.assertTrue(overlay_unlocked(self.state, 'POLLINATION'))
+        self.assertFalse(ready(self.state))
+        mark_overlay_enabled(self.state, 'POLLINATION')
+        self.assertTrue(ready(self.state));self.assertTrue(self.state.quest_no_hives)
+        restored=ScenarioDirector();restored.load_dict(self.game.scenario.to_dict())
+        self.assertEqual(restored.state.quest_checks,self.state.quest_checks)
+
+    def test_clicking_hive_does_not_replace_shroud_assessment(self):
+        from wildlife import AnimalKind
+        from game import Game
+        c=NS(kind=AnimalKind.BEE,level=1,x=26,y=20)
+        self.game.wildlife.colonies=[c];self.game.discovered_cells.add((26,20))
+        self.game.place_kind=None;self.game.assign_workplace_mode=False;self.game.height_edit_mode=False
+        self.game.resource_inspect=NS(open_details=Mock())
+        Game._handle_click(self.game,(26,20),screen_pos=(100,100))
+        self.assertEqual(self.game.resource_inspect.open_details.call_args.kwargs['title'],'Beehive')
+        self.assertNotIn('handbook_1:hive',self.state.quest_checks)
+        self.game.discovered_cells={(x,y) for y in range(10,31) for x in range(10,34)}
+        check_shroud(self.game);self.assertFalse(self.state.quest_no_hives)
+        self.assertIn('handbook_1:hive',self.state.quest_checks)
+
+    def test_distinct_crop_traffic_and_soil_squares(self):
+        self.state.handbook_completed=1
+        inspect_field(self.game,20,20);inspect_field(self.game,20,20)
+        self.assertEqual(self.state.quest_checks,['handbook_2:health'])
+        inspect_field(self.game,21,20);self.assertTrue(ready(self.state))
+        self.state.handbook_completed=2
+        for _ in range(4):inspect_field(self.game,20,20)
+        self.assertNotIn('handbook_3:traffic',self.state.quest_checks)
+        for x in (21,22,23):inspect_field(self.game,x,20)
+        self.assertIn('handbook_3:traffic',self.state.quest_checks)
+        mark(self.state, 'disturbance_layer')
+        self.game._building_at=lambda x,y:NS(kind=NS(name='HOME')) if (x,y)==(24,20) else None
+        self.game.discovered_cells.add((24,20))
+        inspect_field(self.game,24,20)
+        self.assertTrue(ready(self.state))
+        self.state.handbook_completed=3
+        for x in (20,21,22,23):inspect_field(self.game,x,20)
+        self.assertEqual(len(self.state.quest_cells['soil']),4)
+        for key in ('fertility_layer','moisture_layer','erosion_layer'):
+            mark(self.state, key)
+        self.assertFalse(ready(self.state))
+        self.game.discovered_cells.add((25,20))
+        self.game.world.height_corners[20][25]=2.
+        self.game.world.height_at_cell=lambda x,y:2. if x==25 else 0.
+        inspect_field(self.game,25,20);self.assertTrue(ready(self.state))
+
+    def test_backfill_partial_interviews(self):
+        self.state.step='ask_villagers';self.state.gwen_asked=True
+        rows=self.game.scenario.objectives()
+        self.assertTrue(all(i['completed'] for q in rows[:-1] for i in q['objectives']))
+        self.assertEqual([i['completed'] for i in rows[-1]['objectives']],[True,False])

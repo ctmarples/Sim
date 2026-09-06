@@ -65,9 +65,9 @@ OVERLAY_LABELS: dict[OverlayMode, str] = {
     OverlayMode.NONE: "None",
     OverlayMode.HABITAT_DIVERSITY: "Habitat diversity",
     OverlayMode.TREE_DENSITY: "Tree density",
-    OverlayMode.SPECIES_DIVERSITY: "Species diversity",
+    OverlayMode.SPECIES_DIVERSITY: "Tree species mix",
     OverlayMode.DISTURBANCE: "Disturbance",
-    OverlayMode.BIODIVERSITY: "Biodiversity",
+    OverlayMode.BIODIVERSITY: "Species diversity",
     OverlayMode.FLORAL_RESOURCES: "Floral resources",
     OverlayMode.POLLINATION: "Pollination",
     OverlayMode.EROSION: "Soil erosion",
@@ -77,6 +77,43 @@ OVERLAY_LABELS: dict[OverlayMode, str] = {
     OverlayMode.FERTILITY: "Soil fertility",
     OverlayMode.FIELD_YIELD: "Field yield",
 }
+
+
+def overlay_help(mode: OverlayMode) -> str:
+    """Hover explanation for the Layers dropdown, matching the live calculation."""
+    radius = _indicator_radius()
+    help_text = {
+        OverlayMode.NONE: "Turn off environmental colour layers.",
+        OverlayMode.HABITAT_DIVERSITY:
+            f"Share of different habitat types (forest, field, water, and so on) within {radius} tiles.",
+        OverlayMode.TREE_DENSITY:
+            f"Fraction of nearby tiles that hold a tree or sapling within {radius} tiles.",
+        OverlayMode.SPECIES_DIVERSITY:
+            f"How many different tree species grow within {radius} tiles, scaled to the full tree catalogue.",
+        OverlayMode.DISTURBANCE:
+            "Foot-traffic wear on the ground. Busier tiles read hotter on the scale.",
+        OverlayMode.BIODIVERSITY:
+            f"Average number of plant and animal species within {radius} tiles. "
+            f"The map is sampled {BIODIVERSITY_SAMPLES_PER_YEAR} times across the year and averaged, "
+            "so the layer stays stable between seasons.",
+        OverlayMode.FLORAL_RESOURCES:
+            f"Average flower richness of tiles within {radius} tiles — denser blooms read brighter.",
+        OverlayMode.POLLINATION:
+            "How well bee nests cover this tile. Stronger nests reach farther; coverage fades with distance.",
+        OverlayMode.EROSION:
+            "Erosion risk from terrain slope. Steeper ground reads higher.",
+        OverlayMode.SOIL_MOISTURE:
+            "How wet the soil is on this tile, from dry to saturated.",
+        OverlayMode.TEMPERATURE:
+            "Local air temperature in °C, including terrain and seasonal effects.",
+        OverlayMode.RAINFALL:
+            "Relative rainfall intensity on this tile right now.",
+        OverlayMode.FERTILITY:
+            "Soil fertility available to crops. Darker field soil is usually more fertile.",
+        OverlayMode.FIELD_YIELD:
+            "Expected harvest for the selected field as a share of its base yield.",
+    }
+    return help_text.get(mode, "")
 
 
 def format_overlay_value(mode: OverlayMode, value: float) -> str:

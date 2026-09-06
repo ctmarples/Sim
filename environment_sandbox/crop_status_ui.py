@@ -253,7 +253,7 @@ def _env_chips(
     got = int(status.get("harvest_yield") or 0)
 
     bio_tip = (
-        f"Biodiversity {bio:.1f} species nearby "
+        f"Species diversity {bio:.1f} species nearby "
         f"(low {bio_lo:g} · mid {bio_mid:g} · high {bio_hi:g}). "
         f"Higher richness improves pest control."
     )

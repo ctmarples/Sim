@@ -377,6 +377,7 @@ class ManagementWindow:
         self.selected_habitat: tuple[Any, int] | None = None  # (AnimalKind, id)
         self.selected_flora_key: str | None = None
         self.show_player = False
+        self.quest_navigation = None
         self.objectives_filter = "current"
         self.expanded_objective: str | None = None
         self._objective_scroll = 0
@@ -638,9 +639,20 @@ class ManagementWindow:
                     self.objectives_filter = action.split(":", 1)[1]
                     self._objective_scroll = 0
                     return True
+                if action.startswith('quest_group:'):
+                    group = action.split(':', 1)[1]
+                    choices = [row for row in self._quest_rows if row.get('group') == group]
+                    if choices:
+                        selected = next((row for row in choices if not row['completed']), choices[-1])
+                        self.expanded_objective = selected['id']
+                        if self.quest_navigation is not None:
+                            self.quest_navigation.select(selected['id'])
+                    return True
                 if action.startswith("objective:"):
                     key = action.split(":", 1)[1]
                     self.expanded_objective = None if self.expanded_objective == key else key
+                    if self.quest_navigation is not None:
+                        self.quest_navigation.select(key)
                     return True
                 if action == "toggle_detail":
                     if self.show_detail and not self.show_list:
@@ -1035,10 +1047,11 @@ class ManagementWindow:
         self._objective_scroll = 0
 
     def _draw_objectives(self, surface: pygame.Surface, objectives: list[dict]) -> None:
+        self._quest_rows = objectives
         pane = self._list_rect
         x, y = pane.x + PAD, pane.y + PAD
         width = max(40, pane.w - 2 * PAD)
-        surface.blit(self.font_title.render("Objectives", True, COLOUR_TEXT), (x, y))
+        surface.blit(self.font_title.render("Quests", True, COLOUR_TEXT), (x, y))
         y += self.font_title.get_linesize() + 8
         for index, (label, key) in enumerate((("Current", "current"), ("All", "all"))):
             rect = pygame.Rect(x + index * 84, y, 80, 28)
@@ -1048,23 +1061,20 @@ class ManagementWindow:
             self._buttons.append((f"objectives_filter:{key}", rect))
         y += 38
         view = pygame.Rect(x, y, width, max(1, pane.bottom - PAD - y))
-        rows = [row for row in objectives if row["completed"] == (self.objectives_filter == "all")]
+        active_groups = {row.get('group') for row in objectives if not row['completed']}
+        rows = [row for row in objectives if (row['completed'] if self.objectives_filter == 'all' else row.get('group') in active_groups)]
         # Lay out before drawing so a headline link can reveal an offscreen entry immediately.
         layouts = []
         offset = 0
+        last_group = None
+        group_headers = []
         for row in rows:
-            lines = []
-            if self.expanded_objective == row["id"]:
-                line = ""
-                for word in row["explanation"].split():
-                    trial = (line + " " + word).strip()
-                    if line and self.font_small.size(trial)[0] > width - 14:
-                        lines.append(line)
-                        line = word
-                    else:
-                        line = trial
-                if line:
-                    lines.append(line)
+            if row.get('group') != last_group:
+                group_headers.append((offset, row.get('group_title', 'Quests'), row.get('group', '')))
+                offset += self.font_title.get_linesize() + 14
+                last_group = row.get('group')
+            from quest_ui import detail_lines
+            lines = detail_lines(self.font_small, row, width, explanation=True) if self.expanded_objective == row["id"] else []
             headline_h = self.font.get_linesize() + 12
             height = headline_h + len(lines) * self.font_small.get_linesize() + 12
             layouts.append((row, offset, headline_h, lines))
@@ -1080,20 +1090,26 @@ class ManagementWindow:
         old = surface.get_clip()
         surface.set_clip(view.clip(old))
         if not rows:
-            message = "No completed objectives yet." if self.objectives_filter == "all" else "No current objectives."
+            message = "No completed quests yet." if self.objectives_filter == "all" else "No current quests."
             surface.blit(self.font_small.render(message, True, COLOUR_TEXT_DIM), view.topleft)
+        for header_offset, title, group in group_headers:
+            hit = pygame.Rect(x, view.y + header_offset - self._objective_scroll, width, self.font_title.get_linesize()+10).clip(view)
+            if hit.height:
+                self._buttons.append((f'quest_group:{group}', hit))
+            surface.blit(self.font_title.render(title, True, COLOUR_TEXT), (x, view.y + header_offset - self._objective_scroll))
         for row, offset, headline_h, lines in layouts:
             top = view.y + offset - self._objective_scroll
             rect = pygame.Rect(x, top, width, headline_h)
             marker = "−" if row["id"] == self.expanded_objective else "+"
-            text = f"{marker} {row['headline']}"
+            text = f"{marker} {row['headline']}" + (" ✓" if row["completed"] else "")
             surface.blit(self.font.render(text, True, COLOUR_TEXT), (x, top + 4))
             clipped = rect.clip(view)
             if clipped.height:
                 self._buttons.append((f"objective:{row['id']}", clipped))
             ly = top + headline_h
-            for line in lines:
-                surface.blit(self.font_small.render(line, True, COLOUR_TEXT_DIM), (x + 8, ly))
+            from quest_ui import draw_line
+            for line, checked in lines:
+                draw_line(surface, self.font_small, line, checked, x, ly, COLOUR_TEXT_DIM)
                 ly += self.font_small.get_linesize()
             pygame.draw.line(surface, COLOUR_TEXT_DIM, (x, ly + 5), (view.right, ly + 5))
         surface.set_clip(old)

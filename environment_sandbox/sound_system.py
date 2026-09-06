@@ -26,6 +26,9 @@ DEFAULT_SOUNDS = {
     "plant": {"label":"Plant","category":"Effects","file":"effects/freesound_community-digging-with-shovel-63069.mp3","trigger":"work.plant","bus":"sfx","volume":1.0,"parameters":{"cooldown":0.25,"source_type":"event","audible_distance":10.0,"falloff_distance":8.0,"fade_out_ms":200}},
     "cook": {"label":"Cook","category":"Effects","file":"effects/freesound_community-cooking-onions-72799.mp3","trigger":"work.cook","bus":"sfx","volume":1.0,"parameters":{"cooldown":0.35,"source_type":"event","audible_distance":10.0,"falloff_distance":8.0,"fade_out_ms":250}},
     "chop": {"label":"Chop wood","category":"Effects","file":"effects/wings_of_freedom-chopping-wood-435769.mp3","trigger":"work.chop","bus":"sfx","volume":1.0,"parameters":{"cooldown":0.20,"source_type":"event","audible_distance":14.0,"falloff_distance":12.0,"fade_out_ms":250}},
+    'quest_new': {'label': 'New quest · Notification 055', 'category': 'UI', 'file': 'ui/universfield-new-notification-055-494261.mp3', 'trigger': 'quest.new', 'bus': 'sfx', 'volume': 1.0, 'parameters': {'menu_allowed': True}},
+    'quest_objective_complete': {'label': 'Objective complete · Pencil check mark', 'category': 'UI', 'file': 'ui/freesound_community-pencil_check_mark_2-105940.mp3', 'trigger': 'quest.objective_complete', 'bus': 'sfx', 'volume': 1.0, 'parameters': {'menu_allowed': True}},
+    'management_item_added': {'label': 'Management item · Notification 040', 'category': 'UI', 'file': 'ui/universfield-new-notification-040-493469.mp3', 'trigger': 'management.item_added', 'bus': 'sfx', 'volume': 1.0, 'parameters': {'menu_allowed': True}},
 }
 
 

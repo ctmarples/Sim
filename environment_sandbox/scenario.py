@@ -44,6 +44,13 @@ class ScenarioState:
     announced_unlocks: list[str] = field(default_factory=list)
     field_planner_unlocked: bool = False
     handbook_completed: int = 0
+    quest_checks: list[str] = field(default_factory=list)
+    inspected_species: list[str] = field(default_factory=list)
+    quest_no_hives: bool = False
+    handbook_example_seasons: list[str] = field(default_factory=list)
+    quest_shroud_checked: bool = False
+    quest_cells: dict[str, list] = field(default_factory=dict)
+    discovered_flora: list[str] = field(default_factory=list)
 
 
 class ScenarioDirector:
@@ -53,19 +60,29 @@ class ScenarioDirector:
         self.state = ScenarioState()
         self.prompt: str | None = None
         self._dialog_request: tuple[str, tuple[str, ...]] | None = None
+        from quest_feedback import QuestFeedback
+        self.quest_feedback = QuestFeedback()
+        from quest_navigation import QuestNavigation
+        self.quest_navigation = QuestNavigation()
         self.layout: dict = {}
         self.building_groups: dict[int, str] = {}
         self.person_groups: dict[str, str] = {}
 
     def objectives(self) -> list[dict]:
         from objectives import scenario_objectives
-        return scenario_objectives(self.state)
+        return self.quest_feedback.rows(scenario_objectives(self.state))
 
     @property
     def active(self) -> bool:
         return bool(self.state.key and not self.state.completed)
 
     def configure_after_load(self, game, save_stem: str, *, restored: bool) -> None:
+        from quest_feedback import QuestFeedback
+        self.quest_feedback = QuestFeedback()
+        from quest_navigation import QuestNavigation
+        self.quest_navigation = QuestNavigation()
+        game._tutorial_alert_queue = []
+        game._tutorial_unlock_popup = None
         self._load_layout()
         if restored:
             self._restore_presentation()
@@ -91,6 +108,12 @@ class ScenarioDirector:
                 self._ensure_scenario_deer(game)
 
     def start_tutorial(self, game) -> None:
+        from quest_feedback import QuestFeedback
+        self.quest_feedback = QuestFeedback()
+        from quest_navigation import QuestNavigation
+        self.quest_navigation = QuestNavigation()
+        game._tutorial_alert_queue = []
+        game._tutorial_unlock_popup = None
         from indicators import OverlayMode
         from settings import MAP_DISCOVERY_RADIUS
         from world import FeatureType
@@ -277,7 +300,19 @@ class ScenarioDirector:
         if step == "field_handbook":
             panel = game.field_plan_dialog
             panel.handbook_stage = self.state.handbook_completed
-            if panel.take_handbook_completion():
+            from quest_progress import mark, ready, check_shroud
+            if self.state.handbook_completed == 0:
+                check_shroud(game)
+            if self.state.handbook_completed == 4:
+                for season in getattr(panel, '_example_seen_seasons', set()):
+                    if season.name not in self.state.handbook_example_seasons:
+                        self.state.handbook_example_seasons.append(season.name)
+                if len(self.state.handbook_example_seasons) == 4:
+                    mark(self.state, 'read')
+                panel.rotation_unlocked = 'handbook_5:read' in self.state.quest_checks
+                if panel.open and panel.tab == 'rotation':
+                    mark(self.state, 'rotation')
+            if ready(self.state):
                 self.state.handbook_completed = min(5, self.state.handbook_completed + 1)
                 panel.handbook_stage = self.state.handbook_completed
                 panel.tab = "rotation" if self.state.handbook_completed == 5 else "status"
@@ -286,7 +321,7 @@ class ScenarioDirector:
                     self.state.completed = True
                     self.state.step = "complete"
                     self.prompt = None
-                    self._request_dialog("I'll draw in the current crop: Wheat. Perhaps next we should plant something to restore the soil.")
+                    self._request_dialog("Wheat is in the Rotation planner. Perhaps next we should plant something to restore the soil.")
                 else:
                     self._restore_presentation()
             return
@@ -652,27 +687,39 @@ class ScenarioDirector:
             "farm_question", "rhea_abundance", "ask_villagers_intro", "ask_villagers",
             "gwen_intro", "gwen_player", "gwen_history", "joss_intro", "joss_help",
             "joss_doubt", "joss_learn", "joss_books", "finish_interview",
-            "enter_farmhouse", "open_book", "complete",
+            "enter_farmhouse", "open_book", "field_handbook", "complete",
         }
         keys = {"wild:wheat"} if self.state.step in wheat_steps else set()
         if self.state.step in wheat_steps - {
             "clear_weeds", "rhea_weeds_approaches", "weeds_complete_dialog", "farm_question"
         }:
             keys.update(("wild:dandelion", "wild:daisy"))
+        keys.update(self.state.discovered_flora)
+        keys.update(key.replace("plant:", "wild:", 1) for key in self.state.inspected_species
+                    if key.startswith(("plant:", "tree:")))
         return keys
 
-    def _sync_management_unlocks(self, game) -> None:
-        """Show one replaceable discovery card when tutorial catalogue entries unlock."""
+    def _sync_management_unlocks(self, game, *, announce: bool = True) -> None:
+        """Queue a separate notification for each newly available entry."""
         candidates: list[tuple[str, str, str, str]] = []
         if self.state.rhea_villager_id is not None:
             candidates.append(("rhea", "Rhea added to People", "villager", "people"))
         if self.state.repaired_tent_id is not None:
             candidates.append(("tent", "Personal tent added to Buildings", "tent", "buildings"))
         flora = self.tutorial_management_flora()
-        if "wild:wheat" in flora:
-            candidates.append(("wheat", "Wheat added to Flora", "crop_plant", "flora:wild:wheat"))
-        if "wild:dandelion" in flora:
-            candidates.append(("flowers", "Dandelion and Daisy added to Flora", "flower_plant", "flora:wild:dandelion"))
+        from wild_species import WILD_BY_KEY
+        from trees import TREE_BY_KEY
+        for flora_key in sorted(flora):
+            group, key = flora_key.split(":", 1)
+            species = (TREE_BY_KEY if group == "tree" else WILD_BY_KEY).get(key)
+            if species is not None:
+                alert_key = "wheat" if flora_key == "wild:wheat" else f"flora:{flora_key}"
+                if key in ("dandelion", "daisy") and "flowers" in self.state.announced_unlocks:
+                    if alert_key not in self.state.announced_unlocks:
+                        self.state.announced_unlocks.append(alert_key)
+                candidates.append((alert_key, f"{species.label} added to Flora",
+                                   "tree_round_1" if group == "tree" else "crop_plant",
+                                   f"flora:{flora_key}"))
         if self.state.gwen_asked:
             candidates.append(("gwen", "Gwen Hill added to People", "villager", "people"))
         if self.state.joss_asked:
@@ -682,7 +729,9 @@ class ScenarioDirector:
         for key, label, icon, target in candidates:
             if key not in announced:
                 announced.append(key)
-                game._tutorial_unlock_popup = (label, icon, target)
+                if announce:
+                    from quest_feedback import queue_alert
+                    queue_alert(game, label, icon, target)
 
     def can_player_interact_building(self, building) -> bool:
         if self.state.key != TUTORIAL_KEY:
@@ -1208,9 +1257,8 @@ class ScenarioDirector:
         self.state.field_planner_unlocked = True
         field._tutorial_planner_entry = True
         game._select_building(field, show_player=True, detail_only=True)
-        game._tutorial_unlock_popup = (
-            "Field Planner added under the Farmhouse", "field", f"building:{field.id}"
-        )
+        from quest_feedback import queue_alert
+        queue_alert(game, "Field Planner added under the Farmhouse", "field", f"building:{field.id}")
         self.state.step, self.state.completed = "field_handbook", False
         game.field_plan_dialog.handbook_stage = 0
         game.field_plan_dialog.tab = "handbook"
@@ -1267,11 +1315,20 @@ class ScenarioDirector:
         return asdict(self.state)
 
     def load_dict(self, data: object) -> None:
+        from quest_feedback import QuestFeedback
+        self.quest_feedback = QuestFeedback()
+        from quest_navigation import QuestNavigation
+        self.quest_navigation = QuestNavigation()
         if not isinstance(data, dict):
             self.state, self.prompt, self._dialog_request = ScenarioState(), None, None
             return
         fields = ScenarioState.__dataclass_fields__
         self.state = ScenarioState(**{k: data[k] for k in fields if k in data})
+        if self.state.step == 'field_handbook':
+            if self.state.handbook_completed == 0 and not self.state.quest_shroud_checked:
+                self.state.quest_checks = [key for key in self.state.quest_checks if key != 'handbook_1:hive']
+            if self.state.handbook_completed == 4 and len(self.state.handbook_example_seasons) < 4:
+                self.state.quest_checks = [key for key in self.state.quest_checks if key not in ('handbook_5:read', 'handbook_5:rotation')]
         self._restore_presentation()
 
     def _restore_presentation(self) -> None:
@@ -1334,7 +1391,7 @@ class ScenarioDirector:
         post_sleep = step in {
             "talk_to_rhea", "morning_greeting", "walk_to_field", "equip_hoe", "clear_weeds",
             "weeds_complete_dialog", "ask_villagers", "gwen_intro", "joss_intro",
-            "enter_farmhouse", "open_book", "complete",
+            "enter_farmhouse", "open_book", "field_handbook", "complete",
         }
         if step in {"fix_tent", "go_to_sleep"} or post_sleep:
             self._join_rhea_to_village(game)
@@ -1353,6 +1410,9 @@ class ScenarioDirector:
             game.calendar_day = 0
             game.day_tick = round(game.ticks_per_day * (1.0 - 8.0 / 24.0))
             game.finish_tutorial_village_sleep()
+        if post_sleep:
+            self._seed_forest_animals(game)
+            self.state.wildlife_seeded = True
         if step in {"equip_hoe", "clear_weeds"}:
             field = self._village_field(game)
             if field is not None:
@@ -1360,6 +1420,19 @@ class ScenarioDirector:
             game.player.inventory.add_item("hoe", 1)
         if step == "clear_weeds":
             game.player.inventory.equip_tool("hoe")
+        after_weeding = step in {
+            "weeds_complete_dialog", "ask_villagers", "gwen_intro", "joss_intro",
+            "enter_farmhouse", "open_book", "field_handbook", "complete",
+        }
+        field = self._village_field(game)
+        if after_weeding:
+            if field is not None:
+                for x, y in field.plot_cells():
+                    game.world.get_cell(x, y).weeds = 0.0
+            game.player.inventory.add_item("hoe", 1)
+            game.player.inventory.equip_tool("hoe")
+            for villager in game.villagers:
+                self._release_villager_control(villager)
         self.state.gwen_asked = bool(checkpoint.get("gwen_asked", False))
         self.state.joss_asked = bool(checkpoint.get("joss_asked", False))
         self.state.field_planner_unlocked = bool(checkpoint.get("field_planner_unlocked", False))
@@ -1367,6 +1440,71 @@ class ScenarioDirector:
             game.player.inventory.add_item("book", 1)
         self.state.step = step
         self.state.completed = step == "complete"
+        if self.state.field_planner_unlocked:
+            self._apply_field_checkpoint(game, checkpoint)
         self._restore_presentation()
+        # Historical discoveries are already recorded; don't flood a checkpoint
+        # with notifications for every preceding tutorial event.
+        self._sync_management_unlocks(game, announce=False)
+        game._tutorial_unlock_popup = None
+        game._tutorial_alert_queue = []
+        game._layer_pulse_button = False
+        game._layer_pulse_mode = None
         px, py = game._player_camera_point()
         game.camera.center_on(px, py, game.world.cols, game.world.rows)
+
+    def _apply_field_checkpoint(self, game, checkpoint: dict) -> None:
+        from quest_progress import FIELD_OBJECTIVES, check_key, overlapping_hives, near_field
+        from world import FeatureType
+        from wild_species import resolve_species
+        from trees import resolve_tree
+
+        stage = max(0, min(5, int(checkpoint.get("handbook_completed", 5 if self.state.completed else 0))))
+        self.state.handbook_completed = stage
+        self.state.quest_checks = [check_key(index, key)
+            for index in range(stage) for key, _ in FIELD_OBJECTIVES[index]]
+        self.state.quest_checks.extend(key for key in checkpoint.get("quest_checks", [])
+                                       if key not in self.state.quest_checks)
+        self.state.handbook_example_seasons = list(checkpoint.get("handbook_example_seasons", []))
+        if stage == 5:
+            self.state.handbook_example_seasons = ["SPRING", "SUMMER", "AUTUMN", "WINTER"]
+        field = self._village_field(game)
+        if field is None:
+            return
+        cells = list(field.plot_cells())
+        if stage >= 1:
+            left, top, right, bottom = field.plot_bounds()
+            game.discovered_cells.update((x,y)
+                for y in range(max(0, top-10), min(game.world.rows, bottom+11))
+                for x in range(max(0, left-10), min(game.world.cols, right+11)))
+            self.state.quest_shroud_checked = True
+            self.state.quest_no_hives = not bool(overlapping_hives(game))
+            # Backfill actual nearby species rather than invented catalogue keys.
+            for y in range(game.world.rows):
+                for x in range(game.world.cols):
+                    if not near_field(game,x,y) or field.contains_plot(x,y):
+                        continue
+                    cell = game.world.get_cell(x,y)
+                    for obj in [cell, *cell.extra_objects]:
+                        species = resolve_species(obj.feature.name, getattr(obj,"crop_kind",None))
+                        key = ("tree:" + resolve_tree(getattr(obj,"tree_species",None)).key
+                               if obj.feature == FeatureType.TREE else
+                               "plant:" + species.key if species is not None else None)
+                        if key and key not in self.state.inspected_species and len(self.state.inspected_species) < 4:
+                            self.state.inspected_species.append(key)
+                            self._reveal_clearing(game,(x,y),2)
+        if stage >= 2:
+            self.state.quest_cells["crop"] = [list(cell) for cell in cells[:2]]
+        if stage >= 3:
+            self.state.quest_cells["traffic"] = [list(cell) for cell in cells[:4]]
+        if stage >= 4:
+            self.state.quest_cells["soil"] = [list(cell) for cell in cells[:4]]
+        self.state.discovered_flora = [key.replace("plant:", "wild:", 1) for key in self.state.inspected_species]
+        game._select_building(field, show_player=True, detail_only=True)
+        panel = game.field_plan_dialog
+        panel.handbook_stage = stage
+        panel.rotation_unlocked = "handbook_5:read" in self.state.quest_checks
+        panel.tab = checkpoint.get("planner_tab", "handbook" if stage == 0 else "status")
+        if panel.tab == "rotation" and not panel.rotation_unlocked:
+            panel.tab = "handbook"
+        self.quest_navigation.focused(self.objectives())

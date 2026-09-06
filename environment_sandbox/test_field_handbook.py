@@ -15,7 +15,8 @@ class HandbookTests(unittest.TestCase):
         director = ScenarioDirector()
         director.state = ScenarioState(key=TUTORIAL_KEY, step='field_handbook', field_planner_unlocked=True)
         director._sync_management_unlocks = lambda game: None
-        game = SimpleNamespace(field_plan_dialog=panel)
+        game = SimpleNamespace(field_plan_dialog=panel, scenario=director)
+        director.state.quest_shroud_checked = True
         field = SimpleNamespace(id=10, kind=BuildingKind.FIELD, plot_w=6, plot_h=6, plot_size_label=lambda: '6 × 6')
         panel.building_id = 10
         panel.configure_embed(pygame.Rect(0, 0, 620, 700))
@@ -31,6 +32,9 @@ class HandbookTests(unittest.TestCase):
             self.assertNotIn('tab_rotation', dict(panel._buttons))
             panel.tab = 'handbook'
             panel.draw(surface, field)
+            from quest_progress import FIELD_OBJECTIVES, mark
+            for key, _ in FIELD_OBJECTIVES[stage]:
+                mark(director.state, key)
             panel._on_action('record_observations', field)
             director.update(game)
             restored = ScenarioDirector()
@@ -38,4 +42,4 @@ class HandbookTests(unittest.TestCase):
             self.assertEqual(restored.state.handbook_completed, stage + 1)
         self.assertTrue(director.state.completed)
         self.assertEqual(panel.tab, 'rotation')
-        self.assertIn("I'll draw in the current crop: Wheat", director.take_dialog_request()[0])
+        self.assertIn("Wheat is in the Rotation planner", director.take_dialog_request()[0])

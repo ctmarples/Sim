@@ -107,5 +107,8 @@
   "villager_ack_02": {
     "bus":"sfx","category":"Villager Voice","conditions":{},"file":"villager/acknowledgement/villager_ack_02.wav","label":"Villager acknowledgement 2",
     "parameters":{"cooldown":0.4,"loop":false,"menu_allowed":false},"trigger":"villager.acknowledgement","volume":0.8,"weight":1.0
-  }
+  },
+  "quest_new": {"label": "New quest \u00b7 Notification 055", "category": "UI", "file": "ui/universfield-new-notification-055-494261.mp3", "trigger": "quest.new", "bus": "sfx", "volume": 1.0, "parameters": {"menu_allowed": true}},
+  "quest_objective_complete": {"label": "Objective complete \u00b7 Pencil check mark", "category": "UI", "file": "ui/freesound_community-pencil_check_mark_2-105940.mp3", "trigger": "quest.objective_complete", "bus": "sfx", "volume": 1.0, "parameters": {"menu_allowed": true}},
+  "management_item_added": {"label": "Management item \u00b7 Notification 040", "category": "UI", "file": "ui/universfield-new-notification-040-493469.mp3", "trigger": "management.item_added", "bus": "sfx", "volume": 1.0, "parameters": {"menu_allowed": true}}
 }

@@ -491,6 +491,8 @@ class Game:
         self._tutorial_sleep_started: float | None = None
         self._tutorial_sleep_finished = False
         self._tutorial_unlock_popup: tuple[str, str, str] | None = None
+        self._layer_pulse_button = False
+        self._layer_pulse_mode: str | None = None
         self.relocate_building_id: int | None = None
         self.selected_construction_id: int | None = None
         self._player_hud_tool_hits: list[tuple[pygame.Rect, str]] = []
@@ -1443,6 +1445,13 @@ class Game:
         )
 
     def _update_scenario(self) -> None:
+        from objectives import scenario_objectives
+        from quest_feedback import update_alerts
+        update_alerts(self)
+        feedback = self.scenario.quest_feedback
+        feedback.sync(self, scenario_objectives(self.scenario.state))
+        if feedback.holding:
+            return
         if self.scenario_dialog.dismissed:
             self.scenario_dialog.dismissed=False
             choice=self.scenario_dialog.choice
@@ -1450,6 +1459,9 @@ class Game:
             self.scenario_dialog.choice=None
             self.scenario.dismiss_dialog(choice)
         self.scenario.update(self)
+        feedback.sync(self, scenario_objectives(self.scenario.state))
+        if feedback.holding:
+            return
         request=self.scenario.take_dialog_request()
         if request:
             text,choices=request
@@ -1932,7 +1944,16 @@ class Game:
                 self.scenario_dialog.handle_event(event)
                 continue
             elif (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
+                  and self._handle_layers_menu_click(event.pos)):
+                continue
+            elif (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
                   and self._handle_objective_click(event.pos)):
+                continue
+            elif event.type == pygame.MOUSEWHEEL and self.scenario_dialog.quest_rect.collidepoint(pygame.mouse.get_pos()):
+                nav = self.scenario.quest_navigation
+                body = max(1, self.scenario_dialog._view_height - 34)
+                max_scroll = max(0, self.scenario_dialog._content_height - body)
+                nav.scroll_by(event.y, max_scroll)
                 continue
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self._handle_tutorial_unlock_click(event.pos):
                 continue
@@ -2567,23 +2588,23 @@ class Game:
         elif key == pygame.K_3:
             self._set_overlay(OverlayMode.TREE_DENSITY)
         elif key == pygame.K_4:
-            self._set_overlay(OverlayMode.SPECIES_DIVERSITY)
+            self._set_overlay(OverlayMode.BIODIVERSITY)
         elif key == pygame.K_5:
             self._set_overlay(OverlayMode.DISTURBANCE)
         elif key == pygame.K_6:
-            self._set_overlay(OverlayMode.BIODIVERSITY)
-        elif key == pygame.K_7:
             self._set_overlay(OverlayMode.FLORAL_RESOURCES)
-        elif key == pygame.K_8:
+        elif key == pygame.K_7:
             self._set_overlay(OverlayMode.POLLINATION)
-        elif key == pygame.K_9:
+        elif key == pygame.K_8:
             self._set_overlay(OverlayMode.EROSION)
-        elif key == pygame.K_0 and not self.height_edit_mode:
+        elif key == pygame.K_9:
             self._set_overlay(OverlayMode.FERTILITY)
-        elif key == pygame.K_F10:
+        elif key == pygame.K_0 and not self.height_edit_mode:
             self._set_overlay(OverlayMode.SOIL_MOISTURE)
-        elif key == pygame.K_F11:
+        elif key == pygame.K_F10:
             self._set_overlay(OverlayMode.TEMPERATURE)
+        elif key == pygame.K_F11:
+            self._set_overlay(OverlayMode.RAINFALL)
         elif key in (pygame.K_LEFTBRACKET, pygame.K_COMMA):
             self._cycle_ticks_per_day(-1)
         elif key in (pygame.K_RIGHTBRACKET, pygame.K_PERIOD):
@@ -3338,6 +3359,8 @@ class Game:
         return self.camera.cell_rect(x, y)
 
     def _on_mouse_down(self, pos: tuple[int, int]) -> None:
+        if self._handle_layers_menu_click(pos):
+            return
         if self.resource_bar.layers_open and not self.resource_bar.contains(pos):
             self.resource_bar.layers_open = False
         building = self._selected_building()
@@ -3355,7 +3378,10 @@ class Game:
             return
         if self.resource_bar.contains(pos):
             previous_view = self.resource_bar.view_mode
+            was_open = self.resource_bar.layers_open
             handled, layer = self.resource_bar.handle_click(pos, self.overlay_mode)
+            if handled and self.resource_bar.layers_open and not was_open:
+                self._layer_pulse_button = False
             if layer is not None:
                 self._set_overlay(layer)
             elif handled and self.resource_bar.view_mode != previous_view:
@@ -3540,6 +3566,29 @@ class Game:
             self._set_status("Click a building or home to assign workplace.")
             return
 
+        if not self.height_edit_mode and (x, y) in self.discovered_cells:
+            colony = next((c for c in self.wildlife.colonies
+                           if c.kind == AnimalKind.BEE and (c.x, c.y) == (x, y)), None)
+            if colony is not None:
+                from quest_progress import inspect_hive
+                from resource_balance import POLLINATOR_BASE_RADIUS, POLLINATOR_RADIUS_PER_LEVEL
+                inspect_hive(self, colony)
+                reach = max(1, POLLINATOR_BASE_RADIUS + (colony.level - 1) * POLLINATOR_RADIUS_PER_LEVEL)
+                self.inspected_animal_id = self.inspected_tree_cell = None
+                self.resource_inspect.open_details(title="Beehive", lines=[
+                    f"Colony level: {colony.level}", f"Pollination range: {reach} cells",
+                    "Bees pollinate crops within reach of their hive."],
+                    cell=(x, y), screen_xy=screen_pos or self.camera.world_to_screen(x, y))
+                return
+            from quest_progress import inspect_field
+            observation = inspect_field(self, x, y)
+            if observation is not None:
+                title, lines = observation
+                self.inspected_animal_id = self.inspected_tree_cell = None
+                self.resource_inspect.open_details(title=title, lines=lines, cell=(x, y),
+                    screen_xy=screen_pos or self.camera.world_to_screen(x, y))
+                return
+
         if self.habitat_view_mode:
             hit = self._habitat_at_cell(x, y)
             if hit is not None:
@@ -3549,6 +3598,8 @@ class Game:
 
         animal = self.wildlife.animal_at(x, y)
         if animal is not None:
+            from quest_progress import inspect_species
+            inspect_species(self, x, y, f"animal:{animal.kind.name}")
             self._open_animal_inspect(animal)
             return
 
@@ -3580,6 +3631,14 @@ class Game:
         natural_hit=self._natural_object_at_screen(x,y,screen_pos) if screen_pos is not None else None
         if natural_hit is not None:
             obj,secondary,spec=natural_hit
+            from quest_progress import inspect_species
+            from wild_species import resolve_species
+            species = resolve_species(obj.feature.name, getattr(obj, "crop_kind", None))
+            if obj.feature == FeatureType.TREE:
+                from trees import resolve_tree
+                inspect_species(self, x, y, f"tree:{resolve_tree(getattr(obj, 'tree_species', None)).key}")
+            elif species is not None and not (building and building.kind == BuildingKind.FIELD):
+                inspect_species(self, x, y, f"plant:{species.key}")
             if obj.feature==FeatureType.TREE and secondary is None:
                 self.inspected_tree_cell=(x,y);self._refresh_tracking_inspect(force=True)
             else:self._open_natural_object_inspect(x,y,obj,secondary,spec,screen_pos)
@@ -3713,6 +3772,21 @@ class Game:
 
     def _handle_panel_click(self, pos: tuple[int, int]) -> bool:
         action = self.ui.hit_action(pos)
+        if action is not None and action.startswith("quest_load_group:"):
+            self.ui.quest_load_group = action.split(":", 1)[1]
+            self.ui._panel_built = False
+            return True
+        if action is not None and action.startswith("tutorial_load:"):
+            from tutorial_checkpoints import CHECKPOINTS, checkpoint_path
+            number = int(action.split(":", 1)[1])
+            path = checkpoint_path(number)
+            label = next((name for n, _, name in CHECKPOINTS if n == number), path.name)
+            if path.is_file():
+                load_from_path(self, path)
+                self._set_status(f"Loaded {label}")
+            else:
+                self._set_status(f"Missing {label}")
+            return True
         if action is not None and action.startswith("edit_tool:"):
             key = action.split(":", 1)[1]
             try:
@@ -5951,6 +6025,9 @@ class Game:
                 cell.fertility = clamp01(max(floor, float(cell.fertility) - drain))
 
     def _sample_environment(self) -> None:
+        self._field_fertility_generation = getattr(self, "_field_fertility_generation", 0) + 1
+        self._world_layer_key = None
+        self._height_sample_cache = None
         """8×/year: refresh habitats/forest floor and stable env production grids."""
         from wildlife import AnimalKind
 
@@ -6904,6 +6981,7 @@ class Game:
             if self.scenario.state.key == "tutorial_slice" and self.scenario.state.field_planner_unlocked
             else None
         )
+        self.field_plan_dialog.rotation_unlocked = ('handbook_5:read' in self.scenario.state.quest_checks)
         self.field_plan_dialog.open_for(building, season=self.season)
         self.management.select_building(
             building.id, show_player=show_player, detail_only=detail_only
@@ -7983,6 +8061,13 @@ class Game:
         if plan is None:
             self._set_status("Plan must be inside the field.")
             return
+        state = self.scenario.state
+        if (state.step == 'field_handbook' and state.handbook_completed == 4
+                and crop_kind == 'wheat' and 'handbook_5:read' in state.quest_checks
+                and self.field_plan_dialog.tab == 'rotation'):
+            from quest_progress import mark
+            mark(state, 'rotation')
+            mark(state, 'wheat')
         crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
         kinds = sorted({p.crop_kind for p in building.plans})
         self._set_status(
@@ -8333,14 +8418,29 @@ class Game:
         return px, py
 
     def _set_overlay(self, mode: OverlayMode) -> None:
+        from quest_progress import mark_overlay_enabled, overlay_unlocked
         state = self.scenario.state
-        required = {"BIODIVERSITY": 1, "POLLINATION": 1, "DISTURBANCE": 3, "FERTILITY": 4, "SOIL_MOISTURE": 4, "EROSION": 4, "FIELD_YIELD": 5}
-        if state.key == "tutorial_slice" and state.handbook_completed < required.get(mode.name, 0):
+        if mode == OverlayMode.SPECIES_DIVERSITY:
+            mode = OverlayMode.BIODIVERSITY
+        if not overlay_unlocked(state, mode.name):
             self._set_status("Complete the field handbook objective to reveal this layer.")
             return
         self.overlay_mode = mode
+        self._smooth_overlay_cache = None
         self._refresh_indicators()
+        mark_overlay_enabled(state, mode.name)
+        if self._layer_pulse_mode == mode.name:
+            self._layer_pulse_mode = None
+            self._layer_pulse_button = False
         self._set_status(f"Overlay: {OVERLAY_LABELS[mode]}")
+
+    def _unlocked_overlay_modes(self) -> set[OverlayMode]:
+        from quest_progress import overlay_unlocked
+        state = self.scenario.state
+        return {
+            mode for mode in OverlayMode
+            if mode == OverlayMode.NONE or overlay_unlocked(state, mode.name)
+        }
 
     # ------------------------------------------------------------------
     # Lookups
@@ -19736,6 +19836,7 @@ class Game:
         self.status_timer = STATUS_MESSAGE_FRAMES
 
     def _refresh_indicators(self) -> None:
+        self._smooth_overlay_cache = None
         if self.overlay_mode == OverlayMode.BIODIVERSITY:
             avg = self.env_maps.biodiversity
             self.overlay_values = [row[:] for row in avg]
@@ -20317,6 +20418,7 @@ class Game:
             return
         self._draw_world()
         if self.overlay_mode != OverlayMode.NONE:
+            self._desaturate_map_terrain()
             self._draw_overlay()
         if self.height_edit_mode:
             self._draw_height_edit_overlay()
@@ -20395,6 +20497,14 @@ class Game:
             needing=len(residents),
             regional_wealth=self.regional_wealth,
             overlay_mode=self.overlay_mode,
+            unlocked_overlays=self._unlocked_overlay_modes(),
+            pulse_button=self._layer_pulse_button,
+            pulse_mode=(
+                OverlayMode[self._layer_pulse_mode]
+                if self._layer_pulse_mode in OverlayMode.__members__
+                else None
+            ),
+            draw_menu=False,
         )
         self.toolbar.draw(
             self.screen,
@@ -20589,6 +20699,7 @@ class Game:
                 ):
                     self.selected_habitat_kind = kind
                     self.selected_habitat_id = pid
+            self.management.quest_navigation = self.scenario.quest_navigation
             self.management.draw(
                 self.screen,
                 villagers=self.scenario.tutorial_management_villagers(self),
@@ -20682,28 +20793,76 @@ class Game:
         self.sound_settings.draw(self.screen, self.sounds)
         self.file_dialog.draw(self.screen)
         self.number_input.draw(self.screen)
-        current_objectives = [row for row in self.scenario.objectives() if not row["completed"]]
-        self.scenario_dialog.draw(self.screen, current_objectives[0]["headline"] if current_objectives else None)
+        focused = self.scenario.quest_navigation.focused(self.scenario.objectives())
+        group_rows = self.scenario.quest_navigation.group_rows(self.scenario.objectives())
+        dialog = self.scenario_dialog
+        nav = self.scenario.quest_navigation
+        body = max(1, getattr(dialog, '_view_height', 400) - 34)
+        max_scroll = max(0, getattr(dialog, '_content_height', 0) - body)
+        nav.tick(max_scroll)
+        if nav.tick_collapse():
+            focused = nav.focused(self.scenario.objectives())
+            group_rows = nav.group_rows(self.scenario.objectives())
+        dialog.draw(
+            self.screen,
+            focused['headline'] if focused else None,
+            quest=focused,
+            group_rows=group_rows,
+            navigation=nav,
+        )
+        nav.note_pointer(dialog.quest_rect.collidepoint(mouse))
         self._draw_tutorial_unlock_popup()
+        # Layers dropdown above quest HUD so list rows stay clickable.
+        self.resource_bar.draw_layers_menu(self.screen, mouse, self.overlay_mode)
         if self._content_lab_active and self._content_lab_session is not None:
             self._content_lab_session.draw(self.screen)
         self._draw_tutorial_sleep_transition()
         pygame.display.flip()
 
-    def _handle_objective_click(self, pos: tuple[int, int]) -> bool:
-        if not self.scenario_dialog.objective_rect.collidepoint(pos):
+    def _handle_layers_menu_click(self, pos: tuple[int, int]) -> bool:
+        """Keep Layers dropdown above quest HUD / map hit targets."""
+        if not self.resource_bar.layers_menu_contains(pos):
+            if self.resource_bar.layers_open and not self.resource_bar.contains(pos):
+                self.resource_bar.layers_open = False
             return False
-        current = [row for row in self.scenario.objectives() if not row["completed"]]
-        if not current:
-            return False
-        self.management.open_window(MgmtTab.PLAYER)
-        self.management._pending_action = "tab_player"
-        self._apply_management_action()
-        self.management.focus_objective(current[0]["id"])
+        was_open = self.resource_bar.layers_open
+        _handled, layer = self.resource_bar.handle_click(pos, self.overlay_mode)
+        if self.resource_bar.layers_open and not was_open:
+            self._layer_pulse_button = False
+        if layer is not None:
+            self._set_overlay(layer)
         return True
 
+    def _handle_objective_click(self, pos: tuple[int, int]) -> bool:
+        if self.resource_bar.layers_menu_contains(pos):
+            return False
+        dialog = self.scenario_dialog
+        nav = self.scenario.quest_navigation
+        for rect, delta in getattr(dialog, 'quest_steps', []):
+            if rect.collidepoint(pos):
+                nav.step(self.scenario.objectives(), delta)
+                return True
+        quest_id = dialog.quest_at(pos)
+        if quest_id is not None:
+            nav.select(quest_id)
+            if dialog._section_tops:
+                nav.snap_to_focus(dialog._section_tops, dialog._section_ids)
+            return True
+        if dialog.objective_rect.collidepoint(pos):
+            focused = nav.focused(self.scenario.objectives())
+            if focused is None:
+                return False
+            self.management.open_window(MgmtTab.PLAYER)
+            self.management._pending_action = "tab_player"
+            self._apply_management_action()
+            self.management.focus_objective(focused["id"])
+            if focused["completed"]:
+                self.management.objectives_filter = "all"
+            return True
+        return dialog.quest_rect.collidepoint(pos)
+
     def _tutorial_unlock_rect(self) -> pygame.Rect:
-        return pygame.Rect(max(12, map_view_width() - 330), MAP_OFFSET_Y + 14, 316, 72)
+        return pygame.Rect(12, MAP_OFFSET_Y + 14, 316, 72)
 
     def _handle_tutorial_unlock_click(self, pos: tuple[int, int]) -> bool:
         popup = self._tutorial_unlock_popup
@@ -20721,6 +20880,11 @@ class Game:
         elif target.startswith("flora:"):
             self.management.open_window(MgmtTab.FLORA)
             self.management.selected_flora_key = target.split(":", 1)[1]
+        elif target.startswith("layer:"):
+            mode_name = target.split(":", 1)[1]
+            self._layer_pulse_button = False
+            self._layer_pulse_mode = mode_name
+            self.resource_bar.layers_open = True
         elif target.startswith("building:"):
             building = self.buildings.get(int(target.split(":", 1)[1]))
             if building is not None:
@@ -20742,7 +20906,11 @@ class Game:
             pass
         font = pygame.font.SysFont("menlo", 13, bold=True)
         self.screen.blit(font.render(label, True, COLOUR_TEXT), (rect.x + 64, rect.y + 18))
-        hint = pygame.font.SysFont("menlo", 10).render("Click to open Management", True, COLOUR_TEXT_DIM)
+        hint = pygame.font.SysFont("menlo", 10).render(
+            "Click to open Layers" if _target.startswith("layer:") else "Click to open Management",
+            True,
+            COLOUR_TEXT_DIM,
+        )
         self.screen.blit(hint, (rect.x + 64, rect.y + 42))
         close = font.render("×", True, COLOUR_TEXT)
         self.screen.blit(close, (rect.right - 23, rect.y + 6))
@@ -21841,6 +22009,8 @@ class Game:
             self.day_tick // 16,
             getattr(self, "_work_gen", 0),
             construction_visual,
+            getattr(self, "_field_fertility_generation", 0),
+            tuple(b.plot_bounds() for b in self.buildings.values() if b.kind == BuildingKind.FIELD),
             round(vibrancy, 1),
             int(freeze * 5),
             bool(self.height_sample_enabled),
@@ -21857,6 +22027,15 @@ class Game:
 
         farm_cells = self._farm_field_cells()
         base, water_mask, grass_mask, soil_mask = self._ensure_terrain_base(farm_cells)
+        from field_fertility_tint import FieldFertilityTint
+        if not hasattr(self, '_field_fertility_tint'):
+            self._field_fertility_tint = FieldFertilityTint()
+        before = self._field_fertility_tint.key
+        base = self._field_fertility_tint.apply(base, self.world,
+            [b for b in self.buildings.values() if b.kind == BuildingKind.FIELD],
+            getattr(self, '_field_fertility_generation', 0), CELL_SIZE)
+        if before != self._field_fertility_tint.key:
+            self._height_sample_cache = None
         self.screen.set_clip(map_clip)
 
         origin = (0, MAP_OFFSET_Y)
@@ -22469,25 +22648,62 @@ class Game:
                 )
         self.screen.set_clip(None)
 
+    def _desaturate_map_terrain(self) -> None:
+        """Greyscale the map so overlay colour ramps stay readable."""
+        map_clip = pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())
+        view = self.screen.subsurface(map_clip).copy()
+        self.screen.blit(pygame.transform.grayscale(view), map_clip.topleft)
+
+    def _ensure_smooth_overlay_surface(self) -> pygame.Surface:
+        """World-space translucent overlay with bilinear cell blending."""
+        values = self.overlay_values
+        key = (self.overlay_mode, id(values), self.world.cols, self.world.rows, CELL_SIZE)
+        cache = getattr(self, "_smooth_overlay_cache", None)
+        if cache is not None and cache[0] == key:
+            return cache[1]
+        cols, rows = self.world.cols, self.world.rows
+        # One padded sample per cell centre so smoothscale blends neighbours.
+        samples = pygame.Surface((cols + 2, rows + 2), pygame.SRCALPHA)
+        field_only = self.overlay_mode == OverlayMode.FIELD_YIELD
+        for y in range(rows):
+            row = values[y] if y < len(values) else []
+            for x in range(cols):
+                value = float(row[x]) if x < len(row) else 0.0
+                if field_only and value <= 0.0:
+                    colour = (0, 0, 0, 0)
+                else:
+                    rgb = overlay_colour(self.overlay_mode, value)
+                    colour = (*rgb, OVERLAY_ALPHA)
+                samples.set_at((x + 1, y + 1), colour)
+        # Mirror edges so the padding does not darken the map border.
+        for x in range(cols):
+            samples.set_at((x + 1, 0), samples.get_at((x + 1, 1)))
+            samples.set_at((x + 1, rows + 1), samples.get_at((x + 1, rows)))
+        for y in range(rows + 2):
+            samples.set_at((0, y), samples.get_at((1, y)))
+            samples.set_at((cols + 1, y), samples.get_at((cols, y)))
+        smooth = pygame.transform.smoothscale(
+            samples, ((cols + 2) * CELL_SIZE, (rows + 2) * CELL_SIZE)
+        )
+        surface = pygame.Surface((cols * CELL_SIZE, rows * CELL_SIZE), pygame.SRCALPHA)
+        surface.blit(
+            smooth,
+            (0, 0),
+            pygame.Rect(CELL_SIZE, CELL_SIZE, cols * CELL_SIZE, rows * CELL_SIZE),
+        )
+        self._smooth_overlay_cache = (key, surface)
+        return surface
+
     def _draw_overlay(self) -> None:
-        """Draw indicator overlay for the camera viewport (world-sized values)."""
+        """Draw a smooth indicator overlay (no per-cell grid seams)."""
         if self.overlay_mode == OverlayMode.NONE:
             return
         if not self.overlay_values or len(self.overlay_values) != self.world.rows:
             self._refresh_indicators()
         map_clip = pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())
         self.screen.set_clip(map_clip)
-        x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
-        field_only = self.overlay_mode == OverlayMode.FIELD_YIELD
-        for y in range(y0, y1 + 1):
-            for x in range(x0, x1 + 1):
-                if not self.world.in_bounds(x, y):
-                    continue
-                value = self.overlay_values[y][x]
-                if field_only and value <= 0.0:
-                    continue
-                colour = overlay_colour(self.overlay_mode, value)
-                self._draw_height_quad(x, y, colour, OVERLAY_ALPHA)
+        surface = self._ensure_smooth_overlay_surface()
+        self._blit_camera_world_surface(surface, (0, MAP_OFFSET_Y))
         self.screen.set_clip(None)
 
     def _draw_overlay_hud(self) -> None:
