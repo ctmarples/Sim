@@ -517,6 +517,8 @@ class VillagerInspectDialog:
         mouse_pos: tuple[int, int] | None,
         requirement_rows: list[dict] | None,
         activity_label: str | None,
+        extra_status_mods: list | None = None,
+        political_work_mult: float = 1.0,
     ) -> None:
         """Focused, paper-native inspect pages modelled on the field inspector."""
         panel = self.panel_rect()
@@ -698,6 +700,7 @@ class VillagerInspectDialog:
                 food_hunger=villager.food_hunger_mult,
                 inventory=villager.inventory,
                 calendar_day=calendar_day,
+                work_extra_mult=political_work_mult,
             )
             _w, tips = draw_effect_total_columns(
                 surface, x, y, walk=walk, work=work, hunger=hunger,
@@ -713,14 +716,18 @@ class VillagerInspectDialog:
                 last_meal=list(villager.last_meal), inventory=villager.inventory,
                 calendar_day=calendar_day,
             )
+            if extra_status_mods:
+                mods = list(mods) + list(extra_status_mods)
             positive = [mod for mod in mods if mod.is_buff]
             negative = [mod for mod in mods if mod.is_debuff]
             for rows, edge in ((positive, (66, 145, 72)), (negative, (181, 66, 58))):
                 if rows:
-                    _end, hits, _ = draw_mod_row(surface, x, y, rows, mouse_pos=mouse_pos, icon_size=MOD_CELL, gap=MOD_GAP)
+                    _end, hits, _, tip_hits = draw_mod_row(
+                        surface, x, y, rows, mouse_pos=mouse_pos, icon_size=MOD_CELL, gap=MOD_GAP
+                    )
                     for rect, _mod in hits:
                         pygame.draw.rect(surface, edge, rect, 2, border_radius=4)
-                    self._icon_tips.extend((rect, mod.tip) for rect, mod in hits)
+                    self._icon_tips.extend(tip_hits)
                 else:
                     surface.blit(self.font_small.render("—", True, COLOUR_TEXT_DIM), (x, y + 8))
                 y += MOD_CELL + 8
@@ -781,6 +788,8 @@ class VillagerInspectDialog:
         player_inventory: Inventory | None = None,
         requirement_rows: list[dict] | None = None,
         activity_label: str | None = None,
+        extra_status_mods: list | None = None,
+        political_work_mult: float = 1.0,
     ) -> None:
         if not self.open or villager is None:
             return
@@ -798,6 +807,8 @@ class VillagerInspectDialog:
                 mouse_pos=mouse_pos,
                 requirement_rows=requirement_rows,
                 activity_label=activity_label,
+                extra_status_mods=extra_status_mods,
+                political_work_mult=political_work_mult,
             )
             return
 
@@ -945,6 +956,8 @@ class VillagerInspectDialog:
             inventory=villager.inventory,
             calendar_day=calendar_day,
         )
+        if extra_status_mods:
+            all_mods = list(all_mods) + list(extra_status_mods)
         buffs = [m for m in all_mods if m.is_buff]
         debuffs = [m for m in all_mods if m.is_debuff]
         temp_ev = active_temp_event(villager.inventory, calendar_day)
@@ -966,6 +979,7 @@ class VillagerInspectDialog:
                 food_hunger=villager.food_hunger_mult,
                 inventory=villager.inventory,
                 calendar_day=calendar_day,
+                work_extra_mult=political_work_mult,
             )
             _, total_tips = draw_effect_total_columns(
                 surface,
@@ -1062,7 +1076,7 @@ class VillagerInspectDialog:
                 (x, buff_y + MOD_CELL // 2 - 6),
             )
             if buffs:
-                _, buff_hits, _ = draw_mod_row(
+                _, buff_hits, _, tip_hits = draw_mod_row(
                     surface,
                     content_x,
                     buff_y,
@@ -1072,8 +1086,7 @@ class VillagerInspectDialog:
                     icon_size=MOD_CELL,
                     gap=MOD_GAP,
                 )
-                for rect, mod in buff_hits:
-                    self._icon_tips.append((rect, mod.tip))
+                self._icon_tips.extend(tip_hits)
             else:
                 surface.blit(
                     self.font_small.render("—", True, COLOUR_TEXT_DIM),
@@ -1085,7 +1098,7 @@ class VillagerInspectDialog:
                 (x, debuff_y + MOD_CELL // 2 - 6),
             )
             if debuffs:
-                _, debuff_hits, _ = draw_mod_row(
+                _, debuff_hits, _, tip_hits = draw_mod_row(
                     surface,
                     content_x,
                     debuff_y,
@@ -1095,8 +1108,7 @@ class VillagerInspectDialog:
                     icon_size=MOD_CELL,
                     gap=MOD_GAP,
                 )
-                for rect, mod in debuff_hits:
-                    self._icon_tips.append((rect, mod.tip))
+                self._icon_tips.extend(tip_hits)
             else:
                 surface.blit(
                     self.font_small.render("—", True, COLOUR_TEXT_DIM),

@@ -844,8 +844,9 @@ def villager_unmet_requirements(
     return missing
 
 
-def season_pay_coins(unmet: list[str]) -> int:
-    return len(unmet) * SEASON_MISSING_REQ_PAY_COINS
+def season_pay_coins(unmet: list[str], *, coins_per: int | None = None) -> int:
+    rate = SEASON_MISSING_REQ_PAY_COINS if coins_per is None else max(0, int(coins_per))
+    return len(unmet) * rate
 
 
 def requirement_label(key: str) -> str:

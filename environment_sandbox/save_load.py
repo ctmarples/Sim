@@ -873,6 +873,9 @@ def serialize_game(game: Game) -> dict[str, Any]:
         "hire_candidates": [c.to_dict() for c in getattr(game, "hire_candidates", [])],
         "next_community_id": int(getattr(game, "next_community_id", 1)),
         "next_hire_id": int(getattr(game, "next_hire_id", 1)),
+        "sociopolitical": (
+            game.political.to_dict() if getattr(game, "political", None) is not None else None
+        ),
     }
     if hasattr(game, "env_maps"):
         payload["env_maps"] = game.env_maps.to_save_dict()
@@ -1908,6 +1911,9 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             max((c.id for c in game.hire_candidates), default=0) + 1,
         )
     )
+    from sociopolitical import SettlementPoliticalState
+
+    game.political = SettlementPoliticalState.from_dict(data.get("sociopolitical"))
     place = data.get("place_kind")
     game.place_kind = BuildingKind[place] if place else None
     game.sim_speed = int(data.get("sim_speed", 1))

@@ -256,6 +256,13 @@ from height_sample import (
 from balance_config import BalanceState, set_active_balance
 from balance_dialog import BalanceDialog
 from wildlife_repopulate_dialog import WildlifeRepopulateDialog
+from sociopolitical import SettlementPoliticalState, season_pay_rate
+from sociopolitical_ui import (
+    DecisionModal,
+    EndOfTestSummaryModal,
+    InstitutionRevealModal,
+    SociopoliticalPanel,
+)
 from camera import Camera
 from dialogs import FileDialog
 from number_input_dialog import NumberInputDialog
@@ -504,6 +511,11 @@ class Game:
         self.resource_tracker = ResourceTrackerDialog()
         self.balance_dialog = BalanceDialog()
         self.wildlife_repopulate_dialog = WildlifeRepopulateDialog()
+        self.political = SettlementPoliticalState()
+        self.sociopolitical_panel = SociopoliticalPanel()
+        self.decision_modal = DecisionModal()
+        self.institution_reveal = InstitutionRevealModal()
+        self.end_of_test_summary = EndOfTestSummaryModal()
         self.balance = BalanceState()
         set_active_balance(self.balance)
         from save_load import saves_dir
@@ -949,10 +961,15 @@ class Game:
             ]
         if self._launch_menu == "new":
             return [
-                (pygame.Rect(x, panel.y + 125, w, h), "default", "Default valley"),
-                (pygame.Rect(x, panel.y + 179, w, h), "maps", "Choose existing map"),
-                (pygame.Rect(x, panel.y + 233, w, h), "generate", "Generate new map"),
-                (pygame.Rect(x, panel.y + 307, w, h), "back", "Back"),
+                (pygame.Rect(x, panel.y + 110, w, h), "default", "Default valley"),
+                (pygame.Rect(x, panel.y + 158, w, h), "maps", "Choose existing map"),
+                (pygame.Rect(x, panel.y + 206, w, h), "generate", "Generate new map"),
+                (
+                    pygame.Rect(x, panel.y + 254, w, h),
+                    "sociopolitical_test",
+                    "Sociopolitical Test Settlement",
+                ),
+                (pygame.Rect(x, panel.y + 322, w, h), "back", "Back"),
             ]
         if self._launch_menu == "maps":
             buttons: list[tuple[pygame.Rect, str, str]] = []
@@ -989,6 +1006,8 @@ class Game:
     def _launch_panel(self) -> pygame.Rect:
         if self._launch_menu in ("generator", "preview"):
             w, h = min(700, WINDOW_WIDTH - 30), min(620, WINDOW_HEIGHT - 30)
+        elif self._launch_menu == "new":
+            w, h = min(520, WINDOW_WIDTH - 30), min(520, WINDOW_HEIGHT - 30)
         else:
             w, h = min(520, WINDOW_WIDTH - 30), min(460, WINDOW_HEIGHT - 30)
         return pygame.Rect((WINDOW_WIDTH - w) // 2, (WINDOW_HEIGHT - h) // 2, w, h)
@@ -1139,6 +1158,8 @@ class Game:
             self.running = False
         elif action == "default":
             self._begin_new_game()
+        elif action == "sociopolitical_test":
+            self._begin_sociopolitical_test()
         elif action == "maps":
             self._launch_map_files = self._generated_map_paths()
             self._launch_menu = "maps"
@@ -1270,6 +1291,18 @@ class Game:
         self._loaded_save_name = None
         self._launch_menu = None
         self._set_status(f"New game started on {label}.")
+
+    def _begin_sociopolitical_test(self) -> None:
+        """Launch the Sociopolitical Test Settlement preset."""
+        from sociopolitical_hooks import bootstrap_sociopolitical_test
+
+        self._begin_new_game()
+        if self._launch_menu is not None:
+            # _begin_new_game failed (e.g. map error) — abort.
+            return
+        bootstrap_sociopolitical_test(self)
+        self.sociopolitical_panel.open_panel()
+        self.sim_speed = 0
 
     def _apply_launch_wildlife_density(self) -> None:
         """Scale freshly seeded populations using accepted generator settings."""
@@ -1444,6 +1477,10 @@ class Game:
             or self.sound_settings.open
             or self.villager_roster.open
             or self.scenario_dialog.open
+            or self.sociopolitical_panel.open
+            or self.decision_modal.open
+            or self.institution_reveal.open
+            or self.end_of_test_summary.open
         )
 
     def _update_scenario(self) -> None:
@@ -1942,6 +1979,29 @@ class Game:
             elif self._launch_menu is not None:
                 self._handle_launch_event(event)
                 continue
+            elif self.end_of_test_summary.open:
+                self.end_of_test_summary.handle_event(event)
+                if self.end_of_test_summary.dismissed:
+                    self.end_of_test_summary.close()
+                continue
+            elif self.institution_reveal.open:
+                self.institution_reveal.handle_event(event)
+                if self.institution_reveal.dismissed:
+                    if getattr(self.political, "pending_reveal", None) is not None:
+                        self.political.pending_reveal = None
+                    self.institution_reveal.close()
+                continue
+            elif self.decision_modal.open:
+                self.decision_modal.handle_event(event)
+                if self.decision_modal.choice_id is not None:
+                    from sociopolitical_hooks import resolve_decision_choice
+
+                    event_id = self.decision_modal.event_id
+                    choice_id = self.decision_modal.choice_id
+                    self.decision_modal.close()
+                    if event_id and choice_id:
+                        resolve_decision_choice(self, event_id, choice_id)
+                continue
             elif self.scenario_dialog.open:
                 self.scenario_dialog.handle_event(event)
                 continue
@@ -2140,6 +2200,12 @@ class Game:
                 ):
                     self.balance_dialog.handle_mousedown(event.pos)
                     continue
+                if self.sociopolitical_panel.open and self.sociopolitical_panel.contains(
+                    event.pos
+                ):
+                    self.sociopolitical_panel.handle_mousedown(event.pos)
+                    self._apply_sociopolitical_panel_action()
+                    continue
                 if self.habitat_inspect.open and self.habitat_inspect.contains(
                     event.pos
                 ):
@@ -2335,6 +2401,10 @@ class Game:
                 ):
                     continue
                 if self.balance_dialog.open and self.balance_dialog.handle_mousewheel(
+                    event.y
+                ):
+                    continue
+                if self.sociopolitical_panel.open and self.sociopolitical_panel.handle_mousewheel(
                     event.y
                 ):
                     continue
@@ -4732,7 +4802,7 @@ class Game:
             entries.append(
                 entry_from_candidate(
                     c,
-                    season_pay=season_pay_coins(unmet),
+                    season_pay=self._season_pay_coins(unmet),
                     requirement_rows=rows,
                 )
             )
@@ -5932,6 +6002,9 @@ class Game:
             self._refresh_market_demands()
             self._set_status(f"{self._calendar_label()} begins.")
             self._apply_path_fertility_drain()
+            from sociopolitical_hooks import on_season_changed
+
+            on_season_changed(self)
         # Weather/history retain their established annual cadence regardless of
         # how many visible day/night cycles make up this season.
         crossed_units = max(
@@ -6772,6 +6845,8 @@ class Game:
                     "DAY_SECONDS_AT_X1",
                     ticks_to_seconds(self.ticks_per_day, self._playback_ticks()),
                 )
+        elif action == "file_sociopolitical":
+            self.sociopolitical_panel.toggle()
         elif action == "file_sound":
             self.sound_settings.toggle()
         elif action == "file_repopulate":
@@ -7672,6 +7747,15 @@ class Game:
         if action.startswith("ration_"):
             from entities import RationMode
 
+            if (
+                getattr(self, "political", None) is not None
+                and self.political.has_institution("common_provision")
+            ):
+                self._set_status(
+                    "Common Provision: individual ration adjustment is disabled. "
+                    "Change the shared settlement ration in Sociopolitical…"
+                )
+                return
             try:
                 villager.ration_mode = RationMode[action[len("ration_") :]]
             except KeyError:
@@ -9697,6 +9781,66 @@ class Game:
         parts.extend(amounts_from_obj(b) for b in self.buildings.values())
         return merge_amounts(*parts)
 
+    def _apply_sociopolitical_panel_action(self) -> None:
+        action = self.sociopolitical_panel.pending_action
+        if not action:
+            return
+        self.sociopolitical_panel.pending_action = None
+        from sociopolitical import RecruitmentPolicy
+        from sociopolitical_hooks import (
+            accept_open_applicant,
+            add_test_food,
+            add_test_gold,
+            advance_one_season,
+            create_empty_housing,
+            open_decision,
+            refuse_open_applicant,
+            show_end_of_test_summary,
+            trigger_next_decision,
+        )
+
+        if action == "advance_season":
+            advance_one_season(self)
+        elif action == "next_decision":
+            trigger_next_decision(self)
+        elif action == "add_food":
+            add_test_food(self)
+        elif action == "add_gold":
+            add_test_gold(self)
+        elif action == "add_housing":
+            create_empty_housing(self)
+        elif action == "reset_politics":
+            self.political.reset_politics()
+            self._set_status("Sociopolitical state reset.")
+        elif action == "show_summary":
+            show_end_of_test_summary(self)
+        elif action == "policy_contract":
+            self.political.recruitment_policy = RecruitmentPolicy.CONTRACT
+            self._set_status("Recruitment policy: Contract.")
+        elif action == "policy_open":
+            self.political.recruitment_policy = RecruitmentPolicy.OPEN_ADMISSION
+            self._set_status("Recruitment policy: Open Admission.")
+        elif action == "accept_applicant":
+            accept_open_applicant(self)
+        elif action == "refuse_applicant":
+            refuse_open_applicant(self)
+        elif action.startswith("ration_all:"):
+            mode_name = action.split(":", 1)[1]
+            from entities import RationMode
+            from sociopolitical_hooks import sync_common_provision_rations
+
+            try:
+                self.political.settlement_ration_mode = RationMode[mode_name].name
+            except KeyError:
+                return
+            sync_common_provision_rations(self)
+            self._set_status(f"Settlement ration set to {mode_name.title()}.")
+        elif action.startswith("event:"):
+            open_decision(self, action.split(":", 1)[1])
+
+    def _season_pay_coins(self, unmet: list[str]) -> int:
+        return season_pay_coins(unmet, coins_per=season_pay_rate(self.political))
+
     def _candidate_unmet_requirements(self, cand: HireCandidate) -> list[str]:
         return hire_unmet_requirements(
             housing_need=cand.housing_need,
@@ -9719,14 +9863,14 @@ class Game:
             return False, f"Needs completed workplace {workplace.replace('_', ' ').title()}"
         missing = self._candidate_unmet_requirements(cand)
         fee = max(0, int(getattr(cand, "signing_fee", 0) or 0))
-        soft_cost = season_pay_coins(missing) if allow_pay else 0
+        soft_cost = self._season_pay_coins(missing) if allow_pay else 0
         if int(self.regional_wealth) < fee + soft_cost:
             return False, f"Needs {fee + soft_cost} regional coins"
         if not missing:
             return True, "ok"
         labels = [requirement_label(k) for k in missing]
         if allow_pay:
-            pay = season_pay_coins(missing)
+            pay = self._season_pay_coins(missing)
             if int(self.regional_wealth) < pay:
                 return False, f"Needs {pay} regional coins for the first season"
             return (
@@ -9739,7 +9883,7 @@ class Game:
         unmet = villager_unmet_requirements(
             villager, self.buildings, self._village_food_amounts()
         )
-        due = season_pay_coins(unmet)
+        due = self._season_pay_coins(unmet)
         villager.season_pay_due = due
         return due
 
@@ -9857,10 +10001,10 @@ class Game:
             self._set_status("That traveller is no longer available.")
             return
         unmet = self._candidate_unmet_requirements(cand)
-        first_wage = season_pay_coins(unmet) if pay else 0
+        first_wage = self._season_pay_coins(unmet) if pay else 0
         ok, reason = self._hire_requirements_met(cand, allow_pay=pay)
         if not ok:
-            due = season_pay_coins(unmet)
+            due = self._season_pay_coins(unmet)
             if pay:
                 self._set_status(f"Cannot pay to hire {cand.name}: {reason}.")
             else:
@@ -9906,16 +10050,22 @@ class Game:
         self._refresh_villager_season_pay(villager)
         note = ""
         signing_fee = max(0, int(getattr(cand, "signing_fee", 0) or 0))
+        spent = 0
         if signing_fee:
             self.regional_wealth = int(self.regional_wealth) - signing_fee
+            spent += signing_fee
             note = f" Signing fee paid ({signing_fee} coins)."
         if unmet and pay:
             self.regional_wealth = int(self.regional_wealth) - first_wage
             villager.coins_paid_total = int(villager.coins_paid_total) + first_wage
+            spent += first_wage
             note += (
                 f" First season wage paid ({first_wage} coins); "
                 f"{villager.season_pay_due} coins/season until requirements are met."
             )
+        if spent and getattr(self, "political", None) is not None and self.political.test_active:
+            self.political.gold_spent_recruitment += spent
+            self.political.villagers_accepted += 1
         house_note = "No bed yet. "
         if villager.housed and villager.housing_id is not None:
             house = self.buildings.get(villager.housing_id)
@@ -10027,15 +10177,30 @@ class Game:
             excess = max(0, lvl - int(villager.housing_need))
             target += HAPPINESS_HOUSING_BONUS_PER_LEVEL * excess
         else:
-            target -= HAPPINESS_MISSING_REQ_PENALTY
+            from sociopolitical import missing_ration_happiness_scale
+
+            target -= HAPPINESS_MISSING_REQ_PENALTY * missing_ration_happiness_scale(
+                self.political
+            )
         target += HAPPINESS_FOOD_VARIETY_BONUS * min(3, len(villager.last_meal))
         foods = getattr(self, "_tick_village_food", None)
         if foods is None:
             foods = self._village_food_amounts()
+        # Common Provision: damp happiness loss from low satiation / poor rations.
+        if (
+            getattr(self, "political", None) is not None
+            and self.political.has_institution("common_provision")
+            and float(villager.satiation) < 0.35
+        ):
+            from sociopolitical import missing_ration_happiness_scale
+
+            # Pull target upward toward current happiness (less loss).
+            loss_scale = missing_ration_happiness_scale(self.political)
+            target = villager.happiness + (target - villager.happiness) * loss_scale
         villager.happiness += (target - villager.happiness) * min(1.0, day_frac * 3.0)
         villager.happiness = max(0.0, min(1.0, villager.happiness))
         unmet = villager_unmet_requirements(villager, self.buildings, foods)
-        villager.season_pay_due = season_pay_coins(unmet)
+        villager.season_pay_due = self._season_pay_coins(unmet)
 
         tick_skill_decay(villager, day_frac)
 
@@ -10229,7 +10394,7 @@ class Game:
         for villager in self.villagers:
             self._record_seasonal_happiness_events(villager, foods)
             unmet = villager_unmet_requirements(villager, self.buildings, foods)
-            due = season_pay_coins(unmet)
+            due = self._season_pay_coins(unmet)
             villager.season_pay_due = due
             if due <= 0:
                 villager.seasons_without_reqs = 0
@@ -10240,6 +10405,8 @@ class Game:
                 self.regional_wealth = wealth - due
                 villager.coins_paid_total = int(villager.coins_paid_total) + due
                 fee_total += due
+                if getattr(self, "political", None) is not None and self.political.test_active:
+                    self.political.gold_spent_recruitment += due
                 push_happiness_event(
                     villager,
                     icon="coins",
@@ -11798,6 +11965,25 @@ class Game:
             skill_mult = skill_efficiency(villager, SkillType.TRANSPORT)
         elif villager.state == VillagerState.BUILDING:
             skill_mult = skill_efficiency(villager, SkillType.LABOUR)
+        from sociopolitical import extractive_work_multiplier, work_efficiency_multiplier
+        from sociopolitical_hooks import job_matches_strongest
+
+        political_mult = work_efficiency_multiplier(
+            self.political,
+            job_matches_strongest=job_matches_strongest(villager, self.buildings),
+        )
+        skill_mult *= political_mult
+        # Covenant: forestry / field establishment take longer (lower efficiency).
+        if villager.building_id is not None:
+            building = self.buildings.get(villager.building_id)
+            if building is not None and building.kind in (
+                BuildingKind.FORESTER,
+                BuildingKind.FIELD,
+                BuildingKind.ORCHARD,
+            ):
+                skill_mult /= extractive_work_multiplier(self.political)
+        elif villager.state == VillagerState.BUILDING:
+            skill_mult /= extractive_work_multiplier(self.political)
         return self._work_interval_for(
             satiation=villager.satiation,
             food_work_mult=villager.food_work_mult,
@@ -20788,6 +20974,11 @@ class Game:
             )
 
         def _draw_villager_detail(surf: pygame.Surface, rect: pygame.Rect) -> None:
+            from sociopolitical_hooks import (
+                political_status_mods,
+                villager_political_work_mult,
+            )
+
             inspect_v = (
                 self._player_inspect_model()
                 if self.management.tab == MgmtTab.PLAYER
@@ -20797,6 +20988,7 @@ class Game:
             )
             if inspect_v is None:
                 return
+            is_player = self.management.tab == MgmtTab.PLAYER
             self.villager_inspect.configure_embed(rect)
             self.villager_inspect.draw(
                 surf,
@@ -20807,13 +20999,11 @@ class Game:
                 calendar_day=self.calendar_day,
                 mouse_pos=mouse,
                 player_inventory=(
-                    None
-                    if self.management.tab == MgmtTab.PLAYER
-                    else self.player.inventory
+                    None if is_player else self.player.inventory
                 ),
                 requirement_rows=(
                     []
-                    if self.management.tab == MgmtTab.PLAYER
+                    if is_player
                     else villager_requirement_rows(
                         inspect_v,
                         self.buildings,
@@ -20823,8 +21013,14 @@ class Game:
                 ),
                 activity_label=(
                     "Exploring"
-                    if self.management.tab == MgmtTab.PLAYER
+                    if is_player
                     else self._villager_activity_label(inspect_v)
+                ),
+                extra_status_mods=(
+                    [] if is_player else political_status_mods(self, inspect_v)
+                ),
+                political_work_mult=(
+                    1.0 if is_player else villager_political_work_mult(self, inspect_v)
                 ),
             )
 
@@ -20895,6 +21091,10 @@ class Game:
             mouse_pos=mouse,
         )
         self.balance_dialog.draw(self.screen, self.balance, mouse_pos=mouse)
+        self.sociopolitical_panel.draw(self.screen, self.political, mouse)
+        self.decision_modal.draw(self.screen, mouse)
+        self.institution_reveal.draw(self.screen, mouse)
+        self.end_of_test_summary.draw(self.screen, mouse)
         self.wildlife_repopulate_dialog.draw(self.screen, mouse)
         if self.villager_roster.open:
             if self.villager_roster.mode == "place_traveller":
@@ -23655,7 +23855,7 @@ class Game:
             (x0 + 6, buff_y + MOD_CELL // 2 - 6),
         )
         if buffs:
-            _, hits, _ = draw_mod_row(
+            _, hits, _, row_tips = draw_mod_row(
                 self.screen,
                 content_x,
                 buff_y,
@@ -23665,7 +23865,7 @@ class Game:
                 icon_size=MOD_CELL,
                 gap=MOD_GAP,
             )
-            tip_hits.extend((rect, mod.tip) for rect, mod in hits)
+            tip_hits.extend(row_tips)
         else:
             self.screen.blit(
                 font_t.render("—", True, COLOUR_TEXT_DIM),
@@ -23678,7 +23878,7 @@ class Game:
             (x0 + 6, debuff_y + MOD_CELL // 2 - 6),
         )
         if debuffs:
-            _, hits, _ = draw_mod_row(
+            _, hits, _, row_tips = draw_mod_row(
                 self.screen,
                 content_x,
                 debuff_y,
@@ -23688,7 +23888,7 @@ class Game:
                 icon_size=MOD_CELL,
                 gap=MOD_GAP,
             )
-            tip_hits.extend((rect, mod.tip) for rect, mod in hits)
+            tip_hits.extend(row_tips)
         else:
             self.screen.blit(
                 font_t.render("—", True, COLOUR_TEXT_DIM),

@@ -37,12 +37,16 @@ _EFFECT_ICON_NAMES: dict[str, str] = {
     "work": "work_efficiency",
     "hunger": "meat_marker",
     "energy": "energy_drain",
+    "happiness": "stew",
+    "ration": "bread",
 }
 EFFECT_LABELS: dict[str, str] = {
     "walk": "Walk speed",
     "work": "Work efficiency",
     "hunger": "Hunger rate",
     "energy": "Energy drain",
+    "happiness": "Happiness",
+    "ration": "Rations",
 }
 
 HIGHLIGHT_BORDER = (240, 200, 70)
@@ -60,29 +64,89 @@ class StatusMod:
 
     cause_key: str
     cause_icon: str
-    cause_group: str  # meal | events | gear
-    effect: str  # walk | work | hunger | energy
+    cause_group: str  # meal | events | gear | political
+    effect: str  # walk | work | hunger | energy | happiness | ration
     mult: float
+    cause_label: str | None = None  # short cause name for badge hover
+    tip_override: str | None = None  # short effect tip override only
+    display_kind: str | None = None  # "buff" | "debuff" | None (auto from mult)
 
     @property
     def label(self) -> str:
         return EFFECT_LABELS.get(self.effect, self.effect)
 
     @property
-    def tip(self) -> str:
+    def cause_name(self) -> str:
+        if self.cause_label:
+            return self.cause_label
+        if self.cause_group == "meal":
+            from resources import resource_label
+
+            try:
+                return resource_label(self.cause_key)
+            except Exception:
+                return str(self.cause_key).replace("_", " ").title()
+        if self.cause_group == "events":
+            return TEMP_CAUSE_LABELS.get(self.cause_key, self.cause_key.title())
+        if self.cause_group == "gear":
+            from resources import resource_label
+
+            try:
+                return resource_label(self.cause_key)
+            except Exception:
+                return str(self.cause_key).replace("_", " ").title()
+        return str(self.cause_key).replace("_", " ").title()
+
+    @property
+    def effect_tip(self) -> str:
+        """Tooltip when hovering the main effect slot."""
+        if self.tip_override:
+            return self.tip_override
+        if self.effect == "happiness":
+            return f"Happiness {int(round(self.mult)):+d}"
+        if self.effect == "ration":
+            return "Shared rations"
         return f"{self.label} ×{format_buff_mult(self.mult)}"
 
     @property
+    def tip(self) -> str:
+        return self.effect_tip
+
+    @property
     def is_buff(self) -> bool:
+        if self.display_kind == "buff":
+            return True
+        if self.display_kind == "debuff":
+            return False
         if self.effect in ("hunger", "energy"):
             return self.mult < 0.99
+        if self.effect == "happiness":
+            return self.mult > 0
         return self.mult > 1.01
 
     @property
     def is_debuff(self) -> bool:
+        if self.display_kind == "debuff":
+            return True
+        if self.display_kind == "buff":
+            return False
+        if self.effect == "happiness":
+            return self.mult < 0
         if abs(self.mult - 1.0) <= 0.01:
             return False
         return not self.is_buff
+
+
+def cause_badge_rect(slot: pygame.Rect) -> pygame.Rect:
+    """Bottom-right cause badge plate inside a compound mod slot."""
+    pad = max(4, slot.w // 10)
+    cause_size = max(14, slot.w // 3)
+    plate = pygame.Rect(0, 0, cause_size + 4, cause_size + 4)
+    plate.center = (
+        slot.right - cause_size // 2 - pad,
+        slot.bottom - cause_size // 2 - pad,
+    )
+    return plate
 
 
 @dataclass(frozen=True)
@@ -244,6 +308,7 @@ def effect_totals(
     food_hunger: float,
     inventory,
     calendar_day: int,
+    work_extra_mult: float = 1.0,
 ) -> tuple[float, float, float]:
     impact = temperature_impact(
         ambient_temperature_c(calendar_day),
@@ -252,7 +317,7 @@ def effect_totals(
     )
     gear = float(getattr(inventory, "gear_walk_mult", 1.0) or 1.0)
     walk = max(0.05, float(food_walk) * gear * float(impact.walk_mult))
-    work = max(0.05, float(food_work))
+    work = max(0.05, float(food_work) * max(0.05, float(work_extra_mult)))
     hunger = max(0.05, float(food_hunger))
     return walk, work, hunger
 
@@ -359,13 +424,23 @@ def draw_mod_row(
     hover: HoverState | None = None,
     icon_size: int = MOD_CELL,
     gap: int = MOD_GAP,
-) -> tuple[int, list[tuple[pygame.Rect, StatusMod]], StatusMod | None]:
-    """Draw compound mods. Returns (width, hits, mod under cursor)."""
+) -> tuple[
+    int,
+    list[tuple[pygame.Rect, StatusMod]],
+    StatusMod | None,
+    list[tuple[pygame.Rect, str]],
+]:
+    """Draw compound mods.
+
+    Returns ``(width, hits, mod under cursor, tip_hits)``.
+    Tip hits list badge cause names before slot effect tips so badge hover wins.
+    """
     cur = x
     hits: list[tuple[pygame.Rect, StatusMod]] = []
+    tip_hits: list[tuple[pygame.Rect, str]] = []
     hovered_mod: StatusMod | None = None
     if not mods:
-        return 0, hits, None
+        return 0, hits, None, tip_hits
     for mod in mods:
         rect = pygame.Rect(cur, y, icon_size, icon_size)
         pointer = mouse_pos is not None and rect.collidepoint(mouse_pos)
@@ -379,5 +454,7 @@ def draw_mod_row(
             highlighted=mod_is_highlighted(mod, hover),
         )
         hits.append((rect, mod))
+        tip_hits.append((cause_badge_rect(rect), mod.cause_name))
+        tip_hits.append((rect, mod.effect_tip))
         cur += icon_size + gap
-    return cur - x, hits, hovered_mod
+    return cur - x, hits, hovered_mod, tip_hits
