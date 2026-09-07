@@ -3567,6 +3567,9 @@ class Game:
             return
 
         if not self.height_edit_mode and (x, y) in self.discovered_cells:
+            if self.scenario.state.step == "find_diversity_hotspot":
+                if self.scenario.begin_diversity_quiz(self, x, y):
+                    return
             colony = next((c for c in self.wildlife.colonies
                            if c.kind == AnimalKind.BEE and (c.x, c.y) == (x, y)), None)
             if colony is not None:
@@ -3601,6 +3604,26 @@ class Game:
             from quest_progress import inspect_species
             inspect_species(self, x, y, f"animal:{animal.kind.name}")
             self._open_animal_inspect(animal)
+            return
+
+        colony, member = self.wildlife.colony_member_at(x, y)
+        if colony is not None:
+            from quest_progress import inspect_species
+            inspect_species(self, x, y, f"animal:{colony.kind.name}")
+            label = colony.kind.name.replace("_", " ").title()
+            title = f"{label} nest" if member is None else label
+            lines = [f"Species: {label}"]
+            if member is None:
+                lines.append(f"Colony level: {colony.level}")
+            else:
+                lines.append("A wild animal near its nest.")
+            self.inspected_animal_id = self.inspected_tree_cell = None
+            self.resource_inspect.open_details(
+                title=title,
+                lines=lines,
+                cell=(x, y),
+                screen_xy=screen_pos or self.camera.world_to_screen(x, y),
+            )
             return
 
         villager = self._villager_at(x, y)

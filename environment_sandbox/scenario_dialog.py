@@ -56,13 +56,21 @@ class ScenarioDialog:
         if not self.open:
             return False
         if event.type == pygame.KEYDOWN and self.choices:
-            if event.key in (pygame.K_1, pygame.K_KP1):
-                self._dismiss(0)
-            elif event.key in (pygame.K_2, pygame.K_KP2):
-                self._dismiss(1)
+            keys = (
+                (pygame.K_1, pygame.K_KP1),
+                (pygame.K_2, pygame.K_KP2),
+                (pygame.K_3, pygame.K_KP3),
+                (pygame.K_4, pygame.K_KP4),
+            )
+            for index, pair in enumerate(keys):
+                if index < len(self.choices) and event.key in pair:
+                    self._dismiss(index)
+                    return True
         elif event.type == pygame.KEYDOWN and event.key in (
             pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE, pygame.K_ESCAPE
         ):
+            if self.choices:
+                return True
             self._dismiss(None)
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             selected = next(
@@ -130,12 +138,15 @@ class ScenarioDialog:
         shade = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
         shade.fill((0, 0, 0, 105))
         surface.blit(shade, (0, 0))
-        panel_h = 250 if self.choices else 190
+        text_lines = self._wrap(self.font, self.text or "", 590 - 48)
+        choice_n = len(self.choices)
+        panel_h = 120 + 24 * len(text_lines) + (56 * choice_n + 28 if choice_n else 56)
+        panel_h = min(WINDOW_HEIGHT - 40, max(190, panel_h))
         panel = pygame.Rect((WINDOW_WIDTH - 590) // 2, (WINDOW_HEIGHT - panel_h) // 2, 590, panel_h)
         pygame.draw.rect(surface, COLOUR_MENU_BG, panel, border_radius=7)
         pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, panel, 2, border_radius=7)
         y = panel.y + 28
-        for line in self._wrap(self.font, self.text or "", panel.w - 48):
+        for line in text_lines:
             surface.blit(self.font.render(line, True, COLOUR_TEXT), (panel.x + 24, y))
             y += 24
         self._choice_rects = []
@@ -154,7 +165,8 @@ class ScenarioDialog:
                 label = self.small.render(f"{i + 1}. {choice}", True, COLOUR_TEXT)
                 surface.blit(label, (button.x + 10, button.y + 9))
                 cy += 42
-            hint = self.small.render("Choose with click / 1 / 2", True, COLOUR_TEXT_DIM)
+            keys = "/".join(str(i + 1) for i in range(len(self.choices)))
+            hint = self.small.render(f"Choose with click / {keys}", True, COLOUR_TEXT_DIM)
             surface.blit(hint, hint.get_rect(midbottom=(panel.centerx, panel.bottom - 10)))
             return
         button = pygame.Rect(panel.centerx - 65, panel.bottom - 48, 130, 28)

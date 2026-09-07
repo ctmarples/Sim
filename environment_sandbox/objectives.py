@@ -55,6 +55,11 @@ FORAGE_MILESTONES = (
     ('equip_satchel', 'Wear the leather satchel', 'Open your inventory and right-click the leather satchel to add it to your bag slot.'),
     ('gwen_forage_ready', None, ''),
     ('forage_meadow', 'Forage for dinner', 'Find 6 new species of wild plants (inspect with click or collect). Collect at least 15 food and 10 herbs.'),
+    ('abundance_dialog', None, ''),
+    ('find_diversity_hotspot diversity_quiz diversity_wrong diversity_correct', 'Identify the diversity hotspot',
+     'Identify where the highest species diversity is located. Tip: use the species diversity overlay to find the diversity hotspots and use the cursor to inspect the area.'),
+    ('inspect_hotspot_flora', 'Inspect hotspot flora', 'Inspect the flora at the hotspot and find 5 species.'),
+    ('find_hotspot_wildlife wildlife_footprints', 'Look for wildlife', 'Can I find any wildlife here as well? Inspect one wildlife species near the hotspot.'),
 )
 
 FORAGE_STEPS = {step for steps, _, _ in FORAGE_MILESTONES for step in steps.split()}
@@ -141,6 +146,12 @@ OBJECTIVE_TIPS = {
     'read': 'Tip: scroll below the handbook table to see all four seasons.',
     'rotation': 'Tip: open the Rotation tab.',
     'wheat': 'Tip: add Wheat to the Rotation planner.',
+    'diversity_hotspot': (
+        'Tip: use the species diversity overlay to find the diversity hotspots '
+        'and use the cursor to inspect the area.'
+    ),
+    'hotspot_flora': 'Tip: click plants and trees at the meadow–forest edge.',
+    'hotspot_wildlife': 'Tip: click an animal near the hotspot to inspect it.',
 }
 
 
@@ -201,4 +212,22 @@ def quest_items(state, quest):
                  completed=quest["completed"] or herbs >= FORAGE_HERB_GOAL,
                  tip=OBJECTIVE_TIPS.get('forage_herbs', ''), children=[]),
         ]
+    if key == "find_diversity_hotspot":
+        return [dict(id="diversity_hotspot",
+                     label="Identify where the highest species diversity is located",
+                     completed=quest["completed"],
+                     tip=OBJECTIVE_TIPS.get('diversity_hotspot', ''), children=[])]
+    if key == "inspect_hotspot_flora":
+        from quest_progress import HOTSPOT_FLORA_GOAL
+        count = HOTSPOT_FLORA_GOAL if quest["completed"] else min(HOTSPOT_FLORA_GOAL, len(state.hotspot_flora))
+        return [dict(id="hotspot_flora",
+                     label=f"Inspect flora at the hotspot ({count}/{HOTSPOT_FLORA_GOAL})",
+                     completed=quest["completed"] or count >= HOTSPOT_FLORA_GOAL,
+                     tip=OBJECTIVE_TIPS.get('hotspot_flora', ''), children=[])]
+    if key == "find_hotspot_wildlife":
+        found = quest["completed"] or state.hotspot_wildlife_found or state.hotspot_wildlife_absent
+        return [dict(id="hotspot_wildlife",
+                     label="Inspect 1 wildlife species near the hotspot",
+                     completed=found,
+                     tip=OBJECTIVE_TIPS.get('hotspot_wildlife', ''), children=[])]
     return [dict(id=key, label=quest["headline"], completed=quest["completed"])]

@@ -120,7 +120,7 @@ class QuestProgressTests(unittest.TestCase):
         self.assertGreaterEqual(len(self.state.foraged_species),FORAGE_SPECIES_GOAL)
         self.assertTrue(forage_ready(self.state))
 
-    def test_forage_completion_ends_lay_of_the_land(self):
+    def test_forage_completion_starts_diversity_quest(self):
         from quest_progress import FORAGE_FOOD_GOAL, FORAGE_HERB_GOAL
         self.state.step='forage_meadow'
         self.state.handbook_completed=5
@@ -129,5 +129,54 @@ class QuestProgressTests(unittest.TestCase):
         self.state.forage_herbs=FORAGE_HERB_GOAL
         self.game.scenario._sync_management_unlocks=lambda game: None
         self.game.scenario.update(self.game)
+        self.assertFalse(self.state.completed)
+        self.assertEqual(self.state.step,'abundance_dialog')
+        text,_=self.game.scenario.take_dialog_request()
+        self.assertIn('abundance of food and plants',text)
+
+    def test_diversity_quiz_removes_wrong_answers(self):
+        from quest_progress import DIVERSITY_OPTIONS, diversity_option_labels
+        self.state.step='diversity_quiz'
+        self.state.handbook_completed=5
+        self.state.diversity_remaining=[key for key,_ in DIVERSITY_OPTIONS]
+        self.state.hotspot_x,self.state.hotspot_y=22,20
+        self.game.scenario._request_dialog(
+            "So here is the hotspot. Hmm, I wonder why there are so many species here.",
+            diversity_option_labels(self.state),
+        )
+        text,choices=self.game.scenario.take_dialog_request()
+        self.assertIn('hotspot',text)
+        self.assertEqual(len(choices),3)
+        self.game.scenario.dismiss_dialog(0)
+        wrong,_=self.game.scenario.take_dialog_request()
+        self.assertIn('more diverse',wrong)
+        self.game.scenario.dismiss_dialog()
+        text,choices=self.game.scenario.take_dialog_request()
+        self.assertEqual(len(choices),2)
+        self.assertNotIn(DIVERSITY_OPTIONS[0][1],choices)
+        soil_index=list(choices).index(DIVERSITY_OPTIONS[1][1])
+        self.game.scenario.dismiss_dialog(soil_index)
+        wrong,_=self.game.scenario.take_dialog_request()
+        self.assertIn('vegetables',wrong)
+        self.game.scenario.dismiss_dialog()
+        text,choices=self.game.scenario.take_dialog_request()
+        self.assertEqual(choices,(DIVERSITY_OPTIONS[2][1],))
+        self.game.scenario.dismiss_dialog(0)
+        correct,_=self.game.scenario.take_dialog_request()
+        self.assertIn('most diverse',correct)
+        self.game.scenario.dismiss_dialog()
+        self.assertEqual(self.state.step,'inspect_hotspot_flora')
+
+    def test_wildlife_absent_uses_footprints(self):
+        self.state.step='find_hotspot_wildlife'
+        self.state.handbook_completed=5
+        self.state.hotspot_x,self.state.hotspot_y=22,20
+        self.state.hotspot_flora=['plant:a','plant:b','plant:c','plant:d','plant:e']
+        self.game.wildlife=NS(animals=[],colonies=[])
+        self.game.scenario._sync_management_unlocks=lambda game: None
+        self.game.scenario.update(self.game)
+        self.assertEqual(self.state.step,'wildlife_footprints')
+        text,_=self.game.scenario.take_dialog_request()
+        self.assertIn('footprints',text)
+        self.game.scenario.dismiss_dialog()
         self.assertTrue(self.state.completed)
-        self.assertEqual(self.state.step,'complete')

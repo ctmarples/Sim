@@ -56,6 +56,12 @@ class ScenarioState:
     foraged_species: list[str] = field(default_factory=list)
     forage_food: int = 0
     forage_herbs: int = 0
+    diversity_remaining: list[str] = field(default_factory=list)
+    hotspot_x: int | None = None
+    hotspot_y: int | None = None
+    hotspot_flora: list[str] = field(default_factory=list)
+    hotspot_wildlife_found: bool = False
+    hotspot_wildlife_absent: bool = False
 
 
 class ScenarioDirector:
@@ -288,6 +294,23 @@ class ScenarioDirector:
             self._request_dialog("Sure! I've been waiting all day for someone to take me for a walk")
         elif step == "rhea_forage_reply":
             self.state.step, self.prompt = "gwen_forage_approaches", "Gwen is coming to speak with you..."
+        elif step == "diversity_quiz":
+            from quest_progress import (
+                DIVERSITY_CORRECT, DIVERSITY_WRONG, diversity_option_key,
+            )
+            key = diversity_option_key(self.state, choice)
+            if key == DIVERSITY_CORRECT:
+                self.state.step = "diversity_correct"
+                self._request_dialog(
+                    "Yes here it is most diverse! At the border between the forest and the meadow."
+                )
+            elif key in DIVERSITY_WRONG:
+                remaining = list(self.state.diversity_remaining or [])
+                if key in remaining:
+                    remaining.remove(key)
+                self.state.diversity_remaining = remaining
+                self.state.step = "diversity_wrong"
+                self._request_dialog(DIVERSITY_WRONG[key])
         elif step == "gwen_forager_intro":
             self.state.forager_unlocked = True
             self.state.step = "gwen_forager_haulers"
@@ -303,6 +326,38 @@ class ScenarioDirector:
             from quest_progress import begin_forage
             begin_forage(self.state)
             self.state.step, self.prompt = "forage_meadow", "Find 6 new wild plants and gather food for dinner"
+        elif step == "abundance_dialog":
+            self.state.step, self.prompt = (
+                "find_diversity_hotspot",
+                "Identify where the highest species diversity is located",
+            )
+        elif step == "diversity_wrong":
+            from quest_progress import diversity_option_labels
+            self.state.step = "diversity_quiz"
+            self._request_dialog(
+                "So here is the hotspot. Hmm, I wonder why there are so many species here.",
+                diversity_option_labels(self.state),
+            )
+        elif step == "diversity_correct":
+            self.state.step, self.prompt = (
+                "inspect_hotspot_flora",
+                "Inspect the flora at the hotspot — find 5 species",
+            )
+        elif step == "wildlife_footprints":
+            self.state.hotspot_wildlife_absent = True
+            self.state.step, self.state.completed, self.prompt = "complete", True, None
+
+    def begin_diversity_quiz(self, game, x: int, y: int) -> bool:
+        """Open the hotspot location quiz after the player inspects the meadow edge."""
+        from quest_progress import diversity_option_labels, note_diversity_cell
+        if not note_diversity_cell(game, x, y):
+            return False
+        self.state.step, self.prompt = "diversity_quiz", None
+        self._request_dialog(
+            "So here is the hotspot. Hmm, I wonder why there are so many species here.",
+            diversity_option_labels(self.state),
+        )
+        return True
 
     def note_berry_collected(self, game, x: int, y: int, amount: int) -> None:
         if not self.active or self.state.step != "pick_berries" or int(amount) <= 0:
@@ -521,7 +576,28 @@ class ScenarioDirector:
         elif step == "forage_meadow":
             from quest_progress import forage_ready
             if forage_ready(self.state):
+                self.state.step, self.prompt = "abundance_dialog", None
+                self._request_dialog(
+                    "Wow there really is an abundance of food and plants here! "
+                    "I wonder how many different species there are..."
+                )
+        elif step == "inspect_hotspot_flora":
+            from quest_progress import hotspot_flora_ready
+            if hotspot_flora_ready(self.state):
+                self.state.step, self.prompt = (
+                    "find_hotspot_wildlife",
+                    "Can I find any wildlife here as well?",
+                )
+        elif step == "find_hotspot_wildlife":
+            from quest_progress import wildlife_near_hotspot
+            if self.state.hotspot_wildlife_found:
                 self.state.step, self.state.completed, self.prompt = "complete", True, None
+            elif not wildlife_near_hotspot(game):
+                self.state.step, self.prompt = "wildlife_footprints", None
+                self._request_dialog(
+                    "Hmm, I guess they're not around at the moment. "
+                    "But I can see their footprints here!"
+                )
 
     def _tutorial_traveller(self, game):
         candidates = list(getattr(game, "hire_candidates", ()))
@@ -1462,6 +1538,9 @@ class ScenarioDirector:
             "walk_to_meadow":"Follow Gwen to the meadow",
             "equip_satchel":"Wear the leather satchel — right-click it in your inventory",
             "forage_meadow":"Find 6 new wild plants and gather food for dinner",
+            "find_diversity_hotspot":"Identify where the highest species diversity is located",
+            "inspect_hotspot_flora":"Inspect the flora at the hotspot — find 5 species",
+            "find_hotspot_wildlife":"Can I find any wildlife here as well?",
         }
         dialogs = {
             "hunger_dialog":"(Stomach rumble) ... uhhh I'm getting hungry, I need to eat. I'll check what is in my bag",
@@ -1498,6 +1577,17 @@ class ScenarioDirector:
                 "so you'll find many different wild plants here. Here, take this."
             ),
             "gwen_forage_ready":"Great, now you're set to forage! Let's see what you can find.",
+            "abundance_dialog":(
+                "Wow there really is an abundance of food and plants here! "
+                "I wonder how many different species there are..."
+            ),
+            "diversity_correct":(
+                "Yes here it is most diverse! At the border between the forest and the meadow."
+            ),
+            "wildlife_footprints":(
+                "Hmm, I guess they're not around at the moment. "
+                "But I can see their footprints here!"
+            ),
         }
         self.prompt = prompts.get(self.state.step)
         if self.state.step == "field_handbook":
@@ -1521,7 +1611,8 @@ class ScenarioDirector:
             "weeds_complete_dialog", "ask_villagers", "gwen_intro", "joss_intro",
             "enter_farmhouse", "open_book", "field_handbook", "complete",
             "rhea_forage_approaches", "walk_to_forager", "walk_to_meadow",
-            "equip_satchel", "forage_meadow",
+            "equip_satchel", "forage_meadow", "find_diversity_hotspot",
+            "inspect_hotspot_flora", "find_hotspot_wildlife",
         }
         if step in {"fix_tent", "go_to_sleep"} or post_sleep:
             self._join_rhea_to_village(game)
@@ -1554,7 +1645,8 @@ class ScenarioDirector:
             "weeds_complete_dialog", "ask_villagers", "gwen_intro", "joss_intro",
             "enter_farmhouse", "open_book", "field_handbook", "complete",
             "rhea_forage_approaches", "walk_to_forager", "walk_to_meadow",
-            "equip_satchel", "forage_meadow",
+            "equip_satchel", "forage_meadow", "find_diversity_hotspot",
+            "inspect_hotspot_flora", "find_hotspot_wildlife",
         }
         field = self._village_field(game)
         if after_weeding:
@@ -1577,11 +1669,41 @@ class ScenarioDirector:
             game.player.inventory.equip_clothing("leather_satchel")
         self.state.step = step
         self.state.completed = step == "complete"
+        if checkpoint.get("hotspot_x") is not None:
+            self.state.hotspot_x = int(checkpoint["hotspot_x"])
+        if checkpoint.get("hotspot_y") is not None:
+            self.state.hotspot_y = int(checkpoint["hotspot_y"])
         if self.state.field_planner_unlocked:
             self._apply_field_checkpoint(game, checkpoint)
         if step == "forage_meadow":
             from quest_progress import begin_forage
             begin_forage(self.state)
+        if step in {"find_diversity_hotspot", "diversity_quiz", "inspect_hotspot_flora",
+                    "find_hotspot_wildlife", "complete"} and self.state.field_planner_unlocked:
+            from quest_progress import FORAGE_FOOD_GOAL, FORAGE_HERB_GOAL, FORAGE_SPECIES_GOAL, begin_forage
+            begin_forage(self.state)
+            if len(self.state.foraged_species) < FORAGE_SPECIES_GOAL:
+                self.state.foraged_species = [f"plant:checkpoint_{i}" for i in range(FORAGE_SPECIES_GOAL)]
+            self.state.forage_food = max(self.state.forage_food, FORAGE_FOOD_GOAL)
+            self.state.forage_herbs = max(self.state.forage_herbs, FORAGE_HERB_GOAL)
+        if step in {"inspect_hotspot_flora", "find_hotspot_wildlife", "complete"}:
+            from quest_progress import DIVERSITY_OPTIONS, MEADOW_CELL
+            self.state.diversity_remaining = [DIVERSITY_OPTIONS[-1][0]]
+            if self.state.hotspot_x is None:
+                self.state.hotspot_x, self.state.hotspot_y = MEADOW_CELL
+        if step in {"find_diversity_hotspot", "inspect_hotspot_flora", "find_hotspot_wildlife", "complete"}:
+            from quest_progress import MEADOW_CELL
+            hx = self.state.hotspot_x if self.state.hotspot_x is not None else MEADOW_CELL[0]
+            hy = self.state.hotspot_y if self.state.hotspot_y is not None else MEADOW_CELL[1]
+            self._reveal_clearing(game, (hx, hy), 10)
+            self._reveal_clearing(game, MEADOW_CELL, 10)
+        if step in {"find_hotspot_wildlife", "complete"}:
+            from quest_progress import HOTSPOT_FLORA_GOAL
+            if len(self.state.hotspot_flora) < HOTSPOT_FLORA_GOAL:
+                self.state.hotspot_flora = [f"plant:hotspot_{i}" for i in range(HOTSPOT_FLORA_GOAL)]
+        if bool(checkpoint.get("hotspot_wildlife_absent", False)):
+            self.state.hotspot_wildlife_absent = True
+            self.state.hotspot_wildlife_found = False
         self._restore_presentation()
         # Historical discoveries are already recorded; don't flood a checkpoint
         # with notifications for every preceding tutorial event.

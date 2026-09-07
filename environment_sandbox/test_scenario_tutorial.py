@@ -399,5 +399,25 @@ class TutorialScenarioTests(unittest.TestCase):
         self.assertEqual(game.scenario.state.step,"forage_meadow")
         self.assertEqual([q['id'] for q in game.scenario.objectives() if not q['completed']],['forage_meadow'])
 
+    def test_diversity_hotspot_click_opens_quiz(self):
+        game=Game(headless=True)
+        load_from_path(game,Path(__file__).resolve().parents[1]/"saves"/"tutorial_intro_24.json")
+        self.assertEqual(game.scenario.state.step,"find_diversity_hotspot")
+        from quest_progress import is_diversity_hotspot_cell
+        cell=next(( (x,y) for y in range(0,25) for x in range(34,60)
+                    if is_diversity_hotspot_cell(game,x,y) ), None)
+        self.assertIsNotNone(cell)
+        game.discovered_cells.add(cell)
+        self.assertTrue(game.scenario.begin_diversity_quiz(game, cell[0], cell[1]))
+        text,choices=game.scenario.take_dialog_request()
+        self.assertIn("hotspot",text)
+        self.assertEqual(len(choices),3)
+        # Choose the edge answer directly
+        edge_index=list(choices).index("At the boundary of the meadow and the forest")
+        game.scenario.dismiss_dialog(edge_index)
+        self.assertIn("most diverse",game.scenario.take_dialog_request()[0])
+        game.scenario.dismiss_dialog()
+        self.assertEqual(game.scenario.state.step,"inspect_hotspot_flora")
+
 
 if __name__=="__main__":unittest.main()

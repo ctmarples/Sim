@@ -36,8 +36,9 @@ class ObjectiveTests(unittest.TestCase):
             self.assertEqual([r['id'] for r in rows if not r['completed']], [f'handbook_{stage+1}'])
         rows = scenario_objectives(self.state('complete', completed=True, field_planner_unlocked=True, handbook_completed=5))
         self.assertTrue(all(r['completed'] for r in rows))
-        self.assertEqual(rows[-1]['id'], 'forage_meadow')
+        self.assertEqual(rows[-1]['id'], 'find_hotspot_wildlife')
         self.assertIn('handbook_5', [r['id'] for r in rows])
+        self.assertIn('forage_meadow', [r['id'] for r in rows])
         self.assertEqual(scenario_objectives(ScenarioState()), [])
 
     def test_forage_quest_follows_handbook(self):

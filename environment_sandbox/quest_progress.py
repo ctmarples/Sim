@@ -75,12 +75,137 @@ FORAGE_FOOD_GOAL = 15
 FORAGE_HERB_GOAL = 10
 HERB_FORAGE_KEYS = frozenset({'sage', 'mint', 'hemp', 'flax'})
 MEADOW_CELL = (45, 8)
+HOTSPOT_FLORA_GOAL = 5
+HOTSPOT_WILDLIFE_RADIUS = 5
+MEADOW_SEARCH_RADIUS = 16
+
+DIVERSITY_OPTIONS = (
+    ('center', 'In the center of the meadow'),
+    ('soil', 'Around the exposed soil in the meadow'),
+    ('edge', 'At the boundary of the meadow and the forest'),
+)
+DIVERSITY_WRONG = {
+    'center': (
+        'Hmm there are many herbs there, but I think there are more diverse areas.'
+    ),
+    'soil': (
+        'There are a lot of vegetables growing there as well as herbs, but I think '
+        "there's even more over there."
+    ),
+}
+DIVERSITY_CORRECT = 'edge'
 
 
 def forage_ready(state):
     return (len(state.foraged_species) >= FORAGE_SPECIES_GOAL
             and state.forage_food >= FORAGE_FOOD_GOAL
             and state.forage_herbs >= FORAGE_HERB_GOAL)
+
+
+def diversity_option_labels(state):
+    remaining = state.diversity_remaining or [key for key, _ in DIVERSITY_OPTIONS]
+    lookup = dict(DIVERSITY_OPTIONS)
+    return tuple(lookup[key] for key in remaining if key in lookup)
+
+
+def diversity_option_key(state, choice_index):
+    remaining = state.diversity_remaining or [key for key, _ in DIVERSITY_OPTIONS]
+    if choice_index is None or choice_index < 0 or choice_index >= len(remaining):
+        return None
+    return remaining[choice_index]
+
+
+def is_meadow_forest_edge(game, x, y):
+    from world import TerrainType
+    cell = game.world.get_cell(x, y)
+    if cell is None:
+        return False
+    open_land = {TerrainType.MEADOW, TerrainType.GRASS}
+    forest = {TerrainType.FOREST_FLOOR}
+    if cell.terrain not in open_land | forest:
+        return False
+    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        neighbour = game.world.get_cell(x + dx, y + dy)
+        if neighbour is None:
+            continue
+        if cell.terrain in open_land and neighbour.terrain in forest:
+            return True
+        if cell.terrain in forest and neighbour.terrain in open_land:
+            return True
+    return False
+
+
+def near_tutorial_meadow(x, y, radius=MEADOW_SEARCH_RADIUS):
+    mx, my = MEADOW_CELL
+    return max(abs(x - mx), abs(y - my)) <= radius
+
+
+def is_diversity_hotspot_cell(game, x, y):
+    return near_tutorial_meadow(x, y) and is_meadow_forest_edge(game, x, y)
+
+
+def hotspot_anchor(state):
+    if state.hotspot_x is not None and state.hotspot_y is not None:
+        return int(state.hotspot_x), int(state.hotspot_y)
+    return MEADOW_CELL
+
+
+def wildlife_near_hotspot(game, radius=HOTSPOT_WILDLIFE_RADIUS):
+    ax, ay = hotspot_anchor(game.scenario.state)
+    found = []
+    for animal in getattr(game.wildlife, 'animals', ()):
+        if max(abs(animal.x - ax), abs(animal.y - ay)) <= radius:
+            found.append(f'animal:{animal.kind.name}')
+    for colony in getattr(game.wildlife, 'colonies', ()):
+        if max(abs(colony.x - ax), abs(colony.y - ay)) <= radius:
+            found.append(f'animal:{colony.kind.name}')
+        for member in getattr(colony, 'members', ()):
+            if max(abs(member.x - ax), abs(member.y - ay)) <= radius:
+                found.append(f'animal:{colony.kind.name}')
+    return found
+
+
+def note_diversity_cell(game, x, y):
+    """Mark the meadow/forest edge hotspot when the player inspects it."""
+    state = game.scenario.state
+    if getattr(state, 'key', None) != 'tutorial_slice':
+        return False
+    if state.step != 'find_diversity_hotspot':
+        return False
+    if not is_diversity_hotspot_cell(game, x, y):
+        return False
+    state.hotspot_x, state.hotspot_y = int(x), int(y)
+    if not state.diversity_remaining:
+        state.diversity_remaining = [key for key, _ in DIVERSITY_OPTIONS]
+    return True
+
+
+def note_hotspot_flora(game, x, y, species):
+    state = game.scenario.state
+    if getattr(state, 'key', None) != 'tutorial_slice' or state.step != 'inspect_hotspot_flora':
+        return
+    if not (species.startswith('plant:') or species.startswith('tree:')):
+        return
+    if species in state.hotspot_flora:
+        return
+    ax, ay = hotspot_anchor(state)
+    if max(abs(x - ax), abs(y - ay)) > HOTSPOT_WILDLIFE_RADIUS + 2 and not is_diversity_hotspot_cell(game, x, y):
+        if not near_tutorial_meadow(x, y, HOTSPOT_WILDLIFE_RADIUS + 4):
+            return
+    state.hotspot_flora.append(species)
+
+
+def note_hotspot_wildlife(game, species):
+    state = game.scenario.state
+    if getattr(state, 'key', None) != 'tutorial_slice' or state.step != 'find_hotspot_wildlife':
+        return
+    if not species.startswith('animal:'):
+        return
+    state.hotspot_wildlife_found = True
+
+
+def hotspot_flora_ready(state):
+    return len(state.hotspot_flora) >= HOTSPOT_FLORA_GOAL
 
 
 def _known_forage_plants(state):
@@ -235,6 +360,8 @@ def inspect_species(game, x, y, species):
             state.discovered_flora.append(flora_key)
             game.scenario._sync_management_unlocks(game)
     note_forage_species(game, species)
+    note_hotspot_flora(game, x, y, species)
+    note_hotspot_wildlife(game, species)
     if getattr(game.scenario, 'quest_feedback', None) and game.scenario.quest_feedback.holding:
         return
     if (state.step != 'field_handbook' or state.handbook_completed != 0

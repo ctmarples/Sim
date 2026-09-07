@@ -552,6 +552,16 @@ class WildlifeManager:
                 return animal
         return None
 
+    def colony_member_at(self, x: int, y: int) -> tuple[Colony | None, ColonyMember | None]:
+        """Return the colony and member standing on ``(x, y)``, if any."""
+        for colony in self.colonies:
+            if (colony.x, colony.y) == (x, y):
+                return colony, None
+            for member in colony.members:
+                if (member.x, member.y) == (x, y):
+                    return colony, member
+        return None, None
+
     def animals_in_area(self, contains) -> list[Animal]:
         return [a for a in self.animals if contains(a.x, a.y)]
 
