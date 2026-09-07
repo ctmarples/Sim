@@ -1710,6 +1710,7 @@ ICON_ROCK = "rock"
 ICON_ROCK_BIG = "rock_big"
 ICON_MUSHROOM = "mushroom"
 ICON_BERRY_BUSH = "berry_bush"
+ICON_BERRY_BUSH_SAPLING = "berry_bush_sapling"
 ICON_REED = "reed"
 ICON_CROP = "crop_plant"
 ICON_CROP_DENSE = "crop_plant_dense"
@@ -1847,6 +1848,7 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_ROCK_BIG,
     ICON_MUSHROOM,
     ICON_BERRY_BUSH,
+    ICON_BERRY_BUSH_SAPLING,
     ICON_REED,
     ICON_CROP,
     ICON_CROP_DENSE,

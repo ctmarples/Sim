@@ -21,6 +21,7 @@ BUILD_MENU_ORDER: tuple[BuildingKind, ...] = (
     BuildingKind.FISHER,
     BuildingKind.FARM,
     BuildingKind.FIELD,
+    BuildingKind.ORCHARD,
     BuildingKind.KITCHEN,
     BuildingKind.MILL,
     BuildingKind.ALCHEMIST,
@@ -47,6 +48,7 @@ UNLOCK_TIERS: tuple[frozenset[BuildingKind], ...] = (
             BuildingKind.FISHER,
             BuildingKind.FARM,
             BuildingKind.FIELD,
+            BuildingKind.ORCHARD,
             BuildingKind.KITCHEN,
             BuildingKind.MILL,
             BuildingKind.HOUSE,
@@ -118,7 +120,8 @@ BUILD_COSTS: dict[BuildingKind, BuildCost] = {
     BuildingKind.WORKSTATION: BuildCost(logs=2, rock=4, task=TaskType.FULL_FORAGE),
     BuildingKind.FISHER: BuildCost(logs=2, rock=4, task=TaskType.FISH),
     BuildingKind.FARM: BuildCost(logs=2, rock=4, task=TaskType.FARM_FIELD),
-    BuildingKind.FIELD: BuildCost(wood=1, rock=0, task=TaskType.FARM_FIELD),
+    BuildingKind.FIELD: BuildCost(wood=0, rock=0, task=TaskType.FARM_FIELD),
+    BuildingKind.ORCHARD: BuildCost(wood=0, rock=0, task=TaskType.FARM_FIELD),
     BuildingKind.KITCHEN: BuildCost(logs=2, rock=4, task=TaskType.FULL_FORAGE),
     BuildingKind.MILL: BuildCost(logs=2, rock=4, task=TaskType.FULL_FORAGE),
     BuildingKind.ALCHEMIST: BuildCost(hardwood=4, rock=4, task=TaskType.FULL_FORAGE),
@@ -152,7 +155,9 @@ def unlocked_kinds(built: set[BuildingKind]) -> set[BuildingKind]:
         unlocked |= UNLOCK_TIERS[1]
     if built & UNLOCK_TIERS[1]:
         unlocked |= UNLOCK_TIERS[2]
-    if BuildingKind.WORKSTATION in built:
+    # Hiring hall opens the farm tier; already having a farm/field/house also
+    # counts so authored villages (and orchards) stay placeable.
+    if BuildingKind.WORKSTATION in built or built & UNLOCK_TIERS[3]:
         unlocked |= UNLOCK_TIERS[3]
     if built & _TIER4_GATE:
         unlocked |= UNLOCK_TIERS[4]

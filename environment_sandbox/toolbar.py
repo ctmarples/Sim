@@ -44,6 +44,7 @@ _BUILD_ICON: dict[BuildingKind, str] = {
     BuildingKind.FISHER: "fisher",
     BuildingKind.FARM: "farm",
     BuildingKind.FIELD: "field",
+    BuildingKind.ORCHARD: "field",
     BuildingKind.KITCHEN: "kitchen",
     BuildingKind.MILL: "mill",
     BuildingKind.ALCHEMIST: "alchemist",
@@ -203,6 +204,7 @@ class Toolbar:
         # Field / home / hiring hall: options live in their popups.
         if building.kind in (
             BuildingKind.FIELD,
+            BuildingKind.ORCHARD,
             BuildingKind.HOME,
             BuildingKind.WORKSTATION,
         ):

@@ -12,7 +12,7 @@ from trees import SAPLING_ITEM_KEYS
 from height_sample import generate_height_sample
 from entities import (
     Building,
-    BuildingKind,
+    BuildingKind, is_field_plot_kind,
     ConstructionSite,
     CropPlan,
     FarmField,
@@ -51,7 +51,15 @@ _BASE_STORAGE_KEYS = (
     "honey",
     "book",
     "berries",
+    "blackberries",
+    "sloe_berries",
+    "elderberries",
+    "hazelnuts",
     "berry_seeds",
+    "blackberry_seeds",
+    "sloe_berry_seeds",
+    "elder_berry_seeds",
+    "hazel_seeds",
     "reeds",
     "straw",
     "fur",
@@ -104,6 +112,11 @@ def _normalize_legacy_storage(data: dict[str, Any]) -> dict[str, Any]:
     if legacy:
         out["wheat_grain"] = int(out.get("wheat_grain", 0)) + legacy
         out["grain"] = 0
+    # Generic berries → blackberries (species-specific foods replaced the old key).
+    legacy_berries = int(out.get("berries", 0) or 0)
+    if legacy_berries:
+        out["blackberries"] = int(out.get("blackberries", 0) or 0) + legacy_berries
+        out["berries"] = 0
     return out
 
 
@@ -239,8 +252,24 @@ def _apply_storage(obj: Any, data: dict[str, Any]) -> None:
         apply_food_quality(obj, fq)
 
 
-def _feature_from_save(name: str) -> FeatureType:
+def _feature_from_save(name: str, crop_kind: str | None = None) -> FeatureType:
     if name == "HERB" and "WILD_CROP" in FeatureType.__members__:
+        # Scenic flower herbs stay HERB. Legacy anonymous HERB (or a known
+        # farm/wild-crop kind) becomes WILD_CROP so it is not mis-read as sage
+        # via the old HERB→always-sage harvest path.
+        kind = str(crop_kind) if crop_kind else ""
+        if kind:
+            from crops import CROP_BY_KEY
+            from wild_species import WILD_BY_KEY
+
+            wild = WILD_BY_KEY.get(kind)
+            if wild is not None and wild.feature == "HERB":
+                return FeatureType.HERB
+            if kind in CROP_BY_KEY or (
+                wild is not None and wild.feature == "WILD_CROP"
+            ):
+                return FeatureType.WILD_CROP
+            return FeatureType.HERB
         return FeatureType.WILD_CROP
     if name == "FIELD" and "FIELD" in FeatureType.__members__:
         return FeatureType.FIELD
@@ -333,9 +362,10 @@ def _cell_from_save(c: dict[str, Any], *, migrate_legacy_fertility: bool = False
     if terrain == TerrainType.PATH:
         terrain = TerrainType.GRASS
         path_worn = True
+    crop_kind = c.get("crop_kind")
     cell = Cell(
         terrain=terrain,
-        feature=_feature_from_save(c["feature"]),
+        feature=_feature_from_save(c["feature"], crop_kind),
         disturbance=float(c.get("disturbance", 0.0)),
         growth_ticks=int(c.get("growth_ticks", 0)),
         deposit=int(c.get("deposit", 0)),
@@ -347,11 +377,17 @@ def _cell_from_save(c: dict[str, Any], *, migrate_legacy_fertility: bool = False
         path_worn=path_worn,
         tree_age_years=int(c.get("tree_age_years", 0)),
     )
-    crop_kind = c.get("crop_kind")
     if crop_kind is not None:
         setattr(cell, "crop_kind", crop_kind)
     elif cell.feature in (FeatureType.CROP_HERB, FeatureType.WILD_CROP):
         setattr(cell, "crop_kind", "sage")
+    # Repair scenic herbs that were previously forced to WILD_CROP on load.
+    if cell.feature == FeatureType.WILD_CROP and getattr(cell, "crop_kind", None):
+        from wild_species import WILD_BY_KEY
+
+        wild = WILD_BY_KEY.get(str(cell.crop_kind))
+        if wild is not None and wild.feature == "HERB":
+            cell.feature = FeatureType.HERB
     tree_species = c.get("tree_species")
     if tree_species is not None:
         setattr(cell, "tree_species", str(tree_species))
@@ -406,7 +442,8 @@ def _cell_from_save(c: dict[str, Any], *, migrate_legacy_fertility: bool = False
     for raw_obj in c.get("extra_objects", []):
         if not isinstance(raw_obj, dict):
             continue
-        feature = _feature_from_save(str(raw_obj.get("feature", "NONE")))
+        obj_kind = raw_obj.get("crop_kind")
+        feature = _feature_from_save(str(raw_obj.get("feature", "NONE")), obj_kind)
         if feature == FeatureType.NONE:
             continue
         cell.extra_objects.append(
@@ -415,7 +452,7 @@ def _cell_from_save(c: dict[str, Any], *, migrate_legacy_fertility: bool = False
                 anchor_slot=max(0, min(8, int(raw_obj.get("anchor_slot", 4)))),
                 deposit=int(raw_obj.get("deposit", 0)),
                 growth_ticks=int(raw_obj.get("growth_ticks", 0)),
-                crop_kind=raw_obj.get("crop_kind"),
+                crop_kind=obj_kind,
                 tree_species=raw_obj.get("tree_species"),
                 tree_age_years=int(raw_obj.get("tree_age_years", 0)),
                 icon_variant=(
@@ -546,7 +583,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
         }
         if hasattr(b, "crop_kind"):
             bdata["crop_kind"] = b.crop_kind
-        if b.kind.name == "FIELD":
+        if b.kind.name in ("FIELD", "ORCHARD"):
             bdata["crop_health"] = float(getattr(b, "crop_health", 1.0))
             bdata["pest_boost"] = float(getattr(b, "pest_boost", 0.0))
             bdata["fence_edges"] = [list(edge) for edge in sorted(b.fence_edges)]
@@ -894,7 +931,7 @@ def _migrate_legacy_fields(game: Game) -> None:
 
     # Old Field buildings with areas but no plot_w: expand plot from areas.
     for building in list(game.buildings.values()):
-        if building.kind != BuildingKind.FIELD:
+        if not building.is_field_plot:
             continue
         if building.plans:
             continue
@@ -956,7 +993,7 @@ def _migrate_building_footprints(game: Game) -> None:
     }
 
     for building in list(game.buildings.values()):
-        if building.kind == BuildingKind.FIELD:
+        if building.is_field_plot:
             continue
         pw, ph = default_building_plot(building.kind)
         if building.plot_w == pw and building.plot_h == ph:
@@ -986,7 +1023,7 @@ def _migrate_building_footprints(game: Game) -> None:
             game.world.workstation_pos = (cx, cy)
 
     for site in list(game.construction_sites.values()):
-        if site.kind == BuildingKind.FIELD:
+        if is_field_plot_kind(site.kind):
             continue
         pw, ph = default_building_plot(site.kind)
         if site.plot_w == pw and site.plot_h == ph:
@@ -1163,6 +1200,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             BuildingKind.FORAGER: TaskType.FULL_FORAGE,
             BuildingKind.FARM: TaskType.FARM_FIELD,
             BuildingKind.FIELD: TaskType.FARM_FIELD,
+            BuildingKind.ORCHARD: TaskType.FARM_FIELD,
             BuildingKind.MILL: TaskType.FULL_FORAGE,
             BuildingKind.KITCHEN: TaskType.FULL_FORAGE,
             BuildingKind.FIRE: TaskType.FULL_FORAGE,
@@ -1198,7 +1236,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             if raw_mode is None:
                 work_mode = WorkMode.ALL
             # else keep loaded Collect / Plant / Both
-        elif kind not in (BuildingKind.FORESTER, BuildingKind.FORAGER, BuildingKind.FIELD):
+        elif kind not in (BuildingKind.FORESTER, BuildingKind.FORAGER, BuildingKind.FIELD, BuildingKind.ORCHARD):
             work_mode = WorkMode.COLLECT
         building = Building(
             id=int(bdata["id"]),
@@ -1302,7 +1340,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                         RECIPE_PRIORITY_MIN,
                         min(RECIPE_PRIORITY_MAX, int(raw_priority[recipe.name])),
                     )
-        if kind == BuildingKind.FIELD:
+        if is_field_plot_kind(kind):
             building.crop_kind = str(bdata.get("crop_kind", "sage"))
             from environment import CROP_HEALTH_MIN
 
@@ -1330,7 +1368,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             old_gate = bdata.get("fence_gate")
             if isinstance(old_gate, (list, tuple)) and len(old_gate) >= 2:
                 building.fence_gates.add((int(old_gate[0]), int(old_gate[1])))
-            if kind == BuildingKind.FIELD and work_mode not in building.supported_work_modes():
+            if is_field_plot_kind(kind) and work_mode not in building.supported_work_modes():
                 building.work_mode = WorkMode.COLLECT
         building.sync_draw_task_from_mode()
         _apply_storage(building, bdata.get("storage", {}))

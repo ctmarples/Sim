@@ -278,7 +278,7 @@ def reed_despawn_rate(day: float, x: int, y: int) -> float:
 
 def berry_spawn_rate(day: float, x: int, y: int) -> float:
     """Legacy envelope (natural bush spawn is disabled)."""
-    return species_spawn_rate(WILD_BY_KEY["berry_bush"], local_day(day, x, y))
+    return species_spawn_rate(WILD_BY_KEY["blackberry"], local_day(day, x, y))
 
 
 def berry_fruiting(day: float, x: int = 0, y: int = 0) -> bool:

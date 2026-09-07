@@ -167,6 +167,59 @@ class FoodSeekingTests(unittest.TestCase):
         self.assertIsNone(villager.target)
         self.assertEqual(villager.work_cooldown, 12)
 
+    def test_map_food_skips_depleted_cells_still_in_index(self) -> None:
+        game = Game.__new__(Game)
+        depleted = SimpleNamespace()
+        live = SimpleNamespace()
+        game.world = SimpleNamespace(
+            get_cell=Mock(side_effect=lambda x, y: depleted if (x, y) == (1, 1) else live)
+        )
+        game.scenario = SimpleNamespace(
+            villager_foraging_near_home=Mock(return_value=True)
+        )
+        game._forage_cells_for_key = Mock(
+            side_effect=lambda key: [(1, 1), (4, 4)] if key == "blackberries" else []
+        )
+        game._forage_key_for_cell = Mock(
+            side_effect=lambda cell: None if cell is depleted else "blackberries"
+        )
+        game._pick_nearest_reachable = Mock(return_value=(4, 4))
+
+        villager = SimpleNamespace(x=0, y=0)
+        self.assertEqual(game._find_nearest_map_food(villager), (4, 4))
+        game._pick_nearest_reachable.assert_called_once()
+        self.assertEqual(game._pick_nearest_reachable.call_args.args[1], [(4, 4)])
+
+    def test_failed_map_food_collect_clears_target_and_index(self) -> None:
+        game = Game.__new__(Game)
+        game.world = SimpleNamespace(home_pos=(9, 9))
+        game._food_count = Mock(return_value=0)
+        game._find_nearest_food_store = Mock(return_value=None)
+        game._find_nearest_map_food = Mock(return_value=(3, 3))
+        game._food_store_at = Mock(return_value=None)
+        game._inventory_needs_store_deposit = Mock(return_value=False)
+        game._villager_needs_home_restock = Mock(return_value=False)
+        game._collect_map_food = Mock(return_value=False)
+        game._invalidate_forage_index = Mock()
+
+        villager = SimpleNamespace(
+            x=3,
+            y=3,
+            inventory=SimpleNamespace(is_full=False),
+            satiation=0.0,
+            seeking_food=True,
+            target=(3, 3),
+            work_cooldown=0,
+            state=VillagerState.WORKING,
+            needs_food=Mock(return_value=True),
+        )
+
+        game._update_seek_food(villager)
+
+        self.assertIsNone(villager.target)
+        game._invalidate_forage_index.assert_called_once()
+        self.assertTrue(villager.seeking_food)
+
 
 if __name__ == "__main__":
     unittest.main()

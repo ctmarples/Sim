@@ -1,7 +1,11 @@
 """Continuous scroll focus within the quest group."""
 import time
 
-GROUP_TITLES = {'shelter': 'Shelter from the Storm', 'land': 'Lay of the Land'}
+GROUP_TITLES = {
+    'shelter': 'Shelter from the Storm',
+    'land': 'Lay of the Land',
+    'knowledge': 'New knowledge',
+}
 
 SCROLL_FRICTION = 0.88
 SCROLL_STOP = 0.35

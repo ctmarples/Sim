@@ -58,6 +58,10 @@ VILLAGER_SATIATION_DECAY_PER_TICK: float = satiation_decay_per_tick()
 # Kitchen craft outputs are appended via ``register_food`` when recipes.csv loads.
 VILLAGER_FOOD_KEYS: list[str] = [
     "berries",
+    "blackberries",
+    "sloe_berries",
+    "elderberries",
+    "hazelnuts",
     "mushrooms",
     "honey",
     "fish",
@@ -109,6 +113,10 @@ class FoodDef:
 # Raw / foraged foods only. Kitchen craft foods: ``recipes_data/kitchen/recipes.csv``.
 FOODS: list[FoodDef] = [
     FoodDef("berries", satiation=1.0),
+    FoodDef("blackberries", satiation=1.0),
+    FoodDef("sloe_berries", satiation=1.0),
+    FoodDef("elderberries", satiation=1.0),
+    FoodDef("hazelnuts", satiation=1.2),
     FoodDef("mushrooms", satiation=1.0),
     FoodDef("honey", satiation=1.5, hunger_rate=0.8, walk_speed=1.5),
     FoodDef("onion", satiation=1.0),
@@ -595,14 +603,15 @@ from wild_species import (  # noqa: E402
     spawn_group_leader as _spawn_group_leader,
 )
 
-_berry = _WILD_BY_KEY["berry_bush"]
+_berry = _WILD_BY_KEY["blackberry"]
 _reed = _WILD_BY_KEY["reed"]
 _mushroom = _WILD_BY_KEY["mushroom"]
 _wood = _WILD_BY_KEY["wood_bush"]
 _herb = _spawn_group_leader("wild_crop")
 
 BERRY_BUSH_YIELD = int(_berry.yield_amount)
-BERRY_INITIAL_COUNT = int(_berry.initial_count)
+BERRY_INITIAL_COUNT = sum(int(getattr(_WILD_BY_KEY.get(k), "initial_count", 0) or 0)
+                          for k in ("blackberry", "sloe", "elderberry", "hazel"))
 MUSHROOM_YIELD = int(_mushroom.yield_amount)
 REED_YIELD = int(_reed.yield_amount)
 REED_INITIAL_FRACTION = float(_reed.initial_fraction)

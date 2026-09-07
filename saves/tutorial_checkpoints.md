@@ -30,6 +30,12 @@ Load these JSON files through the game’s load menu. Each checkpoint starts fro
 | 24 | [Identify the diversity hotspot](tutorial_intro_24.json) |
 | 25 | [Inspect hotspot flora](tutorial_intro_25.json) |
 | 26 | [Look for wildlife](tutorial_intro_26.json) |
-| 27 | [Lay of the Land complete](tutorial_intro_27.json) |
+| 27 | [Return to Rhea](tutorial_intro_27.json) |
+| 28 | [Return for berry bushes](tutorial_intro_28.json) |
+| 29 | [Trade for berry seeds](tutorial_intro_29.json) |
+| 30 | [Create orchard field](tutorial_intro_30.json) |
+| 31 | [Plan orchard planting](tutorial_intro_31.json) |
+| 32 | [Plant orchard bushes](tutorial_intro_32.json) |
+| 33 | [New knowledge complete](tutorial_intro_33.json) |
 
-Files 1–6 cover Shelter from the Storm; 7–27 cover Lay of the Land. File 15 replaces the former early “complete” checkpoint. In 20 the seasonal example has been viewed and Rotation is open, but adding Wheat is still unfinished. In 21 Wheat is in the Rotation planner and Rhea is about to ask you to help Gwen forage. After forage for dinner, 24–26 cover the meadow diversity hotspot and wildlife check.
+Files 1–6 cover Shelter from the Storm; 7–26 cover Lay of the Land; 27–33 cover New knowledge. After forage for dinner, village buildings unlock. After the wildlife check, return to Rhea, trade with the berry traveller for blackberry, sloe, and elderberry seeds, then establish a 1×6 orchard on the west border of the wheat field.

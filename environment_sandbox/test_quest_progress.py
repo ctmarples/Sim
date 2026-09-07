@@ -179,4 +179,5 @@ class QuestProgressTests(unittest.TestCase):
         text,_=self.game.scenario.take_dialog_request()
         self.assertIn('footprints',text)
         self.game.scenario.dismiss_dialog()
-        self.assertTrue(self.state.completed)
+        self.assertEqual(self.state.step,'return_to_rhea')
+        self.assertFalse(self.state.completed)

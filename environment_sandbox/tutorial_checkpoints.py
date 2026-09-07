@@ -31,10 +31,16 @@ CHECKPOINTS = (
     (24, 'land', 'Identify the diversity hotspot'),
     (25, 'land', 'Inspect hotspot flora'),
     (26, 'land', 'Look for wildlife'),
-    (27, 'land', 'Lay of the Land complete'),
+    (27, 'knowledge', 'Return to Rhea'),
+    (28, 'knowledge', 'Return for berry bushes'),
+    (29, 'knowledge', 'Trade for berry seeds'),
+    (30, 'knowledge', 'Create orchard field'),
+    (31, 'knowledge', 'Plan orchard planting'),
+    (32, 'knowledge', 'Plant orchard bushes'),
+    (33, 'knowledge', 'New knowledge complete'),
 )
 
-GROUP_LABELS = {'shelter': 'Shelter', 'land': 'Land'}
+GROUP_LABELS = {'shelter': 'Shelter', 'land': 'Land', 'knowledge': 'Knowledge'}
 
 
 def checkpoint_path(number: int) -> Path:

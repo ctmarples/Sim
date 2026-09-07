@@ -65,6 +65,10 @@ RESOURCES: list[ResourceDef] = [
     ResourceDef("meat", "Meat", "food", "meat"),
     ResourceDef("fish", "Fish", "food", "fish"),
     ResourceDef("berries", "Berries", "food", "berr"),
+    ResourceDef("blackberries", "Blackberries", "food", "blkb"),
+    ResourceDef("sloe_berries", "Sloe berries", "food", "sloe"),
+    ResourceDef("elderberries", "Elderberries", "food", "eldr"),
+    ResourceDef("hazelnuts", "Hazelnuts", "food", "hazl"),
     ResourceDef("mushrooms", "Mushrooms", "food", "mush"),
     ResourceDef("honey", "Honey", "food", "hone"),
     ResourceDef("book", "Old farm book", "wares", "book", "book_inventory"),
@@ -103,6 +107,10 @@ RESOURCES: list[ResourceDef] = [
     ResourceDef("rye_flour", "Rye flour", "wares", "r.fl"),
     *_TREE_SAPLINGS,
     ResourceDef("berry_seeds", "Berry seeds", "agriculture", "b.sd"),
+    ResourceDef("blackberry_seeds", "Blackberry seeds", "agriculture", "bk.s"),
+    ResourceDef("sloe_berry_seeds", "Sloe berry seeds", "agriculture", "sl.s"),
+    ResourceDef("elder_berry_seeds", "Elder berry seeds", "agriculture", "el.s"),
+    ResourceDef("hazel_seeds", "Hazel seeds", "agriculture", "hz.s"),
     *_CROP_SEEDS,
 ]
 
@@ -285,7 +293,8 @@ class ResourceIconStyle:
 _SEED_COLOUR: tuple[int, int, int] = (130, 62, 39)
 
 
-def _crop_plant_style(crop, *, dense: bool) -> ResourceIconStyle:
+def _crop_plant_style(crop, *, dense: bool = False) -> ResourceIconStyle:
+    """Wild/forage-style plant glyph: stem + flower recolours from CropDef."""
     recolour: dict[str, tuple[int, int, int]] = {"stem": crop.stem_colour}
     omit: tuple[str, ...] = ()
     if crop.flower_colour is not None:
@@ -416,10 +425,27 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
         return ResourceIconStyle(ICON_RABBIT, {})
     if key == "berries":
         return ResourceIconStyle(ICON_BERRIES, {"berry": COLOUR_BERRY})
+    if key in ("blackberries", "sloe_berries", "elderberries", "hazelnuts"):
+        from berry_bushes import berry_fruit_colour, berry_kind_for_seed, normalize_berry_kind
+        kind = {
+            "blackberries": "blackberry",
+            "sloe_berries": "sloe",
+            "elderberries": "elderberry",
+            "hazelnuts": "hazel",
+        }[key]
+        return ResourceIconStyle(ICON_BERRIES, {"berry": berry_fruit_colour(kind)})
     if key == "berry_seeds":
         return ResourceIconStyle(
             ICON_SEEDS,
             {"flower": _SEED_COLOUR},
+            badge_key="berries",
+        )
+    if key in ("blackberry_seeds", "sloe_berry_seeds", "elder_berry_seeds", "hazel_seeds"):
+        from berry_bushes import berry_fruit_colour, berry_kind_for_seed
+        kind = berry_kind_for_seed(key) or "blackberry"
+        return ResourceIconStyle(
+            ICON_SEEDS,
+            {"flower": berry_fruit_colour(kind)},
             badge_key="berries",
         )
     if key == "reeds":
@@ -520,8 +546,12 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
             )
 
     crop = CROP_BY_KEY.get(key)
+    if crop is None:
+        # produce_key may differ from CropDef.key (e.g. orchard berries already handled).
+        crop = next((c for c in CROP_BY_KEY.values() if c.produce_key == key), None)
     if crop is not None:
-        return _crop_plant_style(crop, dense=True)
+        # Sparse plant icon matches wild flora / diary (not field-dense canopy).
+        return _crop_plant_style(crop, dense=False)
 
     # Drop-in recipe icons: any category below assets/icons, resolved by stem.
     from icons import has_icon

@@ -195,20 +195,20 @@ def _wild_crop(
 
 
 WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
-    # --- Permanent / special features ------------------------------------
+    # --- Permanent berry / nut bushes ------------------------------------
     WildSpeciesDef(
-        key="berry_bush",
-        label="Berry bush",
+        key="blackberry",
+        label="Blackberry bush",
         feature="BERRY_BUSH",
         terrains=("GRASS",),
-        resource_key="berries",
+        resource_key="blackberries",
         yield_amount=4,
         icon_base="berry_bush",
-        icon_recolour=(("bush", (50, 110, 50)),),
+        icon_recolour=(("bush", (45, 100, 45)),),
         fruit_class="berry",
-        fruit_colour=(160, 40, 90),
+        fruit_colour=(40, 20, 55),
         empty_fruit_colour=(70, 95, 55),
-        initial_count=6,
+        initial_count=2,
         spawn_peak=0.0,
         fruiting=True,
         fruit_rise=(26.0, 36.0),
@@ -217,6 +217,72 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
         temperature_niche=NicheRange(.20,.35,.65,.85), rainfall_niche=NicheRange(.25,.40,.70,.90),
         moisture_niche=NicheRange(.25,.40,.70,.85), fertility_niche=NicheRange(.25,.40,.75,.95),
         disturbance_niche=NicheRange(.00,.05,.25,.60), ecology_tags=("flowering", "pollinator_food", "grazer_forage"),
+    ),
+    WildSpeciesDef(
+        key="sloe",
+        label="Sloe berry bush",
+        feature="BERRY_BUSH",
+        terrains=("GRASS",),
+        resource_key="sloe_berries",
+        yield_amount=4,
+        icon_base="berry_bush",
+        icon_recolour=(("bush", (55, 105, 50)),),
+        fruit_class="berry",
+        fruit_colour=(55, 45, 120),
+        empty_fruit_colour=(75, 100, 55),
+        initial_count=2,
+        spawn_peak=0.0,
+        fruiting=True,
+        fruit_rise=(26.0, 36.0),
+        fruit_fall=(48.0, 58.0),
+        counts_toward_cap=True,
+        temperature_niche=NicheRange(.18,.32,.62,.82), rainfall_niche=NicheRange(.20,.35,.65,.85),
+        moisture_niche=NicheRange(.20,.35,.65,.80), fertility_niche=NicheRange(.20,.35,.70,.90),
+        disturbance_niche=NicheRange(.00,.05,.25,.55), ecology_tags=("flowering", "pollinator_food", "grazer_forage"),
+    ),
+    WildSpeciesDef(
+        key="elderberry",
+        label="Elder berry bush",
+        feature="BERRY_BUSH",
+        terrains=("GRASS",),
+        resource_key="elderberries",
+        yield_amount=4,
+        icon_base="berry_bush",
+        icon_recolour=(("bush", (50, 115, 55)),),
+        fruit_class="berry",
+        fruit_colour=(110, 30, 90),
+        empty_fruit_colour=(70, 95, 55),
+        initial_count=1,
+        spawn_peak=0.0,
+        fruiting=True,
+        fruit_rise=(26.0, 36.0),
+        fruit_fall=(48.0, 58.0),
+        counts_toward_cap=True,
+        temperature_niche=NicheRange(.22,.38,.68,.88), rainfall_niche=NicheRange(.28,.42,.72,.92),
+        moisture_niche=NicheRange(.28,.42,.72,.88), fertility_niche=NicheRange(.28,.42,.78,.95),
+        disturbance_niche=NicheRange(.00,.05,.22,.55), ecology_tags=("flowering", "pollinator_food", "grazer_forage"),
+    ),
+    WildSpeciesDef(
+        key="hazel",
+        label="Hazel bush",
+        feature="BERRY_BUSH",
+        terrains=("GRASS",),
+        resource_key="hazelnuts",
+        yield_amount=3,
+        icon_base="berry_bush",
+        icon_recolour=(("bush", (60, 110, 50)),),
+        fruit_class="berry",
+        fruit_colour=(150, 105, 45),
+        empty_fruit_colour=(85, 100, 60),
+        initial_count=1,
+        spawn_peak=0.0,
+        fruiting=True,
+        fruit_rise=(48.0, 58.0),
+        fruit_fall=(70.0, 80.0),
+        counts_toward_cap=True,
+        temperature_niche=NicheRange(.15,.30,.60,.80), rainfall_niche=NicheRange(.22,.38,.68,.88),
+        moisture_niche=NicheRange(.22,.38,.68,.85), fertility_niche=NicheRange(.25,.40,.75,.95),
+        disturbance_niche=NicheRange(.00,.05,.20,.50), ecology_tags=("flowering", "grazer_forage"),
     ),
     WildSpeciesDef(
         key="reed",
@@ -365,6 +431,8 @@ def resolve_species(
     kind: str | None = None,
 ) -> WildSpeciesDef | None:
     """Resolve catalogue entry from feature + optional cell kind key."""
+    if kind == "berry_bush":
+        kind = "blackberry"
     if kind:
         s = WILD_BY_KEY.get(kind)
         if s is not None and (
@@ -397,6 +465,88 @@ def is_harvestable(species: WildSpeciesDef | None) -> bool:
     if species is None:
         return False
     return bool(species.resource_key) and int(species.yield_amount) > 0
+
+
+def plant_forage_yield(
+    feature_name: str, kind: str | None
+) -> tuple[str, int] | None:
+    """Inventory key + max yield for a wild plant cell, or None if not collectable.
+
+    Scenic HERB flora (clover, yarrow, …) have no resource_key and must not
+    fall back to sage. Wild crops resolve through ``crops.CROP_BY_KEY``.
+    """
+    from crops import CROP_BY_KEY
+
+    if feature_name == "REED":
+        species = resolve_species("REED", kind)
+        if not is_harvestable(species):
+            return None
+        assert species is not None
+        return (species.resource_key or "reeds", max(1, int(species.yield_amount)))
+
+    if feature_name not in ("HERB", "WILD_CROP", "CROP_HERB"):
+        return None
+
+    crop_key = kind
+    if not crop_key and feature_name in ("WILD_CROP", "CROP_HERB"):
+        crop_key = "sage"
+    if crop_key and crop_key in CROP_BY_KEY:
+        crop = CROP_BY_KEY[crop_key]
+        wild = WILD_BY_KEY.get(crop_key)
+        ymax = max(1, int(wild.yield_amount) if wild is not None else 3)
+        return crop.produce_key, ymax
+
+    species = resolve_species(feature_name, kind)
+    # Mis-tagged scenic herbs (e.g. clover saved as WILD_CROP) must not use the
+    # feature default wild-crop species — only honour an exact kind match.
+    if kind:
+        exact = WILD_BY_KEY.get(kind)
+        if exact is not None and exact.feature == "HERB":
+            if is_harvestable(exact):
+                return exact.resource_key, max(1, int(exact.yield_amount))
+            return None
+    if is_harvestable(species):
+        assert species is not None
+        return species.resource_key, max(1, int(species.yield_amount))
+    return None
+
+
+# Always available on forager Collect (not gated by diary flora).
+ALWAYS_FORAGE_KEYS: frozenset[str] = frozenset({"wood", "rock", "honey"})
+
+
+def forage_resource_keys_for_flora(flora_keys: set[str] | None) -> frozenset[str] | None:
+    """Inventory keys a forager may collect given diary flora.
+
+    ``None`` flora_keys means unrestricted (sandbox / post-tutorial).
+    Wood, rock, and honey stay available even with an empty flora list.
+    """
+    if flora_keys is None:
+        return None
+    allowed: set[str] = set(ALWAYS_FORAGE_KEYS)
+    from crops import CROP_BY_KEY
+    from trees import TREE_BY_KEY
+
+    for raw in flora_keys:
+        key = str(raw or "")
+        if ":" not in key:
+            continue
+        group, name = key.split(":", 1)
+        if group == "tree":
+            tree = TREE_BY_KEY.get(name)
+            if tree is not None:
+                allowed.add(tree.yield_key)
+            continue
+        if group not in ("wild", "plant"):
+            continue
+        species = WILD_BY_KEY.get(name)
+        if species is not None and species.resource_key:
+            allowed.add(species.resource_key)
+            continue
+        crop = CROP_BY_KEY.get(name)
+        if crop is not None:
+            allowed.add(crop.produce_key)
+    return frozenset(allowed)
 
 
 def wild_crops_by_terrain() -> dict[str, tuple[str, ...]]:

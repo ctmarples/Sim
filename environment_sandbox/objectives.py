@@ -62,18 +62,35 @@ FORAGE_MILESTONES = (
     ('find_hotspot_wildlife wildlife_footprints', 'Look for wildlife', 'Can I find any wildlife here as well? Inspect one wildlife species near the hotspot.'),
 )
 
+KNOWLEDGE_MILESTONES = (
+    ('return_to_rhea', 'Find Rhea', 'Return to the village and find Rhea.'),
+    ('knowledge_thanks knowledge_player_glad knowledge_rhea_winter knowledge_player_edge knowledge_rhea_we knowledge_player_hesitate knowledge_rhea_stay knowledge_player_berries', None, ''),
+    ('visit_berry_traveller berry_trade_accuse berry_trade_player_stay berry_trade_mine berry_trade_offer berry_trade_listening berry_trade_terms',
+     'Return for berry bushes', 'Return to the berries traveller to get some berry bushes.'),
+    ('collect_trade_food berry_trade_delivery', 'Trade for berry seeds', 'Collect 20 food and bring it back to the traveller.'),
+    ('create_orchard_field', 'Create an orchard field',
+     'Create a new orchard field on the west of the wheat field. Orchard should be 1×6 along the west border of the field.'),
+    ('plan_orchard_crops', 'Plan the orchard planting',
+     'Plan the orchard planting with 2 blackberry bushes, 2 sloe berry bushes and 2 elder berry bushes.'),
+    ('plant_orchard_bushes', 'Plant the bushes', 'Plant the bushes in the orchard field.'),
+)
+
 FORAGE_STEPS = {step for steps, _, _ in FORAGE_MILESTONES for step in steps.split()}
+KNOWLEDGE_STEPS = {step for steps, _, _ in KNOWLEDGE_MILESTONES for step in steps.split()}
+FORAGE_STEPS.update(KNOWLEDGE_STEPS)
 
 
 def scenario_objectives(state):
     """Return only completed or unlocked tasks, in story chronology."""
     if state.key != 'tutorial_slice':
         return []
+    knowledge_index = next((i for i, (steps, _, _) in enumerate(KNOWLEDGE_MILESTONES)
+                            if state.step in steps.split()), None)
     forage_index = next((i for i, (steps, _, _) in enumerate(FORAGE_MILESTONES)
                          if state.step in steps.split()), None)
     stage = next((i for i, (steps, _, _) in enumerate(MILESTONES)
                   if state.step in steps.split()), None)
-    if (state.step == 'field_handbook' or forage_index is not None
+    if (state.step == 'field_handbook' or forage_index is not None or knowledge_index is not None
             or (state.completed and state.field_planner_unlocked)):
         stage = len(MILESTONES)
     if stage is None and (state.step == 'release_rhea' or state.completed):
@@ -96,8 +113,13 @@ def scenario_objectives(state):
             rows.append(dict(id=f'handbook_{index + 1}', headline=title.split('. ', 1)[-1],
                              explanation=explanation, completed=index < completed))
         forage_limit = -1
+        knowledge_limit = -1
         if state.completed and state.handbook_completed >= 5:
             forage_limit = len(FORAGE_MILESTONES)
+            knowledge_limit = len(KNOWLEDGE_MILESTONES)
+        elif knowledge_index is not None:
+            forage_limit = len(FORAGE_MILESTONES)
+            knowledge_limit = knowledge_index
         elif forage_index is not None:
             forage_limit = forage_index
         for index, (steps, headline, explanation) in enumerate(FORAGE_MILESTONES):
@@ -107,14 +129,27 @@ def scenario_objectives(state):
                 rows.append(dict(id=steps.split()[0], headline=headline,
                                  explanation=explanation,
                                  completed=index < forage_limit or bool(state.completed)))
+        for index, (steps, headline, explanation) in enumerate(KNOWLEDGE_MILESTONES):
+            if index > knowledge_limit:
+                break
+            if headline:
+                rows.append(dict(id=steps.split()[0], headline=headline,
+                                 explanation=explanation,
+                                 completed=index < knowledge_limit or bool(state.completed),
+                                 group='knowledge'))
     from quest_navigation import GROUP_TITLES
     land_ids = {steps.split()[0] for steps, headline, _ in MILESTONES[
         next(i for i, (steps, _, _) in enumerate(MILESTONES) if steps == 'talk_to_rhea'):]
         if headline}
     land_ids.update(steps.split()[0] for steps, headline, _ in FORAGE_MILESTONES if headline)
+    knowledge_ids = {steps.split()[0] for steps, headline, _ in KNOWLEDGE_MILESTONES if headline}
     for quest in rows:
-        quest['group'] = 'land' if quest['id'] in land_ids or quest['id'].startswith('handbook_') else 'shelter'
-        quest['group_title'] = GROUP_TITLES[quest['group']]
+        if quest.get('group') == 'knowledge' or quest['id'] in knowledge_ids:
+            quest['group'] = 'knowledge'
+            quest['group_title'] = GROUP_TITLES.get('knowledge', 'New knowledge')
+        else:
+            quest['group'] = 'land' if quest['id'] in land_ids or quest['id'].startswith('handbook_') else 'shelter'
+            quest['group_title'] = GROUP_TITLES[quest['group']]
         quest["objectives"] = quest_items(state, quest)
         if quest["id"] == "handbook_1" and state.quest_no_hives:
             quest["note"] = "Hmm, doesn’t look like there are any bees nearby."
@@ -152,6 +187,9 @@ OBJECTIVE_TIPS = {
     ),
     'hotspot_flora': 'Tip: click plants and trees at the meadow–forest edge.',
     'hotspot_wildlife': 'Tip: click an animal near the hotspot to inspect it.',
+    'create_orchard_field': 'Tip: drag the field patch selection with the cursor to establish a field.',
+    'plan_orchard_crops': 'Tip: select the crop and draw the crop areas.',
+    'plant_orchard_bushes': 'Tip: plough and plant each planned orchard square in spring.',
 }
 
 
@@ -230,4 +268,31 @@ def quest_items(state, quest):
                      label="Inspect 1 wildlife species near the hotspot",
                      completed=found,
                      tip=OBJECTIVE_TIPS.get('hotspot_wildlife', ''), children=[])]
+    if key == "visit_berry_traveller":
+        return [dict(id="visit_traveller", label="Speak with the berries traveller",
+                     completed=quest["completed"], children=[])]
+    if key == "return_to_rhea":
+        return [dict(id="find_rhea", label="Talk to Rhea in the village",
+                     completed=quest["completed"], children=[])]
+    if key == "collect_trade_food":
+        from berry_bushes import TRADE_FOOD_COST
+        return [dict(id="trade_food",
+                     label=f"Bring {TRADE_FOOD_COST} food to the traveller",
+                     completed=quest["completed"],
+                     tip='Tip: any food in your inventory counts toward the trade.', children=[])]
+    if key == "create_orchard_field":
+        return [dict(id="create_orchard",
+                     label="Create a 1×6 orchard on the west border of the wheat field",
+                     completed=quest["completed"],
+                     tip=OBJECTIVE_TIPS.get('create_orchard_field', ''), children=[])]
+    if key == "plan_orchard_crops":
+        return [dict(id="plan_orchard",
+                     label="Plan 2 blackberry, 2 sloe berry, and 2 elder berry bushes",
+                     completed=quest["completed"],
+                     tip=OBJECTIVE_TIPS.get('plan_orchard_crops', ''), children=[])]
+    if key == "plant_orchard_bushes":
+        return [dict(id="plant_orchard",
+                     label="Plant the planned orchard bushes",
+                     completed=quest["completed"],
+                     tip=OBJECTIVE_TIPS.get('plant_orchard_bushes', ''), children=[])]
     return [dict(id=key, label=quest["headline"], completed=quest["completed"])]

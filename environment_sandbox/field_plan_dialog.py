@@ -1,4 +1,4 @@
-"""Field management panel: Status (yield / environment) and Rotation (crop plans)."""
+"""Field management panel: Status (yield / environment) and Rotation/Crop plans."""
 
 from __future__ import annotations
 
@@ -15,12 +15,13 @@ from crops import (
     PLAN_COLOUR_PLANT,
     SeasonPhase,
     crop_for_season,
+    orchard_crops,
     phase_allows_harvest,
     phase_allows_plough_plant,
     phase_for_crop,
 )
 from crop_status_ui import draw_crop_overview, draw_env_hover
-from entities import Building, BuildingKind
+from entities import Building, BuildingKind, is_field_plot_kind
 from field_yield import (
     SEVERITY_COLOUR,
     FieldFactorDisplay,
@@ -166,6 +167,16 @@ class FieldPlanDialog:
     def open(self) -> bool:
         return self.building_id is not None
 
+    def _is_plan_tab(self) -> bool:
+        return self.tab in ("rotation", "crop")
+
+    def _plan_options(self, building: Building | None = None):
+        if building is not None and building.is_orchard:
+            return orchard_crops()
+        if self.tab == "crop":
+            return orchard_crops()
+        return crop_for_season(self.season)
+
     def configure_embed(self, rect: pygame.Rect) -> None:
         self.embedded = True
         self._panel_x = rect.x
@@ -174,20 +185,20 @@ class FieldPlanDialog:
         self._panel_h = max(120, rect.h)
 
     def open_for(self, building: Building, *, season: Season | None = None) -> None:
-        if building.kind != BuildingKind.FIELD:
+        if not is_field_plot_kind(building.kind):
             return
         self._example_seen_seasons = set()
         self.building_id = building.id
-        self.season = season or Season.SPRING
+        self.season = Season.SPRING if building.is_orchard else (season or Season.SPRING)
         self.tab = "status"
         self.expanded_factor = None
         self._scroll = 0
-        options = crop_for_season(self.season)
+        options = orchard_crops() if building.is_orchard else crop_for_season(self.season)
         if options:
             if self.crop_kind not in {c.key for c in options}:
                 self.crop_kind = options[0].key
         else:
-            self.crop_kind = "sage"
+            self.crop_kind = "blackberry" if building.is_orchard else "sage"
         self._drag_start = None
         self._drag_current = None
         self._result = None
@@ -251,7 +262,7 @@ class FieldPlanDialog:
     def _layout_for(self, building: Building) -> None:
         pw, ph = max(1, building.plot_w), max(1, building.plot_h)
         if self.embedded:
-            if self.tab == "rotation":
+            if self._is_plan_tab():
                 # Keep a stable, comfortably draggable grid. Extra controls
                 # belong to the scrolling page, not the grid-size calculation.
                 self._cell_px = 28
@@ -281,7 +292,7 @@ class FieldPlanDialog:
         self._panel_h = chrome + grid_h + 120
 
     def _crop_row_count(self, inner_w: int) -> int:
-        options = crop_for_season(self.season)
+        options = orchard_crops() if self.tab == "crop" else crop_for_season(self.season)
         if not options:
             return 1
         x = 0
@@ -323,7 +334,7 @@ class FieldPlanDialog:
             if rect.collidepoint(pos):
                 self._on_action(action, building)
                 return
-        if self.tab == "rotation":
+        if self._is_plan_tab():
             local = self._pos_to_local(pos, building)
             if local is not None:
                 self._drag_start = local
@@ -335,7 +346,7 @@ class FieldPlanDialog:
             self._panel_y = pos[1] - self._move_offset[1]
             self._clamp_panel()
             return
-        if self._drag_start is not None and self.tab == "rotation":
+        if self._drag_start is not None and self._is_plan_tab():
             local = self._pos_to_local(pos, building)
             if local is not None:
                 self._drag_current = local
@@ -344,7 +355,7 @@ class FieldPlanDialog:
         if self._moving:
             self._moving = False
             return
-        if self._drag_start is not None and building is not None and self.tab == "rotation":
+        if self._drag_start is not None and building is not None and self._is_plan_tab():
             local = self._pos_to_local(pos, building) or self._drag_current
             if local is not None:
                 sx, sy = self._drag_start
@@ -385,6 +396,15 @@ class FieldPlanDialog:
             self._drag_current = None
         elif action == "tab_rotation" and (self.handbook_stage is None or self.handbook_stage >= 5 or self.rotation_unlocked):
             self.tab = "rotation"
+            self.expanded_factor = None
+            self._scroll = 0
+            self._layout_for(building)
+        elif action == "tab_crop":
+            self.tab = "crop"
+            self.season = Season.SPRING
+            options = orchard_crops()
+            if options and self.crop_kind not in {c.key for c in options}:
+                self.crop_kind = options[0].key
             self.expanded_factor = None
             self._scroll = 0
             self._layout_for(building)
@@ -449,7 +469,7 @@ class FieldPlanDialog:
         yield_map_active: bool = False,
         debug: bool = False,
     ) -> None:
-        if not self.open or building is None or building.kind != BuildingKind.FIELD:
+        if not self.open or building is None or not is_field_plot_kind(building.kind):
             return
         self._crop_overview = list(crop_overview or [])
         self._env_status = env_status
@@ -490,7 +510,8 @@ class FieldPlanDialog:
                 border_top_right_radius=6,
             )
         self._title_rect = pygame.Rect(panel.x, panel.y, panel.w - 32, TITLE_BAR_H)
-        title = f"Field #{building.id} · {building.plot_size_label()}"
+        kind_label = "Orchard" if building.is_orchard else "Field"
+        title = f"{kind_label} #{building.id} · {building.plot_size_label()}"
         surface.blit(
             self.font.render(title, True, COLOUR_TEXT),
             (panel.x + 10, panel.y + 6),
@@ -524,9 +545,11 @@ class FieldPlanDialog:
         # Tabs
         tab_x = inner_left
         tabs = [("Status", "status")]
-        if self.handbook_stage is None or self.handbook_stage >= 5 or self.rotation_unlocked:
+        if building.is_orchard:
+            tabs.append(("Crop", "crop"))
+        elif self.handbook_stage is None or self.handbook_stage >= 5 or self.rotation_unlocked:
             tabs.append(("Rotation", "rotation"))
-        if self.handbook_stage is not None:
+        if self.handbook_stage is not None and not building.is_orchard:
             tabs.append(("Old Field Handbook", "handbook"))
         for label, key in tabs:
             w = max(64, 12 + self.font_small.size(label)[0])
@@ -1041,7 +1064,7 @@ class FieldPlanDialog:
             current_season,
             fonts=fonts,
             empty_label="No crop plans on this field",
-            title="ROTATION PLAN",
+            title="ORCHARD PLAN" if building.is_orchard else "ROTATION PLAN",
         )
         fertility_top = y
         fertility_block_h = 3 * self.font_small.get_linesize() + 18
@@ -1102,22 +1125,29 @@ class FieldPlanDialog:
         # cannot shift or resize the season controls and field grid below it.
         y = fertility_top + fertility_block_h
 
-        # Season row
+        # Season row (rotation only — orchard bushes plant in spring)
         sx = x
-        for season in SEASON_ORDER:
-            label = SEASON_LABELS[season][:3]
-            w = max(44, 10 + self.font_small.size(label)[0])
-            rect = pygame.Rect(sx, y, w, BTN_H)
-            hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
-            self._draw_btn(
-                surface,
-                rect,
-                label,
-                season == self.season,
-                hovered=hovered,
+        if not building.is_orchard:
+            for season in SEASON_ORDER:
+                label = SEASON_LABELS[season][:3]
+                w = max(44, 10 + self.font_small.size(label)[0])
+                rect = pygame.Rect(sx, y, w, BTN_H)
+                hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+                self._draw_btn(
+                    surface,
+                    rect,
+                    label,
+                    season == self.season,
+                    hovered=hovered,
+                )
+                self._buttons.append((f"season_{season.name}", rect))
+                sx += w + 4
+        else:
+            self.season = Season.SPRING
+            surface.blit(
+                self.font_small.render("Spring planting only", True, COLOUR_TEXT_DIM),
+                (x, y + 4),
             )
-            self._buttons.append((f"season_{season.name}", rect))
-            sx += w + 4
         ax = x + inner_w
         for label, action in (("Clr plans", "clear_plans"),):
             w = max(56, 10 + self.font_small.size(label)[0])
@@ -1129,7 +1159,7 @@ class FieldPlanDialog:
             ax -= 4
         y += BTN_H + 6
 
-        options = crop_for_season(self.season)
+        options = self._plan_options(building)
         cx = x
         if not options:
             surface.blit(
@@ -1216,14 +1246,18 @@ class FieldPlanDialog:
                     )
                 pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1)
 
-        tip = (
-            f"{SEASON_LABELS[self.season]} — "
-            + (
-                f"drag to plant {CROP_BY_KEY.get(self.crop_kind, CROP_BY_KEY['sage']).label}"
-                if options
-                else "switch season to plant"
+        tip_crop = CROP_BY_KEY.get(self.crop_kind, CROP_BY_KEY['sage']).label
+        if building.is_orchard:
+            tip = f"Permanent crop — drag to plan {tip_crop}" if options else "select a bush crop"
+        else:
+            tip = (
+                f"{SEASON_LABELS[self.season]} — "
+                + (
+                    f"drag to plant {tip_crop}"
+                    if options
+                    else "switch season to plant"
+                )
             )
-        )
         surface.blit(
             self.font_small.render(tip, True, COLOUR_TEXT_DIM),
             (x, gy + grid_h + 6),

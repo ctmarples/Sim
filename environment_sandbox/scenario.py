@@ -52,6 +52,7 @@ class ScenarioState:
     quest_cells: dict[str, list] = field(default_factory=dict)
     discovered_flora: list[str] = field(default_factory=list)
     forager_unlocked: bool = False
+    village_buildings_unlocked: bool = False
     forage_known: list[str] = field(default_factory=list)
     foraged_species: list[str] = field(default_factory=list)
     forage_food: int = 0
@@ -325,6 +326,7 @@ class ScenarioDirector:
         elif step == "gwen_forage_ready":
             from quest_progress import begin_forage
             begin_forage(self.state)
+            self.state.village_buildings_unlocked = True
             self.state.step, self.prompt = "forage_meadow", "Find 6 new wild plants and gather food for dinner"
         elif step == "abundance_dialog":
             self.state.step, self.prompt = (
@@ -345,7 +347,91 @@ class ScenarioDirector:
             )
         elif step == "wildlife_footprints":
             self.state.hotspot_wildlife_absent = True
-            self.state.step, self.state.completed, self.prompt = "complete", True, None
+            self.state.step, self.prompt = "return_to_rhea", "Return to the village and find Rhea"
+        elif step == "knowledge_thanks":
+            self.state.step = "knowledge_player_glad"
+            self._request_dialog(
+                "My pleasure, I'm glad to be put to work. But there is so much food up there "
+                "I wonder why you even bother with the farm."
+            )
+        elif step == "knowledge_player_glad":
+            self.state.step = "knowledge_rhea_winter"
+            self._request_dialog(
+                "Ah yes. Foraging there can provide enough for a small community to get by during "
+                "the warmer months. But come winter time the forage dies back and we were left with "
+                "only what we can store. Farming closer to the village helps us plan what we need "
+                "for the year and if done well will feed us easily for years to come."
+            )
+        elif step == "knowledge_rhea_winter":
+            self.state.step = "knowledge_player_edge"
+            self._request_dialog(
+                "You know, I noticed something up there in the meadow with so many wild plants and "
+                "animals around. Everything seems so much healthier. Particularly the transitions "
+                "between different terrains. The forest edge was teeming with life! Maybe we can "
+                "apply that to our field here!"
+            )
+        elif step == "knowledge_player_edge":
+            self.state.step = "knowledge_rhea_we"
+            self._request_dialog("We? Our? So you're planning to stay here then?")
+        elif step == "knowledge_rhea_we":
+            self.state.step = "knowledge_player_hesitate"
+            self._request_dialog("Well... I...")
+        elif step == "knowledge_player_hesitate":
+            self.state.step = "knowledge_rhea_stay"
+            self._request_dialog(
+                "I'm only yanking your tail. Of course you can stay! And good idea to try to "
+                "recreate the healthy environment from the meadow and forests. Now that you mention "
+                "it, there always were lines of trees and shrubs around the field before we cleared "
+                "it for wood. Plenty of delicious berries were growing there too! But those trees "
+                "would take many seasons to grow back. (sigh)"
+            )
+        elif step == "knowledge_rhea_stay":
+            self.state.step = "knowledge_player_berries"
+            self._request_dialog(
+                "Berries? They grow on bushes, I've seen them! They must be faster growing than "
+                "growing a new forest. In fact, I think I know just where to go to find some berry bushes!"
+            )
+        elif step == "knowledge_player_berries":
+            self.state.step, self.prompt = (
+                "visit_berry_traveller",
+                "Return to the berries traveller to get some berry bushes",
+            )
+        elif step == "berry_trade_accuse":
+            self.state.step = "berry_trade_player_stay"
+            self._request_dialog(
+                "Yes, yes. I know. I can't stay here. I'm staying up at the village. "
+                "I only came to ask about your berry bushes."
+            )
+        elif step == "berry_trade_player_stay":
+            self.state.step = "berry_trade_mine"
+            self._request_dialog("They're mine!")
+        elif step == "berry_trade_mine":
+            self.state.step = "berry_trade_offer"
+            self._request_dialog(
+                "Yes, yes. I know. But I was wondering, don't you get tired of only eating berries. "
+                "What if I found you some other food, maybe we can make a trade?"
+            )
+        elif step == "berry_trade_offer":
+            self.state.step = "berry_trade_listening"
+            self._request_dialog("Hmm... I'm listening.")
+        elif step == "berry_trade_listening":
+            self.state.step = "berry_trade_terms"
+            self._request_dialog("I'll bring you 20 food and you give me some berry seeds.")
+        elif step == "berry_trade_terms":
+            self.state.step, self.prompt = (
+                "collect_trade_food",
+                "Collect 20 food and bring it back to the traveller",
+            )
+            self._request_dialog("Hmm... let's see.")
+        elif step == "berry_trade_delivery":
+            self.state.step, self.prompt = (
+                "create_orchard_field",
+                "Create a 1×6 orchard field along the west border of the wheat field",
+            )
+            self._request_dialog(
+                "Those seeds will want a proper orchard. Mark a strip of field "
+                "along the west side of the wheat, then plan the bushes."
+            )
 
     def begin_diversity_quiz(self, game, x: int, y: int) -> bool:
         """Open the hotspot location quiz after the player inspects the meadow edge."""
@@ -591,12 +677,37 @@ class ScenarioDirector:
         elif step == "find_hotspot_wildlife":
             from quest_progress import wildlife_near_hotspot
             if self.state.hotspot_wildlife_found:
-                self.state.step, self.state.completed, self.prompt = "complete", True, None
+                self.state.step, self.prompt = "return_to_rhea", "Return to the village and find Rhea"
             elif not wildlife_near_hotspot(game):
                 self.state.step, self.prompt = "wildlife_footprints", None
                 self._request_dialog(
                     "Hmm, I guess they're not around at the moment. "
                     "But I can see their footprints here!"
+                )
+        elif step == "visit_berry_traveller":
+            self._release_villager_control(self._rhea_villager(game))
+        elif step == "collect_trade_food":
+            self._release_villager_control(self._berry_villager(game))
+        elif step == "create_orchard_field":
+            if self._quest_orchard(game) is not None:
+                self.state.step, self.prompt = (
+                    "plan_orchard_crops",
+                    "Plan 2 blackberry, 2 sloe berry, and 2 elder berry bushes",
+                )
+        elif step == "plan_orchard_crops":
+            orchard = self._quest_orchard(game)
+            if self._orchard_plan_ready(orchard):
+                self.state.step, self.prompt = (
+                    "plant_orchard_bushes",
+                    "Plant the planned orchard bushes",
+                )
+        elif step == "plant_orchard_bushes":
+            orchard = self._quest_orchard(game)
+            if self._orchard_planted_ready(game, orchard):
+                self.state.step, self.state.completed, self.prompt = "complete", True, None
+                self._request_dialog(
+                    "The bushes are in. They'll need a change of season to mature, "
+                    "and the orchard ground will shape how much they give."
                 )
 
     def _tutorial_traveller(self, game):
@@ -822,6 +933,15 @@ class ScenarioDirector:
     def tutorial_management_buildings(self, game) -> dict:
         if self.state.key != TUTORIAL_KEY:
             return dict(game.buildings)
+        if self.state.village_buildings_unlocked:
+            allowed = {self.state.repaired_tent_id}
+            allowed.update(
+                bid for bid, group in self.building_groups.items() if group == "village"
+            )
+            allowed.update(
+                b.id for b in game.buildings.values() if b.kind.name == "ORCHARD"
+            )
+            return {bid: b for bid, b in game.buildings.items() if bid in allowed}
         allowed = {self.state.repaired_tent_id}
         if self.state.joss_asked:
             allowed.update(b.id for b in game.buildings.values() if b.kind.name == "FARM")
@@ -887,6 +1007,8 @@ class ScenarioDirector:
             hut = self._village_forager(game)
             target = f"building:{hut.id}" if hut is not None else "buildings"
             candidates.append(("forager", "Forager huts unlocked", "forager", target))
+        if self.state.village_buildings_unlocked:
+            candidates.append(("village", "Village buildings unlocked", "farm", "buildings"))
         announced = self.state.announced_unlocks
         for key, label, icon, target in candidates:
             if key not in announced:
@@ -900,16 +1022,24 @@ class ScenarioDirector:
             return True
         if building.id == self.state.repaired_tent_id:
             return True
+        if self.state.village_buildings_unlocked and self.building_groups.get(building.id) == "village":
+            return True
         if self.state.joss_asked and building.kind.name == "FARM":
             return True
         if self.state.forager_unlocked and building.kind.name == "FORAGER":
             return True
+        if building.kind.name == "ORCHARD":
+            return self.state.village_buildings_unlocked or self.state.field_planner_unlocked
         return self.state.field_planner_unlocked and building.kind.name == "FIELD"
 
     def can_player_interact_site(self, site) -> bool:
         if self.state.key != TUTORIAL_KEY:
             return True
-        return site.id == self.state.broken_tent_site_id
+        if site.id == self.state.broken_tent_site_id:
+            return True
+        if site.kind.name in ("FIELD", "ORCHARD") and self.state.village_buildings_unlocked:
+            return True
+        return False
 
     def site_available_to_villagers(self, site) -> bool:
         return not (
@@ -1344,6 +1474,48 @@ class ScenarioDirector:
     def _gwen_villager(self, game):
         return next((v for v in getattr(game, "villagers", ()) if v.name == "Gwen Hill"), None)
 
+    def _berry_villager(self, game):
+        return next((v for v in getattr(game, "villagers", ()) if v.id == self.state.berry_villager_id), None)
+
+    @staticmethod
+    def _player_food_count(game) -> int:
+        from resource_balance import VILLAGER_FOOD_KEYS
+        inv = game.player.inventory
+        return sum(int(getattr(inv, key, 0) or 0) for key in VILLAGER_FOOD_KEYS)
+
+    @staticmethod
+    def _consume_player_food(game, amount: int) -> int:
+        from resource_balance import VILLAGER_FOOD_KEYS
+        inv = game.player.inventory
+        left = int(amount)
+        taken = 0
+        for key in VILLAGER_FOOD_KEYS:
+            have = int(getattr(inv, key, 0) or 0)
+            if have <= 0:
+                continue
+            use = min(have, left)
+            if inv.consume_item(key, use):
+                taken += use
+                left -= use
+            if left <= 0:
+                break
+        return taken
+
+    def deliver_berry_trade(self, game) -> bool:
+        """Exchange 20 food for the agreed berry seeds."""
+        from berry_bushes import TRADE_FOOD_COST, TRADE_SEED_REWARDS
+        if self.state.step != "collect_trade_food":
+            return False
+        if self._player_food_count(game) < TRADE_FOOD_COST:
+            return False
+        if self._consume_player_food(game, TRADE_FOOD_COST) < TRADE_FOOD_COST:
+            return False
+        for key, n in TRADE_SEED_REWARDS:
+            game.player.inventory.add_item(key, n)
+        self.state.step = "berry_trade_delivery"
+        self._request_dialog("Ohhh my, that does look good. (woof). Fine here take these.")
+        return True
+
     @staticmethod
     def _village_forager(game):
         from entities import BuildingKind
@@ -1390,6 +1562,106 @@ class ScenarioDirector:
         return next((b for b in game.buildings.values() if b.kind == BuildingKind.FIELD), None)
 
     @staticmethod
+    def _orchard_quest_target(wheat) -> tuple[int, int, int, int] | None:
+        """Return (x, y, w, h) for the 1×N orchard strip west of the wheat field."""
+        if wheat is None:
+            return None
+        return int(wheat.x) - 1, int(wheat.y), 1, max(1, int(wheat.plot_h))
+
+    def validate_orchard_placement(self, game, x0: int, y0: int, plot_w: int, plot_h: int):
+        """During the orchard quest, only accept the west-border 1×N strip."""
+        if self.state.key != TUTORIAL_KEY or self.state.step != "create_orchard_field":
+            return True, None
+        wheat = self._village_field(game)
+        target = self._orchard_quest_target(wheat)
+        if target is None:
+            return False, "Need the wheat field before placing an orchard."
+        tx, ty, tw, th = target
+        if (x0, y0, plot_w, plot_h) != (tx, ty, tw, th):
+            return (
+                False,
+                f"Orchard must be {tw}×{th} along the west border of the wheat field. Try again.",
+            )
+        return True, None
+
+    def _quest_orchard(self, game):
+        from entities import BuildingKind
+        wheat = self._village_field(game)
+        target = self._orchard_quest_target(wheat)
+        if target is None:
+            return None
+        tx, ty, tw, th = target
+        for building in game.buildings.values():
+            if building.kind != BuildingKind.ORCHARD:
+                continue
+            if (building.x, building.y, building.plot_w, building.plot_h) == (tx, ty, tw, th):
+                return building
+        return None
+
+    def _ensure_quest_orchard(self, game, wheat):
+        """Create the west-border orchard plot for later orchard checkpoints."""
+        from entities import Building, BuildingKind, TaskType, apply_building_storage
+        existing = self._quest_orchard(game)
+        if existing is not None:
+            return existing
+        target = self._orchard_quest_target(wheat)
+        if target is None:
+            return None
+        tx, ty, tw, th = target
+        building = Building(
+            id=game.next_building_id,
+            kind=BuildingKind.ORCHARD,
+            x=tx,
+            y=ty,
+            plot_w=tw,
+            plot_h=th,
+            draw_task_type=TaskType.FARM_FIELD,
+        )
+        apply_building_storage(building)
+        building.sync_draw_task_from_mode()
+        game.next_building_id += 1
+        game.buildings[building.id] = building
+        self.building_groups[building.id] = "personal"
+        return building
+
+    @staticmethod
+    def _orchard_plan_counts(orchard) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        if orchard is None:
+            return counts
+        for plan in orchard.plans:
+            n = len(plan.cells())
+            counts[plan.crop_kind] = counts.get(plan.crop_kind, 0) + n
+        return counts
+
+    def _orchard_plan_ready(self, orchard) -> bool:
+        counts = self._orchard_plan_counts(orchard)
+        return (
+            counts.get("blackberry", 0) >= 2
+            and counts.get("sloe", 0) >= 2
+            and counts.get("elderberry", 0) >= 2
+        )
+
+    def _orchard_planted_ready(self, game, orchard) -> bool:
+        if orchard is None or not self._orchard_plan_ready(orchard):
+            return False
+        from world import FeatureType
+        needed = {"blackberry": 2, "sloe": 2, "elderberry": 2}
+        planted = {key: 0 for key in needed}
+        for plan in orchard.plans:
+            if plan.crop_kind not in needed:
+                continue
+            for x, y in plan.cells():
+                cell = game.world.get_cell(x, y)
+                if (
+                    cell is not None
+                    and cell.feature == FeatureType.CROP_HERB
+                    and (cell.crop_kind or "") == plan.crop_kind
+                ):
+                    planted[plan.crop_kind] = planted.get(plan.crop_kind, 0) + 1
+        return all(planted.get(key, 0) >= need for key, need in needed.items())
+
+    @staticmethod
     def _seed_field_weeds(game, field) -> None:
         for x, y in field.plot_cells():
             cell = game.world.get_cell(x, y)
@@ -1411,6 +1683,27 @@ class ScenarioDirector:
             self._take_control_of_villager(game, villager)
             self.state.step, self.prompt = "morning_greeting", None
             self._request_dialog("Hey there, can I help you?")
+            return True
+        if villager.id == self.state.rhea_villager_id and self.state.step == "return_to_rhea":
+            self._take_control_of_villager(game, villager)
+            self.state.step, self.prompt = "knowledge_thanks", None
+            self._request_dialog("Thanks for collecting all that food, we'll eat well tonight!")
+            return True
+        if (
+            villager.id == self.state.berry_villager_id
+            and self.state.step == "visit_berry_traveller"
+        ):
+            self._take_control_of_villager(game, villager)
+            self.state.step, self.prompt = "berry_trade_accuse", None
+            self._request_dialog(
+                "You again! Did I not make myself clear?! You're not welcome here! (bark)"
+            )
+            return True
+        if villager.id == self.state.berry_villager_id and self.state.step == "collect_trade_food":
+            if self.deliver_berry_trade(game):
+                return True
+            have = self._player_food_count(game)
+            game._set_status(f"Need 20 food for the trade ({have}/20).")
             return True
         if self.state.step != "ask_villagers":
             return False
@@ -1541,6 +1834,9 @@ class ScenarioDirector:
             "find_diversity_hotspot":"Identify where the highest species diversity is located",
             "inspect_hotspot_flora":"Inspect the flora at the hotspot — find 5 species",
             "find_hotspot_wildlife":"Can I find any wildlife here as well?",
+            "return_to_rhea":"Return to the village and find Rhea",
+            "visit_berry_traveller":"Return to the berries traveller to get some berry bushes",
+            "collect_trade_food":"Collect 20 food and bring it back to the traveller",
         }
         dialogs = {
             "hunger_dialog":"(Stomach rumble) ... uhhh I'm getting hungry, I need to eat. I'll check what is in my bag",
@@ -1600,20 +1896,20 @@ class ScenarioDirector:
             self._request_dialog(dialogs[self.state.step])
 
     def apply_checkpoint(self, game, checkpoint: dict) -> None:
-        """Apply a lightweight tutorial_intro_N developer checkpoint."""
+        """Apply a lightweight tutorial_intro_N developer checkpoint.
+
+        Unlocks, quest items, and map reveals are applied from story chronology
+        so loading a late quest always carries earlier progress.
+        """
+        from tutorial_progress import apply_cumulative_progress, reached
+
         step = str(checkpoint.get("step", "hunger_dialog"))
         position = checkpoint.get("player", self.layout.get("player_start", [90, 69]))
         game.player.reset(int(position[0]), int(position[1]))
         game.discovered_cells = set()
         game._reveal_around_player()
-        post_sleep = step in {
-            "talk_to_rhea", "morning_greeting", "walk_to_field", "equip_hoe", "clear_weeds",
-            "weeds_complete_dialog", "ask_villagers", "gwen_intro", "joss_intro",
-            "enter_farmhouse", "open_book", "field_handbook", "complete",
-            "rhea_forage_approaches", "walk_to_forager", "walk_to_meadow",
-            "equip_satchel", "forage_meadow", "find_diversity_hotspot",
-            "inspect_hotspot_flora", "find_hotspot_wildlife",
-        }
+
+        post_sleep = reached(step, "talk_to_rhea")
         if step in {"fix_tent", "go_to_sleep"} or post_sleep:
             self._join_rhea_to_village(game)
         if step in {"follow_deer", "find_tent", "fix_tent", "go_to_sleep"} or post_sleep:
@@ -1631,79 +1927,93 @@ class ScenarioDirector:
             game.calendar_day = 0
             game.day_tick = round(game.ticks_per_day * (1.0 - 8.0 / 24.0))
             game.finish_tutorial_village_sleep()
-        if post_sleep:
             self._seed_forest_animals(game)
             self.state.wildlife_seeded = True
+
+        # Active weeding stage still has weeds; everything after is cleared.
+        field = self._village_field(game)
         if step in {"equip_hoe", "clear_weeds"}:
-            field = self._village_field(game)
             if field is not None:
                 self._seed_field_weeds(game, field)
-            game.player.inventory.add_item("hoe", 1)
-        if step == "clear_weeds":
-            game.player.inventory.equip_tool("hoe")
-        after_weeding = step in {
-            "weeds_complete_dialog", "ask_villagers", "gwen_intro", "joss_intro",
-            "enter_farmhouse", "open_book", "field_handbook", "complete",
-            "rhea_forage_approaches", "walk_to_forager", "walk_to_meadow",
-            "equip_satchel", "forage_meadow", "find_diversity_hotspot",
-            "inspect_hotspot_flora", "find_hotspot_wildlife",
-        }
-        field = self._village_field(game)
-        if after_weeding:
-            if field is not None:
-                for x, y in field.plot_cells():
-                    game.world.get_cell(x, y).weeds = 0.0
-            game.player.inventory.add_item("hoe", 1)
-            game.player.inventory.equip_tool("hoe")
+        elif reached(step, "weeds_complete_dialog") and field is not None:
+            for x, y in field.plot_cells():
+                game.world.get_cell(x, y).weeds = 0.0
             for villager in game.villagers:
                 self._release_villager_control(villager)
-        self.state.gwen_asked = bool(checkpoint.get("gwen_asked", False))
-        self.state.joss_asked = bool(checkpoint.get("joss_asked", False))
-        self.state.field_planner_unlocked = bool(checkpoint.get("field_planner_unlocked", False))
-        self.state.forager_unlocked = bool(checkpoint.get("forager_unlocked", False))
-        if bool(checkpoint.get("has_book", False)):
-            game.player.inventory.add_item("book", 1)
-        if bool(checkpoint.get("has_satchel", False)) or bool(checkpoint.get("satchel_equipped", False)):
-            game.player.inventory.add_item("leather_satchel", 1)
-        if bool(checkpoint.get("satchel_equipped", False)):
-            game.player.inventory.equip_clothing("leather_satchel")
+
         self.state.step = step
         self.state.completed = step == "complete"
         if checkpoint.get("hotspot_x") is not None:
             self.state.hotspot_x = int(checkpoint["hotspot_x"])
         if checkpoint.get("hotspot_y") is not None:
             self.state.hotspot_y = int(checkpoint["hotspot_y"])
+
+        # Orchard work teleports beside the wheat field before inventory grants.
+        if reached(step, "create_orchard_field") and not reached(step, "complete"):
+            wheat = self._village_field(game)
+            if wheat is not None:
+                game.player.reset(max(0, wheat.x - 2), wheat.y)
+
+        # Chronological unlocks, items, and reveals (after final player.reset).
+        apply_cumulative_progress(self, game, step, checkpoint)
+
         if self.state.field_planner_unlocked:
             self._apply_field_checkpoint(game, checkpoint)
-        if step == "forage_meadow":
-            from quest_progress import begin_forage
+
+        if reached(step, "forage_meadow"):
+            from quest_progress import (
+                FORAGE_FOOD_GOAL,
+                FORAGE_HERB_GOAL,
+                FORAGE_SPECIES_GOAL,
+                begin_forage,
+            )
             begin_forage(self.state)
-        if step in {"find_diversity_hotspot", "diversity_quiz", "inspect_hotspot_flora",
-                    "find_hotspot_wildlife", "complete"} and self.state.field_planner_unlocked:
-            from quest_progress import FORAGE_FOOD_GOAL, FORAGE_HERB_GOAL, FORAGE_SPECIES_GOAL, begin_forage
-            begin_forage(self.state)
-            if len(self.state.foraged_species) < FORAGE_SPECIES_GOAL:
-                self.state.foraged_species = [f"plant:checkpoint_{i}" for i in range(FORAGE_SPECIES_GOAL)]
-            self.state.forage_food = max(self.state.forage_food, FORAGE_FOOD_GOAL)
-            self.state.forage_herbs = max(self.state.forage_herbs, FORAGE_HERB_GOAL)
-        if step in {"inspect_hotspot_flora", "find_hotspot_wildlife", "complete"}:
+            if step != "forage_meadow":
+                if len(self.state.foraged_species) < FORAGE_SPECIES_GOAL:
+                    self.state.foraged_species = [
+                        f"plant:checkpoint_{i}" for i in range(FORAGE_SPECIES_GOAL)
+                    ]
+                self.state.forage_food = max(self.state.forage_food, FORAGE_FOOD_GOAL)
+                self.state.forage_herbs = max(self.state.forage_herbs, FORAGE_HERB_GOAL)
+
+        if reached(step, "inspect_hotspot_flora"):
             from quest_progress import DIVERSITY_OPTIONS, MEADOW_CELL
             self.state.diversity_remaining = [DIVERSITY_OPTIONS[-1][0]]
             if self.state.hotspot_x is None:
                 self.state.hotspot_x, self.state.hotspot_y = MEADOW_CELL
-        if step in {"find_diversity_hotspot", "inspect_hotspot_flora", "find_hotspot_wildlife", "complete"}:
-            from quest_progress import MEADOW_CELL
-            hx = self.state.hotspot_x if self.state.hotspot_x is not None else MEADOW_CELL[0]
-            hy = self.state.hotspot_y if self.state.hotspot_y is not None else MEADOW_CELL[1]
-            self._reveal_clearing(game, (hx, hy), 10)
-            self._reveal_clearing(game, MEADOW_CELL, 10)
-        if step in {"find_hotspot_wildlife", "complete"}:
+
+        if reached(step, "find_hotspot_wildlife"):
             from quest_progress import HOTSPOT_FLORA_GOAL
             if len(self.state.hotspot_flora) < HOTSPOT_FLORA_GOAL:
-                self.state.hotspot_flora = [f"plant:hotspot_{i}" for i in range(HOTSPOT_FLORA_GOAL)]
+                self.state.hotspot_flora = [
+                    f"plant:hotspot_{i}" for i in range(HOTSPOT_FLORA_GOAL)
+                ]
+
+        if reached(step, "return_to_rhea"):
+            self.state.hotspot_wildlife_found = True
+            self.state.hotspot_wildlife_absent = bool(
+                checkpoint.get("hotspot_wildlife_absent", False)
+            )
         if bool(checkpoint.get("hotspot_wildlife_absent", False)):
             self.state.hotspot_wildlife_absent = True
             self.state.hotspot_wildlife_found = False
+
+        if reached(step, "plan_orchard_crops"):
+            wheat = self._village_field(game)
+            if wheat is not None:
+                self._ensure_quest_orchard(game, wheat)
+        if reached(step, "plant_orchard_bushes"):
+            orchard = self._quest_orchard(game)
+            if orchard is not None and not self._orchard_plan_ready(orchard):
+                orchard.plans.clear()
+                orchard.next_plan_id = 1
+                for kind, y0, y1 in (
+                    ("blackberry", orchard.y, orchard.y + 1),
+                    ("sloe", orchard.y + 2, orchard.y + 3),
+                    ("elderberry", orchard.y + 4, orchard.y + 5),
+                ):
+                    orchard.add_field_plan(orchard.x, y0, orchard.x, y1, kind)
+
         self._restore_presentation()
         # Historical discoveries are already recorded; don't flood a checkpoint
         # with notifications for every preceding tutorial event.

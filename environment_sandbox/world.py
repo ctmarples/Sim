@@ -919,7 +919,8 @@ class World:
                 cell.deposit = rng.randint(ROCK_SMALL_MIN, ROCK_SMALL_MAX)
 
         # Permanent berry bushes (fruit only in season; no natural spread).
-        berry = WILD_BY_KEY["berry_bush"]
+        from berry_bushes import BERRY_BUSH_KEYS
+        berry = WILD_BY_KEY["blackberry"]
         berry_terrains = tuple(
             TerrainType[n] for n in berry.terrains if n in TerrainType.__members__
         )
@@ -932,12 +933,13 @@ class World:
             and self.cells[y][x].terrain in berry_terrains
         ]
         rng.shuffle(berry_sites)
-        for x, y in berry_sites[:target_bushes]:
+        for i, (x, y) in enumerate(berry_sites[:target_bushes]):
             cell = self.cells[y][x]
             cell.feature = FeatureType.BERRY_BUSH
-            cell.crop_kind = berry.key
+            cell.crop_kind = BERRY_BUSH_KEYS[i % len(BERRY_BUSH_KEYS)]
             cell.deposit = 0
             cell.growth_ticks = 0
+            cell.tree_age_years = 1
 
         # Home near the centre-left so the starting area is clear.
         # Buildings occupy a square footprint; home_pos is the centre (glyph) cell.
@@ -2580,7 +2582,10 @@ class World:
                 if grow_step > 0:
                     cell.growth_ticks -= grow_step * ticks
                     if cell.growth_ticks <= 0:
-                        if cell.deposit <= 0 and berry_fruiting(day, x, y):
+                        # Seedlings mature after one season; harvest regen just refills.
+                        if cell.tree_age_years < 1:
+                            cell.tree_age_years = 1
+                        if cell.deposit <= 0 and berry_fruiting(day, x, y) and cell.tree_age_years >= 1:
                             species = resolve_species("BERRY_BUSH", cell.crop_kind)
                             cell.deposit = (
                                 int(species.yield_amount)
@@ -2976,6 +2981,11 @@ class World:
                 cell = self.cells[y][x]
                 if cell.feature != FeatureType.BERRY_BUSH:
                     continue
+                # Legacy / natural bushes without an age stamp are mature.
+                if cell.tree_age_years < 1 and cell.growth_ticks <= 0:
+                    cell.tree_age_years = 1
+                if cell.tree_age_years < 1:
+                    continue
                 if berry_fruiting(day, x, y):
                     if cell.deposit <= 0 and cell.growth_ticks <= 0:
                         species = resolve_species("BERRY_BUSH", cell.crop_kind)
@@ -3161,6 +3171,8 @@ class World:
                 cell.crop_kind = species.key
                 cell.deposit = 0
                 cell.growth_ticks = 0
+                if feature == FeatureType.BERRY_BUSH:
+                    cell.tree_age_years = 1
 
         # Repeated canonical seasonal ticks build an established population,
         # while retaining the current day's spawn windows and live niche maps.
@@ -3340,11 +3352,15 @@ class World:
         self.note_growth_cell(x, y)
         return True
 
-    def plant_berry_bush(self, x: int, y: int) -> bool:
+    def plant_berry_bush(self, x: int, y: int, species_key: str = "blackberry",
+                         *, mature_ticks: int | None = None) -> bool:
+        from berry_bushes import normalize_berry_kind
+        from seasons import SEASON_LENGTH_TICKS
         cell = self.get_cell(x, y)
         if cell is None or cell.feature != FeatureType.NONE:
             return False
-        berry = WILD_BY_KEY["berry_bush"]
+        kind = normalize_berry_kind(species_key)
+        berry = WILD_BY_KEY.get(kind) or WILD_BY_KEY["blackberry"]
         berry_terrains = tuple(
             TerrainType[n] for n in berry.terrains if n in TerrainType.__members__
         )
@@ -3354,9 +3370,11 @@ class World:
             return False
         cell.feature = FeatureType.BERRY_BUSH
         cell.crop_kind = berry.key
-        # Fruit appears only during berry season; the bush itself is permanent.
+        # Seedlings take one season to mature before fruiting as perennials.
         cell.deposit = 0
-        cell.growth_ticks = 0
+        cell.tree_age_years = 0
+        cell.growth_ticks = max(1, int(mature_ticks if mature_ticks is not None else SEASON_LENGTH_TICKS))
+        self.note_growth_cell(x, y)
         return True
 
     def plant_herb(self, x: int, y: int, crop_key: str = "sage") -> bool:
@@ -3564,9 +3582,10 @@ class World:
             cell.crop_kind = None
             return kind
         if cell.feature == FeatureType.HERB:
+            kind = cell.crop_kind
             cell.feature = FeatureType.NONE
             cell.crop_kind = None
-            return "sage"
+            return kind
         if cell.feature != FeatureType.WILD_CROP:
             return None
         kind = cell.crop_kind or "sage"

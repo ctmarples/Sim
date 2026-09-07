@@ -138,7 +138,7 @@ class BuildingInspectDialog:
         screen_xy: tuple[int, int] | None = None,
         show_player: bool = False,
     ) -> None:
-        if building.kind == BuildingKind.FIELD:
+        if building.is_field_plot:
             return
         self.building_id = building.id
         self.allow_player_craft = bool(show_player)
@@ -973,11 +973,13 @@ class BuildingInspectDialog:
         crop_overview: list[dict] | None = None,
         env_status: dict | None = None,
         current_season: Season | None = None,
+        forage_allowed_keys: frozenset[str] | None = None,
     ) -> None:
-        if not self.open or building is None or building.kind == BuildingKind.FIELD:
+        if not self.open or building is None or building.is_field_plot:
             return
         if building.id != self.building_id:
             return
+        self._forage_allowed_keys = forage_allowed_keys
         self._advance_scroll()
 
         self._draw_player_inventory = player_inventory
@@ -1075,6 +1077,12 @@ class BuildingInspectDialog:
         gather_recipes = (
             building.known_recipes() if building.is_gather_recipe_building() else ()
         )
+        if (
+            building.kind == BuildingKind.FORAGER
+            and getattr(self, "_forage_allowed_keys", None) is not None
+        ):
+            allowed = self._forage_allowed_keys
+            gather_recipes = tuple(r for r in gather_recipes if r.name in allowed)
         split_recipes = (
             building.split_recipes() if building.kind == BuildingKind.FORESTER else ()
         )

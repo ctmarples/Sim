@@ -348,6 +348,99 @@ CROPS: tuple[CropDef, ...] = (
             SeasonPhase.GROW,
         ),
     ),
+    # Permanent orchard bushes — spring establishment only; mature after one season.
+    CropDef(
+        key="blackberry",
+        label="Blackberry",
+        produce_key="blackberries",
+        seed_key="blackberry_seeds",
+        short="blk",
+        stem_colour=(45, 100, 45),
+        flower_colour=(40, 20, 55),
+        plant_season=Season.SPRING,
+        harvest_seasons=(Season.SUMMER, Season.AUTUMN),
+        growth_days=20,
+        wild_seed_chance=WILD_SEED_CHANCE,
+        farm_seed_amounts=FARM_SEED_AMOUNTS,
+        year_phases=_phases(
+            SeasonPhase.GROW,
+            SeasonPhase.HARVEST,
+            SeasonPhase.HARVEST,
+            SeasonPhase.DORMANT,
+        ),
+        icon_base="crop_plant",
+        perennial=True,
+    ),
+    CropDef(
+        key="sloe",
+        label="Sloe berry",
+        produce_key="sloe_berries",
+        seed_key="sloe_berry_seeds",
+        short="slo",
+        stem_colour=(55, 105, 50),
+        flower_colour=(55, 45, 120),
+        plant_season=Season.SPRING,
+        harvest_seasons=(Season.AUTUMN,),
+        growth_days=20,
+        wild_seed_chance=WILD_SEED_CHANCE,
+        farm_seed_amounts=FARM_SEED_AMOUNTS,
+        year_phases=_phases(
+            SeasonPhase.GROW,
+            SeasonPhase.GROW,
+            SeasonPhase.HARVEST,
+            SeasonPhase.DORMANT,
+        ),
+        icon_base="crop_plant",
+        perennial=True,
+    ),
+    CropDef(
+        key="elderberry",
+        label="Elder berry",
+        produce_key="elderberries",
+        seed_key="elder_berry_seeds",
+        short="eld",
+        stem_colour=(50, 115, 55),
+        flower_colour=(110, 30, 90),
+        plant_season=Season.SPRING,
+        harvest_seasons=(Season.AUTUMN,),
+        growth_days=20,
+        wild_seed_chance=WILD_SEED_CHANCE,
+        farm_seed_amounts=FARM_SEED_AMOUNTS,
+        year_phases=_phases(
+            SeasonPhase.GROW,
+            SeasonPhase.GROW,
+            SeasonPhase.HARVEST,
+            SeasonPhase.DORMANT,
+        ),
+        icon_base="crop_plant",
+        perennial=True,
+    ),
+    CropDef(
+        key="hazel",
+        label="Hazel nut",
+        produce_key="hazelnuts",
+        seed_key="hazel_seeds",
+        short="haz",
+        stem_colour=(60, 110, 50),
+        flower_colour=(150, 105, 45),
+        plant_season=Season.SPRING,
+        harvest_seasons=(Season.AUTUMN,),
+        growth_days=20,
+        wild_seed_chance=WILD_SEED_CHANCE,
+        farm_seed_amounts=FARM_SEED_AMOUNTS,
+        year_phases=_phases(
+            SeasonPhase.GROW,
+            SeasonPhase.GROW,
+            SeasonPhase.HARVEST,
+            SeasonPhase.DORMANT,
+        ),
+        icon_base="crop_plant",
+        perennial=True,
+    ),
+)
+
+ORCHARD_CROP_KEYS: frozenset[str] = frozenset(
+    {"blackberry", "sloe", "elderberry", "hazel"}
 )
 
 CROP_BY_KEY: dict[str, CropDef] = {c.key: c for c in CROPS}
@@ -391,7 +484,15 @@ LEGACY_HERB_SEED = "sage_seeds"
 
 
 def crop_for_season(season: Season) -> tuple[CropDef, ...]:
-    return tuple(c for c in CROPS if c.plant_season == season)
+    return tuple(
+        c for c in CROPS
+        if c.plant_season == season and c.key not in ORCHARD_CROP_KEYS
+    )
+
+
+def orchard_crops() -> tuple[CropDef, ...]:
+    """Permanent orchard bushes available for Crop-tab planning."""
+    return tuple(c for c in CROPS if c.key in ORCHARD_CROP_KEYS)
 
 
 def growth_ticks_for(crop: CropDef, ticks_per_day: int) -> int:

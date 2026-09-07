@@ -355,7 +355,7 @@ class AssignPickerDialog:
                 rows.append((v.id, name, job, ("villager", v.portrait_seed), v))
         else:
             for b in buildings.values():
-                if b.kind == BuildingKind.FIELD:
+                if b.is_field_plot:
                     continue
                 if b.kind == BuildingKind.WORKSTATION:
                     continue

@@ -58,7 +58,8 @@ from settings import (
 from trees import SAPLING_ITEM_KEYS, sapling_item_key
 
 # Seeds share a dedicated carry pool (separate from wood/food/etc.).
-SEED_ITEM_KEYS: tuple[str, ...] = ("berry_seeds", *SEED_KEYS)
+from berry_bushes import BERRY_SEED_KEYS
+SEED_ITEM_KEYS: tuple[str, ...] = ("berry_seeds", *BERRY_SEED_KEYS, *SEED_KEYS)
 
 # Tools carried in dedicated tool slots (not general cargo stacks).
 from resources import RESOURCES
@@ -241,6 +242,7 @@ class BuildingKind(Enum):
     FISHER = auto()
     FARM = auto()
     FIELD = auto()
+    ORCHARD = auto()
     MILL = auto()
     KITCHEN = auto()
     FIRE = auto()
@@ -292,6 +294,7 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
     BuildingKind.FISHER: "Fisher",
     BuildingKind.FARM: "Farm",
     BuildingKind.FIELD: "Field",
+    BuildingKind.ORCHARD: "Orchard field",
     BuildingKind.MILL: "Mill",
     BuildingKind.KITCHEN: "Kitchen",
     BuildingKind.FIRE: "Fire",
@@ -311,9 +314,19 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
 }
 
 
+
+FIELD_PLOT_KINDS: frozenset[BuildingKind] = frozenset(
+    {BuildingKind.FIELD, BuildingKind.ORCHARD}
+)
+
+
+def is_field_plot_kind(kind: BuildingKind | None) -> bool:
+    """True for Field and Orchard field plot buildings."""
+    return kind in FIELD_PLOT_KINDS
+
 def default_building_plot(kind: BuildingKind) -> tuple[int, int]:
     """Default footprint size. Fields are drag-sized; housing uses custom plots."""
-    if kind == BuildingKind.FIELD:
+    if kind in (BuildingKind.FIELD, BuildingKind.ORCHARD):
         return 1, 1
     if kind in (
         BuildingKind.TENT,
@@ -997,7 +1010,7 @@ class Inventory:
             **{key: int(getattr(self, key, 0)) for key in TOOL_KEYS},
             **{key: getattr(self, key) for key in SAPLING_ITEM_KEYS},
             **{key: getattr(self, key) for key in PRODUCE_KEYS},
-            **{key: getattr(self, key) for key in SEED_KEYS},
+            **{key: int(getattr(self, key, 0)) for key in SEED_ITEM_KEYS},
             **{
                 key: getattr(self, key)
                 for key in PROCESSED_KEYS
@@ -1018,7 +1031,7 @@ class Inventory:
             setattr(self, key, 0)
         self.equipped_tools.clear()
         self.equipped_clothing.clear()
-        for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS:
+        for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + tuple(SEED_ITEM_KEYS) + PROCESSED_KEYS:
             setattr(self, key, 0)
         self.food_quality.clear()
 
@@ -1142,7 +1155,7 @@ class HomeStorage:
         self.twine = self.coins = 0
         for key in TOOL_KEYS:
             setattr(self, key, 0)
-        for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS:
+        for key in SAPLING_ITEM_KEYS + PRODUCE_KEYS + tuple(SEED_ITEM_KEYS) + PROCESSED_KEYS:
             setattr(self, key, 0)
         self.food_quality.clear()
 
@@ -1430,7 +1443,15 @@ class FarmField:
         return hit
 
 
-_FORAGE_KEYS = ("mushrooms", "berries", "berry_seeds", "reeds", "honey") + PRODUCE_KEYS + SEED_KEYS
+def _unique_keys(*groups: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(key for group in groups for key in group))
+
+
+_FORAGE_KEYS = _unique_keys(
+    ("mushrooms", "berries", "reeds", "honey"),
+    PRODUCE_KEYS,
+    ("berry_seeds", *SEED_ITEM_KEYS),
+)
 
 
 RECIPE_PRIORITY_MIN = 1
@@ -1605,6 +1626,14 @@ class Building:
     def plot_size_label(self) -> str:
         return f"{max(1, self.plot_w)}×{max(1, self.plot_h)}"
 
+    @property
+    def is_field_plot(self) -> bool:
+        return is_field_plot_kind(self.kind)
+
+    @property
+    def is_orchard(self) -> bool:
+        return self.kind == BuildingKind.ORCHARD
+
     def plan_covering(self, x: int, y: int) -> CropPlan | None:
         """Latest plan covering the cell (Field buildings)."""
         hit: CropPlan | None = None
@@ -1634,9 +1663,11 @@ class Building:
         ``cell_planted`` is accepted for callers but no longer drives removal.
         """
         del cell_planted  # kept for call-site compatibility
-        if self.kind != BuildingKind.FIELD:
+        if not is_field_plot_kind(self.kind):
             return None
-        from crops import CROP_BY_KEY, schedules_conflict
+        from crops import CROP_BY_KEY, ORCHARD_CROP_KEYS, schedules_conflict
+        if self.kind == BuildingKind.ORCHARD and crop_kind not in ORCHARD_CROP_KEYS:
+            return None
 
         new_crop = CROP_BY_KEY.get(crop_kind, CROP_BY_KEY["sage"])
         draft = CropPlan(
@@ -3229,19 +3260,22 @@ class Building:
                 stores = self.linked_food_storages()
                 if stores:
                     return any(s.deposit_one_from(inventory, key) for s in stores)
-        if key not in self.depositable_keys() or self.space_for_key(key) <= 0:
+        if key not in self.depositable_keys() or self.space_for_key(
+            "blackberries" if key == "berries" else key
+        ) <= 0:
             return False
         if getattr(inventory, key, 0) <= 0:
             return False
         from food_spoilage import food_quality, on_food_merged, on_food_removed
 
+        dest_key = "blackberries" if key == "berries" else key
         src_q = food_quality(inventory, key)
-        before = int(getattr(self, key, 0) or 0)
+        before = int(getattr(self, dest_key, 0) or 0)
         setattr(inventory, key, getattr(inventory, key) - 1)
         on_food_removed(inventory, key)
-        setattr(self, key, before + 1)
+        setattr(self, dest_key, before + 1)
         on_food_merged(
-            self, key, amount_before=before, amount_added=1, src_quality=src_q
+            self, dest_key, amount_before=before, amount_added=1, src_quality=src_q
         )
         return True
 
@@ -3266,7 +3300,7 @@ class Building:
                 "hide",
                 "leather",
                 "twine",
-                "axe",
+                *TOOL_KEYS,
             ) + PRODUCE_KEYS + SEED_KEYS + PROCESSED_KEYS
         if self.kind == BuildingKind.WORKSTATION:
             return ()
@@ -3279,7 +3313,7 @@ class Building:
         if self.kind == BuildingKind.FISHER:
             return ("fish", "meat", "bait", "spoilage")
         if self.kind == BuildingKind.FORAGER:
-            return ("wood", "rock", *_FORAGE_KEYS, "spoilage")
+            return _unique_keys(("wood", "rock"), _FORAGE_KEYS, ("spoilage",))
         if self.kind == BuildingKind.FARM:
             keys = PRODUCE_KEYS + SEED_KEYS + ("straw",)
             # With a barn, wheat/rye sheaves live there until threshed.
@@ -3337,7 +3371,7 @@ class Building:
             # Always allow hauling logs / wood; mins keep a split buffer on-site.
             return ("logs", "hardwood_logs", "wood")
         if self.kind == BuildingKind.FORAGER:
-            return ("wood", "rock", *_FORAGE_KEYS, "spoilage")
+            return _unique_keys(("wood", "rock"), _FORAGE_KEYS, ("spoilage",))
         if self.kind == BuildingKind.FARM:
             # Produce + straw, plus surplus grain/seeds (mill / storehouse).
             return PRODUCE_KEYS + ("straw", "spoilage") + SEED_KEYS
@@ -3427,7 +3461,9 @@ class Building:
         return False
 
     def _take(self, inventory: Inventory, key: str) -> None:
-        room = self.space_for_key(key)
+        # Legacy generic berries land as blackberries (current Collect key).
+        dest_key = "blackberries" if key == "berries" else key
+        room = self.space_for_key(dest_key)
         have = getattr(inventory, key)
         take = min(have, room)
         if take <= 0:
@@ -3435,12 +3471,12 @@ class Building:
         from food_spoilage import food_quality, on_food_merged, on_food_removed
 
         src_q = food_quality(inventory, key)
-        before = int(getattr(self, key, 0) or 0)
-        setattr(self, key, before + take)
+        before = int(getattr(self, dest_key, 0) or 0)
+        setattr(self, dest_key, before + take)
         setattr(inventory, key, have - take)
         on_food_removed(inventory, key)
         on_food_merged(
-            self, key, amount_before=before, amount_added=take, src_quality=src_q
+            self, dest_key, amount_before=before, amount_added=take, src_quality=src_q
         )
 
     def withdraw_to_inventory(
@@ -3574,7 +3610,7 @@ class Building:
             return ()
         if self.kind == BuildingKind.FARM:
             return WORK_MODE_CYCLE_PLANTABLE
-        if self.kind == BuildingKind.FIELD:
+        if is_field_plot_kind(self.kind):
             return (WorkMode.COLLECT,)  # unused; Farm workers manage Fields
         return (WorkMode.COLLECT,)
 
@@ -3593,7 +3629,7 @@ class Building:
         elif self.kind == BuildingKind.FORAGER:
             self.draw_task_type = TaskType.FULL_FORAGE
             self.work_mode = WorkMode.COLLECT
-        elif self.kind in (BuildingKind.FARM, BuildingKind.FIELD):
+        elif self.kind in (BuildingKind.FARM, BuildingKind.FIELD, BuildingKind.ORCHARD):
             self.draw_task_type = TaskType.FARM_FIELD
         elif self.kind == BuildingKind.MASON:
             self.draw_task_type = TaskType.COLLECT_ROCKS

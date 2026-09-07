@@ -13,11 +13,11 @@ from tutorial_checkpoints import CHECKPOINTS, available, checkpoint_path
 class TutorialCheckpointTests(unittest.TestCase):
     def test_all_files_and_new_field_stages(self):
         root=Path(__file__).resolve().parents[1]/'saves'
-        for number in range(1,28):
+        for number in range(1,34):
             self.assertIn('tutorial_checkpoint',json.loads((root/f'tutorial_intro_{number}.json').read_text()))
         pygame.init()
         game=Game(headless=True)
-        for number in range(15,28):
+        for number in range(15,34):
             with self.subTest(checkpoint=number):
                 path=root/f'tutorial_intro_{number}.json'
                 config=json.loads(path.read_text())['tutorial_checkpoint']
@@ -54,6 +54,7 @@ class TutorialCheckpointTests(unittest.TestCase):
                     self.assertFalse(state.completed)
                     self.assertEqual(current, ['forage_meadow'])
                     self.assertEqual(game.player.inventory.equipped_in_slot('bag'),'leather_satchel')
+                    self.assertTrue(state.village_buildings_unlocked or state.forager_unlocked)
                 elif number==24:
                     self.assertFalse(state.completed)
                     self.assertEqual(current, ['find_diversity_hotspot'])
@@ -63,6 +64,53 @@ class TutorialCheckpointTests(unittest.TestCase):
                 elif number==26:
                     self.assertFalse(state.completed)
                     self.assertEqual(current, ['find_hotspot_wildlife'])
+                elif number==27:
+                    self.assertFalse(state.completed)
+                    self.assertEqual(current, ['return_to_rhea'])
+                    self.assertEqual(
+                        [q['group_title'] for q in game.scenario.objectives() if not q['completed']],
+                        ['New knowledge'],
+                    )
+                elif number==28:
+                    self.assertFalse(state.completed)
+                    self.assertEqual(current, ['visit_berry_traveller'])
+                elif number==29:
+                    self.assertFalse(state.completed)
+                    self.assertEqual(current, ['collect_trade_food'])
+                elif number==30:
+                    self.assertFalse(state.completed)
+                    self.assertEqual(current, ['create_orchard_field'])
+                    self.assertTrue(state.forager_unlocked)
+                    self.assertTrue(state.village_buildings_unlocked)
+                    self.assertEqual(game.player.inventory.equipped_in_slot('bag'),'leather_satchel')
+                    hut = game.scenario._village_forager(game)
+                    self.assertIsNotNone(hut)
+                    self.assertTrue(game.scenario.can_player_interact_building(hut))
+                    self.assertTrue(any(cell in game.discovered_cells for cell in hut.plot_cells()))
+                elif number==31:
+                    self.assertFalse(state.completed)
+                    self.assertEqual(current, ['plan_orchard_crops'])
+                    self.assertIsNotNone(game.scenario._quest_orchard(game))
+                    self.assertTrue(state.forager_unlocked)
+                    self.assertTrue(state.village_buildings_unlocked)
+                    self.assertEqual(game.player.inventory.equipped_in_slot('bag'),'leather_satchel')
+                    hut = game.scenario._village_forager(game)
+                    self.assertIsNotNone(hut)
+                    self.assertTrue(game.scenario.can_player_interact_building(hut))
+                elif number==32:
+                    self.assertFalse(state.completed)
+                    self.assertEqual(current, ['plant_orchard_bushes'])
+                    self.assertTrue(game.scenario._orchard_plan_ready(game.scenario._quest_orchard(game)))
+                    self.assertTrue(state.forager_unlocked)
+                    self.assertTrue(state.village_buildings_unlocked)
+                    self.assertEqual(game.player.inventory.equipped_in_slot('bag'),'leather_satchel')
+                    hut = game.scenario._village_forager(game)
+                    self.assertIsNotNone(hut)
+                    self.assertTrue(game.scenario.can_player_interact_building(hut))
+                    self.assertTrue(any(cell in game.discovered_cells for cell in hut.plot_cells()))
+                    from berry_bushes import TRADE_SEED_REWARDS
+                    for key, n in TRADE_SEED_REWARDS:
+                        self.assertGreaterEqual(int(getattr(game.player.inventory, key, 0) or 0), n)
                 else:
                     self.assertTrue(state.completed)
                     self.assertTrue(all(q['completed'] for q in game.scenario.objectives()))
@@ -73,7 +121,7 @@ class TutorialCheckpointTests(unittest.TestCase):
                     self.assertIn('handbook_5:wheat',state.quest_checks)
 
     def test_named_catalog_matches_files(self):
-        self.assertEqual([number for number, _, _ in CHECKPOINTS], list(range(1, 28)))
+        self.assertEqual([number for number, _, _ in CHECKPOINTS], list(range(1, 34)))
         self.assertTrue(all(isinstance(label, str) and not label.isdigit() for _, _, label in CHECKPOINTS))
         self.assertEqual({label for _, _, label in available('land')},
                          {label for number, group, label in CHECKPOINTS

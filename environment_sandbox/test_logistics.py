@@ -122,5 +122,25 @@ class RoutedSupplyDemandTests(unittest.TestCase):
         self.assertIs(game._find_processor_needing_supply_for(villager), farm)
 
 
+class IndoorTransferWaitTests(unittest.TestCase):
+    def test_bulk_indoor_transfer_costs_one_work_interval(self) -> None:
+        """Hauler pack grabs must not lock the villager indoors for N×work ticks."""
+        game = Game.__new__(Game)
+        game._villager_work_interval = lambda _v: 100
+        villager = SimpleNamespace(
+            inventory=SimpleNamespace(total=20),
+            _inside_building_id=11,
+            _indoor_inventory_total=0,
+            _building_entry_ticks=0,
+            _building_inside_ticks=0,
+            _building_exit_ticks=0,
+        )
+
+        game._tick_villager_building_transition(villager)
+
+        self.assertEqual(villager._building_inside_ticks, 99)
+        self.assertEqual(villager._indoor_inventory_total, 20)
+
+
 if __name__ == "__main__":
     unittest.main()

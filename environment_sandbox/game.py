@@ -79,6 +79,7 @@ from entities import (
     WORK_MODE_LABELS,
     Building,
     BuildingKind,
+    is_field_plot_kind,
     ConstructionSite,
     CropPlan,
     HomeStorage,
@@ -408,6 +409,7 @@ FEATURE_FOR_BUILDING = {
     BuildingKind.FISHER: FeatureType.FISHER,
     BuildingKind.FARM: FeatureType.FARM,
     BuildingKind.FIELD: FeatureType.FIELD,
+    BuildingKind.ORCHARD: FeatureType.FIELD,
     BuildingKind.MILL: FeatureType.MILL,
     BuildingKind.KITCHEN: FeatureType.KITCHEN,
     BuildingKind.FIRE: FeatureType.FIRE,
@@ -3053,7 +3055,7 @@ class Game:
         """Draw a normal field plot, then complete it immediately for free."""
         before=set(self.construction_sites)
         if not self._place_field_site(start,end):return False
-        site=next((site for sid,site in self.construction_sites.items() if sid not in before and site.kind==BuildingKind.FIELD),None)
+        site=next((site for sid,site in self.construction_sites.items() if sid not in before and is_field_plot_kind(site.kind)),None)
         if site is None:return False
         building_id=self.next_building_id
         self._complete_construction(site)
@@ -3090,17 +3092,20 @@ class Game:
         from seasons import berry_fruiting
         from wild_species import WILD_BY_KEY
 
-        berry=WILD_BY_KEY["berry_bush"]
+        berry=WILD_BY_KEY["blackberry"]
         allowed={TerrainType[name] for name in berry.terrains if name in TerrainType.__members__}
         fruiting=berry_fruiting(self.calendar_day)
         changed=0
+        from berry_bushes import BERRY_BUSH_KEYS
         for py in range(max(0,y-radius),min(self.world.rows,y+radius+1)):
             for px in range(max(0,x-radius),min(self.world.cols,x+radius+1)):
                 cell=self.world.get_cell(px,py)
                 if cell is None or cell.feature!=FeatureType.NONE or cell.terrain not in allowed:continue
-                cell.feature=FeatureType.BERRY_BUSH;cell.crop_kind=berry.key
-                cell.deposit=int(berry.yield_amount) if fruiting else 0
-                cell.growth_ticks=0;cell.tree_species=None
+                kind=BERRY_BUSH_KEYS[(px+py)%len(BERRY_BUSH_KEYS)]
+                species=WILD_BY_KEY[kind]
+                cell.feature=FeatureType.BERRY_BUSH;cell.crop_kind=kind
+                cell.deposit=int(species.yield_amount) if fruiting else 0
+                cell.growth_ticks=0;cell.tree_species=None;cell.tree_age_years=1
                 changed+=1
         if changed:
             self._after_map_edit();self._refresh_indicators()
@@ -3113,7 +3118,7 @@ class Game:
         building=self._selected_building()
         if building is None:
             return self._editor_remove_selected_construction()
-        if building.kind==BuildingKind.FIELD:
+        if building.is_field_plot:
             self._delete_field_building(building.id);return True
         for child in list(self.buildings.values()):
             if child.parent_building_id==building.id:
@@ -3416,7 +3421,7 @@ class Game:
             if self.map_edit_tool == MapEditTool.SELECT:
                 return
             if self.map_edit_tool == MapEditTool.PLACE_BUILDING:
-                if self.map_edit_building_kind == BuildingKind.FIELD:
+                if is_field_plot_kind(self.map_edit_building_kind):
                     self.drawing = True
                     self._placing_field = True
                     self.draw_start = cell
@@ -3435,7 +3440,7 @@ class Game:
             self._paint_height_at(cell[0], cell[1])
             return
         # Field placement: drag to size the plot.
-        if self.place_kind == BuildingKind.FIELD:
+        if is_field_plot_kind(self.place_kind):
             self.drawing = True
             self._placing_field = True
             self.draw_start = cell
@@ -3483,9 +3488,9 @@ class Game:
         if end is None or start is None or down is None:
             return
 
-        if placing_field and (self.place_kind == BuildingKind.FIELD or (self.height_edit_mode and self.map_edit_tool == MapEditTool.PLACE_BUILDING and self.map_edit_building_kind == BuildingKind.FIELD)):
+        if placing_field and (is_field_plot_kind(self.place_kind) or (self.height_edit_mode and self.map_edit_tool == MapEditTool.PLACE_BUILDING and is_field_plot_kind(self.map_edit_building_kind))):
             if self.height_edit_mode:self._editor_place_field(start,end)
-            else:self._place_field_site(start, end)
+            else:self._place_field_site(start, end, kind=self.place_kind if is_field_plot_kind(self.place_kind) else BuildingKind.FIELD)
             return
 
         # Click (same cell): selection / assignment.
@@ -3553,8 +3558,8 @@ class Game:
             if self.relocate_building_id is not None:
                 self._finalize_relocate(x, y)
                 return
-            if self.place_kind == BuildingKind.FIELD:
-                self._place_field_site((x, y), (x, y))
+            if is_field_plot_kind(self.place_kind):
+                self._place_field_site((x, y), (x, y), kind=self.place_kind)
                 return
             if self._place_construction_site(self.place_kind, x, y):
                 return
@@ -3660,7 +3665,7 @@ class Game:
             if obj.feature == FeatureType.TREE:
                 from trees import resolve_tree
                 inspect_species(self, x, y, f"tree:{resolve_tree(getattr(obj, 'tree_species', None)).key}")
-            elif species is not None and not (building and building.kind == BuildingKind.FIELD):
+            elif species is not None and not (building and building.is_field_plot):
                 inspect_species(self, x, y, f"plant:{species.key}")
             if obj.feature==FeatureType.TREE and secondary is None:
                 self.inspected_tree_cell=(x,y);self._refresh_tracking_inspect(force=True)
@@ -3884,7 +3889,7 @@ class Game:
             self._editor_remove_selected_villager();return True
         if action == "edit_open_field_plan":
             building=self._selected_building()
-            if building is not None and building.kind==BuildingKind.FIELD:self._open_field_plan(building)
+            if building is not None and building.is_field_plot:self._open_field_plan(building)
             else:self._set_status("Select an established field first.")
             return True
         if action is not None and action.startswith("edit_settlement:"):
@@ -3926,7 +3931,7 @@ class Game:
             return True
         if action == "open_field_plan":
             building = self._selected_building()
-            if building is not None and building.kind == BuildingKind.FIELD:
+            if building is not None and building.is_field_plot:
                 self._open_field_plan(building)
             return True
         if action == "cycle_work_mode":
@@ -4434,7 +4439,7 @@ class Game:
                 f"Pick a villager to house in {BUILDING_LABELS[building.kind]} #{building.id}."
             )
             return
-        if building.kind == BuildingKind.FIELD:
+        if building.is_field_plot:
             self._set_status("Assign workers to a Farm — Fields only define crop areas.")
             return
         self.assign_picker.open_villagers(
@@ -4933,7 +4938,7 @@ class Game:
             self._select_construction(site)
             return
         for b in self.buildings.values():
-            if b.kind != BuildingKind.FIELD:
+            if not b.is_field_plot:
                 self._select_building(b)
                 return
         self.management.selected_building_id = None
@@ -5113,7 +5118,7 @@ class Game:
         building = self.buildings.get(building_id)
         if building is None:
             return
-        if building.kind == BuildingKind.FIELD:
+        if building.is_field_plot:
             self._set_status("Assign workers to a Farm — Fields only define crop areas.")
             return
         if building.kind == BuildingKind.HOME:
@@ -5230,7 +5235,7 @@ class Game:
         name = BUILDING_LABELS[self.place_kind]
         bits = cost.summary_bits()
         cost_txt = ", ".join(bits) if bits else "free"
-        if self.place_kind == BuildingKind.FIELD:
+        if is_field_plot_kind(self.place_kind):
             self._set_status(
                 f"Build: {name} ({cost_txt}). Drag a rectangle on soil/grass to size the field."
             )
@@ -6122,7 +6127,7 @@ class Game:
         hmin = crop_health_min()
         drop = crop_health_max_drop()
         for building in self.buildings.values():
-            if building.kind != BuildingKind.FIELD:
+            if not building.is_field_plot:
                 continue
             cells = building.plot_cells()
             if not cells:
@@ -6184,10 +6189,10 @@ class Game:
     def _field_plot_cells(self) -> set[tuple[int, int]]:
         cells: set[tuple[int, int]] = set()
         for building in self.buildings.values():
-            if building.kind == BuildingKind.FIELD:
+            if building.is_field_plot:
                 cells.update(building.plot_cells())
         for site in self.construction_sites.values():
-            if site.kind == BuildingKind.FIELD:
+            if is_field_plot_kind(site.kind):
                 cells.update(site.plot_cells())
         return cells
 
@@ -6195,10 +6200,10 @@ class Game:
         """Stable id + building/construction for urban clustering."""
         items: list[tuple[int, object]] = []
         for building in self.buildings.values():
-            if building.kind != BuildingKind.FIELD:
+            if not building.is_field_plot:
                 items.append((building.id, building))
         for site in self.construction_sites.values():
-            if site.kind != BuildingKind.FIELD:
+            if not is_field_plot_kind(site.kind):
                 items.append((1_000_000 + site.id, site))
         return items
 
@@ -6879,7 +6884,7 @@ class Game:
         self.area_draw_task: TaskType | None = None
         if building.draw_task_type not in TASK_LABELS:
             building.draw_task_type = building.default_draw_task()
-        if building.kind == BuildingKind.FIELD:
+        if building.is_field_plot:
             self._open_field_plan(
                 building, show_player=show_player, detail_only=detail_only
             )
@@ -6915,7 +6920,7 @@ class Game:
         if bid is None:
             return None
         building = self.buildings.get(bid)
-        if building is None or building.kind != BuildingKind.FIELD:
+        if building is None or not building.is_field_plot:
             return None
         return building
 
@@ -6924,7 +6929,7 @@ class Game:
         if bid is None:
             return None
         building = self.buildings.get(bid)
-        if building is None or building.kind == BuildingKind.FIELD:
+        if building is None or building.is_field_plot:
             return None
         return building
 
@@ -8027,16 +8032,32 @@ class Game:
         if cell.feature == FeatureType.ROCK:
             return ("Rock", max(1, cell.deposit), "rock", "")
         if cell.feature == FeatureType.BERRY_BUSH:
+            from berry_bushes import berry_food_key, normalize_berry_kind
+            from wild_species import resolve_species
+            kind = normalize_berry_kind(cell.crop_kind)
+            species = resolve_species("BERRY_BUSH", kind)
+            label = species.label if species is not None else "Berry bush"
             qty = cell.deposit
-            detail = "Regrowing" if qty <= 0 else ""
-            return ("Berry bush", max(0, qty), "berries", detail)
+            if cell.tree_age_years < 1 and cell.growth_ticks > 0:
+                detail = "Growing"
+            else:
+                detail = "Regrowing" if qty <= 0 else ""
+            return (label, max(0, qty), berry_food_key(kind), detail)
         if cell.feature == FeatureType.MUSHROOM:
             return ("Mushroom", 1, "mushrooms", "")
         if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP):
-            kind = cell.crop_kind or "sage"
-            crop = CROP_BY_KEY.get(kind)
-            label = crop.label if crop else kind
-            return (f"Wild {label}", 1, crop.produce_key if crop else kind, "")
+            from wild_species import plant_forage_yield, resolve_species
+
+            kind = cell.crop_kind
+            species = resolve_species(cell.feature.name, kind)
+            crop = CROP_BY_KEY.get(kind) if kind else None
+            if crop is not None:
+                return (f"Wild {crop.label}", 1, crop.produce_key, "")
+            if species is not None:
+                yield_info = plant_forage_yield(cell.feature.name, kind)
+                key = yield_info[0] if yield_info else ""
+                return (species.label, 1 if key else 0, key, "")
+            return ("Wild plant", 0, "", "")
         if cell.feature == FeatureType.REED:
             from wild_species import is_harvestable, resolve_species
 
@@ -8066,7 +8087,7 @@ class Game:
             return
         bid = self.field_plan_dialog.building_id
         building = self.buildings.get(bid) if bid is not None else None
-        if building is None or building.kind != BuildingKind.FIELD:
+        if building is None or not building.is_field_plot:
             return
         x0, y0, x1, y1, crop_kind = pending
 
@@ -8106,7 +8127,7 @@ class Game:
         if result == "cleared":
             bid = self.field_plan_dialog.building_id
             building = self.buildings.get(bid) if bid is not None else None
-            if building is not None and building.kind == BuildingKind.FIELD:
+            if building is not None and building.is_field_plot:
                 building.plans.clear()
                 self._set_status(f"Cleared plans on Field #{building.id}.")
                 self._wake_all_farm_workers()
@@ -8119,7 +8140,7 @@ class Game:
         if result == "add_fence":
             bid = self.field_plan_dialog.building_id
             field = self.buildings.get(bid) if bid is not None else None
-            if field is not None and field.kind == BuildingKind.FIELD:
+            if field is not None and field.is_field_plot:
                 self._fence_gate_field_id = field.id
                 self._set_status("Place gate: click a highlighted perimeter square. Right-click when done.")
             return
@@ -8218,7 +8239,7 @@ class Game:
         offsets = {"N": (0, -1), "E": (1, 0), "S": (0, 1), "W": (-1, 0)}
         blocked = set()
         for field in self.buildings.values():
-            if field.kind != BuildingKind.FIELD:
+            if not field.is_field_plot:
                 continue
             # Gate semantics are square-based. This also upgrades saves from
             # the earlier single-edge gate representation.
@@ -8258,7 +8279,7 @@ class Game:
 
     def _delete_field_building(self, building_id: int) -> None:
         building = self.buildings.get(building_id)
-        if building is None or building.kind != BuildingKind.FIELD:
+        if building is None or not building.is_field_plot:
             return
         # Clear any legacy FIELD feature markers inside the plot.
         for x, y in building.plot_cells():
@@ -8331,7 +8352,7 @@ class Game:
         if building.kind == BuildingKind.FARM:
             self._set_status("Farm has no task areas — Fields are separate buildings.")
             return
-        if building.kind == BuildingKind.FIELD:
+        if building.is_field_plot:
             building.plans.clear()
             self._set_status(f"Cleared plans on Field #{building.id}.")
             self._wake_all_farm_workers()
@@ -8496,7 +8517,7 @@ class Game:
         footprints = [
             (b.x, b.y, max(1, b.plot_w), max(1, b.plot_h))
             for b in self.buildings.values()
-            if b.kind != BuildingKind.FIELD
+            if not b.is_field_plot
         ]
         stamp = (id(self.world), tuple(sorted(footprints)))
         changed = stamp != getattr(self, "_building_collision_stamp", None)
@@ -8575,7 +8596,7 @@ class Game:
         building = self.buildings.get(int(building_id))
         if (
             building is None
-            or building.kind == BuildingKind.FIELD
+            or building.is_field_plot
             or (villager.x, villager.y) != building.center_cell()
         ):
             return
@@ -8605,10 +8626,12 @@ class Game:
             current_total = villager.inventory.total
             transferred = abs(current_total - previous_total)
             if transferred > 0:
-                # Each transferred item costs one efficiency-adjusted work
-                # action. Faster/skilled workers therefore spend less time in
-                # the building, while larger loads take proportionally longer.
-                transfer_ticks = transferred * self._villager_work_interval(villager)
+                # One work-action worth of indoor time per AI transfer tick.
+                # Haulers/workers bulk-move many items in a single
+                # withdraw/deposit that already pays one work_cooldown —
+                # charging per item stranded them indoors (hidden, unable to
+                # start an exit) for thousands of ticks after a full pack grab.
+                transfer_ticks = self._villager_work_interval(villager)
                 villager._building_inside_ticks = max(  # type: ignore[attr-defined]
                     int(getattr(villager, "_building_inside_ticks", 0) or 0),
                     transfer_ticks,
@@ -9176,9 +9199,10 @@ class Game:
         return cost.wood, cost.rock, cost.logs, cost.hardwood, cost.task
 
     def _place_field_site(
-        self, start: tuple[int, int], end: tuple[int, int]
+        self, start: tuple[int, int], end: tuple[int, int], *, kind: BuildingKind | None = None
     ) -> bool:
-        """Place a Field construction site sized to the dragged rectangle."""
+        """Place a Field/Orchard construction site sized to the dragged rectangle."""
+        kind = kind if is_field_plot_kind(kind) else BuildingKind.FIELD
         x0, y0 = min(start[0], end[0]), min(start[1], end[1])
         x1, y1 = max(start[0], end[0]), max(start[1], end[1])
         plot_w = x1 - x0 + 1
@@ -9223,6 +9247,12 @@ class Game:
                 if self._field_plot_covers(x, y):
                     self._set_status("Field overlaps another field.")
                     return False
+        # Tutorial: orchard quest accepts only a 1×N strip west of the wheat field.
+        if kind == BuildingKind.ORCHARD and getattr(self, "scenario", None) is not None:
+            ok, reason = self.scenario.validate_orchard_placement(self, x0, y0, plot_w, plot_h)
+            if not ok:
+                self._set_status(reason or "That orchard plot is not the right shape. Try again.")
+                return False
         # Keep saplings and wild crops on the plot until plough:
         # plough destroys saplings; wild crops are harvested then cleared.
         # Only strip mushrooms / reeds that are not part of field work.
@@ -9240,12 +9270,12 @@ class Game:
                     cell.crop_kind = None
                     cell.tree_species = None
                     cell.icon_variant = None
-        cost_w, cost_r, cost_l, cost_h, _ = self._building_cost(BuildingKind.FIELD)
+        cost_w, cost_r, cost_l, cost_h, _ = self._building_cost(kind)
         site = ConstructionSite(
             id=self.next_construction_id,
             x=x0,
             y=y0,
-            kind=BuildingKind.FIELD,
+            kind=kind,
             need_wood=cost_w,
             need_rock=cost_r,
             need_logs=cost_l,
@@ -9260,8 +9290,13 @@ class Game:
         self.world.apply_disturbance(x0, y0)
         self._refresh_indicators()
         self.place_kind = None
+        label = BUILDING_LABELS.get(kind, "Field")
+        # Fields / orchards establish for free: mark the plot, then plough tiles.
+        if cost_w == 0 and cost_r == 0 and cost_l == 0 and cost_h == 0:
+            self._complete_construction(site)
+            return True
         self._set_status(
-            f"Field plot {plot_w}×{plot_h} marked "
+            f"{label} plot {plot_w}×{plot_h} marked "
             f"(needs {cost_w}w {cost_r}r to finish). "
             f"Outline shows the plot; plough each tile before sowing."
         )
@@ -9270,10 +9305,10 @@ class Game:
     def _field_plot_covers(self, x: int, y: int) -> bool:
         """True if an existing Field building or Field construction covers the cell."""
         for building in self.buildings.values():
-            if building.kind == BuildingKind.FIELD and building.contains_plot(x, y):
+            if building.is_field_plot and building.contains_plot(x, y):
                 return True
         for site in self.construction_sites.values():
-            if site.kind == BuildingKind.FIELD and site.contains_plot(x, y):
+            if is_field_plot_kind(site.kind) and site.contains_plot(x, y):
                 return True
         return False
 
@@ -9291,8 +9326,8 @@ class Game:
             is_extension_kind,
         )
 
-        if kind == BuildingKind.FIELD:
-            return self._place_field_site((x, y), (x, y))
+        if is_field_plot_kind(kind):
+            return self._place_field_site((x, y), (x, y), kind=kind)
         plot_w, plot_h = default_building_plot(kind)
         # Click cell is the centre of the footprint.
         ox = x - plot_w // 2
@@ -9387,7 +9422,7 @@ class Game:
             self._set_status("Empty storage before relocating.")
             return
         kind = building.kind
-        if kind == BuildingKind.FIELD:
+        if is_field_plot_kind(kind):
             plot_w, plot_h = max(1, building.plot_w), max(1, building.plot_h)
             ox, oy = x - plot_w // 2, y - plot_h // 2
         else:
@@ -9549,7 +9584,7 @@ class Game:
         _, _, _, _, default_task = self._building_cost(site.kind)
         plot_w = max(1, site.plot_w)
         plot_h = max(1, site.plot_h)
-        if site.kind != BuildingKind.FIELD:
+        if not is_field_plot_kind(site.kind):
             pw, ph = default_building_plot(site.kind)
             plot_w, plot_h = pw, ph
         cap, in_cap, out_cap = default_processor_capacities(site.kind)
@@ -9587,7 +9622,7 @@ class Game:
             )
             if parent is not None:
                 parent.ensure_recipe_state()
-        if site.kind == BuildingKind.FIELD:
+        if is_field_plot_kind(site.kind):
             # Field is a plot outline only — no building glyph on the map.
             for px, py in site.plot_cells():
                 pad = self.world.get_cell(px, py)
@@ -9611,10 +9646,11 @@ class Game:
             if villager.construction_id == site.id:
                 villager.construction_id = None
                 villager.state = VillagerState.IDLE
-        if site.kind == BuildingKind.FIELD:
+        if is_field_plot_kind(site.kind):
+            kind_label = BUILDING_LABELS.get(site.kind, "Field")
             self._set_status(
-                f"Finished Field #{building.id} ({building.plot_size_label()}). "
-                f"Plough tiles to soil, then sow. Click the plot to plan crops."
+                f"{kind_label} #{building.id} ({building.plot_size_label()}) marked. "
+                f"Plough each tile to bare soil, then sow. Click the plot to plan crops."
             )
             self._wake_all_farm_workers()
         else:
@@ -10356,12 +10392,22 @@ class Game:
 
     def _plant_here(self, x: int, y: int, inventory: Inventory, status: bool = False) -> bool:
         """Plant berry seed or sapling depending on inventory and terrain."""
+        from berry_bushes import first_carried_berry_seed
         cell = self.world.get_cell(x, y)
         if cell is None:
             return False
-        if cell.terrain == TerrainType.GRASS and inventory.berry_seeds > 0:
+        if cell.terrain == TerrainType.GRASS and first_carried_berry_seed(inventory):
             return self._plant_berry_seed(x, y, inventory, status=status)
         return self._plant(x, y, inventory, status=status)
+
+    def _field_sow_growth_ticks(self, crop) -> int:
+        """Orchard bushes mature at the next season change; annuals use crop days."""
+        from crops import ORCHARD_CROP_KEYS
+        from seasons import SEASON_LENGTH_TICKS
+
+        if getattr(crop, "key", None) in ORCHARD_CROP_KEYS:
+            return max(1, int(SEASON_LENGTH_TICKS))
+        return growth_ticks_for(crop, self.ticks_per_day)
 
     def _player_tend_field_cell(
         self, field: Building, x: int, y: int
@@ -10377,6 +10423,11 @@ class Game:
         if cell is None:
             return True
         crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
+        if field.is_orchard:
+            from crops import ORCHARD_CROP_KEYS
+            if crop.key not in ORCHARD_CROP_KEYS:
+                self._set_status("Orchard plots only accept permanent bush crops.")
+                return True
         if not crop_allows_plant(crop, self.season):
             self._set_status(f"{crop.label} cannot be planted this season.")
             return True
@@ -10415,7 +10466,7 @@ class Game:
             cell.mineral_cycle_applied = True
             self.record_consumed("mineral_powder", 1)
         if self.world.sow_crop(
-            x, y, crop.key, growth_ticks_for(crop, self.ticks_per_day)
+            x, y, crop.key, self._field_sow_growth_ticks(crop)
         ):
             inv.consume_item(seed_key, 1)
             self.record_consumed(seed_key, 1)
@@ -10429,21 +10480,25 @@ class Game:
         return True
 
     def _plant_berry_seed(self, x: int, y: int, inventory: Inventory, status: bool = False) -> bool:
-        if inventory.berry_seeds <= 0:
+        from berry_bushes import berry_kind_for_seed, first_carried_berry_seed
+        from resources import resource_label
+        seed_key = first_carried_berry_seed(inventory)
+        if seed_key is None:
             if status:
                 self._set_status("Need berry seeds.")
             return False
-        if not self.world.plant_berry_bush(x, y):
+        kind = berry_kind_for_seed(seed_key) or "blackberry"
+        if not self.world.plant_berry_bush(x, y, kind):
             if status:
                 self._set_status("Berry bushes need empty grass.")
             return False
-        inventory.consume_berry_seed()
-        self.record_consumed("berry_seeds", 1)
+        inventory.consume_item(seed_key, 1)
+        self.record_consumed(seed_key, 1)
         self.world.apply_disturbance(x, y)
         self.sounds.emit("work.plant",actor="player",plant_type="shrub",x=x,y=y)
         self._refresh_indicators()
         if status:
-            self._set_status("Planted a berry bush.")
+            self._set_status(f"Planted {resource_label(seed_key).replace(' seeds', '').lower()}.")
         return True
 
     def _note_player_forage(self, inventory, x, y, species, key=None, amount=0) -> None:
@@ -10503,31 +10558,43 @@ class Game:
         return True
 
     def _collect_berries(self, x: int, y: int, inventory: Inventory, status: bool = False) -> bool:
+        from berry_bushes import berry_food_key, berry_seed_key, normalize_berry_kind
+        from resources import resource_label
         if inventory.is_full:
             if status:
                 self._set_status("Inventory is full.")
             return False
+        cell = self.world.get_cell(x, y)
+        kind = normalize_berry_kind(getattr(cell, "crop_kind", None) if cell else None)
+        food_key = berry_food_key(kind)
+        seed_key = berry_seed_key(kind)
         taken = self.world.harvest_berries(x, y, amount=1)
         if taken <= 0:
             if status:
                 self._set_status("No berries ready.")
             return False
-        inventory.add_berries(taken)
-        self.record_produced("berries", taken)
-        self._note_player_forage(inventory, x, y, "plant:berry_bush", "berries", taken)
+        if not inventory.add_item(food_key, taken):
+            # Immature path shouldn't happen; restore deposit if cargo rejected.
+            if cell is not None:
+                cell.deposit += taken
+            if status:
+                self._set_status("Inventory is full.")
+            return False
+        self.record_produced(food_key, taken)
+        self._note_player_forage(inventory, x, y, f"plant:{kind}", food_key, taken)
         if inventory is self.player.inventory:
             self.scenario.note_berry_collected(self, x, y, taken)
         seed_msg = ""
-        if self._drop_rng.random() < self._seed_chance(BERRY_SEED_DROP_CHANCE) and inventory.can_add(1, key="berry_seeds"):
-            inventory.add_berry_seeds(1)
-            self.record_produced("berry_seeds", 1)
-            seed_msg = " +1 berry seed"
+        if self._drop_rng.random() < self._seed_chance(BERRY_SEED_DROP_CHANCE) and inventory.can_add(1, key=seed_key):
+            inventory.add_item(seed_key, 1)
+            self.record_produced(seed_key, 1)
+            seed_msg = f" +1 {resource_label(seed_key).lower()}"
         self.world.apply_extraction_disturbance(x, y)
         self._refresh_indicators()
         if status:
             left = self.world.get_cell(x, y)
             rem = left.deposit if left and left.feature == FeatureType.BERRY_BUSH else 0
-            self._set_status(f"Collected {taken} berry ({rem} left){seed_msg}.")
+            self._set_status(f"Collected {taken} {resource_label(food_key).lower()} ({rem} left){seed_msg}.")
         return True
 
     def _collect_herb(self, x: int, y: int, inventory: Inventory, status: bool = False) -> bool:
@@ -10540,40 +10607,26 @@ class Game:
             if status:
                 self._set_status("No wild plants here.")
             return False
-        forage_species = None
-        if inventory is self.player.inventory:
-            from wild_species import resolve_species
-            species = resolve_species(cell.feature.name, getattr(cell, "crop_kind", None))
-            if species is not None:
-                forage_species = f"plant:{species.key}"
-                self._note_player_forage(inventory, x, y, forage_species)
-        # Check cargo room before clearing the tile (seeds use a separate bag).
-        if cell.feature == FeatureType.REED:
-            from wild_species import resolve_species
+        from wild_species import WILD_BY_KEY, plant_forage_yield, resolve_species
 
-            species = resolve_species("REED", cell.crop_kind)
-            produce_key = (
-                species.resource_key if species is not None else "reeds"
-            ) or "reeds"
-            need = int(species.yield_amount) if species is not None else REED_YIELD
-            if need <= 0:
-                if status:
-                    self._set_status("Nothing to harvest here.")
-                return False
-        elif cell.feature == FeatureType.HERB:
-            crop = CROP_BY_KEY["sage"]
-            produce_key, need = crop.produce_key, WILD_PRODUCE_YIELD
-        elif cell.feature == FeatureType.WILD_CROP:
-            crop = CROP_BY_KEY.get(cell.crop_kind or "sage", CROP_BY_KEY["sage"])
-            produce_key, need = crop.produce_key, WILD_PRODUCE_YIELD
-        else:
+        feature_name = cell.feature.name
+        kind = getattr(cell, "crop_kind", None)
+        if inventory is self.player.inventory:
+            species = resolve_species(feature_name, kind)
+            if species is not None:
+                self._note_player_forage(inventory, x, y, f"plant:{species.key}")
+
+        yield_info = plant_forage_yield(feature_name, kind)
+        if yield_info is None:
             if status:
-                self._set_status("No wild plants here.")
+                self._set_status("Nothing to harvest here.")
             return False
-        if not inventory.can_add(need, key=produce_key):
+        produce_key, wild_max = yield_info
+        if not inventory.can_add(wild_max, key=produce_key):
             if status:
                 self._set_status(
-                    f"Need {need} free cargo slots to harvest {produce_key.replace('_', ' ')}."
+                    f"Need {wild_max} free cargo slots to harvest "
+                    f"{produce_key.replace('_', ' ')}."
                 )
             return False
 
@@ -10582,52 +10635,55 @@ class Game:
             if status:
                 self._set_status("No wild plants here.")
             return False
-        from wild_species import WILD_BY_KEY
 
         wild = WILD_BY_KEY.get(crop_key)
-        if wild is not None and wild.feature == "REED":
-            amount = max(0, int(wild.yield_amount))
-            if amount <= 0:
-                return True
-            inventory.add_item(wild.resource_key or "reeds", amount)
-            self.record_produced(wild.resource_key or "reeds", amount)
+        if produce_key in ("reeds",) or (wild is not None and wild.feature == "REED"):
+            amount = max(1, int(wild.yield_amount) if wild is not None else REED_YIELD)
+            key = (wild.resource_key if wild is not None else None) or "reeds"
+            if not inventory.add_item(key, amount):
+                return False
+            self.record_produced(key, amount)
             self.world.apply_extraction_disturbance(x, y)
             self._refresh_indicators()
             if status:
-                label = wild.label.lower()
+                label = wild.label.lower() if wild is not None else "reed"
                 self._set_status(
                     f"Collected {amount} {label}{'' if amount == 1 else 's'}."
                 )
             return True
-        if crop_key == "reeds":
-            inventory.add_item("reeds", REED_YIELD)
-            self.record_produced("reeds", REED_YIELD)
-            self.world.apply_extraction_disturbance(x, y)
-            self._refresh_indicators()
+
+        crop = CROP_BY_KEY.get(crop_key)
+        wild_amount = self._drop_rng.randint(1, wild_max)
+        if not inventory.add_item(produce_key, wild_amount):
             if status:
-                self._set_status(
-                    f"Collected {REED_YIELD} reed{'' if REED_YIELD == 1 else 's'}."
-                )
-            return True
-        crop = CROP_BY_KEY.get(crop_key, CROP_BY_KEY["sage"])
-        wild_max=max(1,int(wild.yield_amount if wild is not None else 3));wild_amount=self._drop_rng.randint(1,wild_max)
-        inventory.add_item(crop.produce_key, wild_amount)
-        self.record_produced(crop.produce_key, wild_amount)
-        self._note_player_forage(inventory, x, y, None, crop.produce_key, wild_amount)
+                self._set_status("Inventory is full.")
+            return False
+        self.record_produced(produce_key, wild_amount)
+        self._note_player_forage(inventory, x, y, None, produce_key, wild_amount)
         seed_msg = ""
-        # Forage: flat chance of a single seed (see resource_balance.WILD_SEED_CHANCE).
-        seed_drop_chance=wild.seed_drop_chance if wild is not None else WILD_SEED_CHANCE
-        seed_amount=self._drop_rng.randint(1,max(1,int(wild.seed_amount_max if wild is not None else 1)))
-        if self._drop_rng.random() < seed_drop_chance and inventory.can_add(seed_amount,key=crop.seed_key):
-            inventory.add_item(crop.seed_key,seed_amount)
-            self.record_produced(crop.seed_key,seed_amount)
+        seed_drop_chance = (
+            wild.seed_drop_chance if wild is not None else WILD_SEED_CHANCE
+        )
+        seed_amount = self._drop_rng.randint(
+            1, max(1, int(wild.seed_amount_max if wild is not None else 1))
+        )
+        if (
+            crop is not None
+            and self._drop_rng.random() < seed_drop_chance
+            and inventory.can_add(seed_amount, key=crop.seed_key)
+        ):
+            inventory.add_item(crop.seed_key, seed_amount)
+            self.record_produced(crop.seed_key, seed_amount)
             seed_msg = f" +{seed_amount} {crop.label.lower()} seed"
         self.world.apply_extraction_disturbance(x, y)
         self._refresh_indicators()
         if status:
-            self._set_status(
-                f"Collected {wild_amount} {crop.label.lower()}{seed_msg}."
+            label = (
+                crop.label.lower()
+                if crop is not None
+                else produce_key.replace("_", " ")
             )
+            self._set_status(f"Collected {wild_amount} {label}{seed_msg}.")
         return True
 
     def _harvest_farm_herb(
@@ -12459,13 +12515,21 @@ class Game:
         candidates: list[tuple[int, int]] = []
         for key in VILLAGER_FOOD_KEYS:
             candidates.extend(self._forage_cells_for_key(key))
-        candidates = [
-            pos for pos in candidates
-            if self.scenario.villager_foraging_near_home(villager, pos)
-        ]
+        # The forage index can lag a few ticks after a bush is emptied — only
+        # keep cells that still have a live food forage key.
+        live: list[tuple[int, int]] = []
+        for pos in candidates:
+            if not self.scenario.villager_foraging_near_home(villager, pos):
+                continue
+            cell = self.world.get_cell(*pos)
+            if cell is None:
+                continue
+            if self._forage_key_for_cell(cell) not in VILLAGER_FOOD_KEYS:
+                continue
+            live.append(pos)
         return self._pick_nearest_reachable(
             (villager.x, villager.y),
-            candidates,
+            live,
             pos_fn=lambda pos: pos,
             villager=villager,
         )
@@ -12667,7 +12731,10 @@ class Game:
                         villager.target = None
                         villager.work_cooldown = self._villager_work_interval(villager)
                         return
-                # Resource vanished/cargo was full; choose again next tick.
+                # Resource vanished/cargo was full; drop the sticky target and
+                # refresh the forage index so we do not loop on an empty bush.
+                villager.target = None
+                self._invalidate_forage_index()
                 villager.seeking_food = villager.needs_food()
                 return
             if self._food_count(storage) <= 0:
@@ -13076,17 +13143,42 @@ class Game:
 
     def _forage_yield_amount(self, key: str) -> int:
         """Cargo units one collect of this forager recipe needs."""
+        from berry_bushes import BERRY_FOOD_KEYS
+
         if key == "mushrooms":
             return MUSHROOM_YIELD
         if key == "honey":
             return HONEY_PER_BEE_LEVEL
         if key == "reeds":
             return REED_YIELD
-        if key == "berries":
+        if key in BERRY_FOOD_KEYS or key in ("berries", "berry_seeds"):
             return 1
-        if key == "wood":
+        if key in ("wood", "rock"):
             return 1
         return WILD_PRODUCE_YIELD
+
+    def _unlocked_forage_resource_keys(self) -> frozenset[str] | None:
+        """Forager Collect keys unlocked by diary flora (None = unrestricted)."""
+        from wild_species import forage_resource_keys_for_flora
+
+        if getattr(self.scenario.state, "key", None) != "tutorial_slice":
+            return None
+        return forage_resource_keys_for_flora(self.scenario.tutorial_management_flora())
+
+    def _forage_resource_unlocked(self, key: str | None) -> bool:
+        if not key:
+            return True
+        allowed = self._unlocked_forage_resource_keys()
+        if allowed is None:
+            return True
+        return key in allowed
+
+    def _forager_gather_recipes(self, building: Building):
+        recipes = building.known_recipes()
+        allowed = self._unlocked_forage_resource_keys()
+        if allowed is None:
+            return recipes
+        return tuple(r for r in recipes if r.name in allowed)
 
     def _clear_gather_stickies(self, villager: Villager) -> None:
         """Drop mid-task sticky targets so full inventory can deliver."""
@@ -16644,7 +16736,7 @@ class Game:
             return cache[farm.id]
         nearby: list[Building] = []
         for building in self.buildings.values():
-            if building.kind != BuildingKind.FIELD:
+            if not building.is_field_plot:
                 continue
             left, top, right, bottom = building.plot_bounds()
             fcx, fcy = farm.center_cell()
@@ -16941,12 +17033,12 @@ class Game:
 
     def _field_building_at(self, x: int, y: int) -> Building | None:
         for building in self.buildings.values():
-            if building.kind == BuildingKind.FIELD and building.contains_plot(x, y):
+            if building.is_field_plot and building.contains_plot(x, y):
                 return building
         return None
 
     def _field_buildings(self) -> list[Building]:
-        return [b for b in self.buildings.values() if b.kind == BuildingKind.FIELD]
+        return [b for b in self.buildings.values() if b.is_field_plot]
 
     def _plan_at_cell(
         self, building: Building, x: int, y: int
@@ -16955,7 +17047,7 @@ class Game:
         field_b: Building | None
         if building.kind == BuildingKind.FARM:
             field_b = self._field_building_at(x, y)
-        elif building.kind == BuildingKind.FIELD:
+        elif building.is_field_plot:
             field_b = building
         else:
             hit = building.plan_at_cell(x, y)
@@ -17042,7 +17134,7 @@ class Game:
             if getattr(inv, seed_key, 0) > 0:
                 self._farm_apply_preplant_treatments(villager, building, cell)
             if getattr(inv, seed_key, 0) > 0 and self.world.sow_crop(
-                x, y, crop.key, growth_ticks_for(crop, self.ticks_per_day)
+                x, y, crop.key, self._field_sow_growth_ticks(crop)
             ):
                 setattr(inv, seed_key, getattr(inv, seed_key) - 1)
                 self.record_consumed(seed_key, 1)
@@ -19238,6 +19330,8 @@ class Game:
         band = max(1, int(FORAGER_PRIORITY_BAND))
         recipe_meta: list[tuple[str, int, str, int]] = []
         for recipe in building.enabled_recipes():
+            if not self._forage_resource_unlocked(recipe.name):
+                continue
             priority = building.get_recipe_priority(recipe.name)
             need = self._forage_yield_amount(recipe.name)
             cargo_key = "wood" if recipe.name == "wood" else recipe.name
@@ -19501,7 +19595,8 @@ class Game:
         if cell.feature == FeatureType.WOOD_BUSH and cell.deposit > 0:
             return "wood"
         if cell.feature == FeatureType.BERRY_BUSH and cell.deposit > 0:
-            return "berries"
+            from berry_bushes import berry_food_key
+            return berry_food_key(cell.crop_kind)
         if cell.feature == FeatureType.REED:
             from wild_species import is_harvestable, resolve_species
 
@@ -19510,8 +19605,10 @@ class Game:
                 return None
             return (species.resource_key if species is not None else None) or "reeds"
         if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP):
-            crop = CROP_BY_KEY.get(cell.crop_kind or "sage", CROP_BY_KEY["sage"])
-            return crop.produce_key
+            from wild_species import plant_forage_yield
+
+            yield_info = plant_forage_yield(cell.feature.name, cell.crop_kind)
+            return yield_info[0] if yield_info else None
         if cell.feature == FeatureType.TREE and cell.deposit > 0:
             from trees import resolve_tree
 
@@ -19532,9 +19629,11 @@ class Game:
         if building.kind == BuildingKind.FORAGER:
             key = self._forage_key_for_cell(cell)
             if key is None:
-                return True
+                return False
             # Reeds have no recipe toggle — leave them for manual collection.
             if key == "reeds":
+                return False
+            if not self._forage_resource_unlocked(key):
                 return False
             return building.allows_forage_key(key) and self._under_production_max(
                 building, key
@@ -19573,7 +19672,9 @@ class Game:
             return cell.feature == FeatureType.BERRY_BUSH and cell.deposit > 0
         if task_type == TaskType.FORAGE_HERBS:
             if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP):
-                return True
+                from wild_species import plant_forage_yield
+
+                return plant_forage_yield(cell.feature.name, cell.crop_kind) is not None
             if cell.feature == FeatureType.REED:
                 from wild_species import is_harvestable, resolve_species
 
@@ -19601,7 +19702,9 @@ class Game:
             if cell.feature == FeatureType.BERRY_BUSH and cell.deposit > 0:
                 return True
             if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP):
-                return True
+                from wild_species import plant_forage_yield
+
+                return plant_forage_yield(cell.feature.name, cell.crop_kind) is not None
             if cell.feature == FeatureType.REED:
                 from wild_species import is_harvestable, resolve_species
 
@@ -19838,7 +19941,7 @@ class Game:
             building = self._building_at(step[0], step[1])
             if (
                 building is not None
-                and building.kind != BuildingKind.FIELD
+                and not building.is_field_plot
                 and step == building.center_cell()
             ):
                 villager._pending_building_entry_id = building.id  # type: ignore[attr-defined]
@@ -19907,7 +20010,7 @@ class Game:
             field = self._field_plan_building()
             if field is None:
                 sel = self._selected_building()
-                if sel is not None and sel.kind == BuildingKind.FIELD:
+                if sel is not None and sel.is_field_plot:
                     field = sel
             base = float(farm_produce_yield()) or 1.0
             if field is not None:
@@ -20215,7 +20318,7 @@ class Game:
                     building = self._building_at(step[0], step[1])
                     if (
                         building is not None
-                        and building.kind != BuildingKind.FIELD
+                        and not building.is_field_plot
                         and step == building.center_cell()
                     ):
                         villager._pending_building_entry_id = building.id  # type: ignore[attr-defined]
@@ -20665,6 +20768,11 @@ class Game:
                 village_stock=self._village_stock_amounts(),
                 recipe_progress_fractions=self._smooth_recipe_progress(
                     inspect_b, inspect_workers
+                ),
+                forage_allowed_keys=(
+                    self._unlocked_forage_resource_keys()
+                    if inspect_b.kind == BuildingKind.FORAGER
+                    else None
                 ),
                 crop_overview=(
                     self._farm_crop_overview(inspect_b)
@@ -22052,7 +22160,7 @@ class Game:
             getattr(self, "_work_gen", 0),
             construction_visual,
             getattr(self, "_field_fertility_generation", 0),
-            tuple(b.plot_bounds() for b in self.buildings.values() if b.kind == BuildingKind.FIELD),
+            tuple(b.plot_bounds() for b in self.buildings.values() if b.is_field_plot),
             round(vibrancy, 1),
             int(freeze * 5),
             bool(self.height_sample_enabled),
@@ -22074,7 +22182,7 @@ class Game:
             self._field_fertility_tint = FieldFertilityTint()
         before = self._field_fertility_tint.key
         base = self._field_fertility_tint.apply(base, self.world,
-            [b for b in self.buildings.values() if b.kind == BuildingKind.FIELD],
+            [b for b in self.buildings.values() if b.is_field_plot],
             getattr(self, '_field_fertility_generation', 0), CELL_SIZE)
         if before != self._field_fertility_tint.key:
             self._height_sample_cache = None
@@ -22239,6 +22347,7 @@ class Game:
                 icon_variant=cell.icon_variant,
                 deposit=cell.deposit,
                 growth_ticks=cell.growth_ticks,
+                tree_age_years=int(getattr(cell, "tree_age_years", 0) or 0),
                 icon_base_override=(
                     "tent_broken"
                     if cell.feature == FeatureType.CONSTRUCTION_SITE
@@ -22350,6 +22459,7 @@ class Game:
                 icon_variant=obj.icon_variant,
                 deposit=obj.deposit,
                 growth_ticks=obj.growth_ticks,
+                tree_age_years=int(getattr(obj, "tree_age_years", 0) or 0),
                 season_name=self.season.name,
             )
 
@@ -22808,7 +22918,7 @@ class Game:
 
         # Field plots: always outline unploughed fields; selected fields too.
         for field_b in self.buildings.values():
-            if field_b.kind != BuildingKind.FIELD:
+            if not field_b.is_field_plot:
                 continue
             self._draw_field_building(field_b)
             from icons import blit_icon
@@ -22847,7 +22957,7 @@ class Game:
                     self.screen.blit(label, label.get_rect(center=bg.center))
         # Pending Field construction: full plot outline (no scaffold glyph).
         for site in self.construction_sites.values():
-            if site.kind != BuildingKind.FIELD:
+            if not is_field_plot_kind(site.kind):
                 continue
             if site.fence_field_id is not None:
                 for side in site.fence_edges:
@@ -22870,9 +22980,9 @@ class Game:
             )
 
         # While placing a field, show every existing field outline for alignment.
-        if self.place_kind == BuildingKind.FIELD or self._placing_field:
+        if is_field_plot_kind(self.place_kind) or self._placing_field:
             for field_b in self.buildings.values():
-                if field_b.kind != BuildingKind.FIELD:
+                if not field_b.is_field_plot:
                     continue
                 left, top, right, bottom = field_b.plot_bounds()
                 self._draw_field_plot_outline(
@@ -22885,7 +22995,7 @@ class Game:
                     fill_alpha=18,
                 )
             for site in self.construction_sites.values():
-                if site.kind != BuildingKind.FIELD:
+                if not is_field_plot_kind(site.kind):
                     continue
                 left, top = site.x, site.y
                 right = site.x + max(1, site.plot_w) - 1
@@ -22903,7 +23013,7 @@ class Game:
         # Non-field build ghost: 3×3 footprint centred on the hovered cell.
         if (
             self.place_kind is not None
-            and self.place_kind != BuildingKind.FIELD
+            and not is_field_plot_kind(self.place_kind)
             and not self.drawing
         ):
             mouse = pygame.mouse.get_pos()
@@ -22933,7 +23043,7 @@ class Game:
 
         # Field tool: 1-cell cursor before the player starts dragging.
         elif (
-            self.place_kind == BuildingKind.FIELD
+            is_field_plot_kind(self.place_kind)
             and not self.drawing
             and not self._placing_field
         ):
@@ -22951,6 +23061,7 @@ class Game:
         if building is not None and building.kind not in (
             BuildingKind.FARM,
             BuildingKind.FIELD,
+            BuildingKind.ORCHARD,
         ):
             for area in building.areas:
                 colour = TASK_COLOURS.get(area.task_type, COLOUR_TASK_AREA)
@@ -22967,7 +23078,7 @@ class Game:
             x1, y1 = self.draw_current
             left, top = min(x0, x1), min(y0, y1)
             right, bottom = max(x0, x1), max(y0, y1)
-            placing_field = self._placing_field or self.place_kind == BuildingKind.FIELD
+            placing_field = self._placing_field or is_field_plot_kind(self.place_kind)
             if placing_field:
                 overlap = self._field_drag_overlaps(left, top, right, bottom)
                 preview = (180, 70, 70) if overlap else COLOUR_TASK_FARM

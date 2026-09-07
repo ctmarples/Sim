@@ -212,6 +212,7 @@ _BUILD_ICON: dict[BuildingKind, str] = {
     BuildingKind.FISHER: "fisher",
     BuildingKind.FARM: "farm",
     BuildingKind.FIELD: "field",
+    BuildingKind.ORCHARD: "field",
     BuildingKind.KITCHEN: "kitchen",
     BuildingKind.MILL: "mill",
     BuildingKind.ALCHEMIST: "alchemist",
@@ -289,7 +290,7 @@ def _fields_for_farm(
 ) -> list[Building]:
     out: list[Building] = []
     for b in buildings.values():
-        if b.kind != BuildingKind.FIELD:
+        if not b.is_field_plot:
             continue
         left, top, right, bottom = b.plot_bounds()
         home = _nearest_farm(buildings, left, top, right, bottom)
@@ -315,7 +316,7 @@ def _iter_building_list_rows(
         if is_extension_kind(b.kind):
             if b.parent_building_id is not None and b.parent_building_id in buildings:
                 nested_building_ids.add(b.id)
-        elif b.kind == BuildingKind.FIELD:
+        elif b.is_field_plot:
             left, top, right, bottom = b.plot_bounds()
             if _nearest_farm(buildings, left, top, right, bottom) is not None:
                 nested_building_ids.add(b.id)
@@ -323,7 +324,7 @@ def _iter_building_list_rows(
         parent_id = getattr(site, "parent_building_id", None)
         if parent_id is not None and parent_id in buildings:
             nested_site_ids.add(site.id)
-        elif site.kind == BuildingKind.FIELD:
+        elif is_field_plot_kind(site.kind):
             left, top, right, bottom = site.plot_bounds()
             if _nearest_farm(buildings, left, top, right, bottom) is not None:
                 nested_site_ids.add(site.id)
@@ -345,7 +346,7 @@ def _iter_building_list_rows(
             for field in _fields_for_farm(b, buildings):
                 rows.append(("building", field, 1))
             for site in sites.values():
-                if site.kind != BuildingKind.FIELD or site.id not in nested_site_ids:
+                if not is_field_plot_kind(site.kind) or site.id not in nested_site_ids:
                     continue
                 left, top, right, bottom = site.plot_bounds()
                 home = _nearest_farm(buildings, left, top, right, bottom)
@@ -1634,7 +1635,7 @@ class ManagementWindow:
                 return [v for v in villagers if v.assigned_to_home]
             if is_housing_kind(b.kind):
                 return [v for v in villagers if v.housed and v.housing_id == b.id]
-            if b.kind == BuildingKind.FIELD:
+            if b.is_field_plot:
                 return []
             return [v for v in villagers if v.building_id == b.id]
 
@@ -1676,7 +1677,7 @@ class ManagementWindow:
             del selected
             icon = _BUILD_ICON.get(b.kind, "construction_site")
             blit_icon(surface, icon, row.x + 14, row.centery, 24 if indent else 28)
-            if b.kind == BuildingKind.FIELD:
+            if b.is_field_plot:
                 label = "Field Planner" if getattr(b, "_tutorial_planner_entry", False) else f"Field #{b.id}"
                 name = f"{label} · {b.plot_size_label()}"
             else:

@@ -85,11 +85,16 @@ class Recipe:
     steps: int = 0
 
     def display_icon_key(self) -> str:
-        if self.outputs:
-            from resources import resource_icon
-            return resource_icon(next(iter(self.outputs)))
+        """Key for ``resource_icon_style`` (resource / icon id — not a resolved SVG stem).
+
+        Prefer an authored ``icon_key`` (e.g. hunter deer) so meat outputs still
+        show the animal. Otherwise use the primary output resource key so crop
+        produce keeps stem/flower recolours.
+        """
         if self.icon_key:
             return self.icon_key
+        if self.outputs:
+            return next(iter(self.outputs))
         return self.name
 
     def skill_req_map(self) -> dict[SkillType, int]:
