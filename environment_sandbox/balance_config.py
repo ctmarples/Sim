@@ -163,7 +163,7 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
             BalanceParam(
                 "CALENDAR_MODE", "Calendar model (0 legacy, 1 flexible)", "int",
                 CALENDAR_MODE, 0, 1, 1,
-                "Queued for the next season. Flexible mode uses the four season day counts below.",
+                "Applies immediately. Flexible mode uses the four season day counts below.",
             ),
             BalanceParam(
                 "DAY_NIGHT_ENABLED", "Day/night lighting", "int",
@@ -179,22 +179,22 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
             BalanceParam(
                 "SPRING_DAYS", "Spring day/night cycles", "int",
                 SPRING_DAYS, 1, 28, 1,
-                "Flexible mode only. A change applies when Spring next begins.", " days",
+                "Flexible mode only. Applied immediately to the live calendar.", " days",
             ),
             BalanceParam(
                 "SUMMER_DAYS", "Summer day/night cycles", "int",
                 SUMMER_DAYS, 1, 28, 1,
-                "Flexible mode only. A change applies when Summer next begins.", " days",
+                "Flexible mode only. Applied immediately to the live calendar.", " days",
             ),
             BalanceParam(
                 "AUTUMN_DAYS", "Autumn day/night cycles", "int",
                 AUTUMN_DAYS, 1, 28, 1,
-                "Flexible mode only. A change applies when Autumn next begins.", " days",
+                "Flexible mode only. Applied immediately to the live calendar.", " days",
             ),
             BalanceParam(
                 "WINTER_DAYS", "Winter day/night cycles", "int",
                 WINTER_DAYS, 1, 28, 1,
-                "Flexible mode only. A change applies when Winter next begins.", " days",
+                "Flexible mode only. Applied immediately to the live calendar.", " days",
             ),
             BalanceParam(
                 "DAY_SECONDS_AT_X1",

@@ -51,6 +51,21 @@ class CalendarPolicy:
             if max(1, int(value)) != self.season_days.get(season)
         }
 
+    def apply_now(
+        self,
+        mode: CalendarMode,
+        season_days: dict[Season, int],
+        *,
+        current_season: Season,
+    ) -> None:
+        """Apply mode and day counts immediately (e.g. after loading a legacy save)."""
+        self.mode = mode
+        for season, value in season_days.items():
+            self.season_days[season] = max(1, int(value))
+        self.pending_mode = None
+        self.pending_season_days.clear()
+        self.begin(current_season)
+
     def enter_season(self, season: Season) -> None:
         """Apply a mode switch at the next boundary and this season's new length."""
         if self.pending_mode is not None:

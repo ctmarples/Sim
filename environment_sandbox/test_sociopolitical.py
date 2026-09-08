@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+from entities import Villager, WorkPriority
 from sociopolitical import (
     CATEGORY_INSTITUTION_ID,
     DECISION_EVENTS,
@@ -122,6 +123,16 @@ class SociopoliticalDataTests(unittest.TestCase):
             CATEGORY_INSTITUTION_ID[PrincipleCategory.STEWARDSHIP],
             "covenant_of_the_land",
         )
+
+    def test_assigned_workplace_defaults_prefer_job_over_haul(self) -> None:
+        """Mirrors SP test bootstrap: set building_id then default priorities."""
+        villager = Villager(id=1, x=0, y=0, building_id=42)
+        # Unassigned defaults alone leave only Transport after Build is filtered.
+        self.assertNotIn(WorkPriority.WORKPLACE, villager.active_priorities(None))
+        villager.set_default_priorities()
+        prios = villager.active_priorities(None)
+        self.assertEqual(prios[0], WorkPriority.WORKPLACE)
+        self.assertIn(WorkPriority.TRANSPORT, prios)
 
 
 if __name__ == "__main__":

@@ -645,6 +645,17 @@ def serialize_game(game: Game) -> dict[str, Any]:
                 "name": v.name,
                 "energy": round(v.energy, 4),
                 "happiness": round(v.happiness, 4),
+                "break_ticks_left": int(getattr(v, "break_ticks_left", 0) or 0),
+                "break_cooldown_ticks": int(getattr(v, "break_cooldown_ticks", 0) or 0),
+                "break_kind": str(getattr(v, "break_kind", "") or ""),
+                "break_reason": str(getattr(v, "break_reason", "") or ""),
+                "break_thought": str(getattr(v, "break_thought", "") or ""),
+                "break_return_pos": (
+                    list(getattr(v, "break_return_pos"))
+                    if getattr(v, "break_return_pos", None)
+                    else None
+                ),
+                "base_break_day": int(getattr(v, "base_break_day", -1)),
                 "housed": v.housed,
                 "housing_id": v.housing_id,
                 "housing_need": v.housing_need,
@@ -670,6 +681,20 @@ def serialize_game(game: Game) -> dict[str, Any]:
                         or []
                     )
                     if isinstance(imp, dict)
+                ],
+                "happiness_modifiers": [
+                    {
+                        "icon": str(m.get("icon", "")),
+                        "label": str(m.get("label", "")),
+                        "peak": float(m.get("peak", 0)),
+                        "remaining": float(m.get("remaining", 0)),
+                        "ticks_left": int(m.get("ticks_left", 0)),
+                        "ticks_total": int(m.get("ticks_total", 0)),
+                        "until_meal": bool(m.get("until_meal", False)),
+                        "points": int(m.get("points", 0)),
+                    }
+                    for m in (getattr(v, "happiness_modifiers", None) or [])
+                    if isinstance(m, dict)
                 ],
                 "low_happiness_days": round(v.low_happiness_days, 4),
                 "low_happiness_seasons": int(
@@ -1480,12 +1505,17 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         meat_pos = vdata.get("hunt_meat_pos")
         catch_pos = vdata.get("fish_catch_pos")
         post_pos = vdata.get("fish_post_pos")
+        raw_state = str(vdata.get("state", "IDLE") or "IDLE")
+        try:
+            loaded_state = VillagerState[raw_state]
+        except KeyError:
+            loaded_state = VillagerState.IDLE
         villager = Villager(
             id=int(vdata["id"]),
             x=int(vdata["x"]),
             y=int(vdata["y"]),
             inventory=_inv_from_dict(vdata.get("inventory", {})),
-            state=VillagerState[vdata.get("state", "IDLE")],
+            state=loaded_state,
             building_id=vdata.get("building_id"),
             assigned_to_home=bool(vdata.get("assigned_to_home", False)),
             move_cooldown=int(vdata.get("move_cooldown", 0)),
@@ -1590,6 +1620,31 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         villager.name = str(vdata.get("name") or villager.name)
         villager.energy = max(0.0, min(1.0, float(vdata.get("energy", 1.0))))
         villager.happiness = max(0.0, min(1.0, float(vdata.get("happiness", 0.7))))
+        villager.break_ticks_left = max(0, int(vdata.get("break_ticks_left", 0) or 0))
+        villager.break_cooldown_ticks = max(
+            0, int(vdata.get("break_cooldown_ticks", 0) or 0)
+        )
+        villager.break_kind = str(vdata.get("break_kind", "") or "")
+        villager.break_reason = str(vdata.get("break_reason", "") or "")
+        villager.break_thought = str(vdata.get("break_thought", "") or "")
+        raw_return = vdata.get("break_return_pos")
+        if isinstance(raw_return, (list, tuple)) and len(raw_return) >= 2:
+            villager.break_return_pos = (int(raw_return[0]), int(raw_return[1]))
+        else:
+            villager.break_return_pos = None
+        villager.base_break_day = int(vdata.get("base_break_day", -1))
+        # Break states without timers fall back to idle so old/partial saves recover.
+        from society import is_happiness_break_state
+
+        if is_happiness_break_state(villager.state) and villager.break_ticks_left <= 0:
+            if villager.state == VillagerState.RETURNING_TO_WORK:
+                pass
+            else:
+                villager.state = VillagerState.IDLE
+                villager.break_kind = ""
+                villager.break_reason = ""
+                villager.break_thought = ""
+                villager.break_return_pos = None
         villager.housed = bool(vdata.get("housed", False))
         hid = vdata.get("housing_id")
         villager.housing_id = int(hid) if hid is not None else None
@@ -1620,6 +1675,25 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                     }
                 )
         villager.happiness_events = events
+        raw_mods = vdata.get("happiness_modifiers")
+        loaded_mods: list[dict] = []
+        if isinstance(raw_mods, list):
+            for m in raw_mods:
+                if not isinstance(m, dict):
+                    continue
+                loaded_mods.append(
+                    {
+                        "icon": str(m.get("icon", "") or "stew"),
+                        "label": str(m.get("label", "") or "Happiness"),
+                        "peak": float(m.get("peak", 0) or 0),
+                        "remaining": float(m.get("remaining", 0) or 0),
+                        "ticks_left": max(0, int(m.get("ticks_left", 0) or 0)),
+                        "ticks_total": max(1, int(m.get("ticks_total", 1) or 1)),
+                        "until_meal": bool(m.get("until_meal", False)),
+                        "points": int(m.get("points", 0) or 0),
+                    }
+                )
+        villager.happiness_modifiers = loaded_mods
         villager.low_happiness_days = float(vdata.get("low_happiness_days", 0.0))
         villager.low_happiness_seasons = int(vdata.get("low_happiness_seasons", 0) or 0)
         villager.skills = skills_from_dict(vdata.get("skills"))

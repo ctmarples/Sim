@@ -327,6 +327,17 @@ from society import (
     HAPPINESS_MISSING_REQ_PENALTY,
     HAPPINESS_HALF_RATION_PENALTY,
     HAPPINESS_DOUBLE_RATION_BONUS,
+    HappinessBand,
+    happiness_band,
+    happiness_band_label,
+    happiness_break_chance_this_tick,
+    happiness_break_cooldown_ticks,
+    happiness_break_duration_ticks,
+    happiness_break_wander_params,
+    happiness_work_mult,
+    engaged_return_walk_mult,
+    is_happiness_break_state,
+    pick_happiness_break_thought,
     MAX_TRAVELLERS,
     SEASON_MISSING_REQ_PAY_COINS,
     candidate_requirement_rows,
@@ -357,6 +368,10 @@ from society import (
     villager_skill_level,
     villager_unmet_requirements,
     apply_happiness_points,
+    apply_timed_happiness_impact,
+    clear_meal_happiness_modifiers,
+    tick_happiness_modifiers,
+    active_happiness_status_mods,
 )
 from villager_roster import (
     VillagerRosterDialog,
@@ -1816,6 +1831,8 @@ class Game:
             return False
         if villager.state == VillagerState.SLEEPING:
             return False
+        if is_happiness_break_state(villager.state):
+            return True
         if villager.job_change_deposit:
             return True
         if villager.needs_food() or villager.seeking_food:
@@ -1839,6 +1856,9 @@ class Game:
                 VillagerState.DELIVERING,
                 VillagerState.BUILDING,
                 VillagerState.SLEEPING,
+                VillagerState.DISENGAGED_BREAK,
+                VillagerState.WANDERING,
+                VillagerState.RETURNING_TO_WORK,
             )
             or villager.hunt_animal_id is not None
             or villager.hunt_colony_id is not None
@@ -5442,6 +5462,41 @@ class Game:
             },
         )
 
+    def _apply_calendar_balance_now(self) -> None:
+        """Apply calendar model + season day counts immediately to the live game."""
+        policy = getattr(self, "calendar_policy", None)
+        if policy is None:
+            policy = CalendarPolicy()
+            self.calendar_policy = policy
+        mode = (
+            CalendarMode.FLEXIBLE
+            if self.balance.get_int("CALENDAR_MODE")
+            else CalendarMode.LEGACY
+        )
+        old_mode = policy.mode
+        policy.apply_now(
+            mode,
+            {
+                Season.SPRING: self.balance.get_int("SPRING_DAYS"),
+                Season.SUMMER: self.balance.get_int("SUMMER_DAYS"),
+                Season.AUTUMN: self.balance.get_int("AUTUMN_DAYS"),
+                Season.WINTER: self.balance.get_int("WINTER_DAYS"),
+            },
+            current_season=self.season,
+        )
+        day_s = self.balance.get_float(
+            "FLEXIBLE_DAY_SECONDS_AT_X1"
+            if mode == CalendarMode.FLEXIBLE
+            else "DAY_SECONDS_AT_X1"
+        )
+        self._set_ticks_per_day(seconds_to_ticks(day_s, self._playback_ticks()))
+        if old_mode != mode:
+            label = "flexible" if mode == CalendarMode.FLEXIBLE else "legacy"
+            self._set_status(
+                f"Calendar switched to {label} "
+                f"({policy.active_days_in_season} day/night cycles this season)."
+            )
+
     def _apply_calendar_balance_immediately(self) -> None:
         """Apply preferences at a fresh-game boundary rather than queueing them."""
         mode = (
@@ -5667,16 +5722,8 @@ class Game:
         return n
 
     def _apply_time_balance(self) -> None:
-        """Keep calendar ticks in sync with day length in real seconds at ×1."""
-        self._queue_calendar_balance()
-        day_s = self.balance.get_float(
-            "FLEXIBLE_DAY_SECONDS_AT_X1"
-            if self.calendar_policy.mode == CalendarMode.FLEXIBLE
-            else "DAY_SECONDS_AT_X1"
-        )
-        target = seconds_to_ticks(day_s, self._playback_ticks())
-        if target != self.ticks_per_day:
-            self._set_ticks_per_day(target)
+        """Keep calendar model and day ticks in sync with Balance time knobs."""
+        self._apply_calendar_balance_now()
 
     def _combine_eater_meal_buffs(
         self, eater: object, food_keys: list[str]
@@ -7800,6 +7847,14 @@ class Game:
         """Human-readable current work: what, from where, to where."""
         if villager.seeking_food:
             return "Seeking food"
+        if villager.state == VillagerState.DISENGAGED_BREAK:
+            reason = str(getattr(villager, "break_reason", "") or "Taking a break")
+            return f"Disengaged break — {reason}"
+        if villager.state == VillagerState.WANDERING:
+            reason = str(getattr(villager, "break_reason", "") or "Low morale")
+            return f"Wandering — {reason}"
+        if villager.state == VillagerState.RETURNING_TO_WORK:
+            return "Returning to work"
 
         def _bname(bid: int | None) -> str:
             if bid is None:
@@ -10193,6 +10248,8 @@ class Game:
         foods = getattr(self, "_tick_village_food", None)
         if foods is None:
             foods = self._village_food_amounts()
+        # Timed event impacts unwind toward the pre-impact level, then drift.
+        tick_happiness_modifiers(villager)
         villager.happiness += (target - villager.happiness) * min(1.0, day_frac * 3.0)
         villager.happiness = max(0.0, min(1.0, villager.happiness))
         unmet = villager_unmet_requirements(villager, self.buildings, foods)
@@ -10373,14 +10430,15 @@ class Game:
                     day=day,
                 )
         else:
-            push_happiness_event(
+            apply_timed_happiness_impact(
                 villager,
+                -4,
                 icon="tent",
-                label="No housing (−4)",
-                delta=-4,
+                label="No housing",
                 day=day,
+                duration_hours=24.0,
+                ticks_per_day=int(self.ticks_per_day),
             )
-            apply_happiness_points(villager, -4)
 
     def _apply_seasonal_hire_requirement_fees(self) -> None:
         """Charge 2 coins/season per unmet hire requirement from regional wealth."""
@@ -10412,14 +10470,14 @@ class Game:
                 )
             else:
                 unpaid += 1
-                points = -8
-                apply_happiness_points(villager, points)
-                push_happiness_event(
+                apply_timed_happiness_impact(
                     villager,
+                    -8,
                     icon="coins",
                     label=f"Unpaid upkeep ({due} coins)",
-                    delta=points,
                     day=int(self.calendar_day),
+                    duration_hours=24.0,
+                    ticks_per_day=int(self.ticks_per_day),
                 )
         if fee_total > 0:
             msg = f"Paid {fee_total} coins in seasonal villager upkeep."
@@ -11602,6 +11660,208 @@ class Game:
         )
 
     # ------------------------------------------------------------------
+    # Happiness breaks / wandering
+    # ------------------------------------------------------------------
+    def _happiness_break_return_anchor(self, villager: Villager) -> tuple[int, int]:
+        """Cell the villager should return to after a break."""
+        saved = getattr(villager, "break_return_pos", None)
+        if isinstance(saved, (tuple, list)) and len(saved) >= 2:
+            return int(saved[0]), int(saved[1])
+        building = self.buildings.get(villager.building_id or -1)
+        if building is not None:
+            return building.center_cell()
+        house = self.buildings.get(villager.housing_id or -1)
+        if house is not None:
+            return house.center_cell()
+        return int(villager.x), int(villager.y)
+
+    def _pick_happiness_wander_target(
+        self, villager: Villager, radius: int
+    ) -> tuple[int, int] | None:
+        """Reachable walkable cell within Chebyshev ``radius`` of the villager."""
+        import random as _random
+
+        origin = (int(villager.x), int(villager.y))
+        candidates: list[tuple[int, int]] = []
+        for dy in range(-radius, radius + 1):
+            for dx in range(-radius, radius + 1):
+                if dx == 0 and dy == 0:
+                    continue
+                x, y = origin[0] + dx, origin[1] + dy
+                if not self.world.is_walkable(x, y):
+                    continue
+                if self.world.find_path(origin, (x, y)) is None:
+                    continue
+                candidates.append((x, y))
+        if not candidates:
+            return None
+        rng = _random.Random(
+            (int(villager.id) * 7919)
+            ^ (int(self.calendar_day) * 104729)
+            ^ (int(villager.x) * 31 + int(villager.y))
+        )
+        return rng.choice(candidates)
+
+    def _can_start_happiness_break(self, villager: Villager) -> bool:
+        if is_happiness_break_state(villager.state):
+            return False
+        if int(getattr(villager, "break_cooldown_ticks", 0) or 0) > 0:
+            return False
+        if villager.state == VillagerState.SLEEPING:
+            return False
+        if villager.seeking_food or villager.needs_food():
+            return False
+        if villager.job_change_deposit:
+            return False
+        # Only interrupt active workplace labour — never haul/build/idle park.
+        if villager.state != VillagerState.WORKING:
+            return False
+        if villager.building_id is None and not villager.assigned_to_home:
+            return False
+        return True
+
+    def _start_happiness_break(self, villager: Villager, kind: str) -> None:
+        import random as _random
+
+        rng = _random.Random(
+            (int(villager.id) * 104729) ^ (int(self.calendar_day) * 17) ^ hash(kind)
+        )
+        duration = happiness_break_duration_ticks(
+            kind, self.ticks_per_day, rng=rng
+        )
+        wander_chance, wander_radius = happiness_break_wander_params(kind)
+        band = happiness_band(villager.happiness)
+        reason = {
+            "base": "Daily rest",
+            "disengaged": "Disengaged — low morale",
+            "unhappy": "Unhappy — avoiding work",
+        }.get(kind, kind.replace("_", " ").title())
+        thought = pick_happiness_break_thought(kind, rng=rng)
+        if band == HappinessBand.DISENGAGED and kind != "base":
+            # Prefer job-related thought when assignment looks mismatched.
+            try:
+                from sociopolitical_hooks import job_matches_strongest
+
+                if villager.building_id is not None and not job_matches_strongest(
+                    villager, self.buildings
+                ):
+                    thought = "Why am I always assigned this job?"
+            except Exception:
+                pass
+        villager.break_kind = kind
+        villager.break_reason = reason
+        villager.break_thought = thought
+        villager.break_ticks_left = duration
+        villager.break_return_pos = self._happiness_break_return_anchor(villager)
+        villager.decision_cooldown = 0
+        self._clear_villager_path(villager)
+        do_wander = rng.random() < wander_chance
+        if do_wander:
+            target = self._pick_happiness_wander_target(villager, wander_radius)
+            if target is not None:
+                villager.state = VillagerState.WANDERING
+                villager.target = target
+                return
+        villager.state = VillagerState.DISENGAGED_BREAK
+        villager.target = None
+
+    def _maybe_start_happiness_break(self, villager: Villager) -> bool:
+        """Start baseline or morale break when eligible. Returns True if started."""
+        if not self._can_start_happiness_break(villager):
+            return False
+        import random as _random
+
+        day = int(self.calendar_day)
+        band = happiness_band(villager.happiness)
+        # Baseline ~1h rest once per calendar day for every villager.
+        if int(getattr(villager, "base_break_day", -1)) != day:
+            # Trigger in the middle third of the day so it feels like a real pause.
+            day_frac = 1.0 - float(self.day_tick) / max(1, self.ticks_per_day)
+            if 0.35 <= day_frac <= 0.70:
+                villager.base_break_day = day
+                self._start_happiness_break(villager, "base")
+                return True
+        # Additional breaks only below Content (happiness < 50%).
+        if band in (HappinessBand.DISENGAGED, HappinessBand.UNHAPPY):
+            kind = "unhappy" if band == HappinessBand.UNHAPPY else "disengaged"
+            chance = happiness_break_chance_this_tick(kind, self.ticks_per_day)
+            rng = _random.Random(
+                (int(villager.id) * 224737)
+                ^ (int(self.calendar_day) * 97)
+                ^ int(self.day_tick)
+            )
+            if chance > 0 and rng.random() < chance:
+                self._start_happiness_break(villager, kind)
+                return True
+        return False
+
+    def _finish_happiness_break(self, villager: Villager) -> None:
+        villager.break_ticks_left = 0
+        villager.break_cooldown_ticks = happiness_break_cooldown_ticks(
+            self.ticks_per_day
+        )
+        villager.state = VillagerState.RETURNING_TO_WORK
+        villager.target = self._happiness_break_return_anchor(villager)
+        self._clear_villager_path(villager)
+
+    def _complete_return_to_work(self, villager: Villager) -> None:
+        """Resume assigned labour after a morale break without parking idle."""
+        villager.break_kind = ""
+        villager.break_reason = ""
+        villager.break_thought = ""
+        villager.break_return_pos = None
+        villager.break_ticks_left = 0
+        villager.decision_cooldown = 0
+        villager.target = None
+        self._clear_villager_path(villager)
+        if villager.building_id is not None or villager.assigned_to_home:
+            villager.state = VillagerState.WORKING
+        else:
+            villager.state = VillagerState.IDLE
+            self._park_idle_decision(villager)
+
+    def _update_happiness_break(self, villager: Villager) -> None:
+        """Advance an in-progress happiness break / wander / return."""
+        state = villager.state
+        if state == VillagerState.RETURNING_TO_WORK:
+            goal = self._happiness_break_return_anchor(villager)
+            villager.target = goal
+            if (villager.x, villager.y) == goal:
+                self._complete_return_to_work(villager)
+                return
+            if villager.move_cooldown == 0:
+                moved = self._step_villager_toward(villager, goal)
+                if not moved:
+                    # Unreachable — snap complete so they are not stuck.
+                    villager.x, villager.y = goal
+                    self._complete_return_to_work(villager)
+            return
+
+        if state in (VillagerState.DISENGAGED_BREAK, VillagerState.WANDERING):
+            villager.break_ticks_left = max(
+                0, int(getattr(villager, "break_ticks_left", 0) or 0) - 1
+            )
+            if state == VillagerState.WANDERING and villager.target is not None:
+                if (villager.x, villager.y) != villager.target:
+                    if villager.move_cooldown == 0:
+                        moved = self._step_villager_toward(villager, villager.target)
+                        if not moved:
+                            villager.state = VillagerState.DISENGAGED_BREAK
+                            villager.target = None
+                            self._clear_villager_path(villager)
+                else:
+                    # Arrived at wander spot — linger as a standing break.
+                    villager.state = VillagerState.DISENGAGED_BREAK
+                    villager.target = None
+                    self._clear_villager_path(villager)
+            if int(getattr(villager, "break_ticks_left", 0) or 0) <= 0:
+                self._finish_happiness_break(villager)
+            return
+
+        # Unknown / cleared — ensure we do not strand the villager.
+        self._complete_return_to_work(villager)
+
+    # ------------------------------------------------------------------
     # Villager AI
     # ------------------------------------------------------------------
     def _update_villagers(self) -> None:
@@ -11617,6 +11877,8 @@ class Game:
                 villager.decision_cooldown -= 1
             if villager.fish_bait_ticks > 0:
                 villager.fish_bait_ticks -= 1
+            if int(getattr(villager, "break_cooldown_ticks", 0) or 0) > 0:
+                villager.break_cooldown_ticks = int(villager.break_cooldown_ticks) - 1
             self._begin_villager_building_entry(villager)
 
         self._tick_village_food = self._village_food_amounts()
@@ -11652,6 +11914,10 @@ class Game:
                 continue
 
             if self._tick_job_change_deposit(villager):
+                continue
+
+            if is_happiness_break_state(villager.state):
+                self._update_happiness_break(villager)
                 continue
 
             villager.satiation = max(
@@ -11691,6 +11957,10 @@ class Game:
                         continue
                     villager.seeking_food = False
 
+            if self._maybe_start_happiness_break(villager):
+                self._update_happiness_break(villager)
+                continue
+
             # Withdraw tools / seasonal clothing from the storehouse when available.
             if (
                 villager.state
@@ -11698,6 +11968,9 @@ class Game:
                     VillagerState.DELIVERING,
                     VillagerState.HAULING,
                     VillagerState.BUILDING,
+                    VillagerState.DISENGAGED_BREAK,
+                    VillagerState.WANDERING,
+                    VillagerState.RETURNING_TO_WORK,
                 )
                 and self._villager_needs_home_restock(villager)
             ):
@@ -11817,9 +12090,26 @@ class Game:
                     if bid is not None:
                         self._update_workplace_worker(villager, bid)
                         acted = self._villager_has_active_action(villager)
-                    else:
+                        # Keep WORKING so a quiet tick does not cancel the job.
+                        if (
+                            not acted
+                            and villager.building_id is not None
+                            and villager.state
+                            not in (
+                                VillagerState.DELIVERING,
+                                VillagerState.HAULING,
+                                VillagerState.BUILDING,
+                            )
+                        ):
+                            villager.state = VillagerState.WORKING
+                    elif villager.state != VillagerState.WORKING:
                         self._set_workplace_idle(villager)
-                elif villager.state not in (VillagerState.DELIVERING, VillagerState.HAULING, VillagerState.BUILDING):
+                elif villager.state not in (
+                    VillagerState.DELIVERING,
+                    VillagerState.HAULING,
+                    VillagerState.BUILDING,
+                    VillagerState.WORKING,
+                ):
                     villager.state = VillagerState.IDLE
                     villager.target = None
             if (
@@ -11833,6 +12123,9 @@ class Game:
     def _reconcile_seasonal_workplace(self, villager: Villager) -> None:
         """Drop stale job state when the active seasonal workplace changes."""
         if not bool(getattr(villager, "seasonal_priorities", False)):
+            return
+        # Do not cancel jobs while a morale break / return is in progress.
+        if is_happiness_break_state(villager.state):
             return
         active_ids = [
             bid
@@ -11905,7 +12198,7 @@ class Game:
             self._satiation_work_mult(satiation)
             * max(0.1, float(food_work_mult))
             * max(0.15, float(skill_mult))
-            * (0.65 + 0.35 * max(0.0, min(1.0, happiness)))
+            * happiness_work_mult(happiness)
             * self._energy_speed_factor(energy)
         )
         base = self._work_interval_ticks()
@@ -11928,13 +12221,19 @@ class Game:
         return float(self._temp_impact(inventory).energy_mult)
 
     def _villager_move_interval(self, villager: Villager) -> int:
+        walk_mult = (
+            villager.food_walk_mult
+            * villager.inventory.gear_walk_mult
+            * self._temp_walk_mult(villager.inventory)
+        )
+        if (
+            villager.state == VillagerState.RETURNING_TO_WORK
+            and happiness_band(villager.happiness) == HappinessBand.ENGAGED
+        ):
+            walk_mult *= engaged_return_walk_mult()
         return self._move_interval_for(
             satiation=villager.satiation,
-            food_walk_mult=(
-                villager.food_walk_mult
-                * villager.inventory.gear_walk_mult
-                * self._temp_walk_mult(villager.inventory)
-            ),
+            food_walk_mult=walk_mult,
             happiness=villager.happiness,
             energy=villager.energy,
         )
@@ -12858,19 +13157,23 @@ class Game:
                         (k for k in eaten_keys if k in eater.favourite_foods),
                         eaten_keys[0],
                     )
-                    apply_happiness_points(eater, hap_pts)
                     label = (
                         f"Ate favourite food: {requirement_label(chosen)}"
                         if satisfaction is FoodSatisfaction.FAVOURITE
                         else f"Ate unwanted food: {requirement_label(chosen)}"
                     )
-                    push_happiness_event(
+                    clear_meal_happiness_modifiers(eater)
+                    apply_timed_happiness_impact(
                         eater,
+                        hap_pts,
                         icon=resource_icon(chosen),
                         label=label,
-                        delta=hap_pts,
                         day=int(self.calendar_day),
+                        until_meal=True,
+                        ticks_per_day=int(self.ticks_per_day),
                     )
+                else:
+                    clear_meal_happiness_modifiers(eater)
             eater.apply_food_buffs(walk, work, hunger)
         return len(eaten_keys)
 
@@ -23761,6 +24064,7 @@ class Game:
             inventory=p.inventory,
             calendar_day=self.calendar_day,
             satiation=float(p.satiation),
+            happiness=float(p.happiness),
         )
         buffs = [m for m in all_mods if m.is_buff]
         debuffs = [m for m in all_mods if m.is_debuff]
@@ -23819,6 +24123,7 @@ class Game:
             inventory=p.inventory,
             calendar_day=self.calendar_day,
             satiation=float(p.satiation),
+            happiness=float(p.happiness),
         )
         _, total_tips = draw_effect_total_columns(
             self.screen,

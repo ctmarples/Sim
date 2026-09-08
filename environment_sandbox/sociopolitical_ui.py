@@ -183,10 +183,25 @@ class SociopoliticalPanel:
     ) -> int:
         canvas.blit(self.font.render("Settlement values (50 = neutral)", True, COLOUR_TEXT), (0, y))
         y += 22
-        for label, value in (
-            ("Authority", state.authority),
-            ("Solidarity", state.solidarity),
-            ("Stewardship", state.stewardship),
+        for label, value, blurb in (
+            (
+                "Authority",
+                state.authority,
+                "High Authority centralises work. Unsuitable assignments under Settlement Office "
+                "cut happiness → extra breaks and wandering.",
+            ),
+            (
+                "Solidarity",
+                state.solidarity,
+                "High Solidarity shares provision and open admission. Shared rations and care "
+                "protect happiness; low Solidarity leaves morale brittle.",
+            ),
+            (
+                "Stewardship",
+                state.stewardship,
+                "High Stewardship slows extractive work for ecology. Ignoring it trades short-term "
+                "output for later disturbance — not a direct happiness hit.",
+            ),
         ):
             canvas.blit(
                 self.font.render(f"{label}: {value}", True, COLOUR_TEXT),
@@ -201,10 +216,22 @@ class SociopoliticalPanel:
             pygame.draw.line(
                 canvas, COLOUR_TEXT_DIM, (bar.x + bar.w // 2, bar.y), (bar.x + bar.w // 2, bar.bottom)
             )
-            y += 22
+            y += 20
+            for line in _wrap(self.font_small, blurb, canvas.get_width() - 16):
+                canvas.blit(self.font_small.render(line, True, COLOUR_TEXT_DIM), (8, y))
+                y += self.font_small.get_linesize()
+            y += 8
         tendency = format_value_tendency(state.authority, state.solidarity, state.stewardship)
         canvas.blit(self.font_small.render(tendency, True, COLOUR_TEXT_DIM), (8, y))
-        y += 28
+        y += 18
+        chain = (
+            "Chain: decisions → principles/institutions → happiness & work modifiers → "
+            "morale bands (Engaged/Content/Disengaged/Unhappy) → breaks & wandering."
+        )
+        for line in _wrap(self.font_small, chain, canvas.get_width() - 16):
+            canvas.blit(self.font_small.render(line, True, COLOUR_TEXT_DIM), (8, y))
+            y += self.font_small.get_linesize()
+        y += 14
 
         canvas.blit(self.font.render("Institution progress", True, COLOUR_TEXT), (0, y))
         y += 20

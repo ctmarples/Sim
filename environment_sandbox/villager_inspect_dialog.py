@@ -603,7 +603,54 @@ class VillagerInspectDialog:
                 "Exploring" if is_player else villager.state.name.replace("_", " ").title()
             )
             surface.blit(self.font_small.render(state, True, COLOUR_TEXT), (x, y))
-            y += self.font_small.get_linesize() + 8
+            y += self.font_small.get_linesize() + 4
+            if not is_player:
+                from society import happiness_band_label, is_happiness_break_state
+
+                band = happiness_band_label(float(villager.happiness))
+                surface.blit(
+                    self.font_small.render(f"Mood: {band}", True, COLOUR_TEXT_DIM),
+                    (x, y),
+                )
+                y += self.font_small.get_linesize() + 2
+                if is_happiness_break_state(villager.state):
+                    reason = str(getattr(villager, "break_reason", "") or "Morale break")
+                    surface.blit(
+                        self.font_small.render(
+                            f"Break: {reason}", True, COLOUR_TEXT
+                        ),
+                        (x, y),
+                    )
+                    y += self.font_small.get_linesize() + 2
+                    thought = str(getattr(villager, "break_thought", "") or "").strip()
+                    if thought:
+                        tip = thought if len(thought) < 42 else thought[:39] + "…"
+                        surface.blit(
+                            self.font_small.render(f"“{tip}”", True, COLOUR_TEXT_DIM),
+                            (x, y),
+                        )
+                        y += self.font_small.get_linesize() + 2
+                events = list(getattr(villager, "happiness_events", None) or [])
+                if events:
+                    recent = events[-2:]
+                    bits = []
+                    for ev in recent:
+                        if not isinstance(ev, dict):
+                            continue
+                        label = str(ev.get("label") or "").strip()
+                        if label:
+                            bits.append(label[:28])
+                    if bits:
+                        surface.blit(
+                            self.font_small.render(
+                                "Recent: " + " · ".join(bits),
+                                True,
+                                COLOUR_TEXT_DIM,
+                            ),
+                            (x, y),
+                        )
+                        y += self.font_small.get_linesize() + 2
+            y += 6
             for label, kind, value in (
                 ("Energy", "energy", villager.energy),
                 ("Satiation", "sat", villager.satiation),
@@ -702,6 +749,7 @@ class VillagerInspectDialog:
                 calendar_day=calendar_day,
                 work_extra_mult=political_work_mult,
                 satiation=float(villager.satiation),
+                happiness=float(villager.happiness),
             )
             _w, tips = draw_effect_total_columns(
                 surface, x, y, walk=walk, work=work, hunger=hunger,
@@ -717,6 +765,7 @@ class VillagerInspectDialog:
                 last_meal=list(villager.last_meal), inventory=villager.inventory,
                 calendar_day=calendar_day,
                 satiation=float(villager.satiation),
+                villager=villager,
             )
             if extra_status_mods:
                 mods = list(mods) + list(extra_status_mods)
@@ -958,6 +1007,7 @@ class VillagerInspectDialog:
             inventory=villager.inventory,
             calendar_day=calendar_day,
             satiation=float(villager.satiation),
+            villager=villager,
         )
         if extra_status_mods:
             all_mods = list(all_mods) + list(extra_status_mods)
@@ -984,6 +1034,7 @@ class VillagerInspectDialog:
                 calendar_day=calendar_day,
                 work_extra_mult=political_work_mult,
                 satiation=float(villager.satiation),
+                happiness=float(villager.happiness),
             )
             _, total_tips = draw_effect_total_columns(
                 surface,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from entities import Building, BuildingKind, Villager
@@ -110,9 +110,89 @@ HAPPINESS_DOUBLE_RATION_BONUS: float = 0.12
 # Coins charged each season for every unmet hire requirement (housing / staple).
 SEASON_MISSING_REQ_PAY_COINS: int = 2
 HAPPINESS_EVENT_HISTORY: int = 8
+# Timed happiness impacts (UI buffs/debuffs) gradually unwind toward the prior level.
+HAPPINESS_IMPACT_DEFAULT_HOURS: float = 6.0
+HAPPINESS_IMPACT_MAX_ACTIVE: int = 6
 # Discrete event deltas are shown as integer happiness points.
 HAPPINESS_POINT_SCALE: float = 0.01
 MAX_TRAVELLERS: int = 10
+
+# ---------------------------------------------------------------------------
+# Happiness behaviour bands (0–1 bar ↔ percentage labels in UI)
+# ---------------------------------------------------------------------------
+
+
+class HappinessBand(str, Enum):
+    ENGAGED = "engaged"  # 75–100%
+    CONTENT = "content"  # 50–74%
+    DISENGAGED = "disengaged"  # 25–49%
+    UNHAPPY = "unhappy"  # 0–24%
+
+
+HAPPINESS_BAND_LABELS: dict[HappinessBand, str] = {
+    HappinessBand.ENGAGED: "Engaged",
+    HappinessBand.CONTENT: "Content",
+    HappinessBand.DISENGAGED: "Disengaged",
+    HappinessBand.UNHAPPY: "Unhappy",
+}
+
+# Inclusive lower bounds on the 0–1 bar.
+HAPPINESS_BAND_MIN: dict[HappinessBand, float] = {
+    HappinessBand.ENGAGED: 0.75,
+    HappinessBand.CONTENT: 0.50,
+    HappinessBand.DISENGAGED: 0.25,
+    HappinessBand.UNHAPPY: 0.0,
+}
+
+# Work-speed multiplier from happiness alone (capped ≈ +5% … −20%).
+HAPPINESS_WORK_MULT: dict[HappinessBand, float] = {
+    HappinessBand.ENGAGED: 1.05,
+    HappinessBand.CONTENT: 1.00,
+    HappinessBand.DISENGAGED: 0.90,
+    HappinessBand.UNHAPPY: 0.80,
+}
+
+# Break policy (hours of a 24h day). Tunable without code changes to callers.
+HAPPINESS_BREAK_CONFIG: dict[str, Any] = {
+    # Baseline rest every villager takes (~1 hour / day of local wandering).
+    "base": {
+        "duration_hours": 1.0,
+        "wander_chance": 0.85,
+        "wander_radius": 2,
+        "thoughts": (
+            "A short stretch will help.",
+            "Just a moment to clear my head.",
+        ),
+    },
+    # Extra breaks when happiness < 50%.
+    "disengaged": {
+        "chance_per_work_hour": 0.12,
+        "duration_hours": (0.5, 1.0),
+        "wander_chance": 0.55,
+        "wander_radius": 3,
+        "thoughts": (
+            "Why am I always assigned this job?",
+            "Does anyone notice the work piling up?",
+            "I could use a longer pause.",
+        ),
+    },
+    "unhappy": {
+        "chance_per_work_hour": 0.28,
+        "duration_hours": (1.0, 2.0),
+        "wander_chance": 0.80,
+        "wander_radius": 5,
+        "thoughts": (
+            "Why am I always assigned this job?",
+            "I can't keep this pace.",
+            "Nothing here feels right today.",
+            "I need to get away from this for a while.",
+        ),
+    },
+    # Minimum hours between any two happiness breaks.
+    "cooldown_hours": 2.0,
+    # Engaged villagers finish returning to work a bit sooner (move factor).
+    "engaged_return_walk_mult": 1.15,
+}
 
 HIRE_STAPLE_FOODS: tuple[str, ...] = ("meat", "fish", "bread")
 
@@ -1016,3 +1096,255 @@ def apply_happiness_points(villager: Villager, points: int | float) -> float:
     delta = float(points) * HAPPINESS_POINT_SCALE
     villager.happiness = max(0.0, min(1.0, float(villager.happiness) + delta))
     return delta
+
+
+def _happiness_modifiers(villager: Villager) -> list[dict]:
+    mods = getattr(villager, "happiness_modifiers", None)
+    if not isinstance(mods, list):
+        mods = []
+        setattr(villager, "happiness_modifiers", mods)
+    return mods
+
+
+def apply_timed_happiness_impact(
+    villager: Villager,
+    points: int | float,
+    *,
+    icon: str,
+    label: str,
+    day: int = 0,
+    until_meal: bool = False,
+    duration_hours: float | None = None,
+    ticks_per_day: int = 240,
+) -> float:
+    """Apply a happiness swing that shows as a buff/debuff and unwinds over time.
+
+    ``points`` uses the same scale as ``apply_happiness_points`` (1 point = 0.01 bar).
+    Meal impacts clear on the next meal; others decay over ``duration_hours``.
+    """
+    points_i = int(round(float(points)))
+    if points_i == 0:
+        return 0.0
+    peak = float(points_i) * HAPPINESS_POINT_SCALE
+    hours = float(
+        duration_hours
+        if duration_hours is not None
+        else HAPPINESS_IMPACT_DEFAULT_HOURS
+    )
+    ticks_total = max(1, happiness_break_hours_to_ticks(hours, ticks_per_day))
+    apply_happiness_points(villager, points_i)
+    push_happiness_event(
+        villager, icon=icon, label=label, delta=points_i, day=day
+    )
+    mods = _happiness_modifiers(villager)
+    mods.append(
+        {
+            "icon": str(icon),
+            "label": str(label),
+            "peak": peak,
+            "remaining": peak,
+            "ticks_left": ticks_total,
+            "ticks_total": ticks_total,
+            "until_meal": bool(until_meal),
+            "points": points_i,
+        }
+    )
+    # Keep the list bounded.
+    overflow = mods[:-HAPPINESS_IMPACT_MAX_ACTIVE]
+    for old in overflow:
+        rem = float(old.get("remaining", 0.0) or 0.0)
+        if abs(rem) > 1e-6:
+            villager.happiness = max(
+                0.0, min(1.0, float(villager.happiness) - rem)
+            )
+    setattr(villager, "happiness_modifiers", mods[-HAPPINESS_IMPACT_MAX_ACTIVE:])
+    return peak
+
+
+def tick_happiness_modifiers(villager: Villager) -> None:
+    """Unwind active timed impacts one tick toward the pre-impact level."""
+    mods = _happiness_modifiers(villager)
+    if not mods:
+        return
+    kept: list[dict] = []
+    for mod in mods:
+        remaining = float(mod.get("remaining", 0.0) or 0.0)
+        ticks_left = int(mod.get("ticks_left", 0) or 0)
+        if ticks_left <= 0 or abs(remaining) <= 1e-6:
+            if abs(remaining) > 1e-6:
+                villager.happiness = max(
+                    0.0, min(1.0, float(villager.happiness) - remaining)
+                )
+            continue
+        step = remaining / float(ticks_left)
+        villager.happiness = max(
+            0.0, min(1.0, float(villager.happiness) - step)
+        )
+        mod["remaining"] = remaining - step
+        mod["ticks_left"] = ticks_left - 1
+        if mod["ticks_left"] > 0 and abs(float(mod["remaining"])) > 1e-6:
+            kept.append(mod)
+        else:
+            # Snap out any float residue.
+            rem = float(mod.get("remaining", 0.0) or 0.0)
+            if abs(rem) > 1e-6:
+                villager.happiness = max(
+                    0.0, min(1.0, float(villager.happiness) - rem)
+                )
+    setattr(villager, "happiness_modifiers", kept)
+
+
+def clear_meal_happiness_modifiers(villager: Villager) -> None:
+    """Restore any until-next-meal impacts when a new meal begins."""
+    mods = _happiness_modifiers(villager)
+    if not mods:
+        return
+    kept: list[dict] = []
+    for mod in mods:
+        if not bool(mod.get("until_meal")):
+            kept.append(mod)
+            continue
+        rem = float(mod.get("remaining", 0.0) or 0.0)
+        if abs(rem) > 1e-6:
+            villager.happiness = max(
+                0.0, min(1.0, float(villager.happiness) - rem)
+            )
+    setattr(villager, "happiness_modifiers", kept)
+
+
+def active_happiness_status_mods(villager: Villager) -> list:
+    """Buff/debuff tiles for active timed happiness impacts + mood work band."""
+    from status_effects_ui import StatusMod
+
+    mods: list = []
+    for imp in _happiness_modifiers(villager):
+        remaining = float(imp.get("remaining", 0.0) or 0.0)
+        if abs(remaining) < 0.005:
+            continue
+        pct = int(round(remaining * 100))
+        if pct == 0:
+            continue
+        label = str(imp.get("label") or "Happiness")
+        # Short cause for badge hover.
+        short = label
+        for prefix in ("Ate favourite food: ", "Ate unwanted food: "):
+            if short.startswith(prefix):
+                short = ("Favourite: " if "favourite" in prefix else "Unwanted: ") + short[
+                    len(prefix) :
+                ]
+                break
+        mods.append(
+            StatusMod(
+                cause_key=f"hap_{short}",
+                cause_icon=str(imp.get("icon") or "stew"),
+                cause_group="events",
+                effect="happiness",
+                mult=float(pct),
+                cause_label=short[:32],
+                tip_override=f"Happiness {pct:+d}%",
+                display_kind="buff" if pct > 0 else "debuff",
+            )
+        )
+
+    band = happiness_band(float(getattr(villager, "happiness", 0.7) or 0.7))
+    work = happiness_work_mult(float(getattr(villager, "happiness", 0.7) or 0.7))
+    if band != HappinessBand.CONTENT:
+        label = HAPPINESS_BAND_LABELS[band]
+        tip = f"Work efficiency ×{work:.2f}"
+        if band == HappinessBand.DISENGAGED:
+            tip += " — extra breaks"
+        elif band == HappinessBand.UNHAPPY:
+            tip += " — longer breaks / wandering"
+        elif band == HappinessBand.ENGAGED:
+            tip += " — quicker return to work"
+        mods.append(
+            StatusMod(
+                cause_key=f"mood_{band.value}",
+                cause_icon="stew",
+                cause_group="events",
+                effect="work",
+                mult=float(work),
+                cause_label=label,
+                tip_override=tip,
+                display_kind="buff" if work > 1.01 else "debuff",
+            )
+        )
+    return mods
+
+
+def happiness_band(happiness: float) -> HappinessBand:
+    """Map 0–1 happiness onto the four behaviour bands."""
+    h = max(0.0, min(1.0, float(happiness)))
+    if h >= HAPPINESS_BAND_MIN[HappinessBand.ENGAGED]:
+        return HappinessBand.ENGAGED
+    if h >= HAPPINESS_BAND_MIN[HappinessBand.CONTENT]:
+        return HappinessBand.CONTENT
+    if h >= HAPPINESS_BAND_MIN[HappinessBand.DISENGAGED]:
+        return HappinessBand.DISENGAGED
+    return HappinessBand.UNHAPPY
+
+
+def happiness_band_label(happiness: float) -> str:
+    return HAPPINESS_BAND_LABELS[happiness_band(happiness)]
+
+
+def happiness_work_mult(happiness: float) -> float:
+    """Work-speed multiplier from happiness, capped ≈ +5% … −20%."""
+    return float(HAPPINESS_WORK_MULT[happiness_band(happiness)])
+
+
+def happiness_break_hours_to_ticks(hours: float, ticks_per_day: int) -> int:
+    return max(1, int(round(float(hours) * max(1, int(ticks_per_day)) / 24.0)))
+
+
+def happiness_break_duration_ticks(
+    kind: str, ticks_per_day: int, *, rng: random.Random | None = None
+) -> int:
+    """Resolve configured break duration for ``base`` / ``disengaged`` / ``unhappy``."""
+    cfg = HAPPINESS_BREAK_CONFIG.get(kind) or HAPPINESS_BREAK_CONFIG["base"]
+    raw = cfg.get("duration_hours", 1.0)
+    rng = rng or random
+    if isinstance(raw, (tuple, list)) and len(raw) >= 2:
+        lo, hi = float(raw[0]), float(raw[1])
+        hours = float(rng.uniform(lo, hi))
+    else:
+        hours = float(raw)
+    return happiness_break_hours_to_ticks(hours, ticks_per_day)
+
+
+def happiness_break_cooldown_ticks(ticks_per_day: int) -> int:
+    hours = float(HAPPINESS_BREAK_CONFIG.get("cooldown_hours", 2.0))
+    return happiness_break_hours_to_ticks(hours, ticks_per_day)
+
+
+def happiness_break_chance_this_tick(
+    kind: str, ticks_per_day: int
+) -> float:
+    """Per-tick probability while working for an extra (non-base) break."""
+    cfg = HAPPINESS_BREAK_CONFIG.get(kind) or {}
+    per_hour = float(cfg.get("chance_per_work_hour", 0.0))
+    ticks_per_hour = max(1, int(ticks_per_day) / 24.0)
+    # 1 - (1-p_hour)^(1/ticks_per_hour) ≈ p_hour / ticks_per_hour for small p.
+    return max(0.0, min(1.0, per_hour / ticks_per_hour))
+
+
+def pick_happiness_break_thought(kind: str, *, rng: random.Random | None = None) -> str:
+    cfg = HAPPINESS_BREAK_CONFIG.get(kind) or HAPPINESS_BREAK_CONFIG["base"]
+    thoughts = tuple(cfg.get("thoughts") or ("…",))
+    rng = rng or random
+    return str(rng.choice(thoughts))
+
+
+def happiness_break_wander_params(kind: str) -> tuple[float, int]:
+    """Return ``(wander_chance, wander_radius)`` for a break kind."""
+    cfg = HAPPINESS_BREAK_CONFIG.get(kind) or HAPPINESS_BREAK_CONFIG["base"]
+    return float(cfg.get("wander_chance", 0.5)), int(cfg.get("wander_radius", 2))
+
+
+def engaged_return_walk_mult() -> float:
+    return float(HAPPINESS_BREAK_CONFIG.get("engaged_return_walk_mult", 1.15))
+
+
+def is_happiness_break_state(state: object) -> bool:
+    name = getattr(state, "name", str(state))
+    return name in {"DISENGAGED_BREAK", "WANDERING", "RETURNING_TO_WORK"}

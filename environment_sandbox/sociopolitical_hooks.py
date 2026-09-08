@@ -18,9 +18,8 @@ from society import (
     SKILL_ORDER,
     SkillState,
     SkillType,
-    apply_happiness_points,
+    apply_timed_happiness_impact,
     free_housing_beds,
-    push_happiness_event,
     skills_from_dict,
 )
 from sociopolitical import (
@@ -315,6 +314,9 @@ def bootstrap_sociopolitical_test(game: Game) -> SettlementPoliticalState:
         workplace = workplaces.get(job_kind)
         if workplace is not None:
             villager.building_id = workplace.id
+            # building_id alone is not enough — default priorities are unassigned
+            # (Build/Transport), which filter down to hauling once a workplace is set.
+            villager.set_default_priorities()
 
     game._sync_building_collision()
     # Drop incidental tents so bed math matches the brief (HOUSE 8 − 6 = 2 free).
@@ -607,26 +609,26 @@ def apply_immediate_effects(
         event_label = source_label.strip() or effect.label or "Decision"
         if kind == "happiness_all":
             for villager in game.villagers:
-                apply_happiness_points(villager, amount)
-                push_happiness_event(
+                apply_timed_happiness_impact(
                     villager,
+                    amount,
                     icon="stew",
                     label=event_label,
-                    delta=int(amount),
                     day=int(game.calendar_day),
+                    ticks_per_day=int(game.ticks_per_day),
                 )
             record_happiness_delta(game, amount * max(1, len(game.villagers)))
         elif kind == "happiness_workers":
             n = 0
             for villager in game.villagers:
                 if villager.building_id is not None:
-                    apply_happiness_points(villager, amount)
-                    push_happiness_event(
+                    apply_timed_happiness_impact(
                         villager,
+                        amount,
                         icon="coins",
                         label=event_label,
-                        delta=int(amount),
                         day=int(game.calendar_day),
+                        ticks_per_day=int(game.ticks_per_day),
                     )
                     n += 1
             record_happiness_delta(game, amount * n)
@@ -634,13 +636,13 @@ def apply_immediate_effects(
             n = 0
             for villager in game.villagers:
                 if int(getattr(villager.skills.get(strongest_skill(villager)), "level", 1) or 1) >= 4:
-                    apply_happiness_points(villager, amount)
-                    push_happiness_event(
+                    apply_timed_happiness_impact(
                         villager,
+                        amount,
                         icon="stew",
                         label=event_label,
-                        delta=int(amount),
                         day=int(game.calendar_day),
+                        ticks_per_day=int(game.ticks_per_day),
                     )
                     n += 1
             record_happiness_delta(game, amount * n)
@@ -709,13 +711,14 @@ def apply_settlement_office_seasonal(game: Game) -> None:
             continue
         if job_matches_strongest(villager, game.buildings):
             continue
-        apply_happiness_points(villager, -5)
-        push_happiness_event(
+        apply_timed_happiness_impact(
             villager,
+            -5,
             icon="construction_site",
-            label="Assigned outside strongest skill (−5)",
-            delta=-5,
+            label="Assigned outside strongest skill",
             day=int(game.calendar_day),
+            duration_hours=12.0,
+            ticks_per_day=int(game.ticks_per_day),
         )
         hit += 1
     if hit:
@@ -836,7 +839,14 @@ def refuse_open_applicant(game: Game) -> None:
     state.villagers_refused += 1
     state.solidarity = max(0, state.solidarity - 5)
     for villager in game.villagers:
-        apply_happiness_points(villager, -2)
+        apply_timed_happiness_impact(
+            villager,
+            -2,
+            icon="stew",
+            label="Refused open applicant",
+            day=int(game.calendar_day),
+            ticks_per_day=int(game.ticks_per_day),
+        )
     state.add_diary(
         int(game.calendar_day),
         "note",

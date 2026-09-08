@@ -386,6 +386,10 @@ class VillagerState(Enum):
     HAULING = auto()
     BUILDING = auto()
     SLEEPING = auto()
+    # Happiness / sociopolitical disengagement (not pathfinding idle).
+    DISENGAGED_BREAK = auto()
+    WANDERING = auto()
+    RETURNING_TO_WORK = auto()
 
 
 class WorkPriority(Enum):
@@ -3949,8 +3953,18 @@ class Villager:
     coins_paid_total: int = 0
     season_pay_due: int = 0
     happiness_events: list[dict] = field(default_factory=list)
+    # Timed happiness swings shown as buffs/debuffs; unwind toward the prior level.
+    happiness_modifiers: list[dict] = field(default_factory=list)
     low_happiness_days: float = 0.0  # legacy
     low_happiness_seasons: int = 0
+    # Happiness-driven breaks / wandering (sociopolitical consequence).
+    break_ticks_left: int = 0
+    break_cooldown_ticks: int = 0
+    break_kind: str = ""  # base | disengaged | unhappy
+    break_reason: str = ""
+    break_thought: str = ""
+    break_return_pos: tuple[int, int] | None = None
+    base_break_day: int = -1  # calendar day when baseline break was taken
     skills: dict = field(default_factory=dict)
     community_id: int | None = None
     virtues: list[str] = field(default_factory=list)

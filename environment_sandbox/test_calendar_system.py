@@ -28,6 +28,19 @@ class CalendarPolicyTests(unittest.TestCase):
         self.assertEqual(policy.mode, CalendarMode.FLEXIBLE)
         self.assertEqual(policy.active_days_in_season, 5)
 
+    def test_apply_now_switches_mode_immediately(self):
+        policy = CalendarPolicy()
+        policy.begin(Season.SPRING)
+        policy.apply_now(
+            CalendarMode.FLEXIBLE,
+            {Season.SPRING: 4, Season.SUMMER: 5},
+            current_season=Season.SPRING,
+        )
+        self.assertEqual(policy.mode, CalendarMode.FLEXIBLE)
+        self.assertIsNone(policy.pending_mode)
+        self.assertEqual(policy.active_days_in_season, 4)
+        self.assertEqual(policy.season_days[Season.SUMMER], 5)
+
     def test_current_season_length_change_waits_until_it_returns(self):
         policy = CalendarPolicy(mode=CalendarMode.FLEXIBLE)
         policy.begin(Season.SPRING)

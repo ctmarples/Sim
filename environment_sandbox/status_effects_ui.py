@@ -234,6 +234,8 @@ def collect_status_mods(
     inventory,
     calendar_day: int,
     satiation: float | None = None,
+    happiness: float | None = None,
+    villager: object | None = None,
 ) -> list[StatusMod]:
     mods: list[StatusMod] = []
     for key in list(last_meal or [])[:3]:
@@ -330,6 +332,34 @@ def collect_status_mods(
                     display_kind="debuff",
                 )
             )
+
+    if villager is not None:
+        from society import active_happiness_status_mods
+
+        mods.extend(active_happiness_status_mods(villager))
+    elif happiness is not None:
+        from society import (
+            HAPPINESS_BAND_LABELS,
+            HappinessBand,
+            happiness_band,
+            happiness_work_mult,
+        )
+
+        band = happiness_band(happiness)
+        work = happiness_work_mult(happiness)
+        if band != HappinessBand.CONTENT:
+            mods.append(
+                StatusMod(
+                    cause_key=f"mood_{band.value}",
+                    cause_icon="stew",
+                    cause_group="events",
+                    effect="work",
+                    mult=float(work),
+                    cause_label=HAPPINESS_BAND_LABELS[band],
+                    tip_override=f"Work efficiency ×{work:.2f}",
+                    display_kind="buff" if work > 1.01 else "debuff",
+                )
+            )
     return mods
 
 
@@ -342,6 +372,7 @@ def effect_totals(
     calendar_day: int,
     work_extra_mult: float = 1.0,
     satiation: float | None = None,
+    happiness: float | None = None,
 ) -> tuple[float, float, float]:
     impact = temperature_impact(
         ambient_temperature_c(calendar_day),
@@ -356,8 +387,16 @@ def effect_totals(
 
         sat_walk = satiation_walk_mult(satiation)
         sat_work = satiation_work_mult(satiation)
+    mood_work = 1.0
+    if happiness is not None:
+        from society import happiness_work_mult
+
+        mood_work = happiness_work_mult(happiness)
     walk = max(0.05, float(food_walk) * gear * float(impact.walk_mult) * sat_walk)
-    work = max(0.05, float(food_work) * max(0.05, float(work_extra_mult)) * sat_work)
+    work = max(
+        0.05,
+        float(food_work) * max(0.05, float(work_extra_mult)) * sat_work * mood_work,
+    )
     hunger = max(0.05, float(food_hunger))
     return walk, work, hunger
 
