@@ -233,6 +233,7 @@ def collect_status_mods(
     last_meal: list[str] | None,
     inventory,
     calendar_day: int,
+    satiation: float | None = None,
 ) -> list[StatusMod]:
     mods: list[StatusMod] = []
     for key in list(last_meal or [])[:3]:
@@ -298,6 +299,37 @@ def collect_status_mods(
                     mult=float(impact.energy_mult),
                 )
             )
+
+    if satiation is not None:
+        from entities import satiation_walk_mult, satiation_work_mult
+
+        work = satiation_work_mult(satiation)
+        walk = satiation_walk_mult(satiation)
+        if work < 0.99:
+            severe = work <= 0.81
+            mods.append(
+                StatusMod(
+                    cause_key="hungry" if not severe else "starving",
+                    cause_icon="meat_marker",
+                    cause_group="events",
+                    effect="work",
+                    mult=work,
+                    cause_label="Starving" if severe else "Hungry",
+                    display_kind="debuff",
+                )
+            )
+        if walk < 0.99:
+            mods.append(
+                StatusMod(
+                    cause_key="starving",
+                    cause_icon="meat_marker",
+                    cause_group="events",
+                    effect="walk",
+                    mult=walk,
+                    cause_label="Starving",
+                    display_kind="debuff",
+                )
+            )
     return mods
 
 
@@ -309,6 +341,7 @@ def effect_totals(
     inventory,
     calendar_day: int,
     work_extra_mult: float = 1.0,
+    satiation: float | None = None,
 ) -> tuple[float, float, float]:
     impact = temperature_impact(
         ambient_temperature_c(calendar_day),
@@ -316,8 +349,15 @@ def effect_totals(
         float(getattr(inventory, "gear_cold_protection", 0.0) or 0.0),
     )
     gear = float(getattr(inventory, "gear_walk_mult", 1.0) or 1.0)
-    walk = max(0.05, float(food_walk) * gear * float(impact.walk_mult))
-    work = max(0.05, float(food_work) * max(0.05, float(work_extra_mult)))
+    sat_walk = 1.0
+    sat_work = 1.0
+    if satiation is not None:
+        from entities import satiation_walk_mult, satiation_work_mult
+
+        sat_walk = satiation_walk_mult(satiation)
+        sat_work = satiation_work_mult(satiation)
+    walk = max(0.05, float(food_walk) * gear * float(impact.walk_mult) * sat_walk)
+    work = max(0.05, float(food_work) * max(0.05, float(work_extra_mult)) * sat_work)
     hunger = max(0.05, float(food_hunger))
     return walk, work, hunger
 

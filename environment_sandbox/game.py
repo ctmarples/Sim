@@ -325,6 +325,8 @@ from society import (
     HAPPINESS_LEAVE_SEASONS,
     HAPPINESS_LEAVE_THRESHOLD,
     HAPPINESS_MISSING_REQ_PENALTY,
+    HAPPINESS_HALF_RATION_PENALTY,
+    HAPPINESS_DOUBLE_RATION_BONUS,
     MAX_TRAVELLERS,
     SEASON_MISSING_REQ_PAY_COINS,
     candidate_requirement_rows,
@@ -10169,7 +10171,7 @@ class Game:
                     villager.seeking_food = False
                     return
 
-        # Happiness from housing excess over need + recent meal variety.
+        # Happiness from housing excess over need + recent meal variety + rations.
         target = 0.45
         if villager.housed:
             house = self.buildings.get(villager.housing_id or -1)
@@ -10177,26 +10179,20 @@ class Game:
             excess = max(0, lvl - int(villager.housing_need))
             target += HAPPINESS_HOUSING_BONUS_PER_LEVEL * excess
         else:
+            target -= HAPPINESS_MISSING_REQ_PENALTY
+        target += HAPPINESS_FOOD_VARIETY_BONUS * min(3, len(villager.last_meal))
+        # Half rations are a real happiness pressure; Common Provision softens it.
+        if villager.ration_mode == RationMode.HALF:
             from sociopolitical import missing_ration_happiness_scale
 
-            target -= HAPPINESS_MISSING_REQ_PENALTY * missing_ration_happiness_scale(
-                self.political
+            target -= HAPPINESS_HALF_RATION_PENALTY * missing_ration_happiness_scale(
+                getattr(self, "political", None)
             )
-        target += HAPPINESS_FOOD_VARIETY_BONUS * min(3, len(villager.last_meal))
+        elif villager.ration_mode == RationMode.DOUBLE:
+            target += HAPPINESS_DOUBLE_RATION_BONUS
         foods = getattr(self, "_tick_village_food", None)
         if foods is None:
             foods = self._village_food_amounts()
-        # Common Provision: damp happiness loss from low satiation / poor rations.
-        if (
-            getattr(self, "political", None) is not None
-            and self.political.has_institution("common_provision")
-            and float(villager.satiation) < 0.35
-        ):
-            from sociopolitical import missing_ration_happiness_scale
-
-            # Pull target upward toward current happiness (less loss).
-            loss_scale = missing_ration_happiness_scale(self.political)
-            target = villager.happiness + (target - villager.happiness) * loss_scale
         villager.happiness += (target - villager.happiness) * min(1.0, day_frac * 3.0)
         villager.happiness = max(0.0, min(1.0, villager.happiness))
         unmet = villager_unmet_requirements(villager, self.buildings, foods)
@@ -11867,10 +11863,15 @@ class Game:
         if villager.state != VillagerState.SLEEPING:
             villager.state = VillagerState.IDLE
 
-    def _satiation_speed_factor(self, satiation: float) -> float:
-        """Satiation no longer changes movement or work speed."""
-        del satiation
-        return 1.0
+    def _satiation_work_mult(self, satiation: float) -> float:
+        from entities import satiation_work_mult
+
+        return satiation_work_mult(satiation)
+
+    def _satiation_walk_mult(self, satiation: float) -> float:
+        from entities import satiation_walk_mult
+
+        return satiation_walk_mult(satiation)
 
     def _move_interval_for(
         self,
@@ -11882,7 +11883,7 @@ class Game:
     ) -> int:
         """Ticks between steps — fixed vs ticks/day; ×N playback runs N ticks/frame."""
         factor = (
-            self._satiation_speed_factor(satiation)
+            self._satiation_walk_mult(satiation)
             * max(0.1, float(food_walk_mult))
             * (0.7 + 0.3 * max(0.0, min(1.0, happiness)))
             * self._energy_speed_factor(energy)
@@ -11901,7 +11902,7 @@ class Game:
     ) -> int:
         """Ticks between work actions — fixed vs ticks/day; speed buttons scale playback."""
         factor = (
-            self._satiation_speed_factor(satiation)
+            self._satiation_work_mult(satiation)
             * max(0.1, float(food_work_mult))
             * max(0.15, float(skill_mult))
             * (0.65 + 0.35 * max(0.0, min(1.0, happiness)))
@@ -12739,12 +12740,21 @@ class Game:
     ) -> int:
         """Consume food toward a meal. Returns how many items eaten.
 
-        One unit of each food type, up to ``MAX_FOOD_TYPES_PER_MEAL`` types,
-        preferring buff foods over debuff snacks, then satiation.
+        Two layered mechanics:
+        - **Foods** apply their full satiation (and buffs) per unit eaten.
+        - **Rations** only set when to eat, a soft stop for taking more food,
+          and a hard inventory-unit budget (half = 1 unit, double ≥ 2).
+
+        Rations never clamp or rescale food satiation after the fact.
         After a full meat meal, one sweet dessert may still be taken for a
         walk-speed buff even when satiation is already full.
         """
-        target = eater.ration_refill() if eater is not None else 0.75
+        stop_at = eater.ration_refill() if eater is not None else 0.75
+        unit_cap = MAX_FOOD_TYPES_PER_MEAL
+        unit_min = 1
+        if eater is not None and hasattr(eater, "ration_meal_unit_cap"):
+            unit_cap = max(1, int(eater.ration_meal_unit_cap()))
+            unit_min = max(1, int(eater.ration_meal_unit_min()))
         available = [
             key for key in VILLAGER_FOOD_KEYS if getattr(storage, key, 0) > 0
         ]
@@ -12770,19 +12780,43 @@ class Game:
                     1.0, eater.satiation + satiation_from_points(fx.satiation)
                 )
 
+        def _still_hungry_for_more() -> bool:
+            if eater is None:
+                return points < 5.0
+            if len(eaten_keys) < unit_min:
+                return True
+            return eater.satiation < stop_at
+
+        # Prefer distinct types first (meal variety), one unit each.
         for key in available:
-            if len(eaten_keys) >= MAX_FOOD_TYPES_PER_MEAL:
+            if len(eaten_keys) >= unit_cap:
                 break
-            if eater is not None and eater.satiation >= target and eaten_keys:
+            if eaten_keys and not _still_hungry_for_more():
                 break
-            if eater is None and points >= 5.0 and eaten_keys:
-                break
+            if int(getattr(storage, key, 0)) <= 0:
+                continue
             _consume(key)
-            if eater is not None:
-                if eater.satiation >= target:
+
+        # Double (etc.): take extra units of top preference until min / stop.
+        if eater is not None and len(eaten_keys) < unit_min:
+            for key in available:
+                while (
+                    len(eaten_keys) < unit_min
+                    and int(getattr(storage, key, 0)) > 0
+                ):
+                    _consume(key)
+                if len(eaten_keys) >= unit_min:
                     break
-            elif points >= 5.0:
-                break
+        if eater is not None and eater.satiation < stop_at and len(eaten_keys) < unit_cap:
+            for key in available:
+                while (
+                    eater.satiation < stop_at
+                    and len(eaten_keys) < unit_cap
+                    and int(getattr(storage, key, 0)) > 0
+                ):
+                    _consume(key)
+                if eater.satiation >= stop_at or len(eaten_keys) >= unit_cap:
+                    break
 
         # Dessert: full meat meal can take one sweet for a speed buff.
         if (
@@ -12790,7 +12824,7 @@ class Game:
             and meal_includes_meat(eaten_keys)
             and not any(food_is_sweet(k) for k in eaten_keys)
             and (
-                (eater is not None and eater.satiation >= target)
+                (eater is not None and eater.satiation >= stop_at)
                 or (eater is None and points >= 5.0)
             )
         ):
@@ -23726,6 +23760,7 @@ class Game:
             last_meal=list(p.last_meal),
             inventory=p.inventory,
             calendar_day=self.calendar_day,
+            satiation=float(p.satiation),
         )
         buffs = [m for m in all_mods if m.is_buff]
         debuffs = [m for m in all_mods if m.is_debuff]
@@ -23783,6 +23818,7 @@ class Game:
             food_hunger=p.food_hunger_mult,
             inventory=p.inventory,
             calendar_day=self.calendar_day,
+            satiation=float(p.satiation),
         )
         _, total_tips = draw_effect_total_columns(
             self.screen,

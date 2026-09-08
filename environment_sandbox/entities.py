@@ -499,7 +499,12 @@ def empty_workplace_plan() -> list[WorkplaceSlot]:
 
 
 class RationMode(Enum):
-    """How aggressively a villager tops up satiation."""
+    """Portion policy for meals — orthogonal to per-food satiation values.
+
+    Foods always apply their full satiation. Rations only decide *when* to eat
+    and *how many inventory units* a meal may take. They never clamp or replace
+    food satiation gains.
+    """
 
     HALF = auto()
     NORMAL = auto()
@@ -518,25 +523,61 @@ RATION_CYCLE: tuple[RationMode, ...] = (
     RationMode.DOUBLE,
 )
 
-# Eat when satiation falls to this level.
+# Seek a meal when satiation falls to this level.
 RATION_EAT_AT: dict[RationMode, float] = {
     RationMode.HALF: 0.25,
     RationMode.NORMAL: 0.50,
     RationMode.DOUBLE: 0.50,
 }
 
-# Satiation after a successful meal.
+# Soft "enough for now" — stop taking *more* food once satiation reaches this.
+# Already-gained food satiation is kept (no post-meal clamp).
 RATION_REFILL: dict[RationMode, float] = {
-    RationMode.HALF: 0.50,
-    RationMode.NORMAL: 0.75,
+    RationMode.HALF: 0.55,
+    RationMode.NORMAL: 0.80,
     RationMode.DOUBLE: 1.00,
 }
 
-RATION_FOOD_AMOUNT: dict[RationMode, int] = {
+# Hard inventory-unit budget for one meal (food quality still sets fill amount).
+RATION_MEAL_UNIT_CAP: dict[RationMode, int] = {
+    RationMode.HALF: 1,
+    RationMode.NORMAL: 2,
+    RationMode.DOUBLE: 4,
+}
+
+# Double rations keep eating until at least this many units when stock allows.
+RATION_MEAL_UNIT_MIN: dict[RationMode, int] = {
     RationMode.HALF: 1,
     RationMode.NORMAL: 1,
     RationMode.DOUBLE: 2,
 }
+
+# Back-compat alias used by older call sites / saves.
+RATION_FOOD_AMOUNT: dict[RationMode, int] = dict(RATION_MEAL_UNIT_CAP)
+
+# Low satiation penalties (applied on top of food buffs; never replace them).
+SATIATION_WORK_MILD_BELOW: float = 0.25
+SATIATION_WORK_SEVERE_BELOW: float = 0.10
+SATIATION_WORK_MILD_MULT: float = 0.90
+SATIATION_WORK_SEVERE_MULT: float = 0.80
+SATIATION_WALK_SEVERE_MULT: float = 0.90
+
+
+def satiation_work_mult(satiation: float) -> float:
+    """Work efficiency from hunger. ``<0.1`` → 0.8×, ``<0.25`` → 0.9×, else 1.0."""
+    s = float(satiation)
+    if s < SATIATION_WORK_SEVERE_BELOW:
+        return SATIATION_WORK_SEVERE_MULT
+    if s < SATIATION_WORK_MILD_BELOW:
+        return SATIATION_WORK_MILD_MULT
+    return 1.0
+
+
+def satiation_walk_mult(satiation: float) -> float:
+    """Walk speed from hunger. ``<0.1`` → 0.9×, else 1.0."""
+    if float(satiation) < SATIATION_WORK_SEVERE_BELOW:
+        return SATIATION_WALK_SEVERE_MULT
+    return 1.0
 
 DEFAULT_PRIORITIES_UNASSIGNED: tuple[WorkPriority, ...] = (
     WorkPriority.BUILD,
@@ -4265,10 +4306,18 @@ class Villager:
         return RATION_EAT_AT[self.ration_mode]
 
     def ration_refill(self) -> float:
+        """Soft stop level for taking more food (not a satiation ceiling)."""
         return RATION_REFILL[self.ration_mode]
 
+    def ration_meal_unit_cap(self) -> int:
+        return RATION_MEAL_UNIT_CAP[self.ration_mode]
+
+    def ration_meal_unit_min(self) -> int:
+        return RATION_MEAL_UNIT_MIN[self.ration_mode]
+
     def ration_food_amount(self) -> int:
-        return RATION_FOOD_AMOUNT[self.ration_mode]
+        """Deprecated alias for ``ration_meal_unit_cap``."""
+        return self.ration_meal_unit_cap()
 
     def needs_food(self) -> bool:
         return self.satiation <= self.eat_threshold()
@@ -4341,7 +4390,18 @@ class Player:
         return RATION_EAT_AT[self.ration_mode]
 
     def ration_refill(self) -> float:
+        """Soft stop level for taking more food (not a satiation ceiling)."""
         return RATION_REFILL[self.ration_mode]
+
+    def ration_meal_unit_cap(self) -> int:
+        return RATION_MEAL_UNIT_CAP[self.ration_mode]
+
+    def ration_meal_unit_min(self) -> int:
+        return RATION_MEAL_UNIT_MIN[self.ration_mode]
+
+    def ration_food_amount(self) -> int:
+        """Deprecated alias for ``ration_meal_unit_cap``."""
+        return self.ration_meal_unit_cap()
 
     def needs_food(self) -> bool:
         return self.satiation <= self.eat_threshold()

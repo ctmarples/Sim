@@ -701,6 +701,7 @@ class VillagerInspectDialog:
                 inventory=villager.inventory,
                 calendar_day=calendar_day,
                 work_extra_mult=political_work_mult,
+                satiation=float(villager.satiation),
             )
             _w, tips = draw_effect_total_columns(
                 surface, x, y, walk=walk, work=work, hunger=hunger,
@@ -715,6 +716,7 @@ class VillagerInspectDialog:
             mods = collect_status_mods(
                 last_meal=list(villager.last_meal), inventory=villager.inventory,
                 calendar_day=calendar_day,
+                satiation=float(villager.satiation),
             )
             if extra_status_mods:
                 mods = list(mods) + list(extra_status_mods)
@@ -955,6 +957,7 @@ class VillagerInspectDialog:
             last_meal=list(villager.last_meal),
             inventory=villager.inventory,
             calendar_day=calendar_day,
+            satiation=float(villager.satiation),
         )
         if extra_status_mods:
             all_mods = list(all_mods) + list(extra_status_mods)
@@ -980,6 +983,7 @@ class VillagerInspectDialog:
                 inventory=villager.inventory,
                 calendar_day=calendar_day,
                 work_extra_mult=political_work_mult,
+                satiation=float(villager.satiation),
             )
             _, total_tips = draw_effect_total_columns(
                 surface,

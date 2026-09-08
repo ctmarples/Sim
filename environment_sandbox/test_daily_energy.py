@@ -14,9 +14,14 @@ class DailyEnergyTests(unittest.TestCase):
         game.ticks_per_day = 36000
         self.assertAlmostEqual(game._satiation_decay() * game.ticks_per_day, 2.0)
 
-    def test_satiation_does_not_reduce_speed(self):
-        self.assertEqual(Game._satiation_speed_factor(None, 0.0), 1.0)
-        self.assertEqual(Game._satiation_speed_factor(None, 1.0), 1.0)
+    def test_satiation_hunger_speed_bands(self):
+        game = Game.__new__(Game)
+        self.assertEqual(game._satiation_work_mult(0.50), 1.0)
+        self.assertEqual(game._satiation_work_mult(0.20), 0.9)
+        self.assertEqual(game._satiation_work_mult(0.05), 0.8)
+        self.assertEqual(game._satiation_walk_mult(0.50), 1.0)
+        self.assertEqual(game._satiation_walk_mult(0.20), 1.0)
+        self.assertEqual(game._satiation_walk_mult(0.05), 0.9)
 
     def test_seasonal_work_hours(self):
         game = Game.__new__(Game)

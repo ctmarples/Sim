@@ -362,6 +362,24 @@ def bootstrap_sociopolitical_test(game: Game) -> SettlementPoliticalState:
     return state
 
 
+def _seasonal_work_cause_label(state: SettlementPoliticalState) -> str:
+    """Principle / decision title for the seasonal work buff (never a bare 'Decision')."""
+    cause = str(getattr(state, "seasonal_work_source", "") or "").strip()
+    if cause and cause.lower() not in {"decision", "seasonal decision"}:
+        return cause
+    # Recover from enacted principles that granted a seasonal work bonus.
+    for pid in reversed(list(state.enacted_principle_ids)):
+        for event in DECISION_EVENTS.values():
+            for opt in event.options:
+                if opt.principle_id != pid:
+                    continue
+                if not any(e.kind == "work_efficiency_season" for e in opt.immediate_effects):
+                    continue
+                principle = principle_by_id(pid)
+                return principle.name if principle is not None else opt.label
+    return "Work organisation"
+
+
 def political_status_mods(game: Game, villager: Villager) -> list[StatusMod]:
     """Buff/debuff tiles for the diary Buffs section from institutions + decisions.
 
@@ -413,32 +431,46 @@ def political_status_mods(game: Game, villager: Villager) -> list[StatusMod]:
             )
         )
 
-    if state.has_institution("common_provision"):
-        # Only show happiness relief when this villager is actually under strain.
-        poor = float(villager.satiation) < 0.35 or villager.ration_mode.name == "HALF"
-        if poor:
-            scale = missing_ration_happiness_scale(state)
-            mods.append(
-                StatusMod(
-                    cause_key="common_provision",
-                    cause_icon="stew",
-                    cause_group="political",
-                    effect="happiness",
-                    mult=1.0,
-                    cause_label="Common Provision",
-                    tip_override=f"Happiness loss ×{scale:.2f}",
-                    display_kind="buff",
-                )
-            )
+    # Rations: show happiness impact only (never a "rations: half/full" chip).
+    if villager.ration_mode.name == "HALF":
+        from society import HAPPINESS_HALF_RATION_PENALTY
+
+        scale = missing_ration_happiness_scale(state)
+        penalty = HAPPINESS_HALF_RATION_PENALTY * scale
+        pct = int(round(penalty * 100))
+        if state.has_institution("common_provision"):
+            cause = "Common Provision: half rations"
+        else:
+            cause = "Half rations"
         mods.append(
             StatusMod(
-                cause_key="common_provision_ration",
+                cause_key="half_rations",
                 cause_icon="bread",
                 cause_group="political",
-                effect="ration",
-                mult=1.0,
-                cause_label="Common Provision",
-                tip_override=f"Rations: {state.settlement_ration_mode.title()}",
+                effect="happiness",
+                mult=-pct,
+                cause_label=cause,
+                tip_override=f"Happiness −{pct}%",
+                display_kind="debuff",
+            )
+        )
+    elif villager.ration_mode.name == "DOUBLE":
+        from society import HAPPINESS_DOUBLE_RATION_BONUS
+
+        pct = int(round(HAPPINESS_DOUBLE_RATION_BONUS * 100))
+        if state.has_institution("common_provision"):
+            cause = "Common Provision: double rations"
+        else:
+            cause = "Double rations"
+        mods.append(
+            StatusMod(
+                cause_key="double_rations",
+                cause_icon="bread",
+                cause_group="political",
+                effect="happiness",
+                mult=pct,
+                cause_label=cause,
+                tip_override=f"Happiness +{pct}%",
                 display_kind="buff",
             )
         )
@@ -465,7 +497,10 @@ def political_status_mods(game: Game, villager: Villager) -> list[StatusMod]:
 
     if state.seasonal_work_bonus > 0:
         bonus = 1.0 + float(state.seasonal_work_bonus)
-        cause = str(getattr(state, "seasonal_work_source", "") or "Seasonal decision")
+        cause = _seasonal_work_cause_label(state)
+        # Keep stored source in sync when recovered from principles / old saves.
+        if state.seasonal_work_source != cause:
+            state.seasonal_work_source = cause
         mods.append(
             StatusMod(
                 cause_key="seasonal_decision",
@@ -559,18 +594,24 @@ def job_matches_strongest(villager: Villager, buildings: dict) -> bool:
     return job_skill == strongest_skill(villager)
 
 
-def apply_immediate_effects(game: Game, effects: tuple[ImmediateEffect, ...]) -> None:
+def apply_immediate_effects(
+    game: Game,
+    effects: tuple[ImmediateEffect, ...],
+    *,
+    source_label: str = "",
+) -> None:
     state: SettlementPoliticalState = game.political
     for effect in effects:
         kind = effect.kind
         amount = float(effect.amount)
+        event_label = source_label.strip() or effect.label or "Decision"
         if kind == "happiness_all":
             for villager in game.villagers:
                 apply_happiness_points(villager, amount)
                 push_happiness_event(
                     villager,
                     icon="stew",
-                    label=effect.label or "Decision",
+                    label=event_label,
                     delta=int(amount),
                     day=int(game.calendar_day),
                 )
@@ -583,7 +624,7 @@ def apply_immediate_effects(game: Game, effects: tuple[ImmediateEffect, ...]) ->
                     push_happiness_event(
                         villager,
                         icon="coins",
-                        label=effect.label or "Decision",
+                        label=event_label,
                         delta=int(amount),
                         day=int(game.calendar_day),
                     )
@@ -597,7 +638,7 @@ def apply_immediate_effects(game: Game, effects: tuple[ImmediateEffect, ...]) ->
                     push_happiness_event(
                         villager,
                         icon="stew",
-                        label=effect.label or "Decision",
+                        label=event_label,
                         delta=int(amount),
                         day=int(game.calendar_day),
                     )
@@ -606,10 +647,13 @@ def apply_immediate_effects(game: Game, effects: tuple[ImmediateEffect, ...]) ->
         elif kind == "gold":
             game.regional_wealth = max(0, int(game.regional_wealth) + int(amount))
         elif kind == "work_efficiency_season":
-            state.seasonal_work_bonus = max(float(state.seasonal_work_bonus), amount)
-            # Prefer an existing principle/decision label if the caller set one.
-            if not state.seasonal_work_source:
-                state.seasonal_work_source = "Seasonal decision"
+            if amount >= float(state.seasonal_work_bonus):
+                state.seasonal_work_bonus = amount
+                state.seasonal_work_source = (
+                    source_label.strip()
+                    or state.seasonal_work_source
+                    or "Work organisation"
+                )
         elif kind == "set_ration_all":
             mode = RationMode.NORMAL
             state.settlement_ration_mode = mode.name
@@ -682,8 +726,13 @@ def sync_common_provision_rations(game: Game) -> None:
     state = getattr(game, "political", None)
     if state is None or not state.has_institution("common_provision"):
         return
+    # MIXED is a directed-ration staging value, not a real RationMode.
+    raw = str(state.settlement_ration_mode or "NORMAL")
+    if raw == "MIXED":
+        raw = "NORMAL"
+        state.settlement_ration_mode = raw
     try:
-        mode = RationMode[state.settlement_ration_mode]
+        mode = RationMode[raw]
     except Exception:
         mode = RationMode.NORMAL
         state.settlement_ration_mode = mode.name
@@ -805,15 +854,13 @@ def resolve_decision_choice(game: Game, event_id: str, option_id: str) -> None:
     option = next((o for o in event.options if o.id == option_id), None)
     if option is None:
         return
-    apply_immediate_effects(game, option.immediate_effects)
-    if any(e.kind == "work_efficiency_season" for e in option.immediate_effects):
-        principle = principle_by_id(option.principle_id)
-        state.seasonal_work_source = (
-            principle.name if principle is not None else option.label
-        )
+    principle = principle_by_id(option.principle_id)
+    source_label = principle.name if principle is not None else option.label
+    apply_immediate_effects(
+        game, option.immediate_effects, source_label=source_label
+    )
     reveal = resolve_option(state, event, option, day=int(game.calendar_day))
     sample_metrics(game)
-    principle = principle_by_id(option.principle_id)
     if principle is not None:
         game._set_status(
             f"Chose “{option.label}”. Enacted {principle.name}."

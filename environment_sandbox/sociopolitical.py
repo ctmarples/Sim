@@ -257,8 +257,10 @@ class SettlementPoliticalState:
             lines.append(f"{inst.name}: {inst.benefit}")
             lines.append(f"{inst.name}: {inst.cost}")
         if self.seasonal_work_bonus:
+            source = str(self.seasonal_work_source or "").strip() or "decision"
             lines.append(
-                f"Seasonal decision bonus: {self.seasonal_work_bonus:+.0%} work efficiency"
+                f"Seasonal bonus from {source}: "
+                f"{self.seasonal_work_bonus:+.0%} work efficiency"
             )
         return lines
 

@@ -104,6 +104,9 @@ HAPPINESS_FOOD_VARIETY_BONUS: float = 0.04
 HAPPINESS_HOUSING_BONUS_PER_LEVEL: float = 0.01
 HAPPINESS_MISSING_REQ_PENALTY: float = 0.08
 HAPPINESS_FAVOURITE_MISS_PENALTY: float = 0.05
+# Continuous happiness-target shift while on half / double rations.
+HAPPINESS_HALF_RATION_PENALTY: float = 0.16
+HAPPINESS_DOUBLE_RATION_BONUS: float = 0.12
 # Coins charged each season for every unmet hire requirement (housing / staple).
 SEASON_MISSING_REQ_PAY_COINS: int = 2
 HAPPINESS_EVENT_HISTORY: int = 8
