@@ -173,6 +173,16 @@ def clothing_cold_protection(key: str) -> float:
     return float(CLOTHING_COLD_PROTECTION.get(key, 0.0))
 
 
+# Recipe input ``berries`` means any soft berry fruit (legacy or typed forage).
+# Hazelnuts are bush produce but are not jam/tart berries.
+SOFT_BERRY_INPUT_KEYS: tuple[str, ...] = (
+    "blackberries",
+    "sloe_berries",
+    "elderberries",
+    "berries",  # legacy starting / old-save stock
+)
+
+
 def _parse_amount_map(raw: str) -> dict[str, int]:
     """Parse ``key:qty;key:qty`` into a dict. Empty / whitespace → {}."""
     text = (raw or "").strip()
@@ -278,30 +288,36 @@ def _apply_row_metadata(row: dict[str, str], recipe: Recipe) -> None:
     if not resource_group and satiation and recipe.outputs:
         resource_group = "food"
     if resource_group and recipe.outputs:
-        from resources import register_resource
+        from resources import RESOURCES, register_resource
 
         out_key = next(iter(recipe.outputs))
-        register_resource(
-            out_key,
-            label=label or RECIPE_LABELS.get(recipe.name) or out_key,
-            group=resource_group,
-            short=_cell(row, "resource_short") or out_key[:4],
-        )
+        # Only author a catalogue row for this recipe's own product key.
+        # Never rebrand a different existing resource (bread_wheat → fish bug).
+        known = any(r.key == out_key for r in RESOURCES)
+        if out_key == recipe.name or not known:
+            register_resource(
+                out_key,
+                label=label or RECIPE_LABELS.get(recipe.name) or out_key,
+                group=resource_group,
+                short=_cell(row, "resource_short") or out_key[:4],
+            )
 
     if satiation and recipe.outputs:
-        from resource_balance import register_food, register_sweet_food
+        from resource_balance import FOOD_BY_KEY, register_food, register_sweet_food
 
         out_key = next(iter(recipe.outputs))
         edible_raw = _cell(row, "food_edible").lower()
         edible = edible_raw not in ("0", "false", "no") if edible_raw else True
-        register_food(
-            out_key,
-            satiation=float(satiation),
-            walk_speed=float(_cell(row, "food_walk_speed") or "1.0"),
-            work_efficiency=float(_cell(row, "food_work_efficiency") or "1.0"),
-            hunger_rate=float(_cell(row, "food_hunger_rate") or "1.0"),
-            edible=edible,
-        )
+        # Same guard: recipes must not overwrite raw-food defs (e.g. fish).
+        if out_key == recipe.name or out_key not in FOOD_BY_KEY:
+            register_food(
+                out_key,
+                satiation=float(satiation),
+                walk_speed=float(_cell(row, "food_walk_speed") or "1.0"),
+                work_efficiency=float(_cell(row, "food_work_efficiency") or "1.0"),
+                hunger_rate=float(_cell(row, "food_hunger_rate") or "1.0"),
+                edible=edible,
+            )
         if (recipe.category or "").lower() == "sweet":
             register_sweet_food(out_key)
 
@@ -377,29 +393,32 @@ def _apply_json_metadata(data: dict, recipe: Recipe) -> None:
 
     resource = data.get("resource")
     if isinstance(resource, dict) and recipe.outputs:
-        from resources import register_resource
+        from resources import RESOURCES, register_resource
 
         out_key = next(iter(recipe.outputs))
-        register_resource(
-            out_key,
-            label=str(resource.get("label") or RECIPE_LABELS.get(recipe.name) or out_key),
-            group=str(resource.get("group") or "food"),
-            short=str(resource.get("short") or out_key[:4]),
-        )
+        known = any(r.key == out_key for r in RESOURCES)
+        if out_key == recipe.name or not known:
+            register_resource(
+                out_key,
+                label=str(resource.get("label") or RECIPE_LABELS.get(recipe.name) or out_key),
+                group=str(resource.get("group") or "food"),
+                short=str(resource.get("short") or out_key[:4]),
+            )
 
     food = data.get("food")
     if isinstance(food, dict) and recipe.outputs:
-        from resource_balance import MEAL_POINTS_FULL, register_food
+        from resource_balance import FOOD_BY_KEY, MEAL_POINTS_FULL, register_food
 
         out_key = next(iter(recipe.outputs))
-        register_food(
-            out_key,
-            satiation=float(food.get("satiation", MEAL_POINTS_FULL)),
-            walk_speed=float(food.get("walk_speed", 1.0)),
-            work_efficiency=float(food.get("work_efficiency", 1.0)),
-            hunger_rate=float(food.get("hunger_rate", 1.0)),
-            edible=bool(food.get("edible", True)),
-        )
+        if out_key == recipe.name or out_key not in FOOD_BY_KEY:
+            register_food(
+                out_key,
+                satiation=float(food.get("satiation", MEAL_POINTS_FULL)),
+                walk_speed=float(food.get("walk_speed", 1.0)),
+                work_efficiency=float(food.get("work_efficiency", 1.0)),
+                hunger_rate=float(food.get("hunger_rate", 1.0)),
+                edible=bool(food.get("edible", True)),
+            )
 
 
 def _load_building_csv(folder: Path, existing: list[Recipe], seen: set[str]) -> None:
@@ -489,6 +508,13 @@ def input_keys_for_recipes(recipes: tuple[Recipe, ...] | list[Recipe]) -> tuple[
             if key not in seen:
                 seen.add(key)
                 keys.append(key)
+            # Jam/tart ``berries`` also accepts typed forage fruit — expose those
+            # keys so kitchens can store/haul them as inputs.
+            if key == "berries":
+                for berry in SOFT_BERRY_INPUT_KEYS:
+                    if berry not in seen:
+                        seen.add(berry)
+                        keys.append(berry)
     return tuple(keys)
 
 
@@ -567,14 +593,71 @@ def recipe_label(recipe: Recipe) -> str:
 def recipe_inputs_text(recipe: Recipe) -> str:
     from resources import resource_label
 
-    return ", ".join(f"{n} {resource_label(k)}" for k, n in recipe.inputs.items())
+    parts: list[str] = []
+    for k, n in recipe.inputs.items():
+        if k == "berries":
+            parts.append(f"{n} Berries (any soft)")
+        else:
+            parts.append(f"{n} {resource_label(k)}")
+    return ", ".join(parts)
+
+
+def _raw_storage_amount(storage: object, key: str, extra: object | None = None) -> int:
+    amount = getattr(storage, "recipe_storage_amount", None)
+    have = int(amount(key) if callable(amount) else getattr(storage, key, 0) or 0)
+    if extra is not None:
+        have += int(getattr(extra, key, 0) or 0)
+    return have
+
+
+def recipe_input_amount(
+    storage: object, key: str, extra: object | None = None
+) -> int:
+    """How many units of a recipe input are available (berry alias aware)."""
+    if key == "berries":
+        return sum(
+            _raw_storage_amount(storage, berry, extra) for berry in SOFT_BERRY_INPUT_KEYS
+        )
+    return _raw_storage_amount(storage, key, extra)
+
+
+def _consume_recipe_input(storage: object, key: str, amount: int) -> None:
+    """Withdraw ``amount`` of a recipe input, resolving berry aliases."""
+    from food_spoilage import on_food_removed
+
+    left = max(0, int(amount))
+    if left <= 0:
+        return
+
+    def _take(item_key: str, want: int) -> int:
+        if want <= 0:
+            return 0
+        consume = getattr(storage, "consume_recipe_item", None)
+        if callable(consume):
+            before = _raw_storage_amount(storage, item_key)
+            take = min(want, before)
+            if take > 0:
+                consume(str(item_key), int(take))
+            return take
+        have = int(getattr(storage, item_key, 0) or 0)
+        take = min(want, have)
+        if take > 0:
+            setattr(storage, item_key, have - take)
+            on_food_removed(storage, str(item_key))
+        return take
+
+    if key == "berries":
+        for berry in SOFT_BERRY_INPUT_KEYS:
+            left -= _take(berry, left)
+            if left <= 0:
+                return
+        return
+    _take(key, left)
 
 
 def recipe_ready(storage: object, recipe: Recipe) -> bool:
-    amount = getattr(storage, "recipe_storage_amount", None)
     return all(
-        int(amount(key) if callable(amount) else getattr(storage, key, 0)) >= n
-        for key, n in recipe.inputs.items()
+        recipe_input_amount(storage, key) >= n for key, n in recipe.inputs.items()
     )
 
 
@@ -584,13 +667,10 @@ def recipe_ready_with_extra(
     """True if storage + optional extra inventory cover recipe inputs."""
     if extra is None:
         return recipe_ready(storage, recipe)
-    amount = getattr(storage, "recipe_storage_amount", None)
-    for key, n in recipe.inputs.items():
-        stored = amount(key) if callable(amount) else getattr(storage, key, 0)
-        have = int(stored) + int(getattr(extra, key, 0))
-        if have < int(n):
-            return False
-    return True
+    return all(
+        recipe_input_amount(storage, key, extra) >= int(n)
+        for key, n in recipe.inputs.items()
+    )
 
 
 def recipe_output_fits(
@@ -621,8 +701,9 @@ def recipe_output_fits(
         # Net cargo change after consuming inputs and adding outputs.
         delta = 0
         for key, n in recipe.inputs.items():
-            have = int(getattr(storage, key, 0))
-            delta += stack_units(key, have - n) - stack_units(key, have)
+            have = recipe_input_amount(storage, key)
+            # Approximate cargo freed using the recipe's nominal input key.
+            delta += stack_units(key, max(0, have - n)) - stack_units(key, have)
         for key, n in recipe.outputs.items():
             have = int(getattr(storage, key, 0))
             delta += cargo_units_after_add(key, have, n)
@@ -698,15 +779,8 @@ def can_craft(
 
 
 def apply_recipe(storage: object, recipe: Recipe) -> None:
-    from food_spoilage import on_food_removed
-
     for key, n in recipe.inputs.items():
-        consume = getattr(storage, "consume_recipe_item", None)
-        if callable(consume):
-            consume(str(key), int(n))
-        else:
-            setattr(storage, key, int(getattr(storage, key, 0)) - n)
-            on_food_removed(storage, str(key))
+        _consume_recipe_input(storage, str(key), int(n))
     apply_recipe_outputs(storage, recipe)
 
 
@@ -762,8 +836,12 @@ def hunt_recipe_outputs(name: str) -> dict[str, int]:
 def missing_inputs(storage: object, recipe: Recipe) -> dict[str, int]:
     need: dict[str, int] = {}
     for key, n in recipe.inputs.items():
-        amount = getattr(storage, "recipe_storage_amount", None)
-        have = int(amount(key) if callable(amount) else getattr(storage, key, 0))
-        if have < n:
-            need[key] = n - have
+        have = recipe_input_amount(storage, key)
+        if have >= n:
+            continue
+        short = int(n) - have
+        # Ask haulers for blackberries (canonical forage) when soft berries
+        # are short — typed fruit is what the world actually produces.
+        demand_key = "blackberries" if key == "berries" else key
+        need[demand_key] = need.get(demand_key, 0) + short
     return need

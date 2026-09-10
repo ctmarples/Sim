@@ -7,7 +7,7 @@ vegetable_soup,Vegetable soup,onion:2;garlic:1;cabbage:2;carrot:2,vegetable_soup
 grilled_meat,Grilled meat,meat:1,grilled_meat:1,,grill,meat_marker,,,,,,,food,g.mt,2.0,1.0,1.0,0.8,
 grilled_fish,Grilled fish,fish:1,grilled_fish:1,,grill,grilled_fish,,,,,,,food,g.fh,2.0,1.0,1.0,0.8,
 grilled_mushrooms,Grilled mushrooms,mushrooms:1,grilled_mushrooms:1,,grill,grilled_mushrooms,,,,,,,food,g.msh,1.5,1.0,1.0,1.0,
-bread_wheat,Bread (wheat),wheat_flour:1,fish:1,,bakery,bread_wheat,,,,,,,food,bread,2.5,1.0,1.0,0.5,
+bread_wheat,Bread (wheat),wheat_flour:1,bread:1,,bakery,bread,,,,,,,food,bread,2.5,1.0,1.0,0.5,
 bread_rye,Bread (rye),rye_flour:2,bread:1,,bakery,bread,,,,,,,food,bread,2.5,1.0,1.0,0.5,
 berry_jam,Berry jam,berries:2,berry_jam:1,,sweet,berry_jam,,,,,,,food,jam,1.0,1.5,1.0,1.0,
 berry_tart,Berry tart,berries:2;honey:3;wheat_flour:1,berry_tart:1,,sweet,berry_tart,,,,,,,food,b.tart,1.0,3.0,1.0,1.0,
