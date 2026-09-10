@@ -969,8 +969,17 @@ class WildlifeManager:
     def _deer_breeding_tiles(
         world: World, forest: list[tuple[int, int]]
     ) -> list[tuple[int, int]]:
-        """Forest-floor tiles that border open grass/meadow (no tree/sapling there)."""
-        open_land = (TerrainType.GRASS, TerrainType.MEADOW)
+        """Forest-floor tiles that border open land (no tree/sapling there).
+
+        Soil and riparian count as open edge so dense forests ringed by tilled
+        or waterside ground still form usable deer habitats.
+        """
+        open_land = (
+            TerrainType.GRASS,
+            TerrainType.MEADOW,
+            TerrainType.SOIL,
+            TerrainType.RIPARIAN,
+        )
         breeding: list[tuple[int, int]] = []
         for fx, fy in forest:
             for ny, nx in world.neighbourhood(fx, fy, radius=1):
@@ -3272,15 +3281,15 @@ class WildlifeManager:
         """Predator carrying capacity supplied by the prey currently on the map.
 
         A prey unit contributes one predator-place per day that it would feed a
-        pack.  Unlike the old global wolf/fox caps this responds to both habitat
-        recovery and predation: abundant prey permits growth, while an exhausted
-        food web cannot keep producing predators.
+        pack. Prey-derived room is hard-capped by WOLF_MAX_POPULATION /
+        FOX_MAX_POPULATION so abundant rabbits cannot flood the map with packs.
         """
         if kind == AnimalKind.FOX:
             from settings import (
                 FOX_FEED_FROG_DAYS,
                 FOX_FEED_RABBIT_DAYS,
                 FOX_FEED_VOLE_DAYS,
+                FOX_MAX_POPULATION,
             )
 
             prey = (
@@ -3288,7 +3297,7 @@ class WildlifeManager:
                 (AnimalKind.FROG, FOX_FEED_FROG_DAYS),
                 (AnimalKind.VOLE, FOX_FEED_VOLE_DAYS),
             )
-            return max(
+            prey_cap = max(
                 0,
                 int(
                     sum(
@@ -3299,19 +3308,27 @@ class WildlifeManager:
                     )
                 ),
             )
+            hard = max(0, _bal_int("FOX_MAX_POPULATION", FOX_MAX_POPULATION, 0))
+            return min(prey_cap, hard) if hard > 0 else prey_cap
+
+        from settings import WOLF_MAX_POPULATION
 
         animal_food = sum(
             self._wolf_feed_days("boar" if a.kind == AnimalKind.BOAR else "deer")
             for a in self.animals
             if a.kind in (AnimalKind.BOAR, AnimalKind.DEER)
         )
+        # Rabbits count at half weight so small-game bloom cannot alone support
+        # a huge wolf population on open maps.
         rabbit_food = sum(
-            c.level * self._wolf_feed_days("rabbit")
+            c.level * self._wolf_feed_days("rabbit") * 0.5
             for c in self.colonies
             if c.kind == AnimalKind.RABBIT and c.can_harvest()
         )
         fox_food = self.fox_count() * self._wolf_feed_days("fox")
-        return max(0, int(animal_food + rabbit_food + fox_food))
+        prey_cap = max(0, int(animal_food + rabbit_food + fox_food))
+        hard = max(0, _bal_int("WOLF_MAX_POPULATION", WOLF_MAX_POPULATION, 0))
+        return min(prey_cap, hard) if hard > 0 else prey_cap
 
     def _pack_room(self, kind: AnimalKind) -> int:
         return max(0, self._pack_max_pop(kind) - self.pack_count(kind))
@@ -4026,17 +4043,17 @@ class WildlifeManager:
         self._cull_excess_predators()
 
     def _cull_excess_predators(self) -> None:
-        """Apply starvation mortality above prey-supported carrying capacity."""
+        """Trim packs above hard/prey carrying capacity (hungry packs first)."""
         for kind in PACK_KINDS:
             excess = max(0, self.pack_count(kind) - self._pack_max_pop(kind))
             if excess <= 0:
                 continue
-            hungry = sorted(
-                (p for p in self.wolf_packs if p.kind == kind and not p.is_fed(0.0)),
-                key=lambda p: p.size(),
-                reverse=True,
+            # Prefer starving packs, then largest fed packs.
+            ordered = sorted(
+                (p for p in self.wolf_packs if p.kind == kind),
+                key=lambda p: (p.is_fed(0.0), -p.size()),
             )
-            for pack in hungry:
+            for pack in ordered:
                 while pack.members and excess > 0:
                     pack.members.pop()
                     excess -= 1

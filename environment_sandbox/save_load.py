@@ -326,6 +326,8 @@ def _cell_to_dict(cell: Cell) -> dict[str, Any]:
         data["repellant_season"] = str(cell.repellant_season)
     if getattr(cell, "path_worn", False):
         data["path_worn"] = True
+    if getattr(cell, "ploughed", False):
+        data["ploughed"] = True
     if cell.object_anchor_slot is not None:
         data["object_anchor_slot"] = int(cell.object_anchor_slot)
     if cell.meat_anchor_slot is not None:
@@ -375,6 +377,7 @@ def _cell_from_save(c: dict[str, Any], *, migrate_legacy_fertility: bool = False
         feather_deposit=int(c.get("feather_deposit", 0)),
         fish_deposit=int(c.get("fish_deposit", 0)),
         path_worn=path_worn,
+        ploughed=bool(c.get("ploughed", False)),
         tree_age_years=int(c.get("tree_age_years", 0)),
     )
     if crop_kind is not None:
@@ -892,6 +895,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
                 getattr(game.player, "ration_mode", None), "name", "NORMAL"
             ),
             "auto_eat": bool(getattr(game.player, "auto_eat", False)),
+            "skills": skills_to_dict(game.player.skills) if game.player.skills else {},
         },
         "home_storage": _storage_to_dict(game.home_storage),
         "regional_wealth": int(getattr(game, "regional_wealth", 0)),
@@ -1234,6 +1238,15 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
 
         game.player.ration_mode = RationMode.NORMAL
     game.player.auto_eat = bool(player_data.get("auto_eat", False))
+    from society import ensure_skills, player_skills
+
+    if player_data.get("skills"):
+        game.player.skills = ensure_skills(
+            skills_from_dict(player_data.get("skills")), player=True
+        )
+    else:
+        # Pre-skill saves: start the player at the default baseline.
+        game.player.skills = player_skills()
     game.player.move_cooldown = 0
     game.player.work_cooldown = 0
     from entities import snap_entity_visual

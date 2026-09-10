@@ -9,6 +9,7 @@ import pygame
 
 from game import Game
 from save_load import load_from_path,serialize_game
+from villager_inspect_dialog import DetailCategory
 from world import FeatureType
 from wildlife import AnimalKind,AnimalSex,animal_roam_interval
 from entities import BuildingKind,VillagerState
@@ -53,7 +54,7 @@ class TutorialScenarioTests(unittest.TestCase):
         update();self.assertTrue(game.scenario_dialog.open)
         game.scenario_dialog.dismissed=True;update()
         self.assertEqual(game.scenario.prompt,"Press I to open inventory")
-        game.player_inventory.open_window();update()
+        game._toggle_player_diary_section(DetailCategory.INVENTORY);update()
         self.assertEqual(game.scenario.prompt,"Right click on the berries to eat.")
         game._player_eat_item("berries");update()
         self.assertTrue(game.scenario_dialog.open)

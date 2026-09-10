@@ -2,9 +2,9 @@
 
 Player presses Enter/E on their cell (needs equipped tools for chop/hunt/fish).
 F eats the highlighted inventory food (select or hover); right-click food also eats.
-Q equips/unequips tools; I opens inventory (drag tools to equip). On a stocked
-construction site, E builds (pads or centre). Arrow keys move the player; WASD
-pans the camera — both work at the same time. Opening a workplace via E shows
+Q equips/unequips tools; I opens the Player diary Inventory section; B opens Buffs.
+On a stocked construction site, E builds (pads or centre). Arrow keys move the player;
+WASD pans the camera — both work at the same time. Opening a workplace via E shows
 Craft on recipes. Movement/work use villager satiation pacing. Toolbar handles
 build, tasks, speed, and File save/load. Esc clears selection / menus (does not quit).
 """
@@ -279,7 +279,7 @@ from scenario_dialog import ScenarioDialog
 from resource_inspect_dialog import ResourceInspectDialog
 from resource_tracker import ResourceHistory
 from resource_tracker_dialog import ResourceTrackerDialog
-from villager_inspect_dialog import VillagerInspectDialog
+from villager_inspect_dialog import DetailCategory, VillagerInspectDialog
 from resource_bar import VIEW_LABELS, ResourceBar
 from recipes import (
     apply_recipe,
@@ -350,6 +350,7 @@ from society import (
     season_pay_coins,
     skill_efficiency,
     skill_for_building,
+    skill_xp_for_action,
     skills_from_dict,
     skills_to_dict,
     spawn_travellers_from_templates,
@@ -362,6 +363,7 @@ from society import (
     villager_requirement_rows,
     villager_skill_level,
     villager_unmet_requirements,
+    work_effort_mult,
     apply_timed_happiness_impact,
 )
 from villager_roster import (
@@ -503,6 +505,7 @@ class Game:
         self.sound_settings = SoundSettingsDialog()
         self.assign_picker = AssignPickerDialog()
         self.player_inventory = PlayerInventoryDialog()
+        self._diary_hotkey_section: DetailCategory | None = None
         self.scenario = ScenarioDirector()
         self.scenario_dialog = ScenarioDialog()
         self._tutorial_sleep_started: float | None = None
@@ -1354,7 +1357,7 @@ class Game:
             AnimalKind.DEER: "deer", AnimalKind.BOAR: "boar",
             AnimalKind.OWL: "owl", AnimalKind.HAWK: "hawk",
         }
-        rng = random.Random(self.world.seed ^ self.calendar_day ^ 0x5245504F)
+        rng = random.Random(self.world.seed ^ int(self.calendar_day) ^ 0x5245504F)
 
         kept_animals = []
         for kind, key in kind_keys.items():
@@ -1493,6 +1496,7 @@ class Game:
             or self.decision_modal.open
             or self.institution_reveal.open
             or self.end_of_test_summary.open
+            or self.wildlife_repopulate_dialog.open
         )
 
     def _update_scenario(self) -> None:
@@ -2022,6 +2026,17 @@ class Game:
             elif self.scenario_dialog.open:
                 self.scenario_dialog.handle_event(event)
                 continue
+            elif (
+                event.type == pygame.MOUSEBUTTONDOWN
+                and event.button == 1
+                and self.wildlife_repopulate_dialog.open
+            ):
+                self.wildlife_repopulate_dialog.handle_mousedown(event.pos)
+                pending = self.wildlife_repopulate_dialog.pending_apply
+                if pending is not None:
+                    self.wildlife_repopulate_dialog.pending_apply = None
+                    self._repopulate_wildlife(pending)
+                continue
             elif (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
                   and self._handle_layers_menu_click(event.pos)):
                 continue
@@ -2125,13 +2140,6 @@ class Game:
                 if self.file_dialog.open:
                     self.file_dialog.handle_click(event.pos)
                     self._finish_file_dialog_if_needed()
-                    continue
-                if self.wildlife_repopulate_dialog.open:
-                    self.wildlife_repopulate_dialog.handle_mousedown(event.pos)
-                    pending = self.wildlife_repopulate_dialog.pending_apply
-                    if pending is not None:
-                        self.wildlife_repopulate_dialog.pending_apply = None
-                        self._repopulate_wildlife(pending)
                     continue
                 if self.assign_picker.open:
                     if self.assign_picker.contains(event.pos):
@@ -2249,6 +2257,23 @@ class Game:
                 ):
                     self.player_inventory.handle_mousedown(event.pos, button=3)
                     self._apply_player_inventory_action()
+                    continue
+                if (
+                    self.management.open
+                    and self.management.tab == MgmtTab.PLAYER
+                    and self.villager_inspect.open
+                    and self.villager_inspect.contains(event.pos)
+                ):
+                    self.villager_inspect.handle_mousedown(event.pos, button=3)
+                    self._apply_villager_inspect_action()
+                    continue
+                if (
+                    not self.management.open
+                    and self.villager_inspect.open
+                    and self.villager_inspect.contains(event.pos)
+                ):
+                    self.villager_inspect.handle_mousedown(event.pos, button=3)
+                    self._apply_villager_inspect_action()
                     continue
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 if self.file_dialog.open:
@@ -2568,6 +2593,7 @@ class Game:
                 self.building_inspect.close()
                 self.villager_inspect.close()
                 self.selected_construction_id = None
+                self._diary_hotkey_section = None
                 return
             if self.field_plan_dialog.open:
                 self.field_plan_dialog.close()
@@ -2620,11 +2646,11 @@ class Game:
         elif key == pygame.K_q:
             self._player_cycle_tool()
         elif key == pygame.K_i:
-            self.player_inventory.toggle()
+            self._toggle_player_diary_section(DetailCategory.INVENTORY)
         elif key == pygame.K_v:
             self._open_management_people_list()
         elif key == pygame.K_b:
-            self._cycle_place_kind()
+            self._toggle_player_diary_section(DetailCategory.BUFFS)
         elif key == pygame.K_t:
             self._toggle_height_edit()
         elif key == pygame.K_c:
@@ -2840,6 +2866,34 @@ class Game:
         cx, cy = self.camera.world_to_screen(float(x) + 0.5, float(y) + 0.5)
         dy = self._height_screen_lift(float(x) + 0.5, float(y) + 0.5)
         return cx, cy - int(round(dy))
+
+    def _draw_plough_furrows(
+        self, surface: pygame.Surface, cx: int, cy: int, size: int
+    ) -> None:
+        """Soft-edged diagonal furrow lines on bare ploughed soil."""
+        size = max(8, int(size))
+        cache = getattr(self, "_plough_furrow_cache", None)
+        if cache is None:
+            cache = {}
+            self._plough_furrow_cache = cache
+        stamp = cache.get(size)
+        if stamp is None:
+            stamp = pygame.Surface((size, size), pygame.SRCALPHA)
+            spacing = max(3, size // 5)
+            # Soft dark furrows: stacked translucent diagonals (//////).
+            layers = ((6, 55), (4, 90), (2, 130))
+            for offset in range(-size, size + spacing, spacing):
+                for width, alpha in layers:
+                    colour = (36, 22, 12, alpha)
+                    pygame.draw.line(
+                        stamp,
+                        colour,
+                        (offset, 0),
+                        (offset + size, size),
+                        width,
+                    )
+            cache[size] = stamp
+        surface.blit(stamp, (cx - size // 2, cy - size // 2))
 
     def _toggle_height_sample(self) -> None:
         self.height_sample_enabled = not self.height_sample_enabled
@@ -4946,6 +5000,7 @@ class Game:
             self.field_plan_dialog.close()
             self.building_inspect.close()
             self.villager_inspect.open_for(self._player_inspect_model())
+            self._diary_hotkey_section = None
             return
         if action == "toggle_detail":
             if self.management.show_detail and not self.management.show_list:
@@ -5005,6 +5060,38 @@ class Game:
             self.sounds.emit("ui.window.change")
         self._mgmt_auto_select_people()
         self._set_status("People — villager list (V).")
+
+    def _toggle_player_diary_section(self, section: DetailCategory) -> None:
+        """Open Player diary focused on a section; I/B toggle the same section closed."""
+        already = (
+            self.management.open
+            and self.management.tab == MgmtTab.PLAYER
+            and self.villager_inspect.open
+            and self._diary_hotkey_section == section
+        )
+        if already:
+            self.management.close()
+            self.villager_inspect.close()
+            self._diary_hotkey_section = None
+            return
+        self.player_inventory.close()
+        was_open = self.management.open
+        self.management.open_window(MgmtTab.PLAYER)
+        self.management.show_player = True
+        self.management.show_detail = True
+        self.management.show_list = True
+        self.management._scroll = 0
+        self.management._layout_panel()
+        self.field_plan_dialog.close()
+        self.building_inspect.close()
+        self.villager_inspect.open_for(self._player_inspect_model())
+        self.villager_inspect.focus_section(section)
+        self._diary_hotkey_section = section
+        if not was_open:
+            self.sounds.emit("ui.window.change")
+        label = "Inventory" if section == DetailCategory.INVENTORY else "Buffs"
+        key = "I" if section == DetailCategory.INVENTORY else "B"
+        self._set_status(f"Player — {label} ({key}).")
 
     def _mgmt_auto_select_people(self) -> None:
         if self.management.people_mode == "hire":
@@ -7742,7 +7829,7 @@ class Game:
             food_walk_mult=p.food_walk_mult,
             food_work_mult=p.food_work_mult,
             food_hunger_mult=p.food_hunger_mult,
-            skills={},
+            skills=dict(p.skills),
         )
         return model
 
@@ -7758,6 +7845,35 @@ class Game:
                 inv.unequip_tool(action.split(":", 1)[1])
             elif action.startswith("clothing_unequip:"):
                 inv.unequip_clothing(action.split(":", 1)[1])
+            elif action.startswith("equip:"):
+                key = action.split(":", 1)[1]
+                from resources import resource_label
+
+                if inv.equip_tool(key):
+                    self._set_status(f"Equipped {resource_label(key)}.")
+                else:
+                    self._set_status(f"Cannot equip {resource_label(key)}.")
+            elif action.startswith("equip_clothing:"):
+                key = action.split(":", 1)[1]
+                from resources import resource_label
+
+                if inv.equip_clothing(key):
+                    self._set_status(f"Equipped {resource_label(key)}.")
+                else:
+                    self._set_status(f"Cannot equip {resource_label(key)}.")
+            elif action.startswith("select:"):
+                key = action.split(":", 1)[1]
+                from resources import resource_label
+
+                self._set_status(f"{resource_label(key)} ×{int(getattr(inv, key, 0))}")
+            elif action.startswith("eat:"):
+                self._player_eat_item(action.split(":", 1)[1])
+            elif action.startswith("use:"):
+                key = action.split(":", 1)[1]
+                from resources import resource_label
+
+                if not self.scenario.use_inventory_item(self, key):
+                    self._set_status(f"Cannot use {resource_label(key)} right now.")
             elif action.startswith("ration_"):
                 try:
                     self.player.ration_mode = RationMode[action[len("ration_") :]]
@@ -9313,22 +9429,40 @@ class Game:
             if not self.player.inventory.has_equipped_tool("axe"):
                 self._set_status("Equip an axe (Q) to chop trees.")
                 return
+            take = max(1, int(getattr(cell, "deposit", 1) or 1))
+            room = max(
+                0,
+                self.player.inventory.effective_capacity
+                - self.player.inventory.cargo_total,
+            )
+            if room > 0:
+                take = max(1, min(take, room))
             self._player_focus_world_job(
                 action="chop",
                 x=x,
                 y=y,
                 skill=SkillType.EXTRACTION,
                 label="Chopping",
+                amount=take,
             )
             return
 
         if cell.feature == FeatureType.ROCK:
+            take = max(1, int(getattr(cell, "deposit", 1) or 1))
+            room = max(
+                0,
+                self.player.inventory.effective_capacity
+                - self.player.inventory.cargo_total,
+            )
+            if room > 0:
+                take = max(1, min(take, room))
             self._player_focus_world_job(
                 action="rock",
                 x=x,
                 y=y,
                 skill=SkillType.EXTRACTION,
                 label="Mining rock",
+                amount=take,
             )
             return
 
@@ -10533,12 +10667,29 @@ class Game:
         """Mark work so the continuous daily drain uses its 2x rate."""
         villager._worked_this_tick = True  # type: ignore[attr-defined]
 
-    def _gain_job_skill(self, villager: Villager, kind_name: str) -> None:
+    def _gain_job_skill(
+        self,
+        villager: Villager,
+        kind_name: str,
+        *,
+        action: str | None = None,
+        amount: float | None = None,
+    ) -> None:
+        from society import SKILL_XP_PER_ACTION
+
         skill, _ = skill_for_building(kind_name)
+        if amount is not None:
+            xp = float(amount)
+        elif action is not None:
+            xp = skill_xp_for_action(action)
+        else:
+            effort = float(getattr(villager, "_work_effort", 1.0) or 1.0)
+            xp = float(SKILL_XP_PER_ACTION) * max(0.15, effort)
         self._gain_actor_skill(
             villager,
             skill,
             who=str(getattr(villager, "name", None) or f"Villager #{villager.id}"),
+            amount=xp,
         )
 
     def _notify_skill_level_up(
@@ -10556,11 +10707,57 @@ class Game:
         )
 
     def _gain_actor_skill(
-        self, actor: object, skill: SkillType, *, who: str
+        self,
+        actor: object,
+        skill: SkillType,
+        *,
+        who: str,
+        amount: float | None = None,
     ) -> None:
-        new_level = gain_skill(actor, skill)
+        from society import SKILL_XP_PER_ACTION
+
+        xp = SKILL_XP_PER_ACTION if amount is None else float(amount)
+        new_level = gain_skill(actor, skill, xp)
         if new_level is not None:
             self._notify_skill_level_up(who, skill, int(new_level))
+
+    def _work_effort_for_cell(self, x: int, y: int) -> float:
+        """Effort multiplier for a gather/chop cell based on what's there."""
+        cell = self.world.get_cell(x, y)
+        if cell is None:
+            return work_effort_mult("default")
+        feature = cell.feature
+        if feature == FeatureType.TREE:
+            return work_effort_mult("chop")
+        if feature == FeatureType.ROCK:
+            return work_effort_mult("rock")
+        if feature == FeatureType.MUSHROOM:
+            return work_effort_mult("mushroom")
+        if feature == FeatureType.WOOD_BUSH:
+            return work_effort_mult("wood_bush")
+        if feature == FeatureType.BERRY_BUSH:
+            return work_effort_mult("berries")
+        if feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.REED):
+            return work_effort_mult("herb")
+        if feature == FeatureType.CROP_HERB:
+            if self.world.crop_herb_ready(x, y):
+                return work_effort_mult("harvest_crop")
+            if float(getattr(cell, "weeds", 0.0)) > 0.05:
+                return work_effort_mult("weeds")
+            return work_effort_mult("default")
+        return work_effort_mult("default")
+
+    def _work_effort_for_farm_job(self, kind: object) -> float:
+        name = getattr(kind, "name", None) or str(kind)
+        mapping = {
+            "HARVEST": "harvest_crop",
+            "WEED": "weeds",
+            "SOW": "sow",
+            "PLOUGH": "plough",
+            "TREAT": "weeds",
+            "THRESH": "craft",
+        }
+        return work_effort_mult(mapping.get(str(name), "default"))
 
     def _chop_tree(
         self,
@@ -10570,6 +10767,8 @@ class Game:
         status: bool = False,
         *,
         require_axe: bool = False,
+        amount: int | None = None,
+        play_sound: bool = True,
     ) -> bool:
         if require_axe and not inventory.has_equipped_tool("axe"):
             if status:
@@ -10588,7 +10787,14 @@ class Game:
 
         tree = resolve_tree(cell.tree_species)
         yield_key = tree.yield_key
-        taken = self.world.harvest_wood(x, y, amount=1)
+        take = max(1, int(amount)) if amount is not None else 1
+        room = max(0, inventory.effective_capacity - inventory.cargo_total)
+        if room <= 0:
+            if status:
+                self._set_status("Inventory is full.")
+            return False
+        take = min(take, room, max(1, int(cell.deposit)))
+        taken = self.world.harvest_wood(x, y, amount=take)
         if taken <= 0:
             if status:
                 self._set_status("No wood left.")
@@ -10605,7 +10811,8 @@ class Game:
                 self.record_produced(skey, 1)
                 sapling_msg = f" +1 {tree.label.lower()} sapling"
         self.world.apply_extraction_disturbance(x, y)
-        self.sounds.emit("work.chop",actor="player",x=x,y=y)
+        if play_sound:
+            self.sounds.emit("work.chop", actor="player", x=x, y=y)
         self._refresh_indicators()
         if status:
             left = self.world.get_cell(x, y)
@@ -10616,7 +10823,15 @@ class Game:
             )
         return True
 
-    def _collect_rock(self, x: int, y: int, inventory: Inventory, status: bool = False) -> bool:
+    def _collect_rock(
+        self,
+        x: int,
+        y: int,
+        inventory: Inventory,
+        status: bool = False,
+        *,
+        amount: int | None = None,
+    ) -> bool:
         if inventory.is_full:
             if status:
                 self._set_status("Inventory is full.")
@@ -10626,7 +10841,14 @@ class Game:
             if status:
                 self._set_status("No rock here.")
             return False
-        taken = self.world.harvest_rock(x, y, amount=1)
+        take = max(1, int(amount)) if amount is not None else 1
+        room = max(0, inventory.effective_capacity - inventory.cargo_total)
+        if room <= 0:
+            if status:
+                self._set_status("Inventory is full.")
+            return False
+        take = min(take, room, max(1, int(cell.deposit)))
+        taken = self.world.harvest_rock(x, y, amount=take)
         if taken <= 0:
             if status:
                 self._set_status("No rock left.")
@@ -10721,12 +10943,13 @@ class Game:
         if not crop_allows_plant(crop, self.season):
             self._set_status(f"{crop.label} cannot be planted this season.")
             return True
-        # Plough when the tile is not yet bare soil (or still blocked).
-        needs_plough = cell.terrain not in SOIL_LIKE or cell.feature not in (
-            FeatureType.NONE,
-            FeatureType.CROP_HERB,
+        # Plough until the tile is bare soil with furrow marks ready to sow.
+        ready_to_sow = (
+            cell.terrain in SOIL_LIKE
+            and cell.feature == FeatureType.NONE
+            and bool(getattr(cell, "ploughed", False))
         )
-        if needs_plough and cell.feature != FeatureType.CROP_HERB:
+        if not ready_to_sow and cell.feature != FeatureType.CROP_HERB:
             if not self.player.inventory.has_equipped_tool("hoe"):
                 self._set_status("Equip a hoe (Q) to plough this field tile.")
                 return True
@@ -11115,12 +11338,14 @@ class Game:
         recipe = self._craftable_split_recipe(building, worker=villager)
         if recipe is None:
             return False
-        if not self._work_swing_complete(villager, at=(villager.x, villager.y)):
+        if not self._work_swing_complete(
+            villager, at=(villager.x, villager.y), effort=work_effort_mult("split")
+        ):
             return True
         self._spend_work_energy(villager)
         if building.advance_recipe_progress(recipe, split=True):
             self._apply_recipe_tracked(building, recipe)
-            self._gain_job_skill(villager, building.kind.name)
+            self._gain_job_skill(villager, building.kind.name, action="split")
         return True
 
     def _deposit_home(self, inventory: Inventory, status: bool = True) -> bool:
@@ -12261,19 +12486,20 @@ class Game:
         villager.work_in_progress = False
         villager.work_anchor = None
         villager.work_cooldown = 0
+        if hasattr(villager, "_work_effort"):
+            villager._work_effort = 1.0  # type: ignore[attr-defined]
 
     def _work_swing_complete(
         self,
         villager: Villager,
         *,
         at: tuple[int, int] | None = None,
+        effort: float = 1.0,
     ) -> bool:
         """Spend work time on-site first; return True only when the swing finishes.
 
-        Call while the villager is at the work location. First call starts the
-        swing (sets ``work_cooldown``). Later, when the cooldown expires while
-        still on the anchor cell, returns True so the caller can apply the
-        world effect (weed, plant, chop, craft step, etc.).
+        ``effort`` scales duration (and is stored for XP on completion). Light
+        pickups use values well below 1.0; tree chops / field harvests ≥ 1.0.
         """
         here = at if at is not None else (villager.x, villager.y)
         anchor = getattr(villager, "work_anchor", None)
@@ -12291,9 +12517,12 @@ class Game:
             villager.work_anchor = None
             return True
 
+        effort_mult = max(0.15, float(effort))
         villager.work_in_progress = True
         villager.work_anchor = here
-        villager.work_cooldown = self._villager_work_interval(villager)
+        villager._work_effort = effort_mult  # type: ignore[attr-defined]
+        base = self._villager_work_interval(villager)
+        villager.work_cooldown = max(1, int(round(base * effort_mult)))
         return False
 
     def _temp_impact(self, inventory: Inventory):
@@ -12443,11 +12672,15 @@ class Game:
         label: str,
         tag: str = "",
         meta: dict | None = None,
+        amount: int = 1,
     ) -> None:
         """Start or resume work on a world object; progress persists if you leave."""
         key = self._player_world_job_key(action, x, y, tag=tag)
         job = self._player_world_jobs.get(key)
-        need = max(1, self._player_work_interval(skill))
+        amt = max(1, int(amount))
+        effort = work_effort_mult(action, amount=amt)
+        need = max(1, int(round(self._player_work_interval(skill) * effort)))
+        xp = skill_xp_for_action(action, amount=amt)
         if job is None:
             job = {
                 "key": key,
@@ -12460,11 +12693,20 @@ class Game:
                 "label": label,
                 "meta": dict(meta or {}),
                 "tag": tag,
+                "effort": effort,
+                "xp": xp,
+                "amount": amt,
+                "sfx_at": -1,
             }
             self._player_world_jobs[key] = job
+            self._emit_player_work_sfx(action, x, y)
+            job["sfx_at"] = 0
         else:
             job["label"] = label
             job["skill"] = skill
+            job["effort"] = effort
+            job["xp"] = xp
+            job["amount"] = amt
             if meta:
                 job["meta"] = dict(meta)
             # Keep accumulated ``done``; refresh duration only if empty progress.
@@ -12473,6 +12715,19 @@ class Game:
         self._player_active_job_key = key
         frac = int(100 * int(job["done"]) / max(1, int(job["need"])))
         self._set_status(f"{label}… {frac}%.")
+
+    def _emit_player_work_sfx(self, action: str, x: int, y: int) -> None:
+        """Play the looping work sound for a world action (cooldown-gated)."""
+        trigger = {
+            "chop": "work.chop",
+            "plant": "work.plant",
+            "sow": "work.plant",
+            "plough": "work.plant",
+            "weeds": "work.plant",
+            "harvest_crop": "work.plant",
+        }.get(str(action))
+        if trigger:
+            self.sounds.emit(trigger, actor="player", x=x, y=y)
 
     def _player_clear_world_job(self, key: str | None) -> None:
         if not key:
@@ -12598,9 +12853,13 @@ class Game:
         meta = job.get("meta") or {}
         inv = self.player.inventory
         if action == "chop":
-            return self._chop_tree(x, y, inv, status=True, require_axe=True)
+            amt = max(1, int(job.get("amount", 1) or 1))
+            return self._chop_tree(
+                x, y, inv, status=True, require_axe=True, amount=amt, play_sound=False
+            )
         if action == "rock":
-            return self._collect_rock(x, y, inv, status=True)
+            amt = max(1, int(job.get("amount", 1) or 1))
+            return self._collect_rock(x, y, inv, status=True, amount=amt)
         if action == "mushroom":
             return self._collect_mushroom(x, y, inv, status=True)
         if action == "wood_bush":
@@ -12741,6 +13000,7 @@ class Game:
         cell.terrain = TerrainType.SOIL
         cell.feature = FeatureType.NONE
         cell.crop_kind = None
+        cell.ploughed = True
         self.world.mark_terrain_dirty(x, y)
         self._set_status(f"Ploughed field for {crop_label.lower()}.")
         return True
@@ -12801,7 +13061,14 @@ class Game:
         self.player.work_in_progress = True
         job["done"] = int(job.get("done", 0) or 0) + int(ticks)
         need = max(1, int(job.get("need", 1) or 1))
-        if int(job["done"]) < need:
+        done = int(job["done"])
+        # Pulse work SFX during the bar (cooldown in sound_system gates spam).
+        sfx_at = int(job.get("sfx_at", -1) or -1)
+        pulse = max(4, need // 4)
+        if done < need and done - sfx_at >= pulse:
+            self._emit_player_work_sfx(str(job.get("action") or ""), int(job["x"]), int(job["y"]))
+            job["sfx_at"] = done
+        if done < need:
             return
 
         skill = job.get("skill")
@@ -12817,8 +13084,11 @@ class Game:
             - ENERGY_WORK_DRAIN * self._temp_energy_mult(self.player.inventory),
         )
         if ok:
-            self._gain_actor_skill(self.player, skill, who="You")
-        # One swing done — clear job; multi-hit targets (trees) start fresh next interact.
+            from society import SKILL_XP_PER_ACTION
+
+            xp = float(job.get("xp", SKILL_XP_PER_ACTION) or SKILL_XP_PER_ACTION)
+            self._gain_actor_skill(self.player, skill, who="You", amount=xp)
+        # One swing done — clear job (trees/rocks now finish in a single scaled swing).
         self._player_clear_world_job(key)
         self.player.work_in_progress = False
 
@@ -13298,7 +13568,15 @@ class Game:
 
     def _highlighted_player_food(self) -> str | None:
         """Food key selected or hovered in the player inventory UI."""
-        key = self.player_inventory.highlighted_key()
+        key = None
+        if (
+            self.management.open
+            and self.management.tab == MgmtTab.PLAYER
+            and self.villager_inspect.open
+        ):
+            key = self.villager_inspect.highlighted_key()
+        if key is None:
+            key = self.player_inventory.highlighted_key()
         if key is None:
             return None
         if key not in VILLAGER_FOOD_KEYS:
@@ -13347,6 +13625,10 @@ class Game:
             p.inventory, key, 0
         ) <= 0:
             self.player_inventory.selected_key = None
+        if self.villager_inspect.selected_key == key and getattr(
+            p.inventory, key, 0
+        ) <= 0:
+            self.villager_inspect.selected_key = None
         self._set_status(
             f"Ate {label}. Walk ×{format_buff_mult(p.food_walk_mult)} · "
             f"Work ×{format_buff_mult(p.food_work_mult)}."
@@ -16053,7 +16335,9 @@ class Game:
                 villager.state = VillagerState.BUILDING
                 return
             villager.state = VillagerState.BUILDING
-            if not self._work_swing_complete(villager, at=site.center_cell()):
+            if not self._work_swing_complete(
+                villager, at=site.center_cell(), effort=work_effort_mult("build")
+            ):
                 return
             # Construction requirements are authored in simulation ticks.
             # Credit one full villager work interval per completed action.
@@ -16339,7 +16623,8 @@ class Game:
             return
 
         if (villager.x, villager.y) == target:
-            if not self._work_swing_complete(villager, at=target):
+            effort = self._work_effort_for_cell(*target)
+            if not self._work_swing_complete(villager, at=target, effort=effort):
                 return
             self._villager_perform(villager, building, target)
             if getattr(villager, "_return_after_harvest", False):
@@ -16439,7 +16724,9 @@ class Game:
                     return
                 villager.target = None
                 return
-            if not self._work_swing_complete(villager, at=target):
+            if not self._work_swing_complete(
+                villager, at=target, effort=self._work_effort_for_cell(*target)
+            ):
                 return
             self._villager_perform(villager, building, target)
             if self._gather_cargo_needs_delivery(villager, building):
@@ -17049,7 +17336,9 @@ class Game:
         self._register_field_claim(villager, target)
         villager.state = VillagerState.WORKING
         if (villager.x, villager.y) == target:
-            if not self._work_swing_complete(villager, at=target):
+            if not self._work_swing_complete(
+                villager, at=target, effort=self._work_effort_for_farm_job(kind)
+            ):
                 return
             if kind == FarmJobKind.TREAT:
                 self._farm_apply_repellant(villager, building, target)
@@ -17185,7 +17474,9 @@ class Game:
             villager.craft_recipe_name = None
             return
         villager.craft_recipe_name = recipe.name
-        if not self._work_swing_complete(villager, at=(bx, by)):
+        if not self._work_swing_complete(
+            villager, at=(bx, by), effort=work_effort_mult("craft")
+        ):
             return
         self._spend_work_energy(villager)
         if building.advance_recipe_progress(recipe):
@@ -17193,7 +17484,7 @@ class Game:
             self._apply_recipe_tracked(building, recipe, fuel_wood=fuel)
             if fuel:
                 building.fuel_wood = max(0, building.fuel_wood - 1)
-            self._gain_job_skill(villager, building.kind.name)
+            self._gain_job_skill(villager, building.kind.name, action="craft")
 
     def _try_addon_craft(self, villager: Villager, building: Building) -> bool:
         """Farm barn / hunter drying-rack crafts on the parent workplace."""
@@ -17307,12 +17598,14 @@ class Game:
 
         building.deposit_from_inventory(villager.inventory)
         villager.craft_recipe_name = recipe.name
-        if not self._work_swing_complete(villager, at=(bx, by)):
+        if not self._work_swing_complete(
+            villager, at=(bx, by), effort=work_effort_mult("craft")
+        ):
             return True
         self._spend_work_energy(villager)
         if building.advance_recipe_progress(recipe):
             self._apply_recipe_tracked(building, recipe)
-            self._gain_job_skill(villager, building.kind.name)
+            self._gain_job_skill(villager, building.kind.name, action="craft")
         return True
 
     def _try_barn_thresh(
@@ -17370,12 +17663,14 @@ class Game:
 
         self._deposit_sheaves_to_barn(farm, villager.inventory)
         villager.craft_recipe_name = ready.name
-        if not self._work_swing_complete(villager, at=site):
+        if not self._work_swing_complete(
+            villager, at=site, effort=work_effort_mult("craft")
+        ):
             return True
         self._spend_work_energy(villager)
         if farm.advance_recipe_progress(ready):
             self._apply_barn_thresh_recipe(farm, ready, None)
-            self._gain_job_skill(villager, farm.kind.name)
+            self._gain_job_skill(villager, farm.kind.name, action="craft")
         return True
 
     def _market_storehouse_surplus(self, key: str, reserve: int) -> int:
@@ -17547,7 +17842,9 @@ class Game:
 
         building.deposit_from_inventory(villager.inventory)
 
-        if not self._work_swing_complete(villager, at=(bx, by)):
+        if not self._work_swing_complete(
+            villager, at=(bx, by), effort=work_effort_mult("market")
+        ):
             return
         if self._market_can_sell(building):
             import random
@@ -17556,12 +17853,14 @@ class Game:
             if random.random() < self._market_sell_chance(building) and self._market_try_sell(
                 building
             ):
-                self._gain_job_skill(villager, building.kind.name)
+                self._gain_job_skill(villager, building.kind.name, action="market")
             # Immediately begin the next sell attempt swing at market pace.
             villager.work_in_progress = True
             villager.work_anchor = (bx, by)
+            villager._work_effort = work_effort_mult("market")  # type: ignore[attr-defined]
             villager.work_cooldown = max(
-                self._villager_work_interval(villager), MARKET_SELL_INTERVAL
+                int(round(self._villager_work_interval(villager) * work_effort_mult("market"))),
+                MARKET_SELL_INTERVAL,
             )
             return
         self._set_workplace_idle(villager)
@@ -17857,7 +18156,11 @@ class Game:
                     cell = self.world.get_cell(x, y)
                     if cell is None or cell.feature == FeatureType.CROP_HERB:
                         continue
-                    if cell.terrain in SOIL_LIKE and cell.feature == FeatureType.NONE:
+                    if (
+                        cell.terrain in SOIL_LIKE
+                        and cell.feature == FeatureType.NONE
+                        and bool(getattr(cell, "ploughed", False))
+                    ):
                         continue
                     if is_water_terrain(cell.terrain) or cell.terrain == TerrainType.ROCK:
                         continue
@@ -18404,7 +18707,9 @@ class Game:
             villager.state = VillagerState.WORKING
             villager.target = meat_pos
             if (villager.x, villager.y) == meat_pos:
-                if not self._work_swing_complete(villager, at=meat_pos):
+                if not self._work_swing_complete(
+                    villager, at=meat_pos, effort=work_effort_mult("meat")
+                ):
                     return
                 if self._collect_meat(*meat_pos, villager.inventory, status=False):
                     self._spend_work_energy(villager)
@@ -18462,7 +18767,9 @@ class Game:
             villager.target = (colony.x, colony.y)
             dist = max(abs(colony.x - villager.x), abs(colony.y - villager.y))
             if dist <= 1:
-                if not self._work_swing_complete(villager):
+                if not self._work_swing_complete(
+                    villager, effort=work_effort_mult("warren")
+                ):
                     return
                 has_knife = villager.inventory.has_equipped_tool("knife")
                 if not self._hunt_recipe_outputs_fit(
@@ -18517,13 +18824,17 @@ class Game:
         has_spear = villager.inventory.has_equipped_tool("spear")
 
         if can_ranged and dist <= HUNTER_BOW_RANGE:
-            if not self._work_swing_complete(villager):
+            if not self._work_swing_complete(
+                villager, effort=work_effort_mult("hunt")
+            ):
                 return
             self._hunter_fire_bow(villager, building, animal)
             return
 
         if has_spear and dist <= 1:
-            if not self._work_swing_complete(villager):
+            if not self._work_swing_complete(
+                villager, effort=work_effort_mult("hunt")
+            ):
                 return
             result = self.wildlife.kill_animal(animal.id)
             villager.hunt_animal_id = None
@@ -18865,12 +19176,14 @@ class Game:
                 self._step_villager_toward(villager, site)
             return True
         villager.craft_recipe_name = recipe.name
-        if not self._work_swing_complete(villager, at=site):
+        if not self._work_swing_complete(
+            villager, at=site, effort=work_effort_mult("craft")
+        ):
             return True
         self._spend_work_energy(villager)
         if building.advance_recipe_progress(recipe):
             self._apply_recipe_tracked(building, recipe)
-            self._gain_job_skill(villager, building.kind.name)
+            self._gain_job_skill(villager, building.kind.name, action="craft")
         return True
 
     def _fisher_collect_bait(
@@ -18955,7 +19268,9 @@ class Game:
         if catch_pos is not None and not villager.inventory.is_full:
             villager.state = VillagerState.WORKING
             if (villager.x, villager.y) == catch_pos:
-                if not self._work_swing_complete(villager, at=catch_pos):
+                if not self._work_swing_complete(
+                    villager, at=catch_pos, effort=work_effort_mult("fish_deposit")
+                ):
                     return
                 if self._collect_fish(*catch_pos, villager.inventory, status=False):
                     self._spend_work_energy(villager)
@@ -19023,7 +19338,9 @@ class Game:
             self._abort_work_swing(villager)
             villager.work_cooldown = max(4, self._villager_move_interval(villager) // 4)
             return
-        if not self._work_swing_complete(villager):
+        if not self._work_swing_complete(
+            villager, effort=work_effort_mult("fish_catch")
+        ):
             return
         target = min(
             catchable,
@@ -22145,7 +22462,6 @@ class Game:
         self.decision_modal.draw(self.screen, mouse)
         self.institution_reveal.draw(self.screen, mouse)
         self.end_of_test_summary.draw(self.screen, mouse)
-        self.wildlife_repopulate_dialog.draw(self.screen, mouse)
         if self.villager_roster.open:
             if self.villager_roster.mode == "place_traveller":
                 self.villager_roster.draw(
@@ -22193,6 +22509,7 @@ class Game:
         self.sound_settings.draw(self.screen, self.sounds)
         self.file_dialog.draw(self.screen)
         self.number_input.draw(self.screen)
+        self.wildlife_repopulate_dialog.draw(self.screen, mouse)
         focused = self.scenario.quest_navigation.focused(self.scenario.objectives())
         group_rows = self.scenario.quest_navigation.group_rows(self.scenario.objectives())
         dialog = self.scenario_dialog
@@ -23497,6 +23814,10 @@ class Game:
                     or cell.meat_deposit > 0
                     or cell.fish_deposit > 0
                     or cell.extra_objects
+                    or (
+                        getattr(cell, "ploughed", False)
+                        and cell.feature == FeatureType.NONE
+                    )
                 ):
                     primary_cells.append((x, y))
 
@@ -23613,6 +23934,12 @@ class Game:
 
                 weed_size = max(8, int(round(draw_size * (0.4 + 0.6 * weeds))))
                 blit_icon(self.screen, "crop_weeds", cx, cy, weed_size)
+            if (
+                getattr(cell, "ploughed", False)
+                and cell.feature == FeatureType.NONE
+                and cell.terrain in SOIL_LIKE
+            ):
+                self._draw_plough_furrows(self.screen, cx, cy, draw_size)
             if cell.feature == FeatureType.CONSTRUCTION_SITE:
                 site = self._construction_at(x, y)
                 if site is not None and site.center_cell() == (x, y):
@@ -24619,7 +24946,10 @@ class Game:
         if not getattr(villager, "work_in_progress", False):
             return None
         cooldown = int(getattr(villager, "work_cooldown", 0) or 0)
-        interval = max(1, self._villager_work_interval(villager))
+        effort = float(getattr(villager, "_work_effort", 1.0) or 1.0)
+        interval = max(
+            1, int(round(self._villager_work_interval(villager) * max(0.15, effort)))
+        )
         # Cooldown counts down while working; bar fills as the task completes.
         phase = 1.0 - min(1.0, max(0.0, cooldown / interval))
 

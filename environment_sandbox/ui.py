@@ -2404,13 +2404,33 @@ def draw_feature(
             else:
                 crop = CROP_BY_KEY.get(crop_kind or "sage") or CROP_BY_KEY["sage"]
                 from crops import crop_class_presentation,crop_presentation
+                from seasons import Season
                 seasonal_icon,seasonal_stem,seasonal_flower=crop_presentation(crop,season_name)
                 stem = adjust_colour(seasonal_stem, vibrancy)
-                # Farm crops look sparse while growing; dense only when ready to harvest.
-                ripe = feature != FeatureType.CROP_HERB or growth_ticks <= 0
-                dense=ripe and feature == FeatureType.CROP_HERB
-                name=(crop.dense_icon_base or f"{seasonal_icon}_dense") if dense else seasonal_icon
-                class_colours,omit=crop_class_presentation(crop,season_name)
+                # Newly planted crops use seedling art during their plant season.
+                plant_season_now = False
+                if (
+                    feature == FeatureType.CROP_HERB
+                    and growth_ticks > 0
+                    and season_name
+                ):
+                    try:
+                        plant_season_now = Season[season_name] == crop.plant_season
+                    except KeyError:
+                        plant_season_now = False
+                if plant_season_now:
+                    name = "seedling_dense"
+                    class_colours, omit = crop_class_presentation(crop, season_name)
+                else:
+                    # Farm crops look sparse while growing; dense only when ready.
+                    ripe = feature != FeatureType.CROP_HERB or growth_ticks <= 0
+                    dense = ripe and feature == FeatureType.CROP_HERB
+                    name = (
+                        (crop.dense_icon_base or f"{seasonal_icon}_dense")
+                        if dense
+                        else seasonal_icon
+                    )
+                    class_colours, omit = crop_class_presentation(crop, season_name)
                 recolour={name:adjust_colour(colour,vibrancy) for name,colour in class_colours.items()}
                 blit_icon(
                     surface,

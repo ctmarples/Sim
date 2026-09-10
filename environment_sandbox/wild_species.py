@@ -382,7 +382,7 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
             ("leaf", (70, 130, 55)),
         ),
         seed_near_feature="TREE",
-        seed_near_chance=0.1,
+        seed_near_chance=0.03,
         spawn_peak=0.01,
         spawn_rise=(54.0, 62.0),
         spawn_fall=(78.0, 84.0),

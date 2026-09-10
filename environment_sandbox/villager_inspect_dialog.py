@@ -13,7 +13,9 @@ from pathlib import Path
 import pygame
 
 from entities import (
+    CLOTHING_ITEM_SLOT,
     RATION_LABELS,
+    TOOL_KEYS,
     Inventory,
     RationMode,
     Villager,
@@ -144,6 +146,8 @@ class VillagerInspectDialog:
         self._measured_body_h = 0
         self._scroll_areas: dict[str, tuple[pygame.Rect, int, int]] = {}
         self._section_anchors: dict[DetailCategory, int] = {}
+        self._pending_section: DetailCategory | None = None
+        self.selected_key: str | None = None
         self._scrollbar_track = pygame.Rect(0, 0, 0, 0)
         self._scrollbar_thumb = pygame.Rect(0, 0, 0, 0)
         self._scroll_dragging = False
@@ -183,6 +187,7 @@ class VillagerInspectDialog:
         self._scroll_areas = {}
         self._panel_w = 520 if show_player else 320
         self._panel_h = 420
+        self.selected_key = None
         map_w = map_view_width()
         if screen_xy is not None:
             prefer_x = screen_xy[0] + 24
@@ -207,6 +212,20 @@ class VillagerInspectDialog:
         self._scroll = {}
         self._scroll_velocity = {}
         self._scroll_areas = {}
+        self._pending_section = None
+        self.selected_key = None
+
+    def focus_section(self, category: DetailCategory) -> None:
+        """Jump to a diary section on the next draw (anchors measured then)."""
+        self.detail_category = category
+        self._pending_section = category
+        self._scroll_velocity["panel_body"] = 0.0
+
+    def highlighted_key(self) -> str | None:
+        """Hovered cargo item, else the last left-clicked selection."""
+        if self.open and self._tooltip_key:
+            return self._tooltip_key
+        return self.selected_key
 
     def take_action(self) -> str | None:
         action = self._pending_action
@@ -302,9 +321,28 @@ class VillagerInspectDialog:
             return True
         return False
 
-    def handle_mousedown(self, pos: tuple[int, int]) -> bool:
+    def handle_mousedown(self, pos: tuple[int, int], *, button: int = 1) -> bool:
         if not self.open or not self.contains(pos):
             return False
+        is_player = self.villager_id is not None and self.villager_id < 0
+        if button == 3:
+            if not is_player:
+                return True
+            for rect, _side, key in self._inv_hits:
+                if rect.collidepoint(pos):
+                    self.selected_key = key
+                    if key == "book":
+                        self._pending_action = f"use:{key}"
+                    elif key in CLOTHING_ITEM_SLOT:
+                        self._pending_action = f"equip_clothing:{key}"
+                    elif key in TOOL_KEYS:
+                        self._pending_action = f"equip:{key}"
+                    else:
+                        self._pending_action = f"eat:{key}"
+                    return True
+            return True
+        if button != 1:
+            return True
         if self._close_rect.collidepoint(pos):
             self.close()
             return True
@@ -348,7 +386,15 @@ class VillagerInspectDialog:
                 return True
         for rect, side, key in self._inv_hits:
             if rect.collidepoint(pos):
-                if side == "villager":
+                if is_player:
+                    self.selected_key = key
+                    if key in TOOL_KEYS:
+                        self._pending_action = f"equip:{key}"
+                    elif key in CLOTHING_ITEM_SLOT:
+                        self._pending_action = f"equip_clothing:{key}"
+                    else:
+                        self._pending_action = f"select:{key}"
+                elif side == "villager":
                     self._pending_action = f"xfer_to_player:{key}"
                 else:
                     self._pending_action = f"xfer_to_villager:{key}"
@@ -817,7 +863,7 @@ class VillagerInspectDialog:
                     (x, y),
                 )
                 y += self.font_small.get_linesize() + 8
-            if is_player or not villager.skills:
+            if not villager.skills:
                 surface.blit(self.font_small.render("No trained village skills", True, COLOUR_TEXT_DIM), (x, y))
                 y += self.font_small.get_linesize()
             else:
@@ -888,16 +934,26 @@ class VillagerInspectDialog:
             y += clothes_h + 12
             amounts = amounts_from_obj(villager.inventory)
             from food_spoilage import qualities_for_display
-            inv_h, _hits, tips, hovered_item, *_ = draw_inv_grid(
+            inv_h, hits, tips, hovered_item, *_ = draw_inv_grid(
                 surface, origin=(x, y), width=inner_w, title="Carried",
                 subtitle=f"{villager.inventory.cargo_total}/{villager.inventory.effective_capacity}",
                 amounts=amounts, allowed=None, side="villager", mouse_pos=mouse_pos,
-                fonts=self._fonts(), interactive=False, hover_inv=self._hover_inv,
+                fonts=self._fonts(), interactive=is_player, hover_inv=self._hover_inv,
+                selected_key=self.selected_key if is_player else None,
                 qualities=qualities_for_display(villager.inventory),
             )
+            if is_player:
+                self._inv_hits = hits
             self._inv_tip_hits.extend(tips)
             self._tooltip_key = (hovered_item[1] if hovered_item else tool_tip or clothes_tip)
             y += inv_h
+
+        if self._pending_section is not None:
+            target = self._section_anchors.get(self._pending_section)
+            if target is not None:
+                self.detail_category = self._pending_section
+                self._scroll["panel_body"] = float(target)
+                self._pending_section = None
 
         content_h = max(1, y + scroll - view.y + pad)
         self._measured_body_h = content_h

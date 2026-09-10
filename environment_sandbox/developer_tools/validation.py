@@ -99,7 +99,7 @@ def validate_recipe_catalogue(data_dir: Path | None = None) -> ValidationReport:
                         if key: declared_outputs.add(key)
         except (OSError, csv.Error, UnicodeError):
             pass
-    seen: dict[str, tuple[Path, int]] = {}
+    seen: dict[tuple[str, str], tuple[Path, int]] = {}
     for folder, _attr in _BUILDING_RECIPE_ATTR.items():
         directory = base / folder
         if not directory.is_dir():
@@ -119,11 +119,12 @@ def validate_recipe_catalogue(data_dir: Path | None = None) -> ValidationReport:
             if not name:
                 report.add(ValidationSeverity.ERROR, "missing_recipe_key", "Recipe name is required", file=str(path), row=number, field="name")
                 continue
-            if name in seen:
-                first_path, first_row = seen[name]
-                report.add(ValidationSeverity.ERROR, "duplicate_recipe_key", f"Duplicate recipe {name!r}; first at {first_path}:{first_row}", file=str(path), row=number, field="name")
+            key = (folder, name)
+            if key in seen:
+                first_path, first_row = seen[key]
+                report.add(ValidationSeverity.ERROR, "duplicate_recipe_key", f"Duplicate recipe {name!r} in {folder}; first at {first_path}:{first_row}", file=str(path), row=number, field="name")
             else:
-                seen[name] = (path, number)
+                seen[key] = (path, number)
             inputs = _parse_amounts(row.get("inputs", ""), report, path=path, row=number, field_name="inputs")
             outputs = _parse_amounts(row.get("outputs", ""), report, path=path, row=number, field_name="outputs")
             declared_outputs.update(outputs)

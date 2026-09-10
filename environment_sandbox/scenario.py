@@ -492,7 +492,13 @@ class ScenarioDirector:
             return
         if step == "found_berries_dialog" and self.state.bush_x is not None:
             self._pan_camera_toward(game, self.state.bush_x+.5, self.state.bush_y+.5)
-        if step == "open_inventory" and game.player_inventory.open:
+        if step == "open_inventory" and (
+            game.player_inventory.open
+            or (
+                game.management.open
+                and getattr(game.management.tab, "name", None) == "PLAYER"
+            )
+        ):
             self.state.step, self.prompt = "eat_berries", "Right click on the berries to eat."
         elif step == "eat_berries" and int(game.player.inventory.berries) <= 0:
             self.state.step, self.prompt = "last_berry_dialog", None

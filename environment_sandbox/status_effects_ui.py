@@ -37,7 +37,7 @@ _EFFECT_ICON_NAMES: dict[str, str] = {
     "work": "work_efficiency",
     "hunger": "meat_marker",
     "energy": "energy_drain",
-    "happiness": "stew",
+    "happiness": "happiness",
     "ration": "bread",
 }
 EFFECT_LABELS: dict[str, str] = {

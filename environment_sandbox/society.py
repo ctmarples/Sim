@@ -60,6 +60,56 @@ SKILL_XP_DECAY_PER_DAY: float = 4.0
 SKILL_XP_PER_ACTION: float = 8.0
 SKILL_XP_BASE_TO_NEXT: float = 20.0  # xp_to_next = base * level
 
+# Relative work effort vs one standard swing (field harvest / craft step ≈ 1.0).
+# Scales both work duration and XP. Light pickups are quick and low XP.
+WORK_EFFORT_MIN: float = 0.15
+WORK_EFFORT_MAX: float = 2.5
+WORK_EFFORT_BY_ACTION: dict[str, float] = {
+    # Loose / single-item pickups
+    "meat": 0.20,
+    "fish_deposit": 0.20,
+    "herb": 0.30,
+    "mushroom": 0.30,
+    "wood_bush": 0.35,
+    "berries": 0.45,
+    "rock": 0.50,
+    "weeds": 0.40,
+    # Field / planting
+    "plant": 0.50,
+    "sow": 0.55,
+    "plough": 0.85,
+    "harvest_crop": 1.00,
+    # Extraction / hunt
+    "honey": 0.70,
+    "fish_catch": 0.80,
+    "warren": 1.00,
+    "hunt": 1.15,
+    "chop": 1.35,
+    # Workplace
+    "craft": 1.00,
+    "split": 1.00,
+    "build": 1.00,
+    "market": 0.60,
+    "default": 1.00,
+}
+
+
+def work_effort_mult(action: str | None = None, *, amount: int = 1) -> float:
+    """Duration/XP multiplier for a work action (1.0 = standard swing)."""
+    key = str(action or "default").lower()
+    base = float(WORK_EFFORT_BY_ACTION.get(key, WORK_EFFORT_BY_ACTION["default"]))
+    amt = max(1, int(amount))
+    if amt > 1:
+        # Soft scale with yield size (2 units ≈ ×1.35, soft-capped).
+        base *= min(2.0, 0.65 + 0.35 * float(amt))
+    return max(WORK_EFFORT_MIN, min(WORK_EFFORT_MAX, base))
+
+
+def skill_xp_for_action(action: str | None = None, *, amount: int = 1) -> float:
+    """XP granted for completing one swing of ``action``."""
+    return float(SKILL_XP_PER_ACTION) * work_effort_mult(action, amount=amount)
+
+
 # Job → skill used for efficiency / recipe gating (assignment is always allowed).
 JOB_SKILL_REQUIREMENTS: dict[str, tuple[SkillType, int]] = {
     "FORESTER": (SkillType.EXTRACTION, 1),

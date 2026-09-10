@@ -336,6 +336,8 @@ class Cell:
     repellant_season: str | None = None
     # Worn trail overlay — does not replace underlying terrain.
     path_worn: bool = False
+    # Bare ploughed soil (after plough, before sow) — furrow overlay.
+    ploughed: bool = False
 
     def habitat_category(self) -> str:
         if self.feature == FeatureType.TREE:
@@ -3097,23 +3099,14 @@ class World:
         for nx, ny in wood_candidates:
             cell = self.cells[ny][nx]
             if (
-                cell.terrain in wood_terrains
+                cell.feature == FeatureType.NONE
+                and cell.terrain in wood_terrains
                 and self._forage_rng.random() < wood_bush_spawn_rate(day, nx, ny)
             ):
-                if cell.feature == FeatureType.NONE:
-                    cell.feature = FeatureType.WOOD_BUSH
-                    cell.crop_kind = wood.key
-                    cell.deposit = WOOD_BUSH_YIELD
-                    cell.growth_ticks = self._fallen_wood_lifetime_ticks()
-                else:
-                    self.add_natural_object(
-                        nx,
-                        ny,
-                        FeatureType.WOOD_BUSH,
-                        crop_kind=wood.key,
-                        deposit=WOOD_BUSH_YIELD,
-                        growth_ticks=self._fallen_wood_lifetime_ticks(),
-                    )
+                cell.feature = FeatureType.WOOD_BUSH
+                cell.crop_kind = wood.key
+                cell.deposit = WOOD_BUSH_YIELD
+                cell.growth_ticks = self._fallen_wood_lifetime_ticks()
 
     def clear_mushrooms(self) -> None:
         """Remove seasonal mushrooms; fallen wood has its own lifetime."""
@@ -3451,7 +3444,7 @@ class World:
             FeatureType.STRUCTURE_PAD,
         ):
             return False
-        # Legacy Field marker on origin: clear it when ploughing that tile.
+        # Legacy Field marker / already-soil tile: mark as ploughed furrows.
         if cell.terrain in SOIL_LIKE and cell.feature in (
             FeatureType.NONE,
             FeatureType.FIELD,
@@ -3461,14 +3454,15 @@ class World:
                 cell.deposit = 0
                 cell.growth_ticks = 0
                 cell.crop_kind = None
-                return True
-            return False
+            cell.ploughed = True
+            return True
         cell.terrain = TerrainType.SOIL
         cell.feature = FeatureType.NONE
         cell.growth_ticks = 0
         cell.deposit = 0
         cell.crop_kind = None
         cell.tree_species = None
+        cell.ploughed = True
         from soil import cap_fertility_for_soil
 
         cap_fertility_for_soil(cell)
@@ -3489,6 +3483,7 @@ class World:
         cell.growth_ticks = max(1, growth_ticks)
         cell.deposit = 0
         cell.weeds = 0.0
+        cell.ploughed = False
         self.note_growth_cell(x, y)
         return True
 

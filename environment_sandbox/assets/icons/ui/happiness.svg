@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 40 40"
+   width="400"
+   height="400"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="happiness.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <defs
+     id="defs1" />
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="1.1142622"
+     inkscape:cx="163.33678"
+     inkscape:cy="237.3768"
+     inkscape:window-width="1171"
+     inkscape:window-height="946"
+     inkscape:window-x="0"
+     inkscape:window-y="30"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="player" />
+  <title
+     id="title1">player</title>
+  <desc
+     id="desc1">Keep class= on paths for game recolouring. Open in Inkscape, Affinity, Illustrator, or Figma to edit nodes.</desc>
+  <g
+     id="g2">
+    <circle
+       style="fill:#e08d00;stroke-width:0.157524;fill-opacity:1"
+       id="path1-3"
+       cx="13.69454"
+       cy="14.110476"
+       r="10" />
+    <path
+       id="rect1-3"
+       style="fill:#ee0c00;fill-opacity:1;stroke-width:0.365141"
+       d="m 7.3176684,20.178293 c 1.821543,-1.946475 9.3896076,-2.409649 12.3848756,1.022869 -1.653013,-2.501347 -3.473937,-4.836223 -6.381041,-5.698838 -4.1171686,0.559938 -5.2641716,2.460035 -6.0038346,4.675969 z"
+       sodipodi:nodetypes="cccc" />
+    <path
+       id="rect2-48"
+       style="fill:#ee0c00;fill-opacity:1;stroke-width:0.3419"
+       d="m 14.005533,9.6857082 c -0.276858,-2.444854 1.824807,-2.620396 4.262911,0 -0.2836,1.4950998 -0.502436,3.0667398 -2.064146,3.0513468 -1.96516,-0.224963 -1.794892,-1.8227 -2.198765,-3.0513468 z"
+       sodipodi:nodetypes="cccc" />
+    <path
+       id="rect2-4-0"
+       style="fill:#ee0c00;fill-opacity:1;stroke-width:0.346891"
+       d="m 6.9074139,9.9110122 c 1.691141,-1.846166 3.2809821,-3.000118 4.2629111,0 -0.2836,1.5390708 -0.502436,3.1569338 -2.0641461,3.1410888 -1.96516,-0.23158 -1.794892,-1.876307 -2.198765,-3.1410888 z"
+       sodipodi:nodetypes="cccc" />
+  </g>
+  <g
+     id="player"
+     inkscape:groupmode="layer"
+     inkscape:label="player">
+    <circle
+       style="fill:#e0b200;fill-opacity:1;stroke-width:0.157524"
+       id="path1"
+       cx="25.829212"
+       cy="23.719826"
+       r="10" />
+    <path
+       id="rect1"
+       style="fill:#329432;stroke-width:0.35368"
+       d="m 20.237607,26.45766 c 1.722546,1.931148 8.879303,2.390675 11.711785,-1.014815 -1.563175,2.481651 -3.285136,4.798142 -6.034245,5.653965 -3.89341,-0.555529 -4.978076,-2.440665 -5.67754,-4.63915 z"
+       sodipodi:nodetypes="cccc" />
+    <path
+       id="rect2"
+       style="fill:#329432;stroke-width:0.3419"
+       d="m 26.744154,20.237607 c -0.276858,-2.444854 1.824807,-2.620396 4.262911,0 -0.2836,1.4951 -0.502436,3.06674 -2.064146,3.051347 -1.96516,-0.224963 -1.794892,-1.8227 -2.198765,-3.051347 z"
+       sodipodi:nodetypes="cccc" />
+    <path
+       id="rect2-4"
+       style="fill:#329432;stroke-width:0.346891"
+       d="m 19.646035,20.462911 c 1.691141,-1.846166 3.280982,-3.000118 4.262911,0 -0.2836,1.539071 -0.502436,3.156934 -2.064146,3.141089 -1.96516,-0.23158 -1.794892,-1.876307 -2.198765,-3.141089 z"
+       sodipodi:nodetypes="cccc" />
+  </g>
+  <metadata
+     id="metadata1">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:title>player</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+</svg>
