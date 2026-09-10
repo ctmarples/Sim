@@ -23,7 +23,8 @@ TEST_SEASON_LIMIT = 8
 
 # Institution effect placeholders (noticeable, not balanced).
 OFFICE_WORK_EFFICIENCY = 0.10
-OFFICE_MISMATCH_HAPPINESS = -5
+# Legacy point label; ongoing target uses happiness.HAP_OFFICE_OFF_SKILL.
+OFFICE_MISMATCH_HAPPINESS = -12
 PROVISION_RATION_HAPPINESS_REDUCTION = 0.25
 EXCHANGE_MATCH_EFFICIENCY = 0.10
 EXCHANGE_SEASON_PAY_COINS = 3  # vs society.SEASON_MISSING_REQ_PAY_COINS (2)
@@ -505,15 +506,15 @@ INSTITUTIONS: dict[str, InstitutionDef] = {
         PrincipleCategory.COMMAND,
         "The Settlement Office now coordinates communal work.",
         "+10% work efficiency.",
-        "−5 happiness when assigned outside preferred / strongest skill.",
+        "Working off-skill or unassigned lowers happiness while unresolved (−12% / −10% target).",
     ),
     "common_provision": InstitutionDef(
         "common_provision",
         "Common Provision",
         PrincipleCategory.MUTUAL_AID,
         "Common Provision shares food and shelter as a public trust.",
-        "Poor or missing rations cause 25% less happiness loss.",
-        "All villagers share one ration setting; individual adjustment is disabled.",
+        "Locks shared rations (ends unequal-ration conflicts); half-ration hurt reduced 25%.",
+        "Individual ration overrides are disabled while the institution stands.",
     ),
     "labour_exchange": InstitutionDef(
         "labour_exchange",
@@ -529,7 +530,7 @@ INSTITUTIONS: dict[str, InstitutionDef] = {
         PrincipleCategory.STEWARDSHIP,
         "The Covenant of the Land binds production to ecological care.",
         "+10% ecological recovery near the settlement.",
-        "Tree cutting and new field establishment take 10% longer.",
+        "Extractive work is slower and lowers happiness while active (−10% target).",
     ),
 }
 

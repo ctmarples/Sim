@@ -199,8 +199,9 @@ class SociopoliticalPanel:
             (
                 "Stewardship",
                 state.stewardship,
-                "High Stewardship slows extractive work for ecology. Ignoring it trades short-term "
-                "output for later disturbance — not a direct happiness hit.",
+                "High Stewardship slows extractive work and lowers happiness while "
+                "that work is active (Covenant intensifies both). Ignoring it trades "
+                "short-term output for later ecological disturbance.",
             ),
         ):
             canvas.blit(

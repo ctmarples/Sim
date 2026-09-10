@@ -99,14 +99,14 @@ ENERGY_SLEEP_THRESHOLD: float = 0.22
 ENERGY_WORK_DRAIN: float = 0.0012
 ENERGY_MOVE_DRAIN: float = 0.0004
 ENERGY_SLEEP_GAIN: float = 0.004
-HAPPINESS_FOOD_VARIETY_BONUS: float = 0.04
+HAPPINESS_FOOD_VARIETY_BONUS: float = 0.03  # legacy alias; see happiness.HAP_MEAL_VARIETY_PER
 # Happiness from each housing level above the villager's requirement.
-HAPPINESS_HOUSING_BONUS_PER_LEVEL: float = 0.01
-HAPPINESS_MISSING_REQ_PENALTY: float = 0.08
-HAPPINESS_FAVOURITE_MISS_PENALTY: float = 0.05
+HAPPINESS_HOUSING_BONUS_PER_LEVEL: float = 0.03
+HAPPINESS_MISSING_REQ_PENALTY: float = 0.10
+HAPPINESS_FAVOURITE_MISS_PENALTY: float = 0.05  # unused; meal mood is temporary_capped
 # Continuous happiness-target shift while on half / double rations.
-HAPPINESS_HALF_RATION_PENALTY: float = 0.16
-HAPPINESS_DOUBLE_RATION_BONUS: float = 0.12
+HAPPINESS_HALF_RATION_PENALTY: float = 0.12
+HAPPINESS_DOUBLE_RATION_BONUS: float = 0.10
 # Coins charged each season for every unmet hire requirement (housing / staple).
 SEASON_MISSING_REQ_PAY_COINS: int = 2
 HAPPINESS_EVENT_HISTORY: int = 8
@@ -1092,18 +1092,36 @@ push_happiness_impact = push_happiness_event
 
 
 def apply_happiness_points(villager: Villager, points: int | float) -> float:
-    """Apply integer happiness points to the 0–1 happiness bar. Returns float delta."""
-    delta = float(points) * HAPPINESS_POINT_SCALE
-    villager.happiness = max(0.0, min(1.0, float(villager.happiness) + delta))
-    return delta
+    """Immediate one-shot change to underlying happiness (legacy entry point)."""
+    from happiness import apply_immediate_happiness
+
+    return apply_immediate_happiness(
+        villager, points, label="Happiness", source="immediate"
+    )
 
 
 def _happiness_modifiers(villager: Villager) -> list[dict]:
-    mods = getattr(villager, "happiness_modifiers", None)
-    if not isinstance(mods, list):
-        mods = []
-        setattr(villager, "happiness_modifiers", mods)
-    return mods
+    """Legacy view of temporary moods (for older UI/save helpers)."""
+    from happiness import _temporary_moods, temporary_mood_value
+
+    out: list[dict] = []
+    for mood in _temporary_moods(villager):
+        amount = temporary_mood_value(mood)
+        out.append(
+            {
+                "icon": str(mood.get("icon") or "stew"),
+                "label": str(mood.get("label") or "Mood"),
+                "peak": float(mood.get("peak", 0) or 0),
+                "remaining": amount,
+                "ticks_left": int(mood.get("ticks_left", 0) or 0),
+                "ticks_total": int(mood.get("ticks_total", 1) or 1),
+                "until_meal": str(mood.get("channel") or "") == "meal",
+                "points": int(round(float(mood.get("peak", 0) or 0) / HAPPINESS_POINT_SCALE)),
+                "channel": str(mood.get("channel") or ""),
+            }
+        )
+    setattr(villager, "happiness_modifiers", out)
+    return out
 
 
 def apply_timed_happiness_impact(
@@ -1116,107 +1134,52 @@ def apply_timed_happiness_impact(
     until_meal: bool = False,
     duration_hours: float | None = None,
     ticks_per_day: int = 240,
+    channel: str | None = None,
 ) -> float:
-    """Apply a happiness swing that shows as a buff/debuff and unwinds over time.
+    """Temporary capped mood (non-stacking). Preferred for lingering event effects."""
+    from happiness import (
+        HAP_IMMEDIATE_POINT_SCALE,
+        apply_timed_happiness_impact_legacy_bridge,
+        sync_displayed_happiness,
+    )
 
-    ``points`` uses the same scale as ``apply_happiness_points`` (1 point = 0.01 bar).
-    Meal impacts clear on the next meal; others decay over ``duration_hours``.
-    """
-    points_i = int(round(float(points)))
-    if points_i == 0:
+    points_f = float(points)
+    if abs(points_f) < 1e-9:
         return 0.0
-    peak = float(points_i) * HAPPINESS_POINT_SCALE
-    hours = float(
-        duration_hours
-        if duration_hours is not None
-        else HAPPINESS_IMPACT_DEFAULT_HOURS
+    apply_timed_happiness_impact_legacy_bridge(
+        villager,
+        points_f,
+        icon=icon,
+        label=label,
+        day=day,
+        duration_hours=duration_hours,
+        until_meal=until_meal,
+        ticks_per_day=ticks_per_day,
+        channel=channel,
     )
-    ticks_total = max(1, happiness_break_hours_to_ticks(hours, ticks_per_day))
-    apply_happiness_points(villager, points_i)
-    push_happiness_event(
-        villager, icon=icon, label=label, delta=points_i, day=day
-    )
-    mods = _happiness_modifiers(villager)
-    mods.append(
-        {
-            "icon": str(icon),
-            "label": str(label),
-            "peak": peak,
-            "remaining": peak,
-            "ticks_left": ticks_total,
-            "ticks_total": ticks_total,
-            "until_meal": bool(until_meal),
-            "points": points_i,
-        }
-    )
-    # Keep the list bounded.
-    overflow = mods[:-HAPPINESS_IMPACT_MAX_ACTIVE]
-    for old in overflow:
-        rem = float(old.get("remaining", 0.0) or 0.0)
-        if abs(rem) > 1e-6:
-            villager.happiness = max(
-                0.0, min(1.0, float(villager.happiness) - rem)
-            )
-    setattr(villager, "happiness_modifiers", mods[-HAPPINESS_IMPACT_MAX_ACTIVE:])
-    return peak
+    sync_displayed_happiness(villager)
+    return float(points_f) * HAP_IMMEDIATE_POINT_SCALE
 
 
 def tick_happiness_modifiers(villager: Villager) -> None:
-    """Unwind active timed impacts one tick toward the pre-impact level."""
-    mods = _happiness_modifiers(villager)
-    if not mods:
-        return
-    kept: list[dict] = []
-    for mod in mods:
-        remaining = float(mod.get("remaining", 0.0) or 0.0)
-        ticks_left = int(mod.get("ticks_left", 0) or 0)
-        if ticks_left <= 0 or abs(remaining) <= 1e-6:
-            if abs(remaining) > 1e-6:
-                villager.happiness = max(
-                    0.0, min(1.0, float(villager.happiness) - remaining)
-                )
-            continue
-        step = remaining / float(ticks_left)
-        villager.happiness = max(
-            0.0, min(1.0, float(villager.happiness) - step)
-        )
-        mod["remaining"] = remaining - step
-        mod["ticks_left"] = ticks_left - 1
-        if mod["ticks_left"] > 0 and abs(float(mod["remaining"])) > 1e-6:
-            kept.append(mod)
-        else:
-            # Snap out any float residue.
-            rem = float(mod.get("remaining", 0.0) or 0.0)
-            if abs(rem) > 1e-6:
-                villager.happiness = max(
-                    0.0, min(1.0, float(villager.happiness) - rem)
-                )
-    setattr(villager, "happiness_modifiers", kept)
+    """Advance temporary mood decay one tick (underlying drift is separate)."""
+    from happiness import sync_displayed_happiness, tick_temporary_moods
+
+    tick_temporary_moods(villager, ticks=1)
+    sync_displayed_happiness(villager)
 
 
 def clear_meal_happiness_modifiers(villager: Villager) -> None:
-    """Restore any until-next-meal impacts when a new meal begins."""
-    mods = _happiness_modifiers(villager)
-    if not mods:
-        return
-    kept: list[dict] = []
-    for mod in mods:
-        if not bool(mod.get("until_meal")):
-            kept.append(mod)
-            continue
-        rem = float(mod.get("remaining", 0.0) or 0.0)
-        if abs(rem) > 1e-6:
-            villager.happiness = max(
-                0.0, min(1.0, float(villager.happiness) - rem)
-            )
-    setattr(villager, "happiness_modifiers", kept)
+    """No-op: normal meals must not abruptly clear an existing meal mood."""
+    return
 
 
 def active_happiness_status_mods(villager: Villager) -> list:
-    """Buff/debuff tiles for active timed happiness impacts + mood work band."""
+    """Buff/debuff tiles for temporary moods, ongoing target shifts, and mood band."""
     from status_effects_ui import StatusMod
 
     mods: list = []
+    # Temporary capped moods (meal etc.).
     for imp in _happiness_modifiers(villager):
         remaining = float(imp.get("remaining", 0.0) or 0.0)
         if abs(remaining) < 0.005:
@@ -1225,7 +1188,6 @@ def active_happiness_status_mods(villager: Villager) -> list:
         if pct == 0:
             continue
         label = str(imp.get("label") or "Happiness")
-        # Short cause for badge hover.
         short = label
         for prefix in ("Ate favourite food: ", "Ate unwanted food: "):
             if short.startswith(prefix):
@@ -1241,10 +1203,54 @@ def active_happiness_status_mods(villager: Villager) -> list:
                 effect="happiness",
                 mult=float(pct),
                 cause_label=short[:32],
-                tip_override=f"Happiness {pct:+d}%",
+                tip_override=f"Happiness {pct:+d}% (temporary)",
                 display_kind="buff" if pct > 0 else "debuff",
             )
         )
+
+    # Ongoing target components (stable while condition holds).
+    try:
+        from happiness import happiness_breakdown_for
+
+        bd = happiness_breakdown_for(villager)
+        if bd is not None:
+            for comp in bd.target_components:
+                if comp.key == "base":
+                    continue
+                if abs(comp.amount) < 0.005:
+                    continue
+                pct = int(round(comp.amount * 100))
+                if pct == 0:
+                    continue
+                icon = "stew"
+                if "housing" in comp.key:
+                    icon = "tent"
+                elif "ration" in comp.key:
+                    icon = "bread"
+                elif "job" in comp.key or "office" in comp.key or "assigned" in comp.key:
+                    icon = "construction_site"
+                elif "thermal" in comp.key:
+                    icon = "cold" if "cold" in comp.key else "hot"
+                elif "trait" in comp.key:
+                    icon = "stew"
+                elif "extractive" in comp.key or "habitat" in comp.key or "covenant" in comp.key:
+                    icon = "tree_round"
+                mods.append(
+                    StatusMod(
+                        cause_key=f"hap_target_{comp.key}",
+                        cause_icon=icon,
+                        cause_group="events",
+                        effect="happiness",
+                        mult=float(pct),
+                        cause_label=str(comp.label)[:32],
+                        tip_override=(
+                            f"Happiness target {pct:+d}% ← {comp.source}"
+                        ),
+                        display_kind="buff" if pct > 0 else "debuff",
+                    )
+                )
+    except Exception:
+        pass
 
     band = happiness_band(float(getattr(villager, "happiness", 0.7) or 0.7))
     work = happiness_work_mult(float(getattr(villager, "happiness", 0.7) or 0.7))

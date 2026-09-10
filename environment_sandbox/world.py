@@ -2413,25 +2413,27 @@ class World:
         came_from: dict[tuple[int, int], tuple[int, int] | None] = {(sx, sy): None}
         dist: dict[tuple[int, int], int] | None = {(sx, sy): 0} if max_len is not None else None
 
+        # Fixed 8-neighbour order. Prefer toward-goal steps first for nicer
+        # diagonal routes among equal-length BFS paths — without sorting on
+        # every expanded node (that cost dominated hunter prey search).
+        sdx = 0 if gx == sx else (1 if gx > sx else -1)
+        sdy = 0 if gy == sy else (1 if gy > sy else -1)
+        toward = ((sdx, sdy), (sdx, 0), (0, sdy))
+        base = (
+            (-1, -1), (0, -1), (1, -1),
+            (-1, 0), (1, 0),
+            (-1, 1), (0, 1), (1, 1),
+        )
+        seen_dir = {d for d in toward if d != (0, 0)}
+        directions = [d for d in toward if d != (0, 0)]
+        directions.extend(d for d in base if d not in seen_dir)
+
         found = False
         while queue and len(came_from) < node_cap:
             cx, cy = queue.popleft()
             if (cx, cy) == (gx, gy):
                 found = True
                 break
-            directions = [
-                (-1, -1), (0, -1), (1, -1),
-                (-1, 0),             (1, 0),
-                (-1, 1),  (0, 1),   (1, 1),
-            ]
-            # Among equally short BFS routes, prefer steps closest to the
-            # destination vector. This yields diagonal-first direct paths.
-            directions.sort(
-                key=lambda d: (
-                    max(abs(gx - (cx + d[0])), abs(gy - (cy + d[1]))),
-                    (gx - (cx + d[0])) ** 2 + (gy - (cy + d[1])) ** 2,
-                )
-            )
             for dx, dy in directions:
                 nx, ny = cx + dx, cy + dy
                 if (nx, ny) in came_from:

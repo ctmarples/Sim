@@ -320,13 +320,8 @@ from society import (
     ENERGY_SLEEP_GAIN,
     ENERGY_SLEEP_THRESHOLD,
     ENERGY_WORK_DRAIN,
-    HAPPINESS_FOOD_VARIETY_BONUS,
-    HAPPINESS_HOUSING_BONUS_PER_LEVEL,
     HAPPINESS_LEAVE_SEASONS,
     HAPPINESS_LEAVE_THRESHOLD,
-    HAPPINESS_MISSING_REQ_PENALTY,
-    HAPPINESS_HALF_RATION_PENALTY,
-    HAPPINESS_DOUBLE_RATION_BONUS,
     HappinessBand,
     happiness_band,
     happiness_band_label,
@@ -367,11 +362,7 @@ from society import (
     villager_requirement_rows,
     villager_skill_level,
     villager_unmet_requirements,
-    apply_happiness_points,
     apply_timed_happiness_impact,
-    clear_meal_happiness_modifiers,
-    tick_happiness_modifiers,
-    active_happiness_status_mods,
 )
 from villager_roster import (
     VillagerRosterDialog,
@@ -10226,32 +10217,22 @@ class Game:
                     villager.seeking_food = False
                     return
 
-        # Happiness from housing excess over need + recent meal variety + rations.
-        target = 0.45
-        if villager.housed:
-            house = self.buildings.get(villager.housing_id or -1)
-            lvl = housing_level_of(house.kind) if house else 0
-            excess = max(0, lvl - int(villager.housing_need))
-            target += HAPPINESS_HOUSING_BONUS_PER_LEVEL * excess
-        else:
-            target -= HAPPINESS_MISSING_REQ_PENALTY
-        target += HAPPINESS_FOOD_VARIETY_BONUS * min(3, len(villager.last_meal))
-        # Half rations are a real happiness pressure; Common Provision softens it.
-        if villager.ration_mode == RationMode.HALF:
-            from sociopolitical import missing_ration_happiness_scale
+        # Happiness: underlying drifts toward living-condition target; temporary
+        # moods (meal etc.) overlay the displayed bar (see happiness.py).
+        from happiness import tick_underlying_happiness
 
-            target -= HAPPINESS_HALF_RATION_PENALTY * missing_ration_happiness_scale(
-                getattr(self, "political", None)
-            )
-        elif villager.ration_mode == RationMode.DOUBLE:
-            target += HAPPINESS_DOUBLE_RATION_BONUS
+        setattr(villager, "_hap_ticks_per_day", int(self.ticks_per_day))
+        tick_underlying_happiness(
+            villager,
+            day_frac,
+            buildings=self.buildings,
+            political=getattr(self, "political", None),
+            villagers=self.villagers,
+            temp_impact=self._temp_impact(villager.inventory),
+        )
         foods = getattr(self, "_tick_village_food", None)
         if foods is None:
             foods = self._village_food_amounts()
-        # Timed event impacts unwind toward the pre-impact level, then drift.
-        tick_happiness_modifiers(villager)
-        villager.happiness += (target - villager.happiness) * min(1.0, day_frac * 3.0)
-        villager.happiness = max(0.0, min(1.0, villager.happiness))
         unmet = villager_unmet_requirements(villager, self.buildings, foods)
         villager.season_pay_due = self._season_pay_coins(unmet)
 
@@ -10430,14 +10411,13 @@ class Game:
                     day=day,
                 )
         else:
-            apply_timed_happiness_impact(
+            # Housing missing is an ongoing target pressure; seasonal note only.
+            push_happiness_event(
                 villager,
-                -4,
                 icon="tent",
                 label="No housing",
+                delta=-4,
                 day=day,
-                duration_hours=24.0,
-                ticks_per_day=int(self.ticks_per_day),
             )
 
     def _apply_seasonal_hire_requirement_fees(self) -> None:
@@ -10470,14 +10450,18 @@ class Game:
                 )
             else:
                 unpaid += 1
-                apply_timed_happiness_impact(
+                from happiness import HAP_UNPAID_UPKEEP_CAP, HAP_UNPAID_UPKEEP_HOURS, set_temporary_capped_mood
+
+                set_temporary_capped_mood(
                     villager,
-                    -8,
+                    channel="unpaid_upkeep",
+                    peak=HAP_UNPAID_UPKEEP_CAP,
+                    hours=HAP_UNPAID_UPKEEP_HOURS,
+                    ticks_per_day=int(self.ticks_per_day),
                     icon="coins",
                     label=f"Unpaid upkeep ({due} coins)",
                     day=int(self.calendar_day),
-                    duration_hours=24.0,
-                    ticks_per_day=int(self.ticks_per_day),
+                    source="upkeep",
                 )
         if fee_total > 0:
             msg = f"Paid {fee_total} coins in seasonal villager upkeep."
@@ -10643,6 +10627,13 @@ class Game:
         cell = self.world.get_cell(x, y)
         if cell is None:
             return True
+        # Field plots must not keep structure pads — they block plough/sow.
+        if cell.feature in (
+            FeatureType.STRUCTURE_PAD,
+            FeatureType.CONSTRUCTION_SITE,
+            FeatureType.FIELD,
+        ):
+            cell.feature = FeatureType.NONE
         crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
         if field.is_orchard:
             from crops import ORCHARD_CROP_KEYS
@@ -10652,7 +10643,12 @@ class Game:
         if not crop_allows_plant(crop, self.season):
             self._set_status(f"{crop.label} cannot be planted this season.")
             return True
-        if cell.terrain not in SOIL_LIKE:
+        # Plough when the tile is not yet bare soil (or still blocked).
+        needs_plough = cell.terrain not in SOIL_LIKE or cell.feature not in (
+            FeatureType.NONE,
+            FeatureType.CROP_HERB,
+        )
+        if needs_plough and cell.feature != FeatureType.CROP_HERB:
             if not self.player.inventory.has_equipped_tool("hoe"):
                 self._set_status("Equip a hoe (Q) to plough this field tile.")
                 return True
@@ -10664,7 +10660,13 @@ class Game:
                 self._finish_player_work()
                 self._set_status(f"Ploughed field for {crop.label.lower()}.")
             else:
-                self._set_status("Cannot plough this field tile.")
+                # Force-clear residual pad/soil lock on field plots.
+                cell.terrain = TerrainType.SOIL
+                cell.feature = FeatureType.NONE
+                cell.crop_kind = None
+                self.world.mark_terrain_dirty(x, y)
+                self._finish_player_work()
+                self._set_status(f"Ploughed field for {crop.label.lower()}.")
             return True
 
         inv = self.player.inventory
@@ -11729,6 +11731,12 @@ class Game:
         duration = happiness_break_duration_ticks(
             kind, self.ticks_per_day, rng=rng
         )
+        try:
+            from traits import trait_break_duration_mult
+
+            duration = max(1, int(round(duration * float(trait_break_duration_mult(villager)))))
+        except Exception:
+            pass
         wander_chance, wander_radius = happiness_break_wander_params(kind)
         band = happiness_band(villager.happiness)
         reason = {
@@ -11785,6 +11793,12 @@ class Game:
         if band in (HappinessBand.DISENGAGED, HappinessBand.UNHAPPY):
             kind = "unhappy" if band == HappinessBand.UNHAPPY else "disengaged"
             chance = happiness_break_chance_this_tick(kind, self.ticks_per_day)
+            try:
+                from traits import trait_break_chance_mult
+
+                chance = min(1.0, chance * float(trait_break_chance_mult(villager)))
+            except Exception:
+                pass
             rng = _random.Random(
                 (int(villager.id) * 224737)
                 ^ (int(self.calendar_day) * 97)
@@ -11923,7 +11937,9 @@ class Game:
             villager.satiation = max(
                 0.0,
                 villager.satiation
-                - self._satiation_decay(),
+                - self._satiation_decay()
+                * max(0.05, float(getattr(villager, "food_hunger_mult", 1.0) or 1.0))
+                * self._trait_hunger_mult(villager),
             )
 
             if self._idle_decision_pending(villager):
@@ -12220,11 +12236,30 @@ class Game:
         """Energy drain multiplier from temperature impact."""
         return float(self._temp_impact(inventory).energy_mult)
 
+    @staticmethod
+    def _trait_work_mult(villager: Villager) -> float:
+        from traits import trait_work_mult
+
+        return float(trait_work_mult(villager))
+
+    @staticmethod
+    def _trait_walk_mult(villager: Villager) -> float:
+        from traits import trait_walk_mult
+
+        return float(trait_walk_mult(villager))
+
+    @staticmethod
+    def _trait_hunger_mult(villager: Villager) -> float:
+        from traits import trait_hunger_mult
+
+        return float(trait_hunger_mult(villager))
+
     def _villager_move_interval(self, villager: Villager) -> int:
         walk_mult = (
             villager.food_walk_mult
             * villager.inventory.gear_walk_mult
             * self._temp_walk_mult(villager.inventory)
+            * self._trait_walk_mult(villager)
         )
         if (
             villager.state == VillagerState.RETURNING_TO_WORK
@@ -12273,6 +12308,7 @@ class Game:
             job_matches_strongest=job_matches_strongest(villager, self.buildings),
         )
         skill_mult *= political_mult
+        skill_mult *= self._trait_work_mult(villager)
         # Covenant: forestry / field establishment take longer (lower efficiency).
         if villager.building_id is not None:
             building = self.buildings.get(villager.building_id)
@@ -13054,6 +13090,10 @@ class Game:
         if eater is not None and hasattr(eater, "ration_meal_unit_cap"):
             unit_cap = max(1, int(eater.ration_meal_unit_cap()))
             unit_min = max(1, int(eater.ration_meal_unit_min()))
+        if isinstance(eater, Villager):
+            from traits import trait_meal_food_delta
+
+            unit_cap = max(1, unit_cap + int(trait_meal_food_delta(eater)))
         available = [
             key for key in VILLAGER_FOOD_KEYS if getattr(storage, key, 0) > 0
         ]
@@ -13149,31 +13189,43 @@ class Game:
             walk, work, hunger = self._combine_eater_meal_buffs(eater, eaten_keys)
             if isinstance(eater, Villager):
                 from resources import resource_icon
+                from happiness import apply_meal_mood
+                from resource_balance import FoodSatisfaction
 
                 satisfaction = classify_food_satisfaction(eater, eaten_keys)
-                hap_pts = food_satisfaction_points(eater, satisfaction)
-                if hap_pts:
+                if satisfaction is FoodSatisfaction.FAVOURITE:
                     chosen = next(
                         (k for k in eaten_keys if k in eater.favourite_foods),
                         eaten_keys[0],
                     )
-                    label = (
-                        f"Ate favourite food: {requirement_label(chosen)}"
-                        if satisfaction is FoodSatisfaction.FAVOURITE
-                        else f"Ate unwanted food: {requirement_label(chosen)}"
-                    )
-                    clear_meal_happiness_modifiers(eater)
-                    apply_timed_happiness_impact(
+                    apply_meal_mood(
                         eater,
-                        hap_pts,
-                        icon=resource_icon(chosen),
-                        label=label,
-                        day=int(self.calendar_day),
-                        until_meal=True,
+                        favourite=True,
                         ticks_per_day=int(self.ticks_per_day),
+                        icon=resource_icon(chosen),
+                        label=f"Ate favourite food: {requirement_label(chosen)}",
+                        day=int(self.calendar_day),
+                    )
+                elif satisfaction is FoodSatisfaction.UNWANTED:
+                    chosen = eaten_keys[0]
+                    apply_meal_mood(
+                        eater,
+                        favourite=False,
+                        ticks_per_day=int(self.ticks_per_day),
+                        icon=resource_icon(chosen),
+                        label=f"Ate unwanted food: {requirement_label(chosen)}",
+                        day=int(self.calendar_day),
                     )
                 else:
-                    clear_meal_happiness_modifiers(eater)
+                    # Acceptable / normal food: do not clear an existing meal mood.
+                    apply_meal_mood(
+                        eater,
+                        favourite=None,
+                        ticks_per_day=int(self.ticks_per_day),
+                        icon="stew",
+                        label="",
+                        day=int(self.calendar_day),
+                    )
             eater.apply_food_buffs(walk, work, hunger)
         return len(eaten_keys)
 
@@ -14037,6 +14089,42 @@ class Game:
             self._deposit_sheaves_to_barn(building, inventory)
             return
         building.deposit_from_inventory(inventory)
+        if (
+            building.kind == BuildingKind.HUNTER
+            and BuildingKind.DRYING_RACK in building.linked_extensions
+        ):
+            self._hunter_bank_hide_for_tanning(building, inventory)
+
+    def _hunter_bank_hide_for_tanning(
+        self, building: Building, inventory: Inventory
+    ) -> None:
+        """Swap haulable hut stock for hide so leather inputs are not storehoused."""
+        while int(getattr(inventory, "hide", 0)) > 0:
+            if building.space_for_key("hide") > 0:
+                if not building.deposit_one_from(inventory, "hide"):
+                    break
+                continue
+            # Hut full — free a cargo slot by pulling meat/fur/etc. into the pack.
+            freed = False
+            for key in building.haul_keys():
+                if building.haulable_amount(key) <= 0:
+                    continue
+                if not inventory.can_add(1, key=key):
+                    continue
+                if building.give_item_to(inventory, key):
+                    freed = True
+                    break
+            if not freed:
+                break
+
+    def _hunter_pack_has_tanning_hide(
+        self, building: Building, inventory: Inventory
+    ) -> bool:
+        return (
+            building.kind == BuildingKind.HUNTER
+            and BuildingKind.DRYING_RACK in building.linked_extensions
+            and int(getattr(inventory, "hide", 0)) > 0
+        )
 
     def _farm_export_grain_keys(self) -> tuple[str, ...]:
         """Mill inputs that also act as cereal seeds — surplus leaves the farm."""
@@ -14456,6 +14544,10 @@ class Game:
         ):
             return True
         if self._workplace_primary_available(villager, building):
+            # Drying-rack leather still needs hide from the storehouse while prey
+            # remains available — otherwise hide piles at home and never tans.
+            if self._hunter_should_fetch_leather_inputs(villager, building):
+                return True
             return False
         # Soft gather-cargo deposit is handled last by `_pick_workplace_building`.
         if not self._owns_haul_claim(villager, building.id):
@@ -14463,6 +14555,19 @@ class Game:
         if self._workplace_needs_home_supply(building):
             return True
         return False
+
+    def _hunter_should_fetch_leather_inputs(
+        self, villager: Villager, building: Building
+    ) -> bool:
+        if building.kind != BuildingKind.HUNTER:
+            return False
+        if BuildingKind.DRYING_RACK not in building.linked_extensions:
+            return False
+        if not villager.inventory.is_empty:
+            return False
+        if not self._owns_haul_claim(villager, building.id):
+            return False
+        return self._workplace_needs_home_supply(building)
 
     def _processor_blocked_on_output(
         self, building: Building, worker: Villager | None = None
@@ -14846,6 +14951,12 @@ class Game:
                 and villager.state == VillagerState.DELIVERING
                 and villager.target == home
             )
+            if homebound_gather and self._hunter_pack_has_tanning_hide(
+                building, villager.inventory
+            ):
+                # Hide belongs at the drying rack — do not finish a storehouse dump.
+                villager.target = building.center_cell()
+                homebound_gather = False
             if homebound_gather:
                 villager.haul_building_id = None
                 if (villager.x, villager.y) == home:
@@ -14905,6 +15016,22 @@ class Game:
                         if self._workplace_can_accept_cargo(building, villager.inventory):
                             # More workplace-compatible cargo — keep depositing next tick.
                             return True
+                        if self._hunter_pack_has_tanning_hide(
+                            building, villager.inventory
+                        ):
+                            # Prefer waiting / banking hide over dumping it home.
+                            self._hunter_bank_hide_for_tanning(
+                                building, villager.inventory
+                            )
+                            if int(getattr(villager.inventory, "hide", 0)) <= 0:
+                                if villager.inventory.is_empty:
+                                    villager.state = VillagerState.IDLE
+                                    villager.target = None
+                                    return True
+                            else:
+                                villager.state = VillagerState.WORKING
+                                villager.target = dest
+                                return True
                         # Leftover cargo this workplace will not take (e.g. fish on a
                         # farmer after dropping seeds/produce) — finish at storehouse.
                         # Idling here caused field ↔ farm-store thrash with foreign goods.
@@ -14921,6 +15048,10 @@ class Game:
                 villager.state == VillagerState.DELIVERING
                 and villager.target == home
             ):
+                if self._hunter_pack_has_tanning_hide(building, villager.inventory):
+                    villager.target = building.center_cell()
+                    self._step_villager_toward(villager, villager.target)
+                    return True
                 villager.haul_building_id = None
                 if (villager.x, villager.y) == home:
                     self._deposit_home(villager.inventory, status=False)
@@ -14929,6 +15060,17 @@ class Game:
                     villager.target = None
                     return True
                 self._step_villager_toward(villager, home)
+                return True
+            if self._hunter_pack_has_tanning_hide(building, villager.inventory):
+                villager.haul_building_id = None
+                dest = building.center_cell()
+                villager.state = VillagerState.DELIVERING
+                villager.target = dest
+                if (villager.x, villager.y) == dest:
+                    self._deposit_workplace_cargo(building, villager.inventory)
+                    villager.work_cooldown = self._villager_work_interval(villager)
+                else:
+                    self._step_villager_toward(villager, dest)
                 return True
             villager.haul_building_id = None
             villager.state = VillagerState.DELIVERING
@@ -14999,7 +15141,8 @@ class Game:
         or switch P2/P3).
         """
         if self._workplace_primary_available(villager, building):
-            return False
+            if not self._hunter_should_fetch_leather_inputs(villager, building):
+                return False
         return self._update_assigned_transport(villager, building)
 
     def _hauler_pickup_from_building(
@@ -17704,10 +17847,11 @@ class Game:
             )
         if not sticky_loot and self._try_addon_craft(villager, building):
             return
+        # Fetch storehouse hide for leather before chasing more prey.
+        if not sticky_loot and self._maybe_assigned_transport(villager, building):
+            return
         if self._workplace_primary_available(villager, building):
             pass
-        elif self._maybe_assigned_transport(villager, building):
-            return
         elif self._workplace_accepts_carry(villager, building):
             self._force_assigned_delivery(villager, building)
             return
@@ -17727,7 +17871,12 @@ class Game:
                     villager.target = None
                 villager.hunt_meat_pos = None
                 meat_pos = None
-        if meat_pos is None:
+        if (
+            meat_pos is None
+            and villager.hunt_animal_id is None
+            and villager.hunt_colony_id is None
+            and self._meat_deposit_available(building, villager.id)
+        ):
             meat_pos = self._find_meat_in_hunt_areas(building, villager.id)
             if meat_pos is not None:
                 villager.hunt_meat_pos = meat_pos
@@ -17756,18 +17905,38 @@ class Game:
                 self._clear_villager_path(villager)
             return
 
-        # Rabbit colony vs free animal: chase whichever is nearer to the hunter.
-        colony = self._resolve_hunt_colony(villager, building)
-        animal = self._resolve_hunt_animal(villager, building)
-        if colony is not None and animal is not None:
-            dc = abs(colony.x - villager.x) + abs(colony.y - villager.y)
-            da = abs(animal.x - villager.x) + abs(animal.y - villager.y)
-            if da < dc:
-                villager.hunt_colony_id = None
-                colony = None
-            else:
-                villager.hunt_animal_id = None
-                animal = None
+        # Stick to an existing prey claim. Re-scoring colony vs animal every tick
+        # re-runs full BFS prey search and tanks FPS (no-area hunter on SP_trial).
+        sticky_colony = villager.hunt_colony_id is not None
+        sticky_animal = villager.hunt_animal_id is not None
+        if sticky_colony and not sticky_animal:
+            colony = self._resolve_hunt_colony(villager, building)
+            animal = None
+        elif sticky_animal and not sticky_colony:
+            animal = self._resolve_hunt_animal(villager, building)
+            colony = None
+        else:
+            search_cd = int(getattr(villager, "_work_search_cd", 0) or 0)
+            if search_cd > 0:
+                villager._work_search_cd = search_cd - 1  # type: ignore[attr-defined]
+                if self._try_addon_craft(villager, building):
+                    return
+                if self._maybe_assigned_transport(villager, building):
+                    return
+                self._set_workplace_idle(villager)
+                return
+            # Rabbit colony vs free animal: chase whichever is nearer.
+            colony = self._resolve_hunt_colony(villager, building)
+            animal = self._resolve_hunt_animal(villager, building)
+            if colony is not None and animal is not None:
+                dc = abs(colony.x - villager.x) + abs(colony.y - villager.y)
+                da = abs(animal.x - villager.x) + abs(animal.y - villager.y)
+                if da < dc:
+                    villager.hunt_colony_id = None
+                    colony = None
+                else:
+                    villager.hunt_animal_id = None
+                    animal = None
 
         if colony is not None:
             villager.state = VillagerState.WORKING
@@ -18085,14 +18254,23 @@ class Game:
             origin = building.center_cell()
             # Prefer nearest to a hunter currently looking — use building centre.
         else:
-            for y in range(self.world.rows):
-                for x in range(self.world.cols):
+            villager = self._get_villager(exclude_villager_id)
+            origin = (
+                (villager.x, villager.y)
+                if villager is not None
+                else building.center_cell()
+            )
+            ox, oy = origin
+            r = WORK_SEARCH_RADIUS
+            for y in range(max(0, oy - r), min(self.world.rows, oy + r + 1)):
+                for x in range(max(0, ox - r), min(self.world.cols, ox + r + 1)):
                     if (x, y) in claimed:
+                        continue
+                    if abs(x - ox) + abs(y - oy) > r:
                         continue
                     cell = self.world.cells[y][x]
                     if self._cell_has_hunt_loot(cell):
                         cells.append((x, y))
-            origin = building.center_cell()
         villager = self._get_villager(exclude_villager_id)
         if villager is not None:
             origin = (villager.x, villager.y)
@@ -18102,6 +18280,7 @@ class Game:
             pos_fn=lambda p: p,
             prefer_adjacent=False,
             villager=villager,
+            max_radius=WORK_SEARCH_RADIUS,
         )
 
     def _meat_deposit_available(
@@ -18126,14 +18305,16 @@ class Game:
             if villager is not None
             else building.center_cell()
         )
-        for y in range(self.world.rows):
-            for x in range(self.world.cols):
+        ox, oy = origin
+        r = WORK_SEARCH_RADIUS
+        for y in range(max(0, oy - r), min(self.world.rows, oy + r + 1)):
+            for x in range(max(0, ox - r), min(self.world.cols, ox + r + 1)):
                 if (x, y) in claimed:
                     continue
-                cell = self.world.cells[y][x]
-                if not self._cell_has_hunt_loot(cell):
+                if abs(x - ox) + abs(y - oy) > r:
                     continue
-                if self._within_work_search(origin, (x, y)):
+                cell = self.world.cells[y][x]
+                if self._cell_has_hunt_loot(cell):
                     return True
         return False
 
@@ -21326,6 +21507,17 @@ class Game:
             if inspect_v is None:
                 return
             is_player = self.management.tab == MgmtTab.PLAYER
+            if not is_player:
+                from happiness import refresh_happiness_breakdown
+
+                refresh_happiness_breakdown(
+                    inspect_v,
+                    buildings=self.buildings,
+                    political=getattr(self, "political", None),
+                    villagers=self.villagers,
+                    temp_impact=self._temp_impact(inspect_v.inventory),
+                    ticks_per_day=int(self.ticks_per_day),
+                )
             self.villager_inspect.configure_embed(rect)
             self.villager_inspect.draw(
                 surf,

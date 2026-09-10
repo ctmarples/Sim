@@ -645,6 +645,14 @@ def serialize_game(game: Game) -> dict[str, Any]:
                 "name": v.name,
                 "energy": round(v.energy, 4),
                 "happiness": round(v.happiness, 4),
+                "underlying_happiness": round(
+                    float(
+                        getattr(v, "underlying_happiness", None)
+                        if getattr(v, "underlying_happiness", None) is not None
+                        else v.happiness
+                    ),
+                    4,
+                ),
                 "break_ticks_left": int(getattr(v, "break_ticks_left", 0) or 0),
                 "break_cooldown_ticks": int(getattr(v, "break_cooldown_ticks", 0) or 0),
                 "break_kind": str(getattr(v, "break_kind", "") or ""),
@@ -682,6 +690,20 @@ def serialize_game(game: Game) -> dict[str, Any]:
                     )
                     if isinstance(imp, dict)
                 ],
+                "happiness_temporary": [
+                    {
+                        "channel": str(m.get("channel", "")),
+                        "peak": float(m.get("peak", 0)),
+                        "ticks_left": int(m.get("ticks_left", 0)),
+                        "ticks_total": int(m.get("ticks_total", 0)),
+                        "icon": str(m.get("icon", "")),
+                        "label": str(m.get("label", "")),
+                        "source": str(m.get("source", "")),
+                        "day": int(m.get("day", 0) or 0),
+                    }
+                    for m in (getattr(v, "happiness_temporary", None) or [])
+                    if isinstance(m, dict)
+                ],
                 "happiness_modifiers": [
                     {
                         "icon": str(m.get("icon", "")),
@@ -692,6 +714,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
                         "ticks_total": int(m.get("ticks_total", 0)),
                         "until_meal": bool(m.get("until_meal", False)),
                         "points": int(m.get("points", 0)),
+                        "channel": str(m.get("channel", "")),
                     }
                     for m in (getattr(v, "happiness_modifiers", None) or [])
                     if isinstance(m, dict)
@@ -1620,6 +1643,12 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         villager.name = str(vdata.get("name") or villager.name)
         villager.energy = max(0.0, min(1.0, float(vdata.get("energy", 1.0))))
         villager.happiness = max(0.0, min(1.0, float(vdata.get("happiness", 0.7))))
+        if "underlying_happiness" in vdata:
+            villager.underlying_happiness = max(
+                0.0, min(1.0, float(vdata.get("underlying_happiness", villager.happiness)))
+            )
+        else:
+            villager.underlying_happiness = float(villager.happiness)
         villager.break_ticks_left = max(0, int(vdata.get("break_ticks_left", 0) or 0))
         villager.break_cooldown_ticks = max(
             0, int(vdata.get("break_cooldown_ticks", 0) or 0)
@@ -1675,6 +1704,24 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                     }
                 )
         villager.happiness_events = events
+        raw_temps = vdata.get("happiness_temporary")
+        temps: list[dict] = []
+        if isinstance(raw_temps, list):
+            for m in raw_temps:
+                if not isinstance(m, dict):
+                    continue
+                temps.append(
+                    {
+                        "channel": str(m.get("channel", "") or "event"),
+                        "peak": float(m.get("peak", 0) or 0),
+                        "ticks_left": max(0, int(m.get("ticks_left", 0) or 0)),
+                        "ticks_total": max(1, int(m.get("ticks_total", 1) or 1)),
+                        "icon": str(m.get("icon", "") or "stew"),
+                        "label": str(m.get("label", "") or "Mood"),
+                        "source": str(m.get("source", "") or "event"),
+                        "day": int(m.get("day", 0) or 0),
+                    }
+                )
         raw_mods = vdata.get("happiness_modifiers")
         loaded_mods: list[dict] = []
         if isinstance(raw_mods, list):
@@ -1691,9 +1738,33 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                         "ticks_total": max(1, int(m.get("ticks_total", 1) or 1)),
                         "until_meal": bool(m.get("until_meal", False)),
                         "points": int(m.get("points", 0) or 0),
+                        "channel": str(m.get("channel", "") or ""),
                     }
                 )
+                # Migrate legacy unwind mods into temporary capped moods.
+                if not temps:
+                    ch = str(m.get("channel") or "")
+                    if not ch:
+                        ch = "meal" if m.get("until_meal") else f"legacy:{m.get('label', 'event')}"
+                    peak = float(m.get("remaining", m.get("peak", 0)) or 0)
+                    if abs(peak) > 1e-6 and int(m.get("ticks_left", 0) or 0) > 0:
+                        temps.append(
+                            {
+                                "channel": ch,
+                                "peak": peak,
+                                "ticks_left": max(0, int(m.get("ticks_left", 0) or 0)),
+                                "ticks_total": max(1, int(m.get("ticks_total", 1) or 1)),
+                                "icon": str(m.get("icon", "") or "stew"),
+                                "label": str(m.get("label", "") or "Mood"),
+                                "source": "legacy",
+                                "day": 0,
+                            }
+                        )
+        villager.happiness_temporary = temps
         villager.happiness_modifiers = loaded_mods
+        from happiness import sync_displayed_happiness
+
+        sync_displayed_happiness(villager)
         villager.low_happiness_days = float(vdata.get("low_happiness_days", 0.0))
         villager.low_happiness_seasons = int(vdata.get("low_happiness_seasons", 0) or 0)
         villager.skills = skills_from_dict(vdata.get("skills"))

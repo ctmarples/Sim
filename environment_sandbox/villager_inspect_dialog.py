@@ -401,6 +401,85 @@ class VillagerInspectDialog:
             return True
         return self.contains(pos)
 
+    def _draw_happiness_breakdown(
+        self,
+        surface: pygame.Surface,
+        villager: Villager,
+        x: int,
+        y: int,
+        inner_w: int,
+        heading,
+    ) -> int:
+        from happiness import happiness_breakdown_for, sync_displayed_happiness
+
+        bd = happiness_breakdown_for(villager)
+        if bd is None:
+            sync_displayed_happiness(villager)
+            # Minimal fallback when no sim tick has refreshed the breakdown yet.
+            y += 6
+            heading("HAPPINESS DETAIL")
+            underlying = float(
+                getattr(villager, "underlying_happiness", None)
+                if getattr(villager, "underlying_happiness", None) is not None
+                else villager.happiness
+            )
+            surface.blit(
+                self.font_small.render(
+                    f"Underlying {underlying:.0%}  ·  Displayed {villager.happiness:.0%}",
+                    True,
+                    COLOUR_TEXT,
+                ),
+                (x, y),
+            )
+            y += self.font_small.get_linesize() + 4
+            return y
+        y += 6
+        heading("HAPPINESS DETAIL")
+        lines = [
+            f"Target {bd.target:.0%}  ·  Underlying {bd.underlying:.0%}",
+            f"Displayed {bd.displayed:.0%}  (temp {bd.temporary_total:+.0%})",
+        ]
+        for line in lines:
+            surface.blit(self.font_small.render(line, True, COLOUR_TEXT), (x, y))
+            y += self.font_small.get_linesize() + 2
+        surface.blit(
+            self.font_tiny.render("Ongoing target", True, COLOUR_TEXT_DIM),
+            (x, y),
+        )
+        y += self.font_tiny.get_linesize() + 2
+        for comp in bd.target_components:
+            if comp.key == "base":
+                continue
+            amt = f"{comp.amount:+.0%}"
+            text = f"{comp.label}  {amt}"
+            if len(text) > 42:
+                text = text[:39] + "…"
+            surface.blit(self.font_tiny.render(text, True, COLOUR_TEXT_DIM), (x, y))
+            y += self.font_tiny.get_linesize() + 1
+            src = f"  ← {comp.source}"
+            surface.blit(self.font_tiny.render(src, True, COLOUR_TEXT_DIM), (x, y))
+            y += self.font_tiny.get_linesize() + 2
+        if bd.temporary:
+            surface.blit(
+                self.font_tiny.render("Temporary moods", True, COLOUR_TEXT_DIM),
+                (x, y),
+            )
+            y += self.font_tiny.get_linesize() + 2
+            for temp in bd.temporary:
+                hrs = temp.hours_left
+                hrs_txt = f"{hrs:.1f}h" if hrs is not None else "?"
+                text = f"{temp.label}  {temp.amount:+.0%}  ({hrs_txt})"
+                if len(text) > 42:
+                    text = text[:39] + "…"
+                surface.blit(self.font_tiny.render(text, True, COLOUR_TEXT_DIM), (x, y))
+                y += self.font_tiny.get_linesize() + 1
+                surface.blit(
+                    self.font_tiny.render(f"  ← {temp.source}", True, COLOUR_TEXT_DIM),
+                    (x, y),
+                )
+                y += self.font_tiny.get_linesize() + 2
+        return y
+
     def _draw_button(
         self,
         surface: pygame.Surface,
@@ -659,6 +738,9 @@ class VillagerInspectDialog:
                 surface.blit(self.font_small.render(label, True, COLOUR_TEXT_DIM), (x, y))
                 draw_status_bar(surface, x + 92, y + 5, max(70, inner_w - 104), 10, value, kind=kind)
                 y += self.font_small.get_linesize() + 5
+
+            if not is_player:
+                y = self._draw_happiness_breakdown(surface, villager, x, y, inner_w, heading)
 
             if not is_player:
                 y += 6

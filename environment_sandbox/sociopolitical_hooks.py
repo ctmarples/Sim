@@ -188,7 +188,70 @@ def _place_building(
         game.world.workstation_pos = building.center_cell()
     if kind == BuildingKind.HOME:
         game.world.home_pos = building.center_cell()
+    if kind in (BuildingKind.FIELD, BuildingKind.ORCHARD):
+        # Field plots are outlines only — clear structure pads so tiles can be
+        # ploughed / sown (same as _complete_construction for free fields).
+        from world import FeatureType, TerrainType
+
+        for px, py in building.plot_cells():
+            cell = game.world.get_cell(px, py)
+            if cell is None:
+                continue
+            if cell.feature in (
+                FeatureType.STRUCTURE_PAD,
+                FeatureType.CONSTRUCTION_SITE,
+                FeatureType.FIELD,
+            ):
+                cell.feature = FeatureType.NONE
+            if cell.terrain not in (TerrainType.SOIL, TerrainType.GRASS, TerrainType.MEADOW):
+                cell.terrain = TerrainType.SOIL
     return building
+
+
+def _purge_orphan_hiring_hall_features(game: Game) -> None:
+    """Remove WORKSTATION map glyphs that are not part of a hiring-hall building."""
+    from world import FeatureType
+
+    hall_cells: set[tuple[int, int]] = set()
+    for building in game.buildings.values():
+        if building.kind != BuildingKind.WORKSTATION:
+            continue
+        hall_cells.update(building.plot_cells())
+        game.world.workstation_pos = building.center_cell()
+    if not hall_cells:
+        return
+    for y in range(game.world.rows):
+        for x in range(game.world.cols):
+            cell = game.world.get_cell(x, y)
+            if cell is None or cell.feature != FeatureType.WORKSTATION:
+                continue
+            if (x, y) not in hall_cells:
+                cell.feature = FeatureType.NONE
+
+
+def _finalize_bootstrap_field(game: Game, field: Building, farm: Building | None) -> None:
+    """Link field to farm, clear pads, and seed a plantable crop plan."""
+    from world import FeatureType, TerrainType
+
+    if farm is not None:
+        field.parent_building_id = farm.id
+    for cell_x, cell_y in field.plot_cells():
+        cell = game.world.get_cell(cell_x, cell_y)
+        if cell is None:
+            continue
+        cell.terrain = TerrainType.SOIL
+        if cell.feature in (
+            FeatureType.STRUCTURE_PAD,
+            FeatureType.CONSTRUCTION_SITE,
+            FeatureType.FIELD,
+        ):
+            cell.feature = FeatureType.NONE
+    # Ensure the whole plot has a crop plan so plough/plant UI works.
+    if not field.plans:
+        x0, y0 = field.x, field.y
+        x1 = field.x + max(1, field.plot_w) - 1
+        y1 = field.y + max(1, field.plot_h) - 1
+        field.add_field_plan(x0, y0, x1, y1, getattr(field, "crop_kind", None) or "sage")
 
 
 def bootstrap_sociopolitical_test(game: Game) -> SettlementPoliticalState:
@@ -242,23 +305,17 @@ def bootstrap_sociopolitical_test(game: Game) -> SettlementPoliticalState:
             workplaces[kind] = _place_building(game, kind, pos[0], pos[1])
 
     # Established field attached near the farm.
-    if not any(b.kind == BuildingKind.FIELD for b in game.buildings.values()):
-        farm = workplaces.get(BuildingKind.FARM)
+    farm = workplaces.get(BuildingKind.FARM)
+    field = next((b for b in game.buildings.values() if b.kind == BuildingKind.FIELD), None)
+    if field is None:
         near = farm.center_cell() if farm else (hx + 8, hy + 2)
         pos = _find_plot(game, BuildingKind.FIELD, near, plot_w=4, plot_h=3)
         if pos:
             field = _place_building(
                 game, BuildingKind.FIELD, pos[0], pos[1], plot_w=4, plot_h=3
             )
-            # Mark soil as worked field tiles.
-            from world import FeatureType, TerrainType
-
-            for cell_x, cell_y in field.plot_cells():
-                cell = game.world.get_cell(cell_x, cell_y)
-                if cell is not None:
-                    cell.terrain = TerrainType.SOIL
-                    if hasattr(cell, "ploughed"):
-                        cell.ploughed = True
+    if field is not None:
+        _finalize_bootstrap_field(game, field, farm)
 
     # Food / materials / gold sufficient to ignore survival balance.
     game.home_storage.reset()
@@ -319,6 +376,7 @@ def bootstrap_sociopolitical_test(game: Game) -> SettlementPoliticalState:
             villager.set_default_priorities()
 
     game._sync_building_collision()
+    _purge_orphan_hiring_hall_features(game)
     # Drop incidental tents so bed math matches the brief (HOUSE 8 − 6 = 2 free).
     for bid, building in list(game.buildings.items()):
         if building.kind != BuildingKind.TENT:
@@ -407,18 +465,8 @@ def political_status_mods(game: Game, villager: Villager) -> list[StatusMod]:
             )
         )
         if villager.building_id is not None and not matches:
-            mods.append(
-                StatusMod(
-                    cause_key="settlement_office_mismatch",
-                    cause_icon="construction_site",
-                    cause_group="political",
-                    effect="happiness",
-                    mult=-5,
-                    cause_label="Settlement Office",
-                    tip_override="Happiness −5",
-                    display_kind="debuff",
-                )
-            )
+            # Happiness cost is shown via ongoing target buffs while working off-skill.
+            pass
 
     if state.has_institution("labour_exchange") and matches:
         mods.append(
@@ -429,50 +477,6 @@ def political_status_mods(game: Game, villager: Villager) -> list[StatusMod]:
                 effect="work",
                 mult=1.10,
                 cause_label="Labour Exchange",
-                display_kind="buff",
-            )
-        )
-
-    # Rations: show happiness impact only (never a "rations: half/full" chip).
-    if villager.ration_mode.name == "HALF":
-        from society import HAPPINESS_HALF_RATION_PENALTY
-
-        scale = missing_ration_happiness_scale(state)
-        penalty = HAPPINESS_HALF_RATION_PENALTY * scale
-        pct = int(round(penalty * 100))
-        if state.has_institution("common_provision"):
-            cause = "Common Provision: half rations"
-        else:
-            cause = "Half rations"
-        mods.append(
-            StatusMod(
-                cause_key="half_rations",
-                cause_icon="bread",
-                cause_group="political",
-                effect="happiness",
-                mult=-pct,
-                cause_label=cause,
-                tip_override=f"Happiness −{pct}%",
-                display_kind="debuff",
-            )
-        )
-    elif villager.ration_mode.name == "DOUBLE":
-        from society import HAPPINESS_DOUBLE_RATION_BONUS
-
-        pct = int(round(HAPPINESS_DOUBLE_RATION_BONUS * 100))
-        if state.has_institution("common_provision"):
-            cause = "Common Provision: double rations"
-        else:
-            cause = "Double rations"
-        mods.append(
-            StatusMod(
-                cause_key="double_rations",
-                cause_icon="bread",
-                cause_group="political",
-                effect="happiness",
-                mult=pct,
-                cause_label=cause,
-                tip_override=f"Happiness +{pct}%",
                 display_kind="buff",
             )
         )
@@ -608,41 +612,47 @@ def apply_immediate_effects(
         amount = float(effect.amount)
         event_label = source_label.strip() or effect.label or "Decision"
         if kind == "happiness_all":
+            from happiness import apply_immediate_happiness
+
             for villager in game.villagers:
-                apply_timed_happiness_impact(
+                apply_immediate_happiness(
                     villager,
                     amount,
                     icon="stew",
                     label=event_label,
                     day=int(game.calendar_day),
-                    ticks_per_day=int(game.ticks_per_day),
+                    source="decision",
                 )
             record_happiness_delta(game, amount * max(1, len(game.villagers)))
         elif kind == "happiness_workers":
+            from happiness import apply_immediate_happiness
+
             n = 0
             for villager in game.villagers:
                 if villager.building_id is not None:
-                    apply_timed_happiness_impact(
+                    apply_immediate_happiness(
                         villager,
                         amount,
                         icon="coins",
                         label=event_label,
                         day=int(game.calendar_day),
-                        ticks_per_day=int(game.ticks_per_day),
+                        source="decision",
                     )
                     n += 1
             record_happiness_delta(game, amount * n)
         elif kind == "happiness_skilled":
+            from happiness import apply_immediate_happiness
+
             n = 0
             for villager in game.villagers:
                 if int(getattr(villager.skills.get(strongest_skill(villager)), "level", 1) or 1) >= 4:
-                    apply_timed_happiness_impact(
+                    apply_immediate_happiness(
                         villager,
                         amount,
                         icon="stew",
                         label=event_label,
                         day=int(game.calendar_day),
-                        ticks_per_day=int(game.ticks_per_day),
+                        source="decision",
                     )
                     n += 1
             record_happiness_delta(game, amount * n)
@@ -702,27 +712,8 @@ def apply_covenant_ecology_recovery(game: Game) -> None:
 
 
 def apply_settlement_office_seasonal(game: Game) -> None:
-    state = getattr(game, "political", None)
-    if state is None or not state.has_institution("settlement_office"):
-        return
-    hit = 0
-    for villager in game.villagers:
-        if villager.building_id is None:
-            continue
-        if job_matches_strongest(villager, game.buildings):
-            continue
-        apply_timed_happiness_impact(
-            villager,
-            -5,
-            icon="construction_site",
-            label="Assigned outside strongest skill",
-            day=int(game.calendar_day),
-            duration_hours=12.0,
-            ticks_per_day=int(game.ticks_per_day),
-        )
-        hit += 1
-    if hit:
-        record_happiness_delta(game, -5 * hit)
+    """Office mismatch is an ongoing target pressure while working off-skill."""
+    return
 
 
 def sync_common_provision_rations(game: Game) -> None:
@@ -838,14 +829,16 @@ def refuse_open_applicant(game: Game) -> None:
     state.open_applicant = None
     state.villagers_refused += 1
     state.solidarity = max(0, state.solidarity - 5)
+    from happiness import apply_immediate_happiness
+
     for villager in game.villagers:
-        apply_timed_happiness_impact(
+        apply_immediate_happiness(
             villager,
             -2,
             icon="stew",
             label="Refused open applicant",
             day=int(game.calendar_day),
-            ticks_per_day=int(game.ticks_per_day),
+            source="decision",
         )
     state.add_diary(
         int(game.calendar_day),

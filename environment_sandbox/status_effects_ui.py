@@ -335,8 +335,35 @@ def collect_status_mods(
 
     if villager is not None:
         from society import active_happiness_status_mods
+        from traits import iter_trait_effects
 
         mods.extend(active_happiness_status_mods(villager))
+        for name, effect in iter_trait_effects(villager):
+            tip = effect.tip or name
+            for effect_key, mult in (
+                ("work", effect.work),
+                ("walk", effect.walk),
+                ("hunger", effect.hunger),
+            ):
+                if abs(float(mult) - 1.0) <= 0.01:
+                    continue
+                # Hunger: lower rate is beneficial.
+                if effect_key == "hunger":
+                    beneficial = float(mult) < 1.0
+                else:
+                    beneficial = float(mult) > 1.0
+                mods.append(
+                    StatusMod(
+                        cause_key=f"trait_{name}_{effect_key}",
+                        cause_icon="stew",
+                        cause_group="events",
+                        effect=effect_key,
+                        mult=float(mult),
+                        cause_label=name,
+                        tip_override=tip,
+                        display_kind="buff" if beneficial else "debuff",
+                    )
+                )
     elif happiness is not None:
         from society import (
             HAPPINESS_BAND_LABELS,

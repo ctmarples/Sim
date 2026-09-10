@@ -2345,6 +2345,22 @@ class Building:
 
                 for key in barn_sheaf_keys():
                     demand.pop(key, None)
+        elif self.kind == BuildingKind.HUNTER and self.addon_craft_recipes():
+            # Keep a small hide buffer for the drying rack even when gap demand
+            # briefly clears (memo / partial crafts).
+            for key in self.active_supply_keys():
+                target = self.reserve_amount(key)
+                if target <= 0:
+                    continue
+                have = int(getattr(self, key, 0))
+                if have >= target:
+                    continue
+                room = self.space_for_key(key)
+                if room <= 0:
+                    continue
+                want = min(target - have, room)
+                if want > 0:
+                    demand[key] = max(demand.get(key, 0), want)
         if memo.get("fp") != fp:
             memo.clear()
             memo["fp"] = fp
@@ -2929,6 +2945,8 @@ class Building:
             keys = self.plant_keys()
         elif self.kind == BuildingKind.FISHER:
             keys = self.active_supply_keys()
+        elif self.kind == BuildingKind.HUNTER and self.addon_craft_recipes():
+            keys = self.active_supply_keys()
         else:
             keys = ()
         return (
@@ -3213,6 +3231,13 @@ class Building:
                 for k in keys
                 if k not in (*SAPLING_ITEM_KEYS, "berry_seeds", *SEED_KEYS)
             )
+        # Addon craft inputs (hide→leather) before meat/fur so a full hut does not
+        # shove tanning stock into the storehouse.
+        if self.addon_craft_recipes():
+            active = self._ensure_input_policy()["active"]
+            preferred = tuple(k for k in keys if k in active)
+            rest = tuple(k for k in keys if k not in active)
+            keys = preferred + rest
         for key in keys:
             self._take(inventory, key)
 
@@ -3940,6 +3965,9 @@ class Villager:
     name: str = ""
     energy: float = 1.0
     happiness: float = 0.7
+    # Underlying mood that drifts toward living conditions; displayed happiness
+    # adds temporary capped moods on top (see happiness.py).
+    underlying_happiness: float | None = None
     housed: bool = False
     housing_id: int | None = None
     housing_need: int = 1
@@ -3953,8 +3981,10 @@ class Villager:
     coins_paid_total: int = 0
     season_pay_due: int = 0
     happiness_events: list[dict] = field(default_factory=list)
-    # Timed happiness swings shown as buffs/debuffs; unwind toward the prior level.
+    # Legacy mirror of temporary moods (kept for older readers / UI helpers).
     happiness_modifiers: list[dict] = field(default_factory=list)
+    # Temporary capped moods: [{channel, peak, ticks_left, ticks_total, ...}].
+    happiness_temporary: list[dict] = field(default_factory=list)
     low_happiness_days: float = 0.0  # legacy
     low_happiness_seasons: int = 0
     # Happiness-driven breaks / wandering (sociopolitical consequence).
