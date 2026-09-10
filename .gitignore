@@ -34,8 +34,10 @@ Thumbs.db
 !.env.example
 *.log
 
-# Game saves
+# Game saves — keep scenario templates; ignore playthrough / prefs / autosaves
 saves/*.json
+!saves/tutorial_*.json
+!saves/SP_trial.json
 !saves/.gitkeep
 
 # Runtime building stipple bake (regenerated on load)

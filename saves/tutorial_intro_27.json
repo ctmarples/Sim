@@ -1,0 +1,20 @@
+{
+  "tutorial_checkpoint": {
+    "step": "return_to_rhea",
+    "player": [
+      10,
+      23
+    ],
+    "gwen_asked": true,
+    "joss_asked": true,
+    "field_planner_unlocked": true,
+    "forager_unlocked": true,
+    "village_buildings_unlocked": true,
+    "satchel_equipped": true,
+    "handbook_completed": 5,
+    "planner_tab": "rotation",
+    "hotspot_x": 52,
+    "hotspot_y": 13,
+    "label": "Return to Rhea"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "tutorial_checkpoint": {
+    "step": "field_handbook",
+    "player": [
+      10,
+      23
+    ],
+    "gwen_asked": true,
+    "joss_asked": true,
+    "field_planner_unlocked": true,
+    "handbook_completed": 2,
+    "planner_tab": "status",
+    "label": "Mind the traffic"
+  }
+}

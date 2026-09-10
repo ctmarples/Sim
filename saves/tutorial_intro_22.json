@@ -1,0 +1,17 @@
+{
+  "tutorial_checkpoint": {
+    "step": "equip_satchel",
+    "player": [
+      45,
+      8
+    ],
+    "gwen_asked": true,
+    "joss_asked": true,
+    "field_planner_unlocked": true,
+    "forager_unlocked": true,
+    "has_satchel": true,
+    "handbook_completed": 5,
+    "planner_tab": "rotation",
+    "label": "Wear the leather satchel"
+  }
+}

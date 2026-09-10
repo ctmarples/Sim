@@ -1,0 +1,17 @@
+{
+  "tutorial_checkpoint": {
+    "step": "forage_meadow",
+    "player": [
+      45,
+      8
+    ],
+    "gwen_asked": true,
+    "joss_asked": true,
+    "field_planner_unlocked": true,
+    "forager_unlocked": true,
+    "satchel_equipped": true,
+    "handbook_completed": 5,
+    "planner_tab": "rotation",
+    "label": "Forage for dinner"
+  }
+}

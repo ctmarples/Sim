@@ -1,0 +1,25 @@
+{
+  "tutorial_checkpoint": {
+    "step": "field_handbook",
+    "player": [
+      10,
+      23
+    ],
+    "gwen_asked": true,
+    "joss_asked": true,
+    "field_planner_unlocked": true,
+    "handbook_completed": 4,
+    "planner_tab": "rotation",
+    "label": "Add Wheat to Rotation",
+    "quest_checks": [
+      "handbook_5:read",
+      "handbook_5:rotation"
+    ],
+    "handbook_example_seasons": [
+      "SPRING",
+      "SUMMER",
+      "AUTUMN",
+      "WINTER"
+    ]
+  }
+}

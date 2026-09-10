@@ -1,0 +1,15 @@
+{
+  "tutorial_checkpoint": {
+    "step": "field_handbook",
+    "player": [
+      10,
+      23
+    ],
+    "gwen_asked": true,
+    "joss_asked": true,
+    "field_planner_unlocked": true,
+    "handbook_completed": 4,
+    "planner_tab": "handbook",
+    "label": "Thinking past this harvest"
+  }
+}

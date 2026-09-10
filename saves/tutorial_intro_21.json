@@ -1,0 +1,15 @@
+{
+  "tutorial_checkpoint": {
+    "step": "rhea_forage_approaches",
+    "player": [
+      10,
+      23
+    ],
+    "gwen_asked": true,
+    "joss_asked": true,
+    "field_planner_unlocked": true,
+    "handbook_completed": 5,
+    "planner_tab": "rotation",
+    "label": "Help Gwen forage"
+  }
+}
