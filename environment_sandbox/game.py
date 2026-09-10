@@ -513,6 +513,10 @@ class Game:
         self.relocate_building_id: int | None = None
         self.selected_construction_id: int | None = None
         self._player_hud_tool_hits: list[tuple[pygame.Rect, str]] = []
+        # Persistent player world-object work (chop/forage/…). Progress is kept if
+        # the player walks away and resumes when back in range of the same object.
+        self._player_world_jobs: dict[str, dict] = {}
+        self._player_active_job_key: str | None = None
         self.resource_inspect = ResourceInspectDialog()
         self.inspected_animal_id: int | None = None
         self.inspected_tree_cell: tuple[int, int] | None = None
@@ -7073,10 +7077,9 @@ class Game:
             steps = max(1, recipe.work_steps())
             completed = int(building.recipe_progress.get(recipe.name, 0))
             phase = 1.0 - min(1.0, max(0.0, cooldown / max(1, interval)))
-            # ``recipe_progress`` is advanced before the worker cooldown begins.
-            # Animate forward from that saved checkpoint toward the next step.
-            # Subtracting one here made lake.json's mill visibly rewind from
-            # wheat flour 2/3 to 1/3 as soon as its worker resumed after loading.
+            # ``recipe_progress`` advances when a work swing completes. While the
+            # worker is mid-swing, animate from the saved checkpoint through the
+            # current step: (completed + phase) / steps.
             smooth = (completed + phase) / steps
             smooth = max(result.get(recipe.name, 0.0), min(1.0, smooth))
             active[recipe.name] = max(active.get(recipe.name, 0.0), smooth)
@@ -7090,6 +7093,7 @@ class Game:
             if (
                 worker.state != VillagerState.WORKING
                 or worker.building_id != building.id
+                or not getattr(worker, "work_in_progress", False)
             ):
                 continue
             add_cycle(
@@ -9153,7 +9157,10 @@ class Game:
                 self._select_building(building, show_player=True, detail_only=True)
             return
 
-        if self.player.work_cooldown > 0:
+        if self.player.work_cooldown > 0 and (
+            self.player_craft_building_id is not None
+            or self.player_build_site_id is not None
+        ):
             self._set_status("Still working…")
             return
 
@@ -9161,14 +9168,22 @@ class Game:
         loose_target = self._player_loose_deposit_target()
         if loose_target is not None:
             target_x, target_y, kind = loose_target
-            if kind == "meat" and self._collect_meat(
-                target_x, target_y, self.player.inventory, status=True
-            ):
-                self._finish_player_work()
-            elif kind == "fish" and self._collect_fish(
-                target_x, target_y, self.player.inventory, status=True
-            ):
-                self._finish_player_work()
+            if kind == "meat":
+                self._player_focus_world_job(
+                    action="meat",
+                    x=target_x,
+                    y=target_y,
+                    skill=SkillType.HUNTING,
+                    label="Collecting meat",
+                )
+            elif kind == "fish":
+                self._player_focus_world_job(
+                    action="fish_deposit",
+                    x=target_x,
+                    y=target_y,
+                    skill=SkillType.EXTRACTION,
+                    label="Collecting fish",
+                )
             return
 
         # Honey from an adjacent bee nest (same as foragers).
@@ -9227,37 +9242,65 @@ class Game:
             return
 
         if cell.feature == FeatureType.MUSHROOM:
-            if self._collect_mushroom(x, y, self.player.inventory, status=True):
-                self._finish_player_work()
+            self._player_focus_world_job(
+                action="mushroom",
+                x=x,
+                y=y,
+                skill=SkillType.EXTRACTION,
+                label="Gathering mushrooms",
+            )
             return
 
         if cell.feature == FeatureType.WOOD_BUSH:
-            if self._collect_wood_bush(x, y, self.player.inventory, status=True):
-                self._finish_player_work()
+            self._player_focus_world_job(
+                action="wood_bush",
+                x=x,
+                y=y,
+                skill=SkillType.EXTRACTION,
+                label="Gathering wood",
+            )
             return
 
         if cell.feature == FeatureType.BERRY_BUSH:
-            if self._collect_berries(x, y, self.player.inventory, status=True):
-                self._finish_player_work()
+            self._player_focus_world_job(
+                action="berries",
+                x=x,
+                y=y,
+                skill=SkillType.EXTRACTION,
+                label="Picking berries",
+            )
             return
 
         if cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.REED):
-            if self._collect_herb(x, y, self.player.inventory, status=True):
-                self._finish_player_work()
+            self._player_focus_world_job(
+                action="herb",
+                x=x,
+                y=y,
+                skill=SkillType.EXTRACTION,
+                label="Gathering plants",
+            )
             return
 
         if cell.feature == FeatureType.CROP_HERB:
             weeds = float(getattr(cell, "weeds", 0.0))
             hoe = self.player.inventory.has_equipped_tool("hoe")
             if weeds > 0.05 and hoe:
-                if self.world.clear_weeds(x, y):
-                    self.world.apply_disturbance(x, y)
-                    self._finish_player_work()
-                    self._set_status("Pulled weeds.")
+                self._player_focus_world_job(
+                    action="weeds",
+                    x=x,
+                    y=y,
+                    skill=SkillType.FARMING,
+                    label="Pulling weeds",
+                )
                 return
             if self.world.crop_herb_ready(x, y):
-                if self._harvest_farm_herb(x, y, self.player.inventory, status=True):
-                    self._finish_player_work()
+                self._player_focus_world_job(
+                    action="harvest_crop",
+                    x=x,
+                    y=y,
+                    skill=SkillType.FARMING,
+                    label="Harvesting crop",
+                )
             elif self._try_apply_alchemist_treatment(x, y):
                 return
             elif weeds > 0.05 and not hoe:
@@ -9270,15 +9313,23 @@ class Game:
             if not self.player.inventory.has_equipped_tool("axe"):
                 self._set_status("Equip an axe (Q) to chop trees.")
                 return
-            if self._chop_tree(
-                x, y, self.player.inventory, status=True, require_axe=True
-            ):
-                self._finish_player_work()
+            self._player_focus_world_job(
+                action="chop",
+                x=x,
+                y=y,
+                skill=SkillType.EXTRACTION,
+                label="Chopping",
+            )
             return
 
         if cell.feature == FeatureType.ROCK:
-            if self._collect_rock(x, y, self.player.inventory, status=True):
-                self._finish_player_work()
+            self._player_focus_world_job(
+                action="rock",
+                x=x,
+                y=y,
+                skill=SkillType.EXTRACTION,
+                label="Mining rock",
+            )
             return
 
         if cell.feature == FeatureType.NONE and cell.terrain in PLANTABLE_LAND:
@@ -9287,8 +9338,13 @@ class Game:
             if self.place_kind is not None:
                 self._try_build(self.place_kind, x, y)
             else:
-                if self._plant_here(x, y, self.player.inventory, status=True):
-                    self._finish_player_work()
+                self._player_focus_world_job(
+                    action="plant",
+                    x=x,
+                    y=y,
+                    skill=SkillType.FARMING,
+                    label="Planting",
+                )
             return
 
         if cell.feature == FeatureType.SAPLING:
@@ -10479,7 +10535,32 @@ class Game:
 
     def _gain_job_skill(self, villager: Villager, kind_name: str) -> None:
         skill, _ = skill_for_building(kind_name)
-        gain_skill(villager, skill)
+        self._gain_actor_skill(
+            villager,
+            skill,
+            who=str(getattr(villager, "name", None) or f"Villager #{villager.id}"),
+        )
+
+    def _notify_skill_level_up(
+        self, who: str, skill: SkillType, level: int
+    ) -> None:
+        from quest_feedback import queue_alert
+        from society import SKILL_ICONS, SKILL_LABELS
+
+        label = SKILL_LABELS.get(skill, skill.name)
+        queue_alert(
+            self,
+            f"{who}: {label} {level}",
+            SKILL_ICONS.get(skill, "craft_bench"),
+            "skills",
+        )
+
+    def _gain_actor_skill(
+        self, actor: object, skill: SkillType, *, who: str
+    ) -> None:
+        new_level = gain_skill(actor, skill)
+        if new_level is not None:
+            self._notify_skill_level_up(who, skill, int(new_level))
 
     def _chop_tree(
         self,
@@ -10621,9 +10702,6 @@ class Game:
         plan = self._plan_at_cell(field, x, y)
         if plan is None:
             return False
-        if self.player.work_cooldown > 0:
-            self._set_status("Still working…")
-            return True
         cell = self.world.get_cell(x, y)
         if cell is None:
             return True
@@ -10654,19 +10732,14 @@ class Game:
                 return True
             if self._try_apply_alchemist_treatment(x, y):
                 return True
-            if self.world.plough_tile(x, y):
-                self.world.apply_disturbance(x, y)
-                self._refresh_indicators()
-                self._finish_player_work()
-                self._set_status(f"Ploughed field for {crop.label.lower()}.")
-            else:
-                # Force-clear residual pad/soil lock on field plots.
-                cell.terrain = TerrainType.SOIL
-                cell.feature = FeatureType.NONE
-                cell.crop_kind = None
-                self.world.mark_terrain_dirty(x, y)
-                self._finish_player_work()
-                self._set_status(f"Ploughed field for {crop.label.lower()}.")
+            self._player_focus_world_job(
+                action="plough",
+                x=x,
+                y=y,
+                skill=SkillType.FARMING,
+                label="Ploughing",
+                meta={"crop_label": crop.label},
+            )
             return True
 
         inv = self.player.inventory
@@ -10677,29 +10750,14 @@ class Game:
             self._set_status(f"Need {resource_label(seed_key)} to plant here.")
             return True
 
-        # Harvested soil skips ploughing, so apply carried amendments here too.
-        if not cell.compost_cycle_applied and inv.compost > 0:
-            inv.consume_item("compost", 1)
-            cell.fertility = min(1.0, float(cell.fertility) + 0.05)
-            cell.compost_cycle_applied = True
-            self.record_consumed("compost", 1)
-        if not cell.mineral_cycle_applied and inv.mineral_powder > 0:
-            inv.consume_item("mineral_powder", 1)
-            cell.weed_suppression = max(float(cell.weed_suppression), 0.10)
-            cell.mineral_cycle_applied = True
-            self.record_consumed("mineral_powder", 1)
-        if self.world.sow_crop(
-            x, y, crop.key, self._field_sow_growth_ticks(crop)
-        ):
-            inv.consume_item(seed_key, 1)
-            self.record_consumed(seed_key, 1)
-            self.world.apply_disturbance(x, y)
-            self.sounds.emit("work.plant",actor="player",plant_type="crop",x=x,y=y)
-            self._refresh_indicators()
-            self._finish_player_work()
-            self._set_status(f"Planted {crop.label.lower()}.")
-        else:
-            self._set_status("Cannot plant on this field tile.")
+        self._player_focus_world_job(
+            action="sow",
+            x=x,
+            y=y,
+            skill=SkillType.FARMING,
+            label=f"Sowing {crop.label.lower()}",
+            meta={"crop_key": crop.key, "seed_key": seed_key},
+        )
         return True
 
     def _plant_berry_seed(self, x: int, y: int, inventory: Inventory, status: bool = False) -> bool:
@@ -11055,13 +11113,14 @@ class Game:
         if not villager.inventory.has_equipped_tool("axe"):
             return False
         recipe = self._craftable_split_recipe(building, worker=villager)
-        if recipe is None or villager.work_cooldown > 0:
+        if recipe is None:
             return False
+        if not self._work_swing_complete(villager, at=(villager.x, villager.y)):
+            return True
         self._spend_work_energy(villager)
         if building.advance_recipe_progress(recipe, split=True):
             self._apply_recipe_tracked(building, recipe)
             self._gain_job_skill(villager, building.kind.name)
-        villager.work_cooldown = self._villager_work_interval(villager)
         return True
 
     def _deposit_home(self, inventory: Inventory, status: bool = True) -> bool:
@@ -11497,7 +11556,7 @@ class Game:
         return best
 
     def _player_harvest_honey(self, colony) -> None:
-        """Collect honey from a bee nest (no tool required)."""
+        """Start / resume honey harvest on a bee nest."""
         inv = self.player.inventory
         if not colony.can_harvest() or colony.kind != AnimalKind.BEE:
             self._set_status("Bee nest is not ready to harvest.")
@@ -11505,25 +11564,18 @@ class Game:
         if not inv.can_add(HONEY_PER_BEE_LEVEL, key="honey"):
             self._set_status("Inventory is full.")
             return
-        result = self.wildlife.harvest_colony(colony.id, kind=AnimalKind.BEE)
-        if result is None:
-            self._set_status("Could not harvest honey.")
-            return
-        _kind, amount = result
-        inv.add_item("honey", amount)
-        self.record_produced("honey", amount)
-        self.world.apply_extraction_disturbance(colony.x, colony.y)
-        self._refresh_indicators()
-        self._finish_player_work()
-        left = (
-            self.wildlife.colony_by_id(colony.id).level
-            if self.wildlife.colony_by_id(colony.id) is not None
-            else 0
+        self._player_focus_world_job(
+            action="honey",
+            x=colony.x,
+            y=colony.y,
+            skill=SkillType.EXTRACTION,
+            label="Collecting honey",
+            tag=f"colony:{colony.id}",
+            meta={"colony_id": colony.id},
         )
-        self._set_status(f"Collected {amount} honey (nest level now {left}).")
 
     def _player_hunt_warren(self, colony) -> None:
-        """Spear-hunt a rabbit warren within melee range."""
+        """Start / resume spear-hunting a rabbit warren."""
         inv = self.player.inventory
         if not inv.has_equipped_tool("spear"):
             self._set_status("Equip a spear (I or Q) to hunt rabbits.")
@@ -11538,52 +11590,31 @@ class Game:
         ):
             self._set_status("Inventory is full.")
             return
-        result = self.wildlife.harvest_colony(colony.id, kind=AnimalKind.RABBIT)
-        if result is None:
-            self._set_status("Rabbits got away.")
-            return
-        if not self._apply_hunt_recipe_to_inventory(
-            inv, "rabbit", has_knife=has_knife
-        ):
-            self._set_status("Inventory is full.")
-            return
-        self.world.apply_extraction_disturbance(colony.x, colony.y)
-        self._refresh_indicators()
-        self._finish_player_work()
-        loot = ", ".join(
-            self._hunt_recipe_status_bits("rabbit", has_knife=has_knife)
-        ) or "loot"
-        self._set_status(f"Hunted warren. {loot}.")
+        self._player_focus_world_job(
+            action="warren",
+            x=colony.x,
+            y=colony.y,
+            skill=SkillType.HUNTING,
+            label="Hunting warren",
+            tag=f"colony:{colony.id}",
+            meta={"colony_id": colony.id},
+        )
 
     def _player_hunt(self, animal) -> None:
         inv = self.player.inventory
-        has_knife = inv.has_equipped_tool("knife")
         has_spear = inv.has_equipped_tool("spear")
         has_bow = inv.has_equipped_tool("bow") and int(getattr(inv, "stone_arrows", 0)) > 0
         if not has_spear and not has_bow:
             self._set_status("Equip a spear or bow+arrows (I or Q) to hunt.")
             return
-        result = self.wildlife.kill_animal(animal.id)
-        if result is None:
-            self._set_status("Animal got away.")
-            return
-        if has_bow and not has_spear:
-            inv.consume_item("stone_arrows", 1)
-            self.record_consumed("stone_arrows", 1)
-        x, y, kind = result
-        meat = self._drop_hunt_yields(x, y, kind, has_knife=has_knife)
-        label = kind.name.lower()
-        self.world.apply_extraction_disturbance(x, y)
-        if kind in (AnimalKind.DEER, AnimalKind.BOAR):
-            self.wildlife.scare_from_kill(x, y)
-        self._refresh_indicators()
-        self._finish_player_work()
-        weapon = "spear" if has_spear else "bow"
-        loot = ", ".join(
-            self._hunt_recipe_status_bits(kind.name.lower(), has_knife=has_knife)
-        ) or f"{meat} meat"
-        self._set_status(
-            f"Hunted {label} with {weapon}. {loot} on ({x}, {y})."
+        self._player_focus_world_job(
+            action="hunt",
+            x=animal.x,
+            y=animal.y,
+            skill=SkillType.HUNTING,
+            label=f"Hunting {animal.kind.name.lower()}",
+            tag=f"animal:{animal.id}",
+            meta={"animal_id": animal.id},
         )
 
     def _hunt_threat_positions(self) -> list[tuple[int, int]]:
@@ -11645,20 +11676,14 @@ class Game:
         if not self.player.inventory.has_equipped_tool("fishing_rod"):
             self._set_status("Equip a fishing rod (Q) to fish.")
             return
-        from wildlife import fish_yield_for
-
-        result = self.fish.kill_fish(item.id)
-        if result is None:
-            self._set_status("Fish got away.")
-            return
-        x, y, kind = result
-        yield_n = fish_yield_for(kind)
-        self.world.add_fish_deposit(x, y, yield_n)
-        self.world.apply_extraction_disturbance(x, y)
-        self._refresh_indicators()
-        self._finish_player_work()
-        self._set_status(
-            f"Caught {kind.name.lower()}. {yield_n} fish left on shore."
+        self._player_focus_world_job(
+            action="fish_catch",
+            x=item.x,
+            y=item.y,
+            skill=SkillType.EXTRACTION,
+            label="Fishing",
+            tag=f"fish:{item.id}",
+            meta={"fish_id": item.id},
         )
 
     # ------------------------------------------------------------------
@@ -11887,6 +11912,13 @@ class Game:
                 villager.move_cooldown -= 1
             if villager.work_cooldown > 0:
                 villager.work_cooldown -= 1
+            # Work time is spent on-site; leaving the anchor cancels the swing.
+            if (
+                getattr(villager, "work_in_progress", False)
+                and getattr(villager, "work_anchor", None) is not None
+                and (villager.x, villager.y) != villager.work_anchor
+            ):
+                self._abort_work_swing(villager)
             if villager.decision_cooldown > 0:
                 villager.decision_cooldown -= 1
             if villager.fish_bait_ticks > 0:
@@ -11969,11 +12001,13 @@ class Game:
                         or self._find_nearest_map_food(villager) is not None
                     )
                     if can_eat:
+                        self._abort_work_swing(villager)
                         self._update_seek_food(villager)
                         continue
                     villager.seeking_food = False
 
             if self._maybe_start_happiness_break(villager):
+                self._abort_work_swing(villager)
                 self._update_happiness_break(villager)
                 continue
 
@@ -12220,6 +12254,48 @@ class Game:
         base = self._work_interval_ticks()
         return max(6, int(round(base / max(0.15, factor))))
 
+    def _abort_work_swing(self, villager: Villager) -> None:
+        """Cancel an unfinished on-site work swing without applying its effect."""
+        if not getattr(villager, "work_in_progress", False):
+            return
+        villager.work_in_progress = False
+        villager.work_anchor = None
+        villager.work_cooldown = 0
+
+    def _work_swing_complete(
+        self,
+        villager: Villager,
+        *,
+        at: tuple[int, int] | None = None,
+    ) -> bool:
+        """Spend work time on-site first; return True only when the swing finishes.
+
+        Call while the villager is at the work location. First call starts the
+        swing (sets ``work_cooldown``). Later, when the cooldown expires while
+        still on the anchor cell, returns True so the caller can apply the
+        world effect (weed, plant, chop, craft step, etc.).
+        """
+        here = at if at is not None else (villager.x, villager.y)
+        anchor = getattr(villager, "work_anchor", None)
+        in_progress = bool(getattr(villager, "work_in_progress", False))
+
+        if in_progress and anchor is not None and here != anchor:
+            self._abort_work_swing(villager)
+            in_progress = False
+
+        if villager.work_cooldown > 0:
+            return False
+
+        if in_progress:
+            villager.work_in_progress = False
+            villager.work_anchor = None
+            return True
+
+        villager.work_in_progress = True
+        villager.work_anchor = here
+        villager.work_cooldown = self._villager_work_interval(villager)
+        return False
+
     def _temp_impact(self, inventory: Inventory):
         """Hot/cold impact for this inventory's equipped clothing."""
         return temperature_impact(
@@ -12328,23 +12404,463 @@ class Game:
             skill_mult=skill_mult,
         )
 
-    def _player_work_interval(self) -> int:
+    def _player_work_interval(self, skill: SkillType | None = None) -> int:
         p = self.player
+        skill_mult = 1.0
+        if skill is not None:
+            skill_mult = skill_efficiency(p, skill)
         return self._work_interval_for(
             satiation=p.satiation,
             food_work_mult=p.food_work_mult,
             happiness=p.happiness,
             energy=p.energy,
+            skill_mult=skill_mult,
         )
 
-    def _finish_player_work(self) -> None:
-        """Spend energy and start the villager-paced work cooldown after an action."""
+    def _finish_player_work(self, skill: SkillType | None = None) -> None:
+        """Spend energy and start a short pacing cooldown (craft/build/logistics)."""
         self.player.energy = max(
             0.0,
             self.player.energy
             - ENERGY_WORK_DRAIN * self._temp_energy_mult(self.player.inventory),
         )
-        self.player.work_cooldown = self._player_work_interval()
+        self.player.work_cooldown = self._player_work_interval(skill)
+        if skill is not None:
+            self._gain_actor_skill(self.player, skill, who="You")
+
+    def _player_world_job_key(self, action: str, x: int, y: int, *, tag: str = "") -> str:
+        if tag:
+            return f"{action}:{x},{y}:{tag}"
+        return f"{action}:{x},{y}"
+
+    def _player_focus_world_job(
+        self,
+        *,
+        action: str,
+        x: int,
+        y: int,
+        skill: SkillType,
+        label: str,
+        tag: str = "",
+        meta: dict | None = None,
+    ) -> None:
+        """Start or resume work on a world object; progress persists if you leave."""
+        key = self._player_world_job_key(action, x, y, tag=tag)
+        job = self._player_world_jobs.get(key)
+        need = max(1, self._player_work_interval(skill))
+        if job is None:
+            job = {
+                "key": key,
+                "action": action,
+                "x": int(x),
+                "y": int(y),
+                "done": 0,
+                "need": need,
+                "skill": skill,
+                "label": label,
+                "meta": dict(meta or {}),
+                "tag": tag,
+            }
+            self._player_world_jobs[key] = job
+        else:
+            job["label"] = label
+            job["skill"] = skill
+            if meta:
+                job["meta"] = dict(meta)
+            # Keep accumulated ``done``; refresh duration only if empty progress.
+            if int(job.get("done", 0) or 0) <= 0:
+                job["need"] = need
+        self._player_active_job_key = key
+        frac = int(100 * int(job["done"]) / max(1, int(job["need"])))
+        self._set_status(f"{label}… {frac}%.")
+
+    def _player_clear_world_job(self, key: str | None) -> None:
+        if not key:
+            return
+        self._player_world_jobs.pop(key, None)
+        if self._player_active_job_key == key:
+            self._player_active_job_key = None
+
+    def _player_job_in_range(self, job: dict) -> bool:
+        """True when the player is close enough to keep working this object."""
+        action = str(job.get("action") or "")
+        x, y = int(job["x"]), int(job["y"])
+        px = float(self.player.world_x)
+        py = float(self.player.world_y)
+        meta = job.get("meta") or {}
+
+        if action in ("honey", "warren"):
+            colony_id = meta.get("colony_id")
+            colony = self.wildlife.colony_by_id(colony_id) if colony_id is not None else None
+            if colony is None:
+                return False
+            return max(abs(colony.x - self.player.x), abs(colony.y - self.player.y)) <= 1
+
+        if action == "hunt":
+            animal_id = meta.get("animal_id")
+            animal = self.wildlife.huntable_by_id(animal_id) if animal_id is not None else None
+            if animal is None:
+                return False
+            return max(abs(animal.x - self.player.x), abs(animal.y - self.player.y)) <= 1
+
+        if action == "fish_catch":
+            fish_id = meta.get("fish_id")
+            fish = next((f for f in self.fish.fish if f.id == fish_id), None)
+            if fish is None:
+                return False
+            return self.world.is_adjacent_chebyshev(
+                self.player.x, self.player.y, fish.x, fish.y, radius=1
+            )
+
+        # Cell / deposit work: same reach rules as natural interaction.
+        if action in ("meat", "fish_deposit"):
+            return max(abs(x - self.player.x), abs(y - self.player.y)) <= 1
+
+        natural = self._player_natural_interaction_target()
+        if natural is not None:
+            nx, ny, feature, _secondary = natural
+            if (nx, ny) == (x, y):
+                expected = {
+                    "chop": FeatureType.TREE,
+                    "rock": FeatureType.ROCK,
+                    "mushroom": FeatureType.MUSHROOM,
+                    "wood_bush": FeatureType.WOOD_BUSH,
+                    "berries": FeatureType.BERRY_BUSH,
+                    "herb": (FeatureType.HERB, FeatureType.WILD_CROP, FeatureType.REED),
+                    "weeds": FeatureType.CROP_HERB,
+                    "harvest_crop": FeatureType.CROP_HERB,
+                    "plant": FeatureType.NONE,
+                    "plough": FeatureType.NONE,
+                    "sow": FeatureType.NONE,
+                }.get(action)
+                if expected is None:
+                    return True
+                if isinstance(expected, tuple):
+                    return feature in expected
+                if action in ("plant", "plough", "sow"):
+                    return True
+                return feature == expected
+
+        # Fallback: stand on/near the cell.
+        return math.hypot(px - x, py - y) <= 0.85
+
+    def _player_job_still_valid(self, job: dict) -> bool:
+        action = str(job.get("action") or "")
+        x, y = int(job["x"]), int(job["y"])
+        cell = self.world.get_cell(x, y)
+        meta = job.get("meta") or {}
+        if action == "chop":
+            return cell is not None and cell.feature == FeatureType.TREE
+        if action == "rock":
+            return cell is not None and cell.feature == FeatureType.ROCK
+        if action == "mushroom":
+            return cell is not None and cell.feature == FeatureType.MUSHROOM
+        if action == "wood_bush":
+            return cell is not None and cell.feature == FeatureType.WOOD_BUSH
+        if action == "berries":
+            return cell is not None and cell.feature == FeatureType.BERRY_BUSH
+        if action == "herb":
+            return cell is not None and cell.feature in (
+                FeatureType.HERB,
+                FeatureType.WILD_CROP,
+                FeatureType.REED,
+            )
+        if action == "weeds":
+            return (
+                cell is not None
+                and cell.feature == FeatureType.CROP_HERB
+                and float(getattr(cell, "weeds", 0.0)) > 0.05
+            )
+        if action == "harvest_crop":
+            return cell is not None and self.world.crop_herb_ready(x, y)
+        if action == "meat":
+            return cell is not None and self._cell_has_hunt_loot(cell)
+        if action == "fish_deposit":
+            return cell is not None and int(getattr(cell, "fish_deposit", 0)) > 0
+        if action == "honey":
+            colony = self.wildlife.colony_by_id(meta.get("colony_id"))
+            return colony is not None and colony.can_harvest()
+        if action == "warren":
+            colony = self.wildlife.colony_by_id(meta.get("colony_id"))
+            return colony is not None and colony.can_harvest()
+        if action == "hunt":
+            return self.wildlife.huntable_by_id(meta.get("animal_id")) is not None
+        if action == "fish_catch":
+            return any(f.id == meta.get("fish_id") for f in self.fish.fish)
+        if action in ("plough", "sow", "plant"):
+            return cell is not None
+        return True
+
+    def _player_apply_world_job(self, job: dict) -> bool:
+        """Apply the completed world-work effect. Returns True on success."""
+        action = str(job.get("action") or "")
+        x, y = int(job["x"]), int(job["y"])
+        meta = job.get("meta") or {}
+        inv = self.player.inventory
+        if action == "chop":
+            return self._chop_tree(x, y, inv, status=True, require_axe=True)
+        if action == "rock":
+            return self._collect_rock(x, y, inv, status=True)
+        if action == "mushroom":
+            return self._collect_mushroom(x, y, inv, status=True)
+        if action == "wood_bush":
+            return self._collect_wood_bush(x, y, inv, status=True)
+        if action == "berries":
+            return self._collect_berries(x, y, inv, status=True)
+        if action == "herb":
+            return self._collect_herb(x, y, inv, status=True)
+        if action == "weeds":
+            if self.world.clear_weeds(x, y):
+                self.world.apply_disturbance(x, y)
+                self._set_status("Pulled weeds.")
+                return True
+            return False
+        if action == "harvest_crop":
+            return self._harvest_farm_herb(x, y, inv, status=True)
+        if action == "meat":
+            return self._collect_meat(x, y, inv, status=True)
+        if action == "fish_deposit":
+            return self._collect_fish(x, y, inv, status=True)
+        if action == "honey":
+            colony = self.wildlife.colony_by_id(meta.get("colony_id"))
+            if colony is None:
+                return False
+            # Re-run harvest body without the old finish_player_work path.
+            if not colony.can_harvest() or colony.kind != AnimalKind.BEE:
+                return False
+            if not inv.can_add(HONEY_PER_BEE_LEVEL, key="honey"):
+                self._set_status("Inventory is full.")
+                return False
+            result = self.wildlife.harvest_colony(colony.id, kind=AnimalKind.BEE)
+            if result is None:
+                return False
+            _kind, amount = result
+            inv.add_item("honey", amount)
+            self.record_produced("honey", amount)
+            self.world.apply_extraction_disturbance(colony.x, colony.y)
+            self._refresh_indicators()
+            left = (
+                self.wildlife.colony_by_id(colony.id).level
+                if self.wildlife.colony_by_id(colony.id) is not None
+                else 0
+            )
+            self._set_status(f"Collected {amount} honey (nest level now {left}).")
+            return True
+        if action == "warren":
+            colony = self.wildlife.colony_by_id(meta.get("colony_id"))
+            if colony is None:
+                return False
+            has_knife = inv.has_equipped_tool("knife")
+            result = self.wildlife.harvest_colony(colony.id, kind=AnimalKind.RABBIT)
+            if result is None:
+                self._set_status("Rabbits got away.")
+                return False
+            if not self._apply_hunt_recipe_to_inventory(
+                inv, "rabbit", has_knife=has_knife
+            ):
+                self._set_status("Inventory is full.")
+                return False
+            self.world.apply_extraction_disturbance(colony.x, colony.y)
+            self._refresh_indicators()
+            loot = ", ".join(
+                self._hunt_recipe_status_bits("rabbit", has_knife=has_knife)
+            ) or "loot"
+            self._set_status(f"Hunted warren. {loot}.")
+            return True
+        if action == "hunt":
+            animal = self.wildlife.huntable_by_id(meta.get("animal_id"))
+            if animal is None:
+                return False
+            has_knife = inv.has_equipped_tool("knife")
+            has_spear = inv.has_equipped_tool("spear")
+            has_bow = inv.has_equipped_tool("bow") and int(
+                getattr(inv, "stone_arrows", 0)
+            ) > 0
+            result = self.wildlife.kill_animal(animal.id)
+            if result is None:
+                self._set_status("Animal got away.")
+                return False
+            if has_bow and not has_spear:
+                inv.consume_item("stone_arrows", 1)
+                self.record_consumed("stone_arrows", 1)
+            hx, hy, kind = result
+            meat = self._drop_hunt_yields(hx, hy, kind, has_knife=has_knife)
+            self.world.apply_extraction_disturbance(hx, hy)
+            if kind in (AnimalKind.DEER, AnimalKind.BOAR):
+                self.wildlife.scare_from_kill(hx, hy)
+            self._refresh_indicators()
+            weapon = "spear" if has_spear else "bow"
+            loot = ", ".join(
+                self._hunt_recipe_status_bits(kind.name.lower(), has_knife=has_knife)
+            ) or f"{meat} meat"
+            self._set_status(
+                f"Hunted {kind.name.lower()} with {weapon}. {loot} on ({hx}, {hy})."
+            )
+            return True
+        if action == "fish_catch":
+            from wildlife import fish_yield_for
+
+            fish_id = meta.get("fish_id")
+            target = next((f for f in self.fish.fish if f.id == fish_id), None)
+            if target is None:
+                return False
+            if not inv.has_equipped_tool("fishing_rod"):
+                self._set_status("Equip a fishing rod (Q) to fish.")
+                return False
+            result = self.fish.kill_fish(target.id)
+            if result is None:
+                self._set_status("Fish got away.")
+                return False
+            fx, fy, kind = result
+            yield_n = fish_yield_for(kind)
+            self.world.add_fish_deposit(fx, fy, yield_n)
+            self.world.apply_extraction_disturbance(fx, fy)
+            self._refresh_indicators()
+            self._set_status(
+                f"Caught {kind.name.lower()}. {yield_n} fish left on shore."
+            )
+            return True
+        if action == "plant":
+            return self._plant_here(x, y, inv, status=True)
+        if action == "plough":
+            return self._player_apply_plough_job(x, y, meta)
+        if action == "sow":
+            return self._player_apply_sow_job(x, y, meta)
+        return False
+
+    def _player_apply_plough_job(self, x: int, y: int, meta: dict) -> bool:
+        cell = self.world.get_cell(x, y)
+        if cell is None:
+            return False
+        crop_label = str(meta.get("crop_label") or "crop")
+        if self.world.plough_tile(x, y):
+            self.world.apply_disturbance(x, y)
+            self._refresh_indicators()
+            self._set_status(f"Ploughed field for {crop_label.lower()}.")
+            return True
+        cell.terrain = TerrainType.SOIL
+        cell.feature = FeatureType.NONE
+        cell.crop_kind = None
+        self.world.mark_terrain_dirty(x, y)
+        self._set_status(f"Ploughed field for {crop_label.lower()}.")
+        return True
+
+    def _player_apply_sow_job(self, x: int, y: int, meta: dict) -> bool:
+        from crops import CROP_BY_KEY
+
+        inv = self.player.inventory
+        crop_key = str(meta.get("crop_key") or "")
+        seed_key = str(meta.get("seed_key") or "")
+        crop = CROP_BY_KEY.get(crop_key)
+        if crop is None or int(getattr(inv, seed_key, 0)) <= 0:
+            return False
+        cell = self.world.get_cell(x, y)
+        if cell is None:
+            return False
+        if not cell.compost_cycle_applied and inv.compost > 0:
+            inv.consume_item("compost", 1)
+            cell.fertility = min(1.0, float(cell.fertility) + 0.05)
+            cell.compost_cycle_applied = True
+            self.record_consumed("compost", 1)
+        if not cell.mineral_cycle_applied and inv.mineral_powder > 0:
+            inv.consume_item("mineral_powder", 1)
+            cell.weed_suppression = max(float(cell.weed_suppression), 0.10)
+            cell.mineral_cycle_applied = True
+            self.record_consumed("mineral_powder", 1)
+        if self.world.sow_crop(x, y, crop.key, self._field_sow_growth_ticks(crop)):
+            inv.consume_item(seed_key, 1)
+            self.record_consumed(seed_key, 1)
+            self.world.apply_disturbance(x, y)
+            self.sounds.emit("work.plant", actor="player", plant_type="crop", x=x, y=y)
+            self._refresh_indicators()
+            self._set_status(f"Planted {crop.label.lower()}.")
+            return True
+        return False
+
+    def _tick_player_world_work(self, ticks: int) -> None:
+        """Advance the focused world job while the player stays in range."""
+        if ticks <= 0 or self.sim_speed <= 0:
+            return
+        key = self._player_active_job_key
+        if not key:
+            self.player.work_in_progress = False
+            return
+        job = self._player_world_jobs.get(key)
+        if job is None:
+            self._player_active_job_key = None
+            self.player.work_in_progress = False
+            return
+        if not self._player_job_still_valid(job):
+            self._player_clear_world_job(key)
+            self.player.work_in_progress = False
+            return
+        if not self._player_job_in_range(job):
+            self.player.work_in_progress = False
+            return
+
+        self.player.work_in_progress = True
+        job["done"] = int(job.get("done", 0) or 0) + int(ticks)
+        need = max(1, int(job.get("need", 1) or 1))
+        if int(job["done"]) < need:
+            return
+
+        skill = job.get("skill")
+        if not isinstance(skill, SkillType):
+            try:
+                skill = SkillType[str(skill)]
+            except Exception:
+                skill = SkillType.EXTRACTION
+        ok = self._player_apply_world_job(job)
+        self.player.energy = max(
+            0.0,
+            self.player.energy
+            - ENERGY_WORK_DRAIN * self._temp_energy_mult(self.player.inventory),
+        )
+        if ok:
+            self._gain_actor_skill(self.player, skill, who="You")
+        # One swing done — clear job; multi-hit targets (trees) start fresh next interact.
+        self._player_clear_world_job(key)
+        self.player.work_in_progress = False
+
+    def _draw_player_world_work_bars(self) -> None:
+        """Green progress bars on world objects the player is working in range."""
+        size = self.camera.view_cell_px()
+        for key, job in list(self._player_world_jobs.items()):
+            if key != self._player_active_job_key:
+                continue
+            if not self._player_job_still_valid(job):
+                continue
+            if not self._player_job_in_range(job):
+                continue
+            need = max(1, int(job.get("need", 1) or 1))
+            done = max(0, int(job.get("done", 0) or 0))
+            frac = max(0.0, min(1.0, done / need))
+            x, y = int(job["x"]), int(job["y"])
+            meta = job.get("meta") or {}
+            action = str(job.get("action") or "")
+            if action in ("honey", "warren"):
+                colony = self.wildlife.colony_by_id(meta.get("colony_id"))
+                if colony is None:
+                    continue
+                cx, cy = self._cell_center(float(colony.x), float(colony.y))
+            elif action == "hunt":
+                animal = self.wildlife.huntable_by_id(meta.get("animal_id"))
+                if animal is None:
+                    continue
+                ax, ay = entity_draw_xy(animal)
+                cx, cy = self._cell_center(ax, ay)
+            elif action == "fish_catch":
+                fish = next(
+                    (f for f in self.fish.fish if f.id == meta.get("fish_id")), None
+                )
+                if fish is None:
+                    continue
+                fx, fy = entity_draw_xy(fish)
+                cx, cy = self._cell_center(fx, fy)
+            else:
+                cx, cy = self._cell_center(float(x), float(y))
+            # Anchor above the object rather than beside the player.
+            self._draw_work_progress_bar(cx, cy, size, frac, above=True)
 
     def _clear_player_build(self) -> None:
         self.player_build_site_id = None
@@ -12748,6 +13264,7 @@ class Game:
         p = self.player
         p.move_cooldown = max(0, p.move_cooldown - ticks)
         p.work_cooldown = max(0, p.work_cooldown - ticks)
+        self._tick_player_world_work(ticks)
         p.satiation = max(
             0.0,
             p.satiation - self._satiation_decay() * ticks,
@@ -15536,6 +16053,8 @@ class Game:
                 villager.state = VillagerState.BUILDING
                 return
             villager.state = VillagerState.BUILDING
+            if not self._work_swing_complete(villager, at=site.center_cell()):
+                return
             # Construction requirements are authored in simulation ticks.
             # Credit one full villager work interval per completed action.
             site.build_progress += self._villager_work_interval(villager)
@@ -15820,10 +16339,9 @@ class Game:
             return
 
         if (villager.x, villager.y) == target:
-            if villager.work_cooldown > 0:
+            if not self._work_swing_complete(villager, at=target):
                 return
             self._villager_perform(villager, building, target)
-            villager.work_cooldown = self._villager_work_interval(villager)
             if getattr(villager, "_return_after_harvest", False):
                 villager._return_after_harvest = False  # type: ignore[attr-defined]
                 self._force_assigned_delivery(villager, building)
@@ -15915,16 +16433,15 @@ class Game:
             self._register_field_claim(villager, target)
 
         if (villager.x, villager.y) == target:
-            if villager.work_cooldown > 0:
-                return
             if kind == "split" or target == (bx, by):
                 building.deposit_from_inventory(villager.inventory)
                 if self._forester_try_split(villager, building):
                     return
                 villager.target = None
                 return
+            if not self._work_swing_complete(villager, at=target):
+                return
             self._villager_perform(villager, building, target)
-            villager.work_cooldown = self._villager_work_interval(villager)
             if self._gather_cargo_needs_delivery(villager, building):
                 self._force_assigned_delivery(villager, building)
                 return
@@ -16532,25 +17049,26 @@ class Game:
         self._register_field_claim(villager, target)
         villager.state = VillagerState.WORKING
         if (villager.x, villager.y) == target:
-            if villager.work_cooldown == 0:
-                if kind == FarmJobKind.TREAT:
-                    self._farm_apply_repellant(villager, building, target)
-                else:
-                    self._villager_perform_farm(villager, building, target)
-                villager.work_cooldown = self._villager_work_interval(villager)
-                villager.target = None
-                villager.farm_job_kind = None
-                self._clear_villager_path(villager)
-                if self._farm_pack_has_export_cargo(villager.inventory, villager) and (
-                    self._gather_cargo_needs_delivery(villager, building)
-                    or not villager.inventory.can_add(1)
-                ):
-                    villager.farm_job_kind = FarmJobKind.EXPORT.name
-                    self._farm_finish_export_trip(villager, building)
-                elif self._gather_cargo_needs_delivery(villager, building):
-                    villager.farm_job_kind = FarmJobKind.DELIVER.name
-                    self._force_assigned_delivery(villager, building)
+            if not self._work_swing_complete(villager, at=target):
+                return
+            if kind == FarmJobKind.TREAT:
+                self._farm_apply_repellant(villager, building, target)
+            else:
+                self._villager_perform_farm(villager, building, target)
+            villager.target = None
+            villager.farm_job_kind = None
+            self._clear_villager_path(villager)
+            if self._farm_pack_has_export_cargo(villager.inventory, villager) and (
+                self._gather_cargo_needs_delivery(villager, building)
+                or not villager.inventory.can_add(1)
+            ):
+                villager.farm_job_kind = FarmJobKind.EXPORT.name
+                self._farm_finish_export_trip(villager, building)
+            elif self._gather_cargo_needs_delivery(villager, building):
+                villager.farm_job_kind = FarmJobKind.DELIVER.name
+                self._force_assigned_delivery(villager, building)
         else:
+            self._abort_work_swing(villager)
             self._step_or_clear_field_target(villager, target)
 
     def _update_farmer(self, villager: Villager, building: Building) -> None:
@@ -16667,7 +17185,7 @@ class Game:
             villager.craft_recipe_name = None
             return
         villager.craft_recipe_name = recipe.name
-        if villager.work_cooldown > 0:
+        if not self._work_swing_complete(villager, at=(bx, by)):
             return
         self._spend_work_energy(villager)
         if building.advance_recipe_progress(recipe):
@@ -16676,7 +17194,6 @@ class Game:
             if fuel:
                 building.fuel_wood = max(0, building.fuel_wood - 1)
             self._gain_job_skill(villager, building.kind.name)
-        villager.work_cooldown = self._villager_work_interval(villager)
 
     def _try_addon_craft(self, villager: Villager, building: Building) -> bool:
         """Farm barn / hunter drying-rack crafts on the parent workplace."""
@@ -16790,13 +17307,12 @@ class Game:
 
         building.deposit_from_inventory(villager.inventory)
         villager.craft_recipe_name = recipe.name
-        if villager.work_cooldown > 0:
+        if not self._work_swing_complete(villager, at=(bx, by)):
             return True
         self._spend_work_energy(villager)
         if building.advance_recipe_progress(recipe):
             self._apply_recipe_tracked(building, recipe)
             self._gain_job_skill(villager, building.kind.name)
-        villager.work_cooldown = self._villager_work_interval(villager)
         return True
 
     def _try_barn_thresh(
@@ -16854,13 +17370,12 @@ class Game:
 
         self._deposit_sheaves_to_barn(farm, villager.inventory)
         villager.craft_recipe_name = ready.name
-        if villager.work_cooldown > 0:
+        if not self._work_swing_complete(villager, at=site):
             return True
         self._spend_work_energy(villager)
         if farm.advance_recipe_progress(ready):
             self._apply_barn_thresh_recipe(farm, ready, None)
             self._gain_job_skill(villager, farm.kind.name)
-        villager.work_cooldown = self._villager_work_interval(villager)
         return True
 
     def _market_storehouse_surplus(self, key: str, reserve: int) -> int:
@@ -17032,7 +17547,7 @@ class Game:
 
         building.deposit_from_inventory(villager.inventory)
 
-        if villager.work_cooldown > 0:
+        if not self._work_swing_complete(villager, at=(bx, by)):
             return
         if self._market_can_sell(building):
             import random
@@ -17042,11 +17557,14 @@ class Game:
                 building
             ):
                 self._gain_job_skill(villager, building.kind.name)
+            # Immediately begin the next sell attempt swing at market pace.
+            villager.work_in_progress = True
+            villager.work_anchor = (bx, by)
             villager.work_cooldown = max(
                 self._villager_work_interval(villager), MARKET_SELL_INTERVAL
             )
             return
-        villager.work_cooldown = self._villager_work_interval(villager)
+        self._set_workplace_idle(villager)
 
     def _find_farm_harvest(
         self,
@@ -17886,15 +18404,16 @@ class Game:
             villager.state = VillagerState.WORKING
             villager.target = meat_pos
             if (villager.x, villager.y) == meat_pos:
-                if villager.work_cooldown == 0:
-                    if self._collect_meat(*meat_pos, villager.inventory, status=False):
-                        self._spend_work_energy(villager)
-                        self._gain_job_skill(villager, building.kind.name)
-                    villager.work_cooldown = self._villager_work_interval(villager)
-                    cell = self.world.get_cell(*meat_pos)
-                    if cell is None or not self._cell_has_hunt_loot(cell):
-                        villager.hunt_meat_pos = None
+                if not self._work_swing_complete(villager, at=meat_pos):
+                    return
+                if self._collect_meat(*meat_pos, villager.inventory, status=False):
+                    self._spend_work_energy(villager)
+                    self._gain_job_skill(villager, building.kind.name)
+                cell = self.world.get_cell(*meat_pos)
+                if cell is None or not self._cell_has_hunt_loot(cell):
+                    villager.hunt_meat_pos = None
                 return
+            self._abort_work_swing(villager)
             if not self.world.is_walkable(*meat_pos):
                 villager.hunt_meat_pos = None
                 self._clear_villager_path(villager)
@@ -17943,33 +18462,33 @@ class Game:
             villager.target = (colony.x, colony.y)
             dist = max(abs(colony.x - villager.x), abs(colony.y - villager.y))
             if dist <= 1:
-                if villager.work_cooldown == 0:
-                    has_knife = villager.inventory.has_equipped_tool("knife")
-                    if not self._hunt_recipe_outputs_fit(
-                        villager.inventory, "rabbit", has_knife=has_knife
-                    ):
-                        villager.hunt_colony_id = None
-                        self._force_assigned_delivery(villager, building)
-                        return
-                    result = self.wildlife.harvest_colony(
-                        colony.id, kind=colony.kind
-                    )
+                if not self._work_swing_complete(villager):
+                    return
+                has_knife = villager.inventory.has_equipped_tool("knife")
+                if not self._hunt_recipe_outputs_fit(
+                    villager.inventory, "rabbit", has_knife=has_knife
+                ):
                     villager.hunt_colony_id = None
-                    if result is not None:
-                        if self._apply_hunt_recipe_to_inventory(
-                            villager.inventory,
-                            "rabbit",
-                            has_knife=has_knife,
-                        ):
-                            self.world.apply_extraction_disturbance(colony.x, colony.y)
-                            self._refresh_indicators()
-                            self._spend_work_energy(villager)
-                            self._gain_job_skill(villager, building.kind.name)
-                            self._force_assigned_delivery(villager, building)
-                        villager.work_cooldown = self._villager_work_interval(villager)
-                        return
-                    villager.work_cooldown = self._villager_work_interval(villager)
+                    self._force_assigned_delivery(villager, building)
+                    return
+                result = self.wildlife.harvest_colony(
+                    colony.id, kind=colony.kind
+                )
+                villager.hunt_colony_id = None
+                if result is not None:
+                    if self._apply_hunt_recipe_to_inventory(
+                        villager.inventory,
+                        "rabbit",
+                        has_knife=has_knife,
+                    ):
+                        self.world.apply_extraction_disturbance(colony.x, colony.y)
+                        self._refresh_indicators()
+                        self._spend_work_energy(villager)
+                        self._gain_job_skill(villager, building.kind.name)
+                        self._force_assigned_delivery(villager, building)
+                    return
                 return
+            self._abort_work_swing(villager)
             approach = (colony.x, colony.y)
             if not self.world.is_walkable(*approach):
                 for ny, nx in self.world.neighbourhood(colony.x, colony.y, radius=1):
@@ -17998,34 +18517,36 @@ class Game:
         has_spear = villager.inventory.has_equipped_tool("spear")
 
         if can_ranged and dist <= HUNTER_BOW_RANGE:
-            if villager.work_cooldown == 0:
-                self._hunter_fire_bow(villager, building, animal)
+            if not self._work_swing_complete(villager):
+                return
+            self._hunter_fire_bow(villager, building, animal)
             return
 
         if has_spear and dist <= 1:
-            if villager.work_cooldown == 0:
-                result = self.wildlife.kill_animal(animal.id)
-                villager.hunt_animal_id = None
-                if result is not None:
-                    x, y, kind = result
-                    self._drop_hunt_yields(
-                        x,
-                        y,
-                        kind,
-                        building=building,
-                        has_knife=villager.inventory.has_equipped_tool("knife"),
-                    )
-                    self.world.apply_extraction_disturbance(x, y)
-                    if kind in (AnimalKind.DEER, AnimalKind.BOAR):
-                        self.wildlife.scare_from_kill(x, y)
-                    self._refresh_indicators()
-                    villager.hunt_meat_pos = (x, y)
-                    self._register_field_claim(villager, (x, y))
-                    self._spend_work_energy(villager)
-                    self._gain_job_skill(villager, building.kind.name)
-                villager.work_cooldown = self._villager_work_interval(villager)
+            if not self._work_swing_complete(villager):
+                return
+            result = self.wildlife.kill_animal(animal.id)
+            villager.hunt_animal_id = None
+            if result is not None:
+                x, y, kind = result
+                self._drop_hunt_yields(
+                    x,
+                    y,
+                    kind,
+                    building=building,
+                    has_knife=villager.inventory.has_equipped_tool("knife"),
+                )
+                self.world.apply_extraction_disturbance(x, y)
+                if kind in (AnimalKind.DEER, AnimalKind.BOAR):
+                    self.wildlife.scare_from_kill(x, y)
+                self._refresh_indicators()
+                villager.hunt_meat_pos = (x, y)
+                self._register_field_claim(villager, (x, y))
+                self._spend_work_energy(villager)
+                self._gain_job_skill(villager, building.kind.name)
             return
 
+        self._abort_work_swing(villager)
         approach = (animal.x, animal.y)
         if not self.world.is_walkable(*approach):
             for ny, nx in self.world.neighbourhood(animal.x, animal.y, radius=1):
@@ -18066,7 +18587,6 @@ class Game:
             )
         )
         self._spend_work_energy(villager)
-        villager.work_cooldown = self._villager_work_interval(villager)
 
     def _tick_hunter_shot(self, villager: Villager) -> None:
         shot = villager.hunt_shot
@@ -18345,13 +18865,12 @@ class Game:
                 self._step_villager_toward(villager, site)
             return True
         villager.craft_recipe_name = recipe.name
-        if villager.work_cooldown > 0:
+        if not self._work_swing_complete(villager, at=site):
             return True
         self._spend_work_energy(villager)
         if building.advance_recipe_progress(recipe):
             self._apply_recipe_tracked(building, recipe)
             self._gain_job_skill(villager, building.kind.name)
-        villager.work_cooldown = self._villager_work_interval(villager)
         return True
 
     def _fisher_collect_bait(
@@ -18436,15 +18955,16 @@ class Game:
         if catch_pos is not None and not villager.inventory.is_full:
             villager.state = VillagerState.WORKING
             if (villager.x, villager.y) == catch_pos:
-                if villager.work_cooldown == 0:
-                    if self._collect_fish(*catch_pos, villager.inventory, status=False):
-                        self._spend_work_energy(villager)
-                        self._gain_job_skill(villager, building.kind.name)
-                    villager.work_cooldown = self._villager_work_interval(villager)
-                    cell = self.world.get_cell(*catch_pos)
-                    if cell is None or cell.fish_deposit <= 0:
-                        villager.fish_catch_pos = None
+                if not self._work_swing_complete(villager, at=catch_pos):
+                    return
+                if self._collect_fish(*catch_pos, villager.inventory, status=False):
+                    self._spend_work_energy(villager)
+                    self._gain_job_skill(villager, building.kind.name)
+                cell = self.world.get_cell(*catch_pos)
+                if cell is None or cell.fish_deposit <= 0:
+                    villager.fish_catch_pos = None
                 return
+            self._abort_work_swing(villager)
             if not self.world.is_walkable(*catch_pos):
                 recovered = self._recover_fish_catch(villager, catch_pos)
                 villager.fish_catch_pos = recovered
@@ -18478,8 +18998,6 @@ class Game:
         # Fish go straight into inventory (no shore drop → pick-up loop).
         # Yield is per species (roach 1 … pike 4); only require space for a fish
         # that actually fits — gating on max yield blocked catches in 1–3 free slots.
-        if villager.work_cooldown != 0:
-            return
         from wildlife import fish_yield_for
 
         if not villager.inventory.can_add(1, key="fish"):
@@ -18502,7 +19020,10 @@ class Game:
             ):
                 self._force_assigned_delivery(villager, building)
                 return
+            self._abort_work_swing(villager)
             villager.work_cooldown = max(4, self._villager_move_interval(villager) // 4)
+            return
+        if not self._work_swing_complete(villager):
             return
         target = min(
             catchable,
@@ -18520,7 +19041,6 @@ class Game:
             villager._fish_post_last_catch_tick = self._simulation_clock_tick()
         self.world.apply_extraction_disturbance(pos[0], pos[1])
         self._refresh_indicators()
-        villager.work_cooldown = self._villager_work_interval(villager)
         if villager.inventory.is_full or self._gather_cargo_needs_delivery(
             villager, building
         ):
@@ -21275,6 +21795,7 @@ class Game:
         self._draw_animals()
         self._draw_fish()
         self._draw_people_depth_sorted()
+        self._draw_player_world_work_bars()
         self._draw_arrow_shots()
         self._draw_rain_effect()
         self._draw_overlay_hud()
@@ -24091,6 +24612,68 @@ class Game:
             cx, cy = self._cell_center(fx, fy)
             blit_icon(self.screen, fish_icon_for(item.kind), cx, cy, size)
 
+    def _villager_work_task_progress(self, villager: Villager) -> float | None:
+        """0–1 progress for the villager's current on-site work swing, or None."""
+        if villager.state not in (VillagerState.WORKING, VillagerState.BUILDING):
+            return None
+        if not getattr(villager, "work_in_progress", False):
+            return None
+        cooldown = int(getattr(villager, "work_cooldown", 0) or 0)
+        interval = max(1, self._villager_work_interval(villager))
+        # Cooldown counts down while working; bar fills as the task completes.
+        phase = 1.0 - min(1.0, max(0.0, cooldown / interval))
+
+        # Multi-step processor crafts: show overall recipe completion.
+        name = getattr(villager, "craft_recipe_name", None)
+        building_id = getattr(villager, "building_id", None)
+        if name and building_id is not None:
+            building = self.buildings.get(building_id)
+            if building is not None:
+                recipe = None
+                for candidate in (
+                    *building.known_recipes(),
+                    *building.addon_craft_recipes(),
+                    *building.split_recipes(),
+                    *building.plant_recipes(),
+                ):
+                    if candidate.name == name:
+                        recipe = candidate
+                        break
+                if recipe is not None:
+                    steps = max(1, recipe.work_steps())
+                    if steps > 1:
+                        completed = int(building.recipe_progress.get(name, 0))
+                        return max(0.0, min(1.0, (completed + phase) / steps))
+        return phase
+
+    def _draw_work_progress_bar(
+        self,
+        cx: int,
+        cy: int,
+        cell_px: int,
+        frac: float,
+        colour: tuple[int, int, int] = (70, 175, 85),
+        *,
+        above: bool = False,
+    ) -> None:
+        """Small bar beside (or above) a sprite; fills as work completes."""
+        bar_w = max(10, cell_px // 2)
+        bar_h = max(3, cell_px // 8)
+        if above:
+            bx = cx - bar_w // 2
+            by = cy - max(12, (cell_px * 3) // 4)
+        else:
+            # Beside the torso (feet-anchored sprite sits on cy).
+            bx = cx + max(6, cell_px // 3)
+            by = cy - max(10, (cell_px * 2) // 3)
+        bg = pygame.Rect(bx, by, bar_w, bar_h)
+        pygame.draw.rect(self.screen, (25, 25, 30), bg, border_radius=2)
+        fill_w = max(0, int(round(bar_w * max(0.0, min(1.0, frac)))))
+        if fill_w > 0:
+            fill = pygame.Rect(bx, by, fill_w, bar_h)
+            pygame.draw.rect(self.screen, colour, fill, border_radius=2)
+        pygame.draw.rect(self.screen, (70, 70, 78), bg, 1, border_radius=2)
+
     def _draw_villagers(self) -> None:
         villagers_by_depth: list[tuple[float, float, object]] = []
         for villager in self.villagers:
@@ -24140,6 +24723,10 @@ class Game:
             recolour={"shirt": job_colour, "hat": job_colour},
             feet_anchor=True,
         )
+        if isinstance(villager, Villager):
+            frac = self._villager_work_task_progress(villager)
+            if frac is not None:
+                self._draw_work_progress_bar(cx, cy, size, frac)
 
     def _draw_people_depth_sorted(self) -> None:
         """Interleave people with cached world objects using feet/ground Y."""

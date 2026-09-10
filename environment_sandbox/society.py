@@ -246,11 +246,15 @@ class SkillState:
     def efficiency(self) -> float:
         return 1.0 + max(0, self.level - 1) * SKILL_EFFICIENCY_PER_LEVEL
 
-    def gain(self, amount: float = SKILL_XP_PER_ACTION) -> None:
-        """Gain XP from work; levels up when threshold is reached."""
+    def gain(self, amount: float = SKILL_XP_PER_ACTION) -> int:
+        """Gain XP from work; levels up when threshold is reached.
+
+        Returns how many levels were gained this call (0 if none).
+        """
         self.idle_days = 0.0
         if self.level >= self.potential:
-            return
+            return 0
+        before = int(self.level)
         self.xp += max(0.0, float(amount))
         while self.level < self.potential and self.xp >= self.xp_to_next():
             need = self.xp_to_next()
@@ -262,6 +266,7 @@ class SkillState:
         if self.level >= self.potential:
             self.xp = 0.0
         self.clamp()
+        return max(0, int(self.level) - before)
 
     def tick_idle(self, days: float) -> None:
         self.idle_days += days
@@ -325,6 +330,42 @@ def blank_skills(rng: random.Random | None = None) -> dict[SkillType, SkillState
         level = rng.randint(1, min(3, potential))
         xp = round(rng.uniform(0.0, SKILL_XP_BASE_TO_NEXT * level * 0.4), 1)
         st = SkillState(level=level, xp=xp, potential=potential, peak=level)
+        st.clamp()
+        out[skill] = st
+    return out
+
+
+def player_skills() -> dict[SkillType, SkillState]:
+    """Player skills: all start at 1 with a hard cap of 10."""
+    out: dict[SkillType, SkillState] = {}
+    for skill in SKILL_ORDER:
+        st = SkillState(level=1, xp=0.0, potential=10, peak=1)
+        st.clamp()
+        out[skill] = st
+    return out
+
+
+def ensure_skills(
+    skills: dict | None, *, player: bool = False
+) -> dict[SkillType, SkillState]:
+    """Fill missing skill entries; player caps stay at 10."""
+    base = player_skills() if player else {
+        s: SkillState() for s in SKILL_ORDER
+    }
+    raw = skills or {}
+    out: dict[SkillType, SkillState] = {}
+    for skill in SKILL_ORDER:
+        existing = raw.get(skill)
+        if existing is None:
+            existing = raw.get(skill.name) or raw.get(skill.name.lower())
+        if isinstance(existing, SkillState):
+            st = existing
+        elif isinstance(existing, dict):
+            st = SkillState.from_dict(existing)
+        else:
+            st = base[skill]
+        if player:
+            st.potential = 10
         st.clamp()
         out[skill] = st
     return out
@@ -423,13 +464,22 @@ def skill_efficiency(villager: Villager, skill: SkillType) -> float:
 
 
 def gain_skill(
-    villager: Villager, skill: SkillType, amount: float = SKILL_XP_PER_ACTION
-) -> None:
-    state = villager.skills.get(skill)
+    actor: Any, skill: SkillType, amount: float = SKILL_XP_PER_ACTION
+) -> int | None:
+    """Apply XP to ``actor.skills``. Returns the new level if leveled up."""
+    skills = getattr(actor, "skills", None)
+    if not isinstance(skills, dict):
+        return None
+    state = skills.get(skill)
     if state is None:
         state = SkillState()
-        villager.skills[skill] = state
-    state.gain(amount)
+        skills[skill] = state
+    if type(actor).__name__ == "Player":
+        state.potential = 10
+    gained = int(state.gain(amount) or 0)
+    if gained <= 0:
+        return None
+    return int(state.level)
 
 
 def tick_skill_decay(villager: Villager, day_fraction: float) -> None:

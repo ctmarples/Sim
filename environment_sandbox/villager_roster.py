@@ -424,6 +424,40 @@ def draw_portrait(
         pygame.draw.ellipse(surface, (60, 60, 70), rect, 1)
 
 
+def skill_hover_tip(
+    skill: SkillType,
+    state: object | None,
+    *,
+    used_here: bool = False,
+) -> dict[str, object]:
+    """Tooltip payload for a skill icon: title, XP bar fraction, subtext."""
+    label = SKILL_LABELS.get(skill, skill.name)
+    lvl = max(1, int(getattr(state, "level", 1) or 1))
+    potential = max(lvl, int(getattr(state, "potential", 10) or 10))
+    xp = max(0.0, float(getattr(state, "xp", 0.0) or 0.0))
+    title = f"{label} {lvl}/{potential}"
+    if used_here:
+        title += " · used here"
+    need = 0.0
+    xp_to_next = getattr(state, "xp_to_next", None)
+    if callable(xp_to_next):
+        need = float(xp_to_next() or 0.0)
+    if lvl >= potential or need <= 0:
+        return {
+            "text": title,
+            "subtext": "Max level" if potential >= 10 else f"Capped at {potential}",
+            "progress": 1.0,
+        }
+    remaining = max(0.0, need - xp)
+    # Prefer a whole-number XP readout when values are near integers.
+    rem_disp = int(round(remaining))
+    return {
+        "text": title,
+        "subtext": f"{rem_disp} XP to {lvl + 1}",
+        "progress": max(0.0, min(1.0, xp / need)),
+    }
+
+
 def draw_skill_cell(
     surface: pygame.Surface,
     x: int,
@@ -468,12 +502,10 @@ def draw_skill_icons(
     icon_size: int = 14,
     col_w: int = SKILL_COL_W,
     highlight: frozenset | set | None = None,
-) -> tuple[int, list[tuple[pygame.Rect, str]]]:
+) -> tuple[int, list[tuple[pygame.Rect, dict[str, object]]]]:
     """Draw skills in fixed-width columns. Returns (width used, tip hits)."""
-    from society import SKILL_LABELS
-
     cur = x
-    tips: list[tuple[pygame.Rect, str]] = []
+    tips: list[tuple[pygame.Rect, dict[str, object]]] = []
     hi = highlight or ()
     for sk in SKILL_ORDER:
         st = skills.get(sk)
@@ -492,9 +524,7 @@ def draw_skill_icons(
             highlighted=sk in hi,
         )
         tip_rect = pygame.Rect(cur, y, col_w, icon_size + font.get_linesize())
-        label = SKILL_LABELS.get(sk, sk.name)
-        tip = f"{label} {lvl} / {potential}" + (" · used here" if sk in hi else "")
-        tips.append((tip_rect, tip))
+        tips.append((tip_rect, skill_hover_tip(sk, st, used_here=sk in hi)))
         cur += col_w
     return cur - x, tips
 

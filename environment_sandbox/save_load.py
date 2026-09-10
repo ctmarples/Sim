@@ -602,6 +602,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
                 "assigned_to_home": v.assigned_to_home,
                 "move_cooldown": v.move_cooldown,
                 "work_cooldown": v.work_cooldown,
+                "work_in_progress": bool(getattr(v, "work_in_progress", False)),
+                "work_anchor": list(v.work_anchor) if getattr(v, "work_anchor", None) else None,
                 # Preserve a partial craft's sticky worker assignment.  Building
                 # recipe_progress is saved separately; this prevents a reload
                 # from immediately choosing a different ready recipe.
@@ -1543,6 +1545,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             assigned_to_home=bool(vdata.get("assigned_to_home", False)),
             move_cooldown=int(vdata.get("move_cooldown", 0)),
             work_cooldown=int(vdata.get("work_cooldown", 0)),
+            work_in_progress=bool(vdata.get("work_in_progress", False)),
             target=tuple(target) if target else None,  # type: ignore[arg-type]
             haul_building_id=vdata.get("haul_building_id"),
             hunt_animal_id=vdata.get("hunt_animal_id"),
@@ -1555,6 +1558,9 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             forage_colony_id=vdata.get("forage_colony_id"),
             construction_id=vdata.get("construction_id"),
         )
+        raw_anchor = vdata.get("work_anchor")
+        if isinstance(raw_anchor, (list, tuple)) and len(raw_anchor) >= 2:
+            villager.work_anchor = (int(raw_anchor[0]), int(raw_anchor[1]))
         raw_craft_recipe = vdata.get("craft_recipe_name")
         villager.craft_recipe_name = (
             str(raw_craft_recipe) if raw_craft_recipe else None

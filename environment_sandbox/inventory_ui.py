@@ -371,24 +371,55 @@ def draw_hover_tooltip(
     mouse_pos: tuple[int, int],
     text: str,
     font: pygame.font.Font,
+    subtext: str | None = None,
+    progress: float | None = None,
 ) -> None:
-    """Draw a free-text tooltip near the cursor."""
+    """Draw a free-text tooltip near the cursor.
+
+    Optional ``subtext`` and ``progress`` (0–1) add a skill-style XP line and bar.
+    """
     if not text:
         return
     rendered = font.render(text, True, (0, 0, 0))
+    sub_rendered = (
+        font.render(subtext, True, (40, 40, 40)) if subtext else None
+    )
     pad = 4
+    bar_h = 6 if progress is not None else 0
+    bar_gap = 4 if progress is not None else 0
+    sub_h = (sub_rendered.get_height() + 2) if sub_rendered is not None else 0
+    inner_w = rendered.get_width()
+    if sub_rendered is not None:
+        inner_w = max(inner_w, sub_rendered.get_width())
+    if progress is not None:
+        inner_w = max(inner_w, 88)
     tip = pygame.Rect(
         mouse_pos[0] + 14,
         mouse_pos[1] + 12,
-        rendered.get_width() + pad * 2,
-        rendered.get_height() + pad * 2,
+        inner_w + pad * 2,
+        rendered.get_height() + sub_h + bar_h + bar_gap + pad * 2,
     )
     if tip.right > surface.get_width() - 4:
         tip.x = mouse_pos[0] - tip.w - 8
     if tip.bottom > surface.get_height() - 4:
         tip.y = mouse_pos[1] - tip.h - 8
     _slot_background(surface, tip)
-    surface.blit(rendered, (tip.x + pad, tip.y + pad))
+    y = tip.y + pad
+    surface.blit(rendered, (tip.x + pad, y))
+    y += rendered.get_height()
+    if progress is not None:
+        y += bar_gap
+        bar = pygame.Rect(tip.x + pad, y, tip.w - pad * 2, bar_h)
+        pygame.draw.rect(surface, (55, 55, 60), bar, border_radius=2)
+        fill_w = max(0, int(round(bar.w * max(0.0, min(1.0, float(progress))))))
+        if fill_w > 0:
+            fill = pygame.Rect(bar.x, bar.y, fill_w, bar.h)
+            pygame.draw.rect(surface, (70, 175, 85), fill, border_radius=2)
+        pygame.draw.rect(surface, (90, 90, 98), bar, 1, border_radius=2)
+        y += bar_h
+    if sub_rendered is not None:
+        y += 2
+        surface.blit(sub_rendered, (tip.x + pad, y))
 
 
 def draw_tool_slot(

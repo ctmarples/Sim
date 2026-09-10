@@ -12,6 +12,7 @@ class RecipeProgressDisplayTests(unittest.TestCase):
     def test_active_mill_worker_never_rewinds_saved_two_thirds(self) -> None:
         game = Game.__new__(Game)
         game.player_craft_building_id = None
+        game._villager_work_interval = lambda worker: 50
 
         mill = Building(id=21, kind=BuildingKind.MILL, x=0, y=0)
         apply_building_storage(mill)
@@ -24,6 +25,8 @@ class RecipeProgressDisplayTests(unittest.TestCase):
         worker.state = VillagerState.WORKING
         worker.craft_recipe_name = "wheat_flour"
         worker.work_cooldown = 25
+        worker.work_in_progress = True
+        worker.work_anchor = (0, 0)
 
         shown = game._smooth_recipe_progress(mill, [worker])
 

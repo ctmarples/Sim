@@ -121,7 +121,7 @@ class VillagerInspectDialog:
         self._tool_hits: list[tuple[pygame.Rect, str]] = []
         self._clothing_hits: list[tuple[pygame.Rect, str]] = []
         self._inv_tip_hits: list[tuple[pygame.Rect, str, str]] = []
-        self._icon_tips: list[tuple[pygame.Rect, str]] = []
+        self._icon_tips: list[tuple[pygame.Rect, str | dict[str, object]]] = []
         self._pending_action: str | None = None
         self._panel_x = 80
         self._panel_y = MAP_OFFSET_Y + 40
@@ -134,6 +134,8 @@ class VillagerInspectDialog:
         self._hover_inv: tuple[str, str] | None = None
         self._tooltip_key: str | None = None
         self._tooltip_text: str | None = None
+        self._tooltip_subtext: str | None = None
+        self._tooltip_progress: float | None = None
         self.embedded = False
         self.detail_category = DetailCategory.OVERVIEW
         self._scroll: dict[str, float] = {}
@@ -172,6 +174,8 @@ class VillagerInspectDialog:
         self._hover_inv = None
         self._tooltip_key = None
         self._tooltip_text = None
+        self._tooltip_subtext = None
+        self._tooltip_progress = None
         self._scroll = {}
         self._scroll_velocity = {}
         self._scroll_tick = pygame.time.get_ticks()
@@ -616,6 +620,8 @@ class VillagerInspectDialog:
         self._icon_tips = []
         self._tooltip_key = None
         self._tooltip_text = None
+        self._tooltip_subtext = None
+        self._tooltip_progress = None
 
         is_player = villager.id < 0
         header_y = panel.y
@@ -899,13 +905,31 @@ class VillagerInspectDialog:
         surface.set_clip(old_clip)
         self._draw_scrollbar(surface, view, content_h, int(measured_scroll))
         if mouse_pos is not None:
-            for rect, text in self._icon_tips:
+            for rect, tip in self._icon_tips:
                 if rect.collidepoint(mouse_pos):
-                    self._tooltip_text = text
+                    if isinstance(tip, dict):
+                        self._tooltip_text = str(tip.get("text") or "")
+                        sub = tip.get("subtext")
+                        self._tooltip_subtext = str(sub) if sub else None
+                        prog = tip.get("progress")
+                        self._tooltip_progress = (
+                            float(prog) if prog is not None else None
+                        )
+                    else:
+                        self._tooltip_text = tip
+                        self._tooltip_subtext = None
+                        self._tooltip_progress = None
                     break
-        if self._tooltip_text:
-            draw_hover_tooltip(surface, mouse_pos=mouse_pos, text=self._tooltip_text, font=self.font_small)
-        elif self._tooltip_key:
+        if self._tooltip_text and mouse_pos is not None:
+            draw_hover_tooltip(
+                surface,
+                mouse_pos=mouse_pos,
+                text=self._tooltip_text,
+                font=self.font_small,
+                subtext=self._tooltip_subtext,
+                progress=self._tooltip_progress,
+            )
+        elif self._tooltip_key and mouse_pos is not None:
             draw_item_tooltip(surface, mouse_pos=mouse_pos, key=self._tooltip_key, font=self.font_small)
 
     def draw(
@@ -1073,6 +1097,8 @@ class VillagerInspectDialog:
         self._icon_tips = []
         self._tooltip_key = None
         self._tooltip_text = None
+        self._tooltip_subtext = None
+        self._tooltip_progress = None
         old_clip = surface.get_clip()
         body_clip = client_rect.clip(old_clip) if old_clip.width else client_rect
         surface.set_clip(body_clip)
@@ -1650,12 +1676,25 @@ class VillagerInspectDialog:
         if tip_key is not None:
             if tip_key == "_empty_tool_":
                 self._tooltip_text = "Empty tool slot"
+                self._tooltip_subtext = None
+                self._tooltip_progress = None
             else:
                 self._tooltip_key = tip_key
         if mouse_pos is not None:
-            for rect, text in self._icon_tips:
+            for rect, tip in self._icon_tips:
                 if rect.collidepoint(mouse_pos):
-                    self._tooltip_text = text
+                    if isinstance(tip, dict):
+                        self._tooltip_text = str(tip.get("text") or "")
+                        sub = tip.get("subtext")
+                        self._tooltip_subtext = str(sub) if sub else None
+                        prog = tip.get("progress")
+                        self._tooltip_progress = (
+                            float(prog) if prog is not None else None
+                        )
+                    else:
+                        self._tooltip_text = tip
+                        self._tooltip_subtext = None
+                        self._tooltip_progress = None
                     break
         if self._tooltip_text and mouse_pos is not None:
             draw_hover_tooltip(
@@ -1663,6 +1702,8 @@ class VillagerInspectDialog:
                 mouse_pos=mouse_pos,
                 text=self._tooltip_text,
                 font=self.font_small,
+                subtext=self._tooltip_subtext,
+                progress=self._tooltip_progress,
             )
         elif self._tooltip_key and mouse_pos is not None:
             draw_item_tooltip(

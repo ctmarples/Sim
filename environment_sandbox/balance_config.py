@@ -224,9 +224,10 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
                 "float",
                 WORK_SECONDS_AT_X1,
                 0.15,
-                6.0,
-                0.15,
-                "Real seconds between chops / harvests / craft steps.",
+                30.0,
+                0.25,
+                "Real seconds between chops / harvests / craft steps / farm tile actions. "
+                "Default 10s targets ~2 standard fields per farmer under flexible 4-day seasons.",
                 "s",
             ),
             BalanceParam(

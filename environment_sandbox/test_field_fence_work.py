@@ -65,7 +65,13 @@ class FieldFenceWorkTests(unittest.TestCase):
         game._villager_work_interval = Mock(return_value=1)
         game._spend_work_energy = Mock()
         game._gain_job_skill = Mock()
+        game.sounds = Mock()
 
+        game._update_builder(villager)
+        self.assertEqual(site.build_progress, 0)
+        self.assertTrue(villager.work_in_progress)
+
+        villager.work_cooldown = 0
         game._update_builder(villager)
 
         self.assertGreater(site.build_progress, 0)

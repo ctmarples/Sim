@@ -115,7 +115,7 @@ class HunterLeatherTests(unittest.TestCase):
         game, hunter, villager = self._hunter_with_rack()
         hunter.hide = 1
         villager.x, villager.y = hunter.center_cell()
-        for _ in range(5):
+        for _ in range(12):
             villager.work_cooldown = 0
             game._try_addon_craft(villager, hunter)
             if hunter.leather > 0:

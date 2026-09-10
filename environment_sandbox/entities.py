@@ -3918,6 +3918,10 @@ class Villager:
     assigned_to_home: bool = False
     move_cooldown: int = 0
     work_cooldown: int = 0
+    # True while spending work_cooldown at a site; effect applies when it hits 0.
+    work_in_progress: bool = False
+    # Cell where the current work swing was started (abort if the villager leaves).
+    work_anchor: tuple[int, int] | None = None
     # Ticks until an IDLE villager may replan; 0 = think now.
     decision_cooldown: int = 0
     # Work-generation snapshot when parked idle (wake if village work_gen moves).
@@ -4386,6 +4390,9 @@ class Player:
     inventory: Inventory = field(default_factory=Inventory)
     move_cooldown: int = 0
     work_cooldown: int = 0
+    # True while spending work_cooldown on a task; effect applies when it hits 0.
+    work_in_progress: bool = False
+    skills: dict = field(default_factory=dict)
     satiation: float = 0.75
     energy: float = 1.0
     happiness: float = 0.7
@@ -4404,6 +4411,14 @@ class Player:
             self.world_x = float(self.x)
         if self.world_y is None:
             self.world_y = float(self.y)
+        if not self.skills:
+            from society import player_skills
+
+            self.skills = player_skills()
+        else:
+            from society import ensure_skills
+
+            self.skills = ensure_skills(self.skills, player=True)
         snap_entity_visual(self)
 
     def move_to(self, x: int, y: int) -> None:
@@ -4420,6 +4435,7 @@ class Player:
         self.world_y = float(y)
         self.move_cooldown = 0
         self.work_cooldown = 0
+        self.work_in_progress = False
         self.satiation = 0.75
         self.energy = 1.0
         self.happiness = 0.7

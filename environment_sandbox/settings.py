@@ -38,7 +38,7 @@ SIM_SPEEDS: tuple[int, ...] = (0, 1, 2, 4, 8, 16, 32, 64, 128)
 PLAYBACK_TICKS_AT_X1: int = 2  # sim ticks per displayed frame at ×1; speed ×N multiplies this
 DAY_SECONDS_AT_X1: float = 300.0  # real seconds for one calendar day at ×1 / 60 FPS
 WALK_SECONDS_AT_X1: float = 0.40  # real seconds to walk one tile at ×1 / 60 FPS
-WORK_SECONDS_AT_X1: float = 1.20  # real seconds between work actions at ×1 / 60 FPS
+WORK_SECONDS_AT_X1: float = 10.0  # real seconds between work actions at ×1 / 60 FPS
 DAY_SECONDS_OPTIONS: tuple[float, ...] = (
     1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0, 180.0, 300.0, 600.0
 )
