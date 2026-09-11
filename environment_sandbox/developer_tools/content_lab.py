@@ -309,6 +309,9 @@ class ContentLabSession:
             elif action == "apply_skills": self.apply_skills()
             elif action.startswith("speed_"): self.game.sim_speed = int(action.split("_", 1)[1]); self.message = f"Simulation speed set to {self.game.sim_speed}x."
             elif action == "reset": self.reset(); self.game.sim_speed = 0; self.message = "Lab reset."
+            elif action == "landscape_fields":
+                from developer_tools.landscape_fields_lab import LandscapeFieldsSession
+                LandscapeFieldsSession(self.game).start()
             elif action == "back": self.leave()
             return True
         if event.type != pygame.KEYDOWN:
@@ -360,7 +363,9 @@ class ContentLabSession:
         lines=(f"Workstation  {'✓ '+str(diag.workstation) if diag.building_id else '✕ missing'}",f"Worker       {'✓ #'+str(diag.worker_id) if diag.worker_id else '✕ missing'}",f"Inputs       {'✓' if diag.inputs_ready else '✕'}",f"Skills       {'✓' if diag.skill_ready else '✕'}",f"Progress     {diag.progress}",f"State: {diag.status}")
         for line in lines:surface.blit(body.render(line,True,(135,195,145) if '✕' not in line else (225,115,100)),(panel.x+20,y));y+=19
         surface.blit(body.render(self.message,True,(190,195,190)),(panel.x+12,panel.bottom-65))
-        button(panel.x+12,panel.bottom-37,105,"Reset Lab","reset");button(panel.x+125,panel.bottom-37,190,"Back to Developer Tools","back")
+        button(panel.x+12,panel.bottom-37,105,"Reset Lab","reset")
+        button(panel.x+125,panel.bottom-37,160,"Landscape Fields","landscape_fields")
+        button(panel.x+293,panel.bottom-37,150,"Back to Dev Tools","back")
         # Draw open dropdowns last so their popup menus remain above the panel.
         if self.resource_dropdown.open:self.resource_dropdown.draw(surface,body)
         if self.recipe_dropdown.open:self.recipe_dropdown.draw(surface,body)

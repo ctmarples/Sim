@@ -63,6 +63,11 @@ class OverlayMode(Enum):
     FERTILITY = auto()
     SOIL_TEXTURE = auto()
     FIELD_YIELD = auto()
+    # Developer Landscape Fields prototype (not production layers).
+    FERTILITY_POTENTIAL = auto()
+    HYDROLOGICAL_POSITION = auto()
+    MOISTURE_BASELINE = auto()
+    LANDSCAPE_COMBINED = auto()
 
 
 OVERLAY_LABELS: dict[OverlayMode, str] = {
@@ -81,7 +86,20 @@ OVERLAY_LABELS: dict[OverlayMode, str] = {
     OverlayMode.FERTILITY: "Soil fertility",
     OverlayMode.SOIL_TEXTURE: "Soil texture",
     OverlayMode.FIELD_YIELD: "Field yield",
+    OverlayMode.FERTILITY_POTENTIAL: "Fertility potential",
+    OverlayMode.HYDROLOGICAL_POSITION: "Hydrological position",
+    OverlayMode.MOISTURE_BASELINE: "Moisture baseline",
+    OverlayMode.LANDSCAPE_COMBINED: "Landscape combined",
 }
+
+LANDSCAPE_FIELD_OVERLAYS = frozenset(
+    {
+        OverlayMode.FERTILITY_POTENTIAL,
+        OverlayMode.HYDROLOGICAL_POSITION,
+        OverlayMode.MOISTURE_BASELINE,
+        OverlayMode.LANDSCAPE_COMBINED,
+    }
+)
 
 
 def overlay_help(mode: OverlayMode) -> str:
@@ -119,6 +137,14 @@ def overlay_help(mode: OverlayMode) -> str:
             "Persistent soil texture from sandy/coarse through loam to clayey/fine.",
         OverlayMode.FIELD_YIELD:
             "Expected harvest for the selected field as a share of its base yield.",
+        OverlayMode.FERTILITY_POTENTIAL:
+            "Experimental natural fertility potential (Landscape Fields prototype).",
+        OverlayMode.HYDROLOGICAL_POSITION:
+            "Experimental wetness position from elevation and water distance.",
+        OverlayMode.MOISTURE_BASELINE:
+            "Experimental moisture tendency before daily weather dynamics.",
+        OverlayMode.LANDSCAPE_COMBINED:
+            "RGB blend of texture / fertility potential / hydrology (prototype).",
     }
     return help_text.get(mode, "")
 
@@ -143,6 +169,13 @@ def format_overlay_value(mode: OverlayMode, value: float) -> str:
         from soil_texture import texture_band_label
 
         return f"{texture_band_label(value)} ({value * 100:.0f}%)"
+    if mode in (
+        OverlayMode.FERTILITY_POTENTIAL,
+        OverlayMode.HYDROLOGICAL_POSITION,
+        OverlayMode.MOISTURE_BASELINE,
+        OverlayMode.LANDSCAPE_COMBINED,
+    ):
+        return f"{value * 100:.0f}%"
     # Most live overlays are 0–1 fractions mapped to the colour ramp.
     return f"{value * 100:.0f}%"
 
@@ -493,6 +526,16 @@ def overlay_colour(mode: OverlayMode, value: float) -> Colour:
         if t < 0.5:
             return lerp_colour(COLOUR_SOIL_TEXTURE_SANDY, COLOUR_SOIL_TEXTURE_LOAM, t * 2.0)
         return lerp_colour(COLOUR_SOIL_TEXTURE_LOAM, COLOUR_SOIL_TEXTURE_CLAY, (t - 0.5) * 2.0)
+    if mode == OverlayMode.FERTILITY_POTENTIAL:
+        return lerp_colour(COLOUR_FERTILITY_LOW, COLOUR_FERTILITY_HIGH, value)
+    if mode == OverlayMode.HYDROLOGICAL_POSITION:
+        return lerp_colour((176, 132, 72), (45, 125, 210), value)
+    if mode == OverlayMode.MOISTURE_BASELINE:
+        return lerp_colour((160, 120, 70), (40, 110, 200), value)
+    if mode == OverlayMode.LANDSCAPE_COMBINED:
+        # value is unused; colouring is overridden when drawing combined grids.
+        t = max(0.0, min(1.0, float(value)))
+        return lerp_colour((80, 80, 80), (200, 200, 180), t)
     if mode == OverlayMode.FIELD_YIELD:
         # Green good → red poor (value already normalised high=good)
         return lerp_colour(COLOUR_DISTURBANCE_HIGH, COLOUR_FERTILITY_HIGH, value)
@@ -511,6 +554,10 @@ def build_overlay_grid(world: World, mode: OverlayMode) -> list[list[float]]:
         OverlayMode.TEMPERATURE,
         OverlayMode.RAINFALL,
         OverlayMode.FIELD_YIELD,
+        OverlayMode.FERTILITY_POTENTIAL,
+        OverlayMode.HYDROLOGICAL_POSITION,
+        OverlayMode.MOISTURE_BASELINE,
+        OverlayMode.LANDSCAPE_COMBINED,
     ):
         return [[0.0] * world.cols for _ in range(world.rows)]
     return [

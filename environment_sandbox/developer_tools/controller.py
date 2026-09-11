@@ -87,7 +87,7 @@ class DeveloperToolsController:
             self._buttons.append((pygame.Rect(x if x is not None else panel.x + 40, y, w, 36), action, label, enabled))
         if self.page == "home":
             y = panel.y + 175
-            for action, label in (("recipes", "Recipes"), ("travellers", "Travellers"), ("icons", "Icons"), ("resources", "Resources"), ("objects", "Plants"), ("terrains", "Terrains"), ("sounds", "Sounds"), ("content_lab", "Content Lab")):
+            for action, label in (("recipes", "Recipes"), ("travellers", "Travellers"), ("icons", "Icons"), ("resources", "Resources"), ("objects", "Plants"), ("terrains", "Terrains"), ("sounds", "Sounds"), ("content_lab", "Content Lab"), ("landscape_fields", "Landscape Fields")):
                 add(y, action, label); y += 46
             add(y + 4, "validate_all", "Validate All")
             add(panel.bottom - 55, "launcher", "Back")
@@ -138,6 +138,8 @@ class DeveloperToolsController:
             self.page = action; self.refresh_page(); return None
         if action == "content_lab":
             return "content_lab"
+        if action == "landscape_fields":
+            return "landscape_fields"
         if action == "launcher":
             return "launcher"
         if action == "validate_all":

@@ -7,7 +7,7 @@ from enum import Enum, auto
 import pygame
 
 from entities import Building, HomeStorage, Player, Villager
-from indicators import OVERLAY_LABELS, OverlayMode, overlay_help
+from indicators import LANDSCAPE_FIELD_OVERLAYS, OVERLAY_LABELS, OverlayMode, overlay_help
 from resources import (
     GROUP_LABELS,
     GROUP_ORDER,
@@ -78,6 +78,7 @@ class ResourceBar:
         return tuple(
             mode for mode in OverlayMode
             if mode not in (OverlayMode.NONE, OverlayMode.SPECIES_DIVERSITY)
+            and mode not in LANDSCAPE_FIELD_OVERLAYS
         )
 
     def cycle_view(self) -> ResourceView:

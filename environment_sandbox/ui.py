@@ -438,7 +438,14 @@ class UI:
         y = _blit_text(content, self.font_title, "Layer views", (x, y))
         layer_modes = (OverlayMode.NONE,) + tuple(
             mode for mode in OverlayMode
-            if mode not in (OverlayMode.NONE, OverlayMode.SPECIES_DIVERSITY)
+            if mode not in (
+                OverlayMode.NONE,
+                OverlayMode.SPECIES_DIVERSITY,
+                OverlayMode.FERTILITY_POTENTIAL,
+                OverlayMode.HYDROLOGICAL_POSITION,
+                OverlayMode.MOISTURE_BASELINE,
+                OverlayMode.LANDSCAPE_COMBINED,
+            )
         )
         col_w = (PANEL_WIDTH - 28) // 2
         for index, mode in enumerate(layer_modes):

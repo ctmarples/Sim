@@ -87,6 +87,34 @@ def _moisture_cell_noise(seed: int, x: int, y: int) -> float:
     return u * 0.65 + v * 0.35
 
 
+def water_distance_grid(world: World) -> list[list[int]]:
+    """4-neighbour BFS distance (in cells) to the nearest water/river tile.
+
+    Reused by live soil-moisture sampling and the Landscape Fields prototype.
+    Cells that are themselves water have distance 0. If the map has no water,
+    every cell receives ``rows + cols`` (effectively unreachable).
+    """
+    from world import is_water_terrain
+
+    cols, rows = world.cols, world.rows
+    unreachable = rows + cols
+    distances = [[unreachable] * cols for _ in range(rows)]
+    queue: deque[tuple[int, int]] = deque()
+    for y in range(rows):
+        for x in range(cols):
+            if is_water_terrain(world.cells[y][x].terrain):
+                distances[y][x] = 0
+                queue.append((x, y))
+    while queue:
+        x, y = queue.popleft()
+        nd = distances[y][x] + 1
+        for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            if 0 <= nx < cols and 0 <= ny < rows and nd < distances[ny][nx]:
+                distances[ny][nx] = nd
+                queue.append((nx, ny))
+    return distances
+
+
 def soil_moisture_grid(world: World, calendar_day: int) -> list[list[float]]:
     """Build a 0–1 soil-moisture map from terrain, features, and climate.
 
@@ -100,20 +128,7 @@ def soil_moisture_grid(world: World, calendar_day: int) -> list[list[float]]:
 
     from developer_tools.terrain_editor import terrain_band
     bands = {terrain: terrain_band(terrain, "soil_moisture") for terrain in TerrainType}
-    distances = [[world.rows + world.cols] * world.cols for _ in range(world.rows)]
-    queue: deque[tuple[int, int]] = deque()
-    for y in range(world.rows):
-        for x in range(world.cols):
-            if is_water_terrain(world.cells[y][x].terrain):
-                distances[y][x] = 0
-                queue.append((x, y))
-    while queue:
-        x, y = queue.popleft()
-        nd = distances[y][x] + 1
-        for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
-            if 0 <= nx < world.cols and 0 <= ny < world.rows and nd < distances[ny][nx]:
-                distances[ny][nx] = nd
-                queue.append((nx, ny))
+    distances = water_distance_grid(world)
 
     retaining = {
         FeatureType.TREE: 0.10,

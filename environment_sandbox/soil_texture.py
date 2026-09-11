@@ -130,6 +130,58 @@ def _blur_field(field: list[list[float]], radius: int) -> list[list[float]]:
     return out
 
 
+# Public aliases — preferred entry points for experimental landscape fields.
+value_noise_field = _value_noise_field
+blur_field = _blur_field
+
+
+def generate_soil_texture_field(
+    width: int,
+    height: int,
+    seed: int,
+    *,
+    base: float = TEXTURE_BASE,
+    regional_amp: float = TEXTURE_REGIONAL_AMP,
+    mid_amp: float = TEXTURE_MID_AMP,
+    fine_amp: float = TEXTURE_FINE_AMP,
+    regional_spacing: int | None = None,
+    mid_spacing: int | None = None,
+    fine_spacing: int = 2,
+    blur_radius: int = 0,
+    seed_mixin: int = 0x50117E87,
+) -> list[list[float]]:
+    """Seeded continuous soil-texture field without terrain bias.
+
+    Used by production generation (plus a weak terrain nudge) and by the
+    isolated Landscape Fields prototype (broader spacing / weaker fine noise).
+    """
+    cols, rows = max(1, int(width)), max(1, int(height))
+    rng = random.Random(int(seed) ^ int(seed_mixin))
+    short = max(8, min(cols, rows))
+    reg_sp = max(4, int(regional_spacing if regional_spacing is not None else max(14, short // 4)))
+    mid_sp = max(2, int(mid_spacing if mid_spacing is not None else max(5, short // 10)))
+    fine_sp = max(1, int(fine_spacing))
+    regional = _value_noise_field(cols, rows, rng, spacing=reg_sp, persistence=0.55)
+    mid = _value_noise_field(cols, rows, rng, spacing=mid_sp, persistence=0.50)
+    fine = _value_noise_field(cols, rows, rng, spacing=fine_sp, persistence=0.40)
+    out = [
+        [
+            clamp01(
+                float(base)
+                + (regional[y][x] - 0.5) * (2.0 * float(regional_amp))
+                + (mid[y][x] - 0.5) * (2.0 * float(mid_amp))
+                + (fine[y][x] - 0.5) * (2.0 * float(fine_amp))
+            )
+            for x in range(cols)
+        ]
+        for y in range(rows)
+    ]
+    if blur_radius > 0:
+        out = _blur_field(out, int(blur_radius))
+        out = [[clamp01(v) for v in row] for row in out]
+    return out
+
+
 def generate_soil_texture(world: "World", *, seed: int | None = None) -> None:
     """Fill every cell with a persistent clustered soil_texture in [0, 1].
 
@@ -139,15 +191,8 @@ def generate_soil_texture(world: "World", *, seed: int | None = None) -> None:
     cols, rows = world.cols, world.rows
     if cols <= 0 or rows <= 0:
         return
-    rng = random.Random(int(world.seed if seed is None else seed) ^ 0x50117E87)
-    short = max(8, min(cols, rows))
-    regional = _value_noise_field(
-        cols, rows, rng, spacing=max(14, short // 4), persistence=0.55
-    )
-    mid = _value_noise_field(
-        cols, rows, rng, spacing=max(5, short // 10), persistence=0.50
-    )
-    fine = _value_noise_field(cols, rows, rng, spacing=2, persistence=0.40)
+    field_seed = int(world.seed if seed is None else seed)
+    field = generate_soil_texture_field(cols, rows, field_seed)
 
     bias = [
         [_terrain_bias(cell.terrain) for cell in row] for row in world.cells
@@ -157,14 +202,7 @@ def generate_soil_texture(world: "World", *, seed: int | None = None) -> None:
     for y in range(rows):
         for x in range(cols):
             nudge = max(-TEXTURE_BIAS_CAP, min(TEXTURE_BIAS_CAP, bias[y][x]))
-            value = (
-                TEXTURE_BASE
-                + (regional[y][x] - 0.5) * (2.0 * TEXTURE_REGIONAL_AMP)
-                + (mid[y][x] - 0.5) * (2.0 * TEXTURE_MID_AMP)
-                + (fine[y][x] - 0.5) * (2.0 * TEXTURE_FINE_AMP)
-                + nudge
-            )
-            world.cells[y][x].soil_texture = clamp01(value)
+            world.cells[y][x].soil_texture = clamp01(field[y][x] + nudge)
 
 
 def ensure_soil_texture(world: "World") -> None:

@@ -682,6 +682,8 @@ class Game:
         self.developer_tools = None
         self._content_lab_active = False
         self._content_lab_session = None
+        self._landscape_fields_active = False
+        self._landscape_fields_session = None
         self._terrain_editor_process = None
         self._launch_map_files: list[Path] = []
         self._launch_gen = {
@@ -1080,10 +1082,23 @@ class Game:
                     self.sim_speed = 0
                     self.developer_tools.pending_lab_species = None
                 self._launch_menu = None
+            elif result == "landscape_fields":
+                from developer_tools.landscape_fields_lab import LandscapeFieldsSession
+
+                session = LandscapeFieldsSession(self)
+                session.start()
+                self._launch_menu = None
             if result == "launcher":
                 self.sounds.emit("ui.window.close")
-            elif old_page != self.developer_tools.page:
-                self.sounds.emit("ui.window.close" if self.developer_tools.page == "home" else "ui.window.change")
+            elif (
+                self.developer_tools is not None
+                and old_page != self.developer_tools.page
+            ):
+                self.sounds.emit(
+                    "ui.window.close"
+                    if self.developer_tools.page == "home"
+                    else "ui.window.change"
+                )
             return
         if self.file_dialog.open:
             if event.type == pygame.KEYDOWN:
@@ -2053,6 +2068,8 @@ class Game:
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self._handle_tutorial_unlock_click(event.pos):
                 continue
             elif self._content_lab_active and self._content_lab_session.handle_event(event):
+                continue
+            elif self._landscape_fields_active and self._landscape_fields_session is not None and self._landscape_fields_session.handle_event(event):
                 continue
             elif (
                 self.management.open
@@ -5791,6 +5808,17 @@ class Game:
             self._set_status(f"Could not start niche test: {exc}")
             return
 
+    def _open_landscape_fields(self) -> None:
+        """Developer prototype: persistent landscape environmental fields."""
+        try:
+            from developer_tools.landscape_fields_lab import LandscapeFieldsSession
+
+            session = LandscapeFieldsSession(self)
+            session.start()
+            self._set_status("Landscape Fields prototype started.")
+        except Exception as exc:
+            self._set_status(f"Could not start Landscape Fields: {exc}")
+
     def _set_sim_speed(self, speed: int) -> None:
         if speed not in SIM_SPEEDS:
             return
@@ -7103,6 +7131,8 @@ class Game:
             self._open_subtile_test()
         elif action == "file_niche_test":
             self._open_niche_test()
+        elif action == "file_landscape_fields":
+            self._open_landscape_fields()
         elif action == "file_reset":
             self.reset()
         elif action == "file_time_demo":
@@ -21743,6 +21773,24 @@ class Game:
                     grid[y][x] = max(0.0, min(1.0, float(yld) / base))
             self.overlay_values = grid
             return
+        if self.overlay_mode in (
+            OverlayMode.FERTILITY_POTENTIAL,
+            OverlayMode.HYDROLOGICAL_POSITION,
+            OverlayMode.MOISTURE_BASELINE,
+            OverlayMode.LANDSCAPE_COMBINED,
+        ):
+            session = getattr(self, "_landscape_fields_session", None)
+            if session is not None and session.state is not None:
+                key = {
+                    OverlayMode.FERTILITY_POTENTIAL: "fertility_potential",
+                    OverlayMode.HYDROLOGICAL_POSITION: "hydrological_position",
+                    OverlayMode.MOISTURE_BASELINE: "soil_moisture_baseline",
+                    OverlayMode.LANDSCAPE_COMBINED: "combined",
+                }[self.overlay_mode]
+                self.overlay_values = [row[:] for row in session.overlay_grid(key)]
+                return
+            self.overlay_values = [[0.0] * self.world.cols for _ in range(self.world.rows)]
+            return
         self.overlay_values = build_overlay_grid(self.world, self.overlay_mode)
 
     def _update_status_timer(self) -> None:
@@ -22716,6 +22764,10 @@ class Game:
         self.resource_bar.draw_layers_menu(self.screen, mouse, self.overlay_mode)
         if self._content_lab_active and self._content_lab_session is not None:
             self._content_lab_session.draw(self.screen)
+        if self._landscape_fields_active and self._landscape_fields_session is not None:
+            hover = self._map_cell_from_pos(pygame.mouse.get_pos())
+            self._landscape_fields_session.update_hover(hover)
+            self._landscape_fields_session.draw(self.screen)
         self._draw_tutorial_sleep_transition()
         pygame.display.flip()
 
@@ -24577,12 +24629,23 @@ class Game:
         # One padded sample per cell centre so smoothscale blends neighbours.
         samples = pygame.Surface((cols + 2, rows + 2), pygame.SRCALPHA)
         field_only = self.overlay_mode == OverlayMode.FIELD_YIELD
+        combined = (
+            self.overlay_mode == OverlayMode.LANDSCAPE_COMBINED
+            and getattr(self, "_landscape_fields_session", None) is not None
+            and self._landscape_fields_session.state is not None
+        )
+        lf_state = self._landscape_fields_session.state if combined else None
         for y in range(rows):
             row = values[y] if y < len(values) else []
             for x in range(cols):
                 value = float(row[x]) if x < len(row) else 0.0
                 if field_only and value <= 0.0:
                     colour = (0, 0, 0, 0)
+                elif combined and lf_state is not None:
+                    r = int(40 + 200 * lf_state.soil_texture[y][x])
+                    g = int(40 + 200 * lf_state.fertility_potential[y][x])
+                    b = int(40 + 200 * lf_state.hydrological_position[y][x])
+                    colour = (r, g, b, OVERLAY_ALPHA)
                 else:
                     rgb = overlay_colour(self.overlay_mode, value)
                     colour = (*rgb, OVERLAY_ALPHA)
