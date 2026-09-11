@@ -309,6 +309,9 @@ def _cell_to_dict(cell: Cell) -> dict[str, Any]:
     if abs(shade - 0.55) > 0.001:
         data["terrain_shade"] = float(shade)
     data["fertility"] = float(getattr(cell, "fertility", 0.8))
+    texture = float(getattr(cell, "soil_texture", -1.0))
+    if texture >= 0.0:
+        data["soil_texture"] = max(0.0, min(1.0, texture))
     weeds = float(getattr(cell, "weeds", 0.0))
     if weeds > 0.001:
         data["weeds"] = weeds
@@ -417,6 +420,10 @@ def _cell_from_save(c: dict[str, Any], *, migrate_legacy_fertility: bool = False
                 cell.fertility = clamp01(cell.fertility + (new_base - legacy))
     else:
         cell.fertility = fertility_base_for(cell.terrain)
+    if c.get("soil_texture") is not None:
+        cell.soil_texture = clamp01(float(c["soil_texture"]))
+    else:
+        cell.soil_texture = -1.0
     cell.weeds = clamp01(float(c.get("weeds", 0.0)))
     cell.weed_appearances = max(0, int(c.get("weed_appearances", 0) or 0))
     cell.compost_cycle_applied = bool(c.get("compost_cycle_applied", False))
@@ -1179,6 +1186,10 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         for cell in row
     ):
         world._paint_terrain_subclusters(random.Random(world.seed + 77))
+    # Legacy saves lack soil_texture — generate once from the world seed.
+    from soil_texture import ensure_soil_texture
+
+    ensure_soil_texture(world)
     world.valley_path = world._valley_river_path()
     world.lake_cx, world.lake_cy, world.lake_rx, world.lake_ry = world._valley_lake_params()
     # Prefer painted/saved heights; older saves rebuild from the valley map.

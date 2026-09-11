@@ -64,12 +64,6 @@
         1,
         4
       ],
-      "rainfall_niche": {
-        "maximum": 0.85,
-        "minimum": 0.25,
-        "optimum_high": 0.7,
-        "optimum_low": 0.4
-      },
       "resource_key": "flax",
       "seed_near_chance": 0.0,
       "seed_near_feature": null,

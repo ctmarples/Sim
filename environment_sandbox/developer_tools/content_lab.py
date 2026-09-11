@@ -83,7 +83,7 @@ class ContentLabSession:
         self.species_key: str | None = None
         self.crop_key: str | None = None
         self.tree_key: str | None = None
-        self.environment_fields = {name:FloatField(__import__("pygame").Rect(0,0,1,1),"0.5",minimum=0,maximum=1) for name in ("moisture","temperature","fertility","rainfall","disturbance")}
+        self.environment_fields = {name:FloatField(__import__("pygame").Rect(0,0,1,1),"0.5",minimum=0,maximum=1) for name in ("moisture","temperature","fertility","disturbance","soil_texture")}
 
     def _refresh_recipe_dropdown(self) -> None:
         catalogue = recipe_catalogue()
@@ -162,7 +162,7 @@ class ContentLabSession:
         if not self.species_key:return None
         values={name:field.parse() for name,field in self.environment_fields.items()}
         if any(v is None for v in values.values()):return None
-        return species_environment_suitability(WILD_BY_KEY[self.species_key],temperature=values["temperature"],rainfall=values["rainfall"],soil_moisture=values["moisture"],fertility=values["fertility"],disturbance=values["disturbance"])
+        return species_environment_suitability(WILD_BY_KEY[self.species_key],temperature=values["temperature"],soil_moisture=values["moisture"],fertility=values["fertility"],disturbance=values["disturbance"],soil_texture=values.get("soil_texture",0.45))
 
     def spawn_species(self):
         from wild_species import WILD_BY_KEY

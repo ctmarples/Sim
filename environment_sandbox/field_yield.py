@@ -36,6 +36,8 @@ class YieldBreakdown:
     fertility: float
     weed_penalty: float
     weeds: float = 0.0
+    moisture: float = 1.0
+    soil_texture: float = 1.0
     after_landscape: float = 0.0
     after_crop_condition: float = 0.0
     final_unrounded: float = 0.0
@@ -52,10 +54,13 @@ def calculate_tile_yield_breakdown(
     fertility: float,
     weed_penalty: float,
     weeds: float = 0.0,
+    moisture: float = 1.0,
+    soil_texture: float = 1.0,
 ) -> YieldBreakdown:
     """Single source of truth for farm tile harvest (same product as pickup).
 
-    Product: base × pollination × ecology × crop_health × weed_penalty × fertility.
+    Product: base × pollination × ecology × crop_health × weed_penalty
+    × fertility × moisture × soil_texture.
     ``pest_control`` is retained for diagnostics only (feeds health over time).
     """
     b = max(0.0, float(base))
@@ -65,9 +70,11 @@ def calculate_tile_yield_breakdown(
     eco = float(ecology)
     fert = float(fertility)
     weed = float(weed_penalty)
+    moist = float(moisture)
+    texture = float(soil_texture)
     after_landscape = b * poll * eco
     after_crop = after_landscape * health * weed
-    final = after_crop * fert
+    final = after_crop * fert * moist * texture
     rounded = max(1, int(round(final)))
     return YieldBreakdown(
         base=b,
@@ -78,6 +85,8 @@ def calculate_tile_yield_breakdown(
         fertility=fert,
         weed_penalty=weed,
         weeds=float(weeds),
+        moisture=moist,
+        soil_texture=texture,
         after_landscape=after_landscape,
         after_crop_condition=after_crop,
         final_unrounded=final,
@@ -116,6 +125,42 @@ class FieldFactorDisplay:
     effect_mult: float = 1.0  # for main-limitation ranking (1.0 = neutral)
     management: str = ""  # Habitat | Location | Persistent | …
     hint: str = ""
+
+
+def niche_yield_multiplier(
+    value: float,
+    niche,
+    *,
+    floor: float = 0.75,
+    ceiling: float = 1.05,
+) -> float:
+    """Soft yield factor from a wild niche response (None niche → neutral 1.0)."""
+    if niche is None:
+        return 1.0
+    from wild_species import niche_response
+
+    response = niche_response(float(value), niche)
+    return float(floor) + (float(ceiling) - float(floor)) * response
+
+
+def crop_moisture_texture_multipliers(
+    crop_kind: str | None,
+    *,
+    soil_moisture: float,
+    soil_texture: float,
+) -> tuple[float, float]:
+    """Look up wild niches for a planted crop key; missing niches stay neutral."""
+    if not crop_kind:
+        return 1.0, 1.0
+    from wild_species import WILD_BY_KEY
+
+    species = WILD_BY_KEY.get(str(crop_kind))
+    if species is None:
+        return 1.0, 1.0
+    return (
+        niche_yield_multiplier(soil_moisture, species.moisture_niche),
+        niche_yield_multiplier(soil_texture, species.texture_niche),
+    )
 
 
 def effect_pct_text(mult: float) -> str | None:
@@ -483,12 +528,41 @@ def build_field_factors(status: dict) -> list[FieldFactorDisplay]:
     ]
     if "moisture" in status:
         moisture = float(status["moisture"])
+        moist_mult = float(status.get("moisture_mult") or 1.0)
         rows.insert(-1, FieldFactorDisplay(
             key="moisture", label="Moisture", icon="water", section="soil",
             state_text="Dry" if moisture < .3 else "Good" if moisture < .75 else "Wet",
-            value_text=f"{moisture * 100:.0f}%", effect_text=None,
-            severity=Severity.POSITIVE, overlay_key="SOIL_MOISTURE",
-            detail_lines=["Soil moisture is observational; it does not affect yield yet."],
+            value_text=f"{moisture * 100:.0f}%",
+            effect_text=effect_pct_text(moist_mult),
+            severity=severity_for_mult(moist_mult),
+            overlay_key="SOIL_MOISTURE",
+            effect_mult=moist_mult,
+            detail_lines=[
+                "Matched to each crop's wild moisture niche when available.",
+                "Outside the preferred band softens yield; ideal moisture boosts it slightly.",
+            ],
+            management="Persistent",
+            hint="Irrigate dry ground or drain saturated plots to suit the crop.",
+        ))
+    if "soil_texture" in status or "soil_texture_mult" in status:
+        texture = float(status.get("soil_texture") or 0.45)
+        texture_mult = float(status.get("soil_texture_mult") or 1.0)
+        from soil_texture import texture_band_label
+
+        rows.insert(-1, FieldFactorDisplay(
+            key="soil_texture", label="Soil texture", icon="field", section="soil",
+            state_text=texture_band_label(texture).title(),
+            value_text=f"{texture * 100:.0f}%",
+            effect_text=effect_pct_text(texture_mult),
+            severity=severity_for_mult(texture_mult),
+            overlay_key="SOIL_TEXTURE",
+            effect_mult=texture_mult,
+            detail_lines=[
+                "Persistent sand→clay axis. Yield follows each crop's wild texture niche.",
+                "Terrain conversion does not change underlying texture.",
+            ],
+            management="Persistent",
+            hint="Choose crops that match the local soil texture band.",
         ))
     return rows
 

@@ -15,10 +15,10 @@ from .widgets import Checkbox, ColourField, Dropdown, FloatField, IntegerField, 
 NICHE_VALUE_LABELS = ("Min", "Ideal from", "Ideal to", "Max")
 NICHE_DESCRIPTIONS = {
     "temperature_niche": "0 = -10 C, 1 = 35 C; values between are proportional.",
-    "rainfall_niche": "0 = driest long-term climate, 1 = wettest climate.",
-    "moisture_niche": "0 = driest soil, 1 = fully waterlogged soil.",
+    "moisture_niche": "0 = driest soil, 1 = fully waterlogged soil. Local rainfall recharges this.",
     "fertility_niche": "0 = depleted soil, 1 = richest soil.",
     "disturbance_niche": "0 = untouched ground, 1 = heavily worked or disrupted ground.",
+    "texture_niche": "0 = sandy/coarse soil, 1 = clayey/fine soil.",
 }
 
 
@@ -651,7 +651,7 @@ class WildSpeciesAuthoringPage:
     GROUPS=(
         ("Identity / resource",("key","label","feature","resource_key","yield_amount","crop_key")),
         ("Habitat",("terrains","edge_terrains","seed_near_feature","near_feature","ecology_tags")),
-        ("Environmental niche",("temperature_niche","rainfall_niche","moisture_niche","fertility_niche","disturbance_niche")),
+        ("Environmental niche",("temperature_niche","moisture_niche","fertility_niche","disturbance_niche","texture_niche")),
         ("Spawn / spread",("initial_count","initial_fraction","seed_near_chance","spawn_peak","spawn_rise","spawn_fall","spawn_activity","spread_chance","patch_extras","spawn_group")),
         ("Despawn",("despawn_fade","despawn_fade_end","despawn_fade_chance","despawn_leftover_from","despawn_leftover_chance","clear_from_day","clear_ramp_days","counts_toward_cap")),
         ("Fruiting / harvest",("fruiting","fruit_rise","fruit_fall","seed_drop_chance","fruit_class","fruit_colour","empty_fruit_colour")),
@@ -660,7 +660,7 @@ class WildSpeciesAuthoringPage:
     BOOLS={"counts_toward_cap","fruiting"}
     INTS={"yield_amount","initial_count"}
     PAIRS={"spawn_rise","spawn_fall","patch_extras","despawn_fade","despawn_fade_end","fruit_rise","fruit_fall"}
-    NICHES={"temperature_niche","rainfall_niche","moisture_niche","fertility_niche","disturbance_niche"}
+    NICHES={"temperature_niche","moisture_niche","fertility_niche","disturbance_niche","texture_niche"}
     FLOATS={"initial_fraction","seed_near_chance","spawn_peak","spawn_activity","spread_chance","despawn_fade_chance","despawn_leftover_from","despawn_leftover_chance","clear_from_day","clear_ramp_days","seed_drop_chance"}
     def __init__(self,service,icons):
         self.service=service;self.icons=icons;self.list=ScrollableList(pygame.Rect(0,0,1,1),row_height=25);self.list.category=lambda s:"Wild crops" if s.crop_key else s.feature.replace("_"," ").title();self.controls={};self.optional_enabled={};self.terrains={};self.icon_colours=[];self.icon_colour_enabled={};self.actions=[];self.scroll=0;self.message="Select a wild species.";self.refresh()
@@ -967,7 +967,7 @@ class CropAuthoringPage:
 class PlantAuthoringPage:
     """One editor record projected into cultivated, wild, and tree runtimes."""
     WILD_FLOATS=("initial_fraction","seed_near_chance","spawn_peak","spawn_activity","spread_chance","despawn_fade_chance","despawn_leftover_from","despawn_leftover_chance","clear_from_day","clear_ramp_days","seed_drop_chance")
-    NICHES=("temperature_niche","rainfall_niche","moisture_niche","fertility_niche","disturbance_niche")
+    NICHES=("temperature_niche","moisture_niche","fertility_niche","disturbance_niche","texture_niche")
     def __init__(self,service,icons):self.service=service;self.icons=icons;self.list=ScrollableList(pygame.Rect(0,0,1,1),row_height=26);self.list.category=lambda p:p.growth_form.title();self.search=TextField(pygame.Rect(0,0,1,1),placeholder="Search plants");self.controls={};self.harvest={};self.phases={};self.season_colours={};self.presentation_colours={};self.presentation_enabled={};self.season_presentation={};self.season_presentation_enabled={};self.terrains={};self.edge_terrains={};self.niches={};self.collapsed={"cultivation":False,"wild":False};self.delete_armed=False;self.actions=[];self.scroll=0;self.message="Select a plant or create a new one.";self.refresh()
     def refresh(self,key=None):
         query=self.search.text.strip().casefold();order={"annual herb":0,"perennial herb":1,"shrub":2,"tree":3};items=[p for p in self.service.records if not query or query in p.label.casefold() or query in p.key.casefold()];self.list.set_items(sorted(items,key=lambda p:(order.get(p.growth_form,99),p.label.casefold())))
@@ -1205,19 +1205,23 @@ class PlantAuthoringPage:
 class TerrainAuthoringPage:
     """Terrain-centric ecology values and the inverse wild-plant matrix."""
     FIELDS=(
-        ("soil_moisture","Initial soil moisture","0 = dry, 1 = saturated"),
-        ("fertility","Initial fertility","0 = depleted, 1 = richest"),
-        ("temperature_offset_c","Temperature offset (C)","Added to local air temperature"),
-        ("rainfall_multiplier","Rainfall multiplier","1 = unchanged local rainfall"),
+        ("soil_moisture","Initial soil moisture centre","0 = dry, 1 = saturated"),
+        ("fertility","Initial fertility centre","0 = depleted, 1 = richest"),
+        ("temperature_offset_c","Temperature offset centre (C)","Added to local air temperature"),
+        ("rainfall_multiplier","Rainfall multiplier centre","1 = unchanged local rainfall"),
     )
     def __init__(self,service):
         from world import TerrainType
-        rect=pygame.Rect(0,0,1,1);self.service=service;self.list=ScrollableList(rect,row_height=30);self.list.set_items(list(TerrainType));self.list.selected_index=list(TerrainType).index(TerrainType.GRASS);self.controls={};self.plants={};self.actions=[];self.scroll=0;self.message="Select a terrain type.";self.load(TerrainType.GRASS)
+        rect=pygame.Rect(0,0,1,1);self.service=service;self.list=ScrollableList(rect,row_height=30);self.list.set_items(list(TerrainType));self.list.selected_index=list(TerrainType).index(TerrainType.GRASS);self.controls={};self.spreads={};self.plants={};self.actions=[];self.scroll=0;self.message="Select a terrain type.";self.load(TerrainType.GRASS)
     def load(self,terrain):
         self.service.select(terrain.name);row=self.service.values[terrain.name];rect=pygame.Rect(0,0,1,1)
-        self.controls={k:FloatField(rect,str(row[k]),minimum=0 if k!="temperature_offset_c" else None,maximum=2 if k=="rainfall_multiplier" else 1 if k!="temperature_offset_c" else None) for k,_,_ in self.FIELDS}
+        self.controls={};self.spreads={}
+        for k,_,_ in self.FIELDS:
+            band=row[k] if isinstance(row[k],dict) else {"centre":float(row[k]),"spread":0.0}
+            self.controls[k]=FloatField(rect,str(band["centre"]),minimum=0 if k!="temperature_offset_c" else None,maximum=2 if k=="rainfall_multiplier" else 1 if k!="temperature_offset_c" else None)
+            self.spreads[k]=FloatField(rect,str(band.get("spread",0.0)),minimum=0,maximum=5 if k=="temperature_offset_c" else 1)
         selected=self.service.selected_plants();self.plants={p.key:Checkbox(rect,p.key in selected) for p in self.service.wild_plants()};self.scroll=0
-    def _all(self):return list(self.controls.values())+list(self.plants.values())
+    def _all(self):return list(self.controls.values())+list(self.spreads.values())+list(self.plants.values())
     def handle_event(self,event):
         old=self.list.selected_index
         if self.list.handle_event(event):
@@ -1229,9 +1233,12 @@ class TerrainAuthoringPage:
         if event.type==pygame.MOUSEBUTTONDOWN and event.button==1:
             for rect,action in self.actions:
                 if rect.collidepoint(event.pos) and action=="save":
-                    values={k:self.controls[k].parse() for k,_,_ in self.FIELDS}
-                    if any(v is None for v in values.values()):self.message="Enter valid numeric terrain values."
-                    else:_ok,self.message=self.service.save(values,{k for k,b in self.plants.items() if b.checked})
+                    values={}
+                    for k,_,_ in self.FIELDS:
+                        centre=self.controls[k].parse();spread=self.spreads[k].parse()
+                        if centre is None or spread is None:self.message="Enter valid numeric terrain values.";return True
+                        values[k]={"centre":centre,"spread":spread}
+                    _ok,self.message=self.service.save(values,{k for k,b in self.plants.items() if b.checked})
                     return True
         return False
     def draw(self,surface,panel,font,small):
@@ -1241,9 +1248,10 @@ class TerrainAuthoringPage:
         terrain=self.list.selected or __import__("world").TerrainType.GRASS
         surface.blit(font.render(terrain.name.replace("_"," ").title(),True,COLOUR_TEXT),(right.x+16,right.y+12))
         clip=pygame.Rect(right.x+2,right.y+43,right.w-4,right.h-92);old=surface.get_clip();surface.set_clip(clip);x=right.x+16;fx=right.x+230;y=right.y+52-self.scroll
-        surface.blit(font.render("ECOLOGICAL BASE VALUES",True,(150,190,165)),(x,y));y+=31
+        surface.blit(font.render("ECOLOGICAL BANDS (CENTRE ± SPREAD)",True,(150,190,165)),(x,y));y+=31
         for key,label,hint in self.FIELDS:
-            surface.blit(small.render(label,True,COLOUR_TEXT_DIM),(x,y+5));ctl=self.controls[key];ctl.rect=pygame.Rect(fx,y,160,26);ctl.draw(surface,small);y+=28;surface.blit(small.render(hint,True,COLOUR_TEXT_DIM),(fx,y));y+=22
+            surface.blit(small.render(label,True,COLOUR_TEXT_DIM),(x,y+5));ctl=self.controls[key];ctl.rect=pygame.Rect(fx,y,70,26);ctl.draw(surface,small)
+            surface.blit(small.render("±",True,COLOUR_TEXT_DIM),(fx+76,y+5));spread=self.spreads[key];spread.rect=pygame.Rect(fx+94,y,66,26);spread.draw(surface,small);y+=28;surface.blit(small.render(hint,True,COLOUR_TEXT_DIM),(fx,y));y+=22
         surface.blit(font.render("WILD PLANTS ALLOWED ON THIS TERRAIN",True,(150,190,165)),(x,y));y+=30
         for p in self.service.wild_plants():
             ctl=self.plants[p.key];ctl.rect=pygame.Rect(x,y+2,18,18);ctl.draw(surface);surface.blit(small.render(p.label,True,COLOUR_TEXT),(x+26,y+2));y+=25

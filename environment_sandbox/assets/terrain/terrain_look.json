@@ -261,7 +261,7 @@
       "speckle_density": 1.0,
       "cluster_density": 1.0,
       "speckle_alpha": 1.0,
-      "cluster_alpha": 1.0,
+      "cluster_alpha": 0.996,
       "cluster_spread": 1.0,
       "seed": 101
     },

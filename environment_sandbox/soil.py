@@ -33,13 +33,60 @@ def _bal(key: str, default: float) -> float:
 
 
 def fertility_base_for(terrain: TerrainType) -> float:
-    """Starting fertility 0–1 for a terrain type."""
-    from world import TerrainType as T
+    """Starting fertility centre 0–1 for a terrain type."""
     from developer_tools.terrain_editor import terrain_value
 
-    authored = terrain_value(terrain, "fertility")
+    return float(terrain_value(terrain, "fertility"))
 
-    return authored
+
+def fertility_unit_noise_grid(world: World) -> list[list[float]]:
+    """Deterministic clustered noise in roughly −1…1 (scaled by terrain spread later)."""
+    import random
+
+    from soil_texture import _value_noise_field
+
+    rng = random.Random(int(getattr(world, "seed", 0)) ^ 0xFE2711E)
+    regional = _value_noise_field(
+        world.cols, world.rows, rng, spacing=max(5, min(world.cols, world.rows) // 5), persistence=0.55,
+    )
+    mid = _value_noise_field(
+        world.cols, world.rows, rng, spacing=max(2, min(world.cols, world.rows) // 12), persistence=0.45,
+    )
+    return [
+        [
+            ((regional[y][x] - 0.5) * 2.0 * 0.72)
+            + ((mid[y][x] - 0.5) * 2.0 * 0.28)
+            for x in range(world.cols)
+        ]
+        for y in range(world.rows)
+    ]
+
+
+def fertility_variation_grid(world: World) -> list[list[float]]:
+    """Per-cell fertility offsets using each terrain's authored fertility spread."""
+    from developer_tools.terrain_editor import terrain_band
+
+    unit = fertility_unit_noise_grid(world)
+    out = [[0.0] * world.cols for _ in range(world.rows)]
+    for y, row in enumerate(world.cells):
+        for x, cell in enumerate(row):
+            _centre, spread = terrain_band(cell.terrain, "fertility")
+            out[y][x] = unit[y][x] * float(spread)
+    return out
+
+
+def fertility_noise_at(world: World, x: int, y: int) -> float:
+    """Cheap single-cell noise for paint / local updates (uses terrain spread)."""
+    from developer_tools.terrain_editor import terrain_band
+
+    cell = world.cells[y][x]
+    _centre, spread = terrain_band(cell.terrain, "fertility")
+    seed = int(getattr(world, "seed", 0)) ^ 0xFE2711E
+    h = (seed + x * 73856093 + y * 19349663) & 0xFFFFFFFF
+    u = (h / 0xFFFFFFFF) * 2.0 - 1.0
+    h2 = (seed + x * 19349663 + y * 83492791) & 0xFFFFFFFF
+    v = (h2 / 0xFFFFFFFF) * 2.0 - 1.0
+    return (u * 0.7 + v * 0.3) * float(spread)
 
 
 def clamp01(value: float) -> float:
@@ -58,18 +105,24 @@ def overlay_fertility(cell: Cell) -> float:
     return clamp01(getattr(cell, "fertility", 0.0))
 
 
-def init_cell_fertility(cell: Cell) -> None:
-    cell.fertility = clamp01(fertility_base_for(cell.terrain))
+def init_cell_fertility(cell: Cell, *, noise: float = 0.0) -> None:
+    base = fertility_base_for(cell.terrain)
+    if base <= 0.0:
+        cell.fertility = 0.0
+    else:
+        cell.fertility = clamp01(base + float(noise))
     cell.weeds = 0.0
 
 
-def apply_terrain_fertility(cell: Cell, *, reset: bool = True) -> None:
+def apply_terrain_fertility(cell: Cell, *, reset: bool = True, noise: float = 0.0) -> None:
     """After a terrain paint. ``reset`` writes the new terrain's base."""
     base = fertility_base_for(cell.terrain)
-    if reset or base <= 0.0:
-        cell.fertility = clamp01(base)
+    if base <= 0.0:
+        cell.fertility = 0.0
+    elif reset:
+        cell.fertility = clamp01(base + float(noise))
     else:
-        cell.fertility = clamp01(min(float(getattr(cell, "fertility", base)), base))
+        cell.fertility = clamp01(min(float(getattr(cell, "fertility", base)), base + abs(float(noise))))
     if cell.feature.name != "CROP_HERB":
         cell.weeds = 0.0
 

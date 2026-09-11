@@ -71,6 +71,21 @@ SEASON_MOISTURE: dict[str, float] = {
     "WINTER": -0.04,
 }
 
+# Groundwater reach and peak boost (was 4 cells / +0.30).
+WATER_MOISTURE_RADIUS: float = 8.0
+WATER_MOISTURE_BOOST: float = 0.48
+# Daily rain → soil recharge strength (was 0.34).
+RAIN_TO_MOISTURE_GAIN: float = 0.55
+
+
+def _moisture_cell_noise(seed: int, x: int, y: int) -> float:
+    """Deterministic ±1 noise for within-terrain moisture mottling."""
+    h = ((int(seed) ^ 0x50115A) + x * 374761393 + y * 668265263) & 0xFFFFFFFF
+    u = (h / 0xFFFFFFFF) * 2.0 - 1.0
+    h2 = ((int(seed) ^ 0xA11CE) + x * 83492791 + y * 19349663) & 0xFFFFFFFF
+    v = (h2 / 0xFFFFFFFF) * 2.0 - 1.0
+    return u * 0.65 + v * 0.35
+
 
 def soil_moisture_grid(world: World, calendar_day: int) -> list[list[float]]:
     """Build a 0–1 soil-moisture map from terrain, features, and climate.
@@ -83,8 +98,8 @@ def soil_moisture_grid(world: World, calendar_day: int) -> list[list[float]]:
     from seasons import season_for_day
     from world import FeatureType, TerrainType, is_water_terrain
 
-    from developer_tools.terrain_editor import terrain_value
-    bases = {terrain: terrain_value(terrain,"soil_moisture") for terrain in TerrainType}
+    from developer_tools.terrain_editor import terrain_band
+    bands = {terrain: terrain_band(terrain, "soil_moisture") for terrain in TerrainType}
     distances = [[world.rows + world.cols] * world.cols for _ in range(world.rows)]
     queue: deque[tuple[int, int]] = deque()
     for y in range(world.rows):
@@ -110,6 +125,7 @@ def soil_moisture_grid(world: World, calendar_day: int) -> list[list[float]]:
         FeatureType.CROP_HERB: 0.02,
     }
     climate = SEASON_MOISTURE.get(season_for_day(calendar_day).name, 0.0)
+    seed = int(getattr(world, "seed", 0))
     out = _zero_grid(world.rows, world.cols)
     for y in range(world.rows):
         for x in range(world.cols):
@@ -117,10 +133,18 @@ def soil_moisture_grid(world: World, calendar_day: int) -> list[list[float]]:
             if is_water_terrain(cell.terrain):
                 out[y][x] = 1.0
                 continue
-            # Groundwater influence fades to zero four cells from open water.
-            water = max(0.0, (4.0 - float(distances[y][x])) / 4.0) * 0.30
+            centre, spread = bands.get(cell.terrain, (0.35, 0.10))
+            # Groundwater influence fades across WATER_MOISTURE_RADIUS cells.
+            water = max(
+                0.0,
+                (WATER_MOISTURE_RADIUS - float(distances[y][x])) / WATER_MOISTURE_RADIUS,
+            ) * WATER_MOISTURE_BOOST
             feature = retaining.get(cell.feature, 0.0)
-            out[y][x] = max(0.0, min(1.0, bases.get(cell.terrain, 0.35) + water + feature + climate))
+            mottling = _moisture_cell_noise(seed, x, y) * float(spread)
+            out[y][x] = max(
+                0.0,
+                min(1.0, float(centre) + water + feature + climate + mottling),
+            )
     return out
 
 
@@ -140,14 +164,15 @@ def temperature_grid(world: World, calendar_day: int) -> list[list[float]]:
     # Same annual -cosine, but water only swings 4 C around a cool mean.
     angle = 2.0 * math.pi * (float(calendar_day) - 42.0) / float(YEAR_DAYS)
     water_temperature = 9.0 + 4.0 * math.cos(angle)
-    from developer_tools.terrain_editor import terrain_value
-    terrain_offset = {terrain: terrain_value(terrain,"temperature_offset_c") for terrain in TerrainType}
+    from developer_tools.terrain_editor import terrain_band
+    terrain_bands = {terrain: terrain_band(terrain, "temperature_offset_c") for terrain in TerrainType}
     shade_features = {
         FeatureType.TREE: 1.0,
         FeatureType.SAPLING: 0.45,
         FeatureType.BERRY_BUSH: 0.25,
         FeatureType.REED: 0.20,
     }
+    seed = int(getattr(world, "seed", 0))
     out = _zero_grid(world.rows, world.cols)
     for y in range(world.rows):
         for x in range(world.cols):
@@ -176,7 +201,8 @@ def temperature_grid(world: World, calendar_day: int) -> list[list[float]]:
             # A lone tree has a small effect; a continuous forest canopy damps
             # up to 45% of the seasonal departure from the annual midpoint.
             forest_temp = midpoint + (ambient - midpoint) * (1.0 - 0.45 * forest_share)
-            temp = forest_temp + terrain_offset.get(cell.terrain, 0.0)
+            centre, spread = terrain_bands.get(cell.terrain, (0.0, 0.0))
+            temp = forest_temp + float(centre) + _moisture_cell_noise(seed, x, y) * float(spread)
             # Large water bodies exert more influence than isolated water tiles.
             water_influence = min(0.75, water_share * 2.2)
             temp += (water_temperature - temp) * water_influence
@@ -216,8 +242,12 @@ def rainfall_modifier_grid(world: World) -> list[list[float]]:
                 modifier *= 0.86
             elif cell.feature == FeatureType.SAPLING:
                 modifier *= 0.94
-            from developer_tools.terrain_editor import terrain_value
-            modifier *= terrain_value(cell.terrain,"rainfall_multiplier")
+            from developer_tools.terrain_editor import terrain_band
+            centre, spread = terrain_band(cell.terrain, "rainfall_multiplier")
+            rain_mult = float(centre) + _moisture_cell_noise(
+                int(getattr(world, "seed", 0)) ^ 0x5A1A, x, y
+            ) * float(spread)
+            modifier *= max(0.05, rain_mult)
             out[y][x] = max(0.65, min(1.25, modifier))
     return out
 
@@ -252,13 +282,21 @@ def update_soil_moisture_from_rain(
                 out[y][x] = 1.0
                 continue
             old = moisture[y][x] if valid and x < len(moisture[y]) else baseline[y][x]
-            rain_gain = rainfall[y][x] * 0.34 * infiltration.get(cell.terrain, 0.65)
+            rain_gain = rainfall[y][x] * RAIN_TO_MOISTURE_GAIN * infiltration.get(cell.terrain, 0.65)
             temp = temperature[y][x] if temperature else 12.0
             heat = max(0.0, min(1.0, (temp + 5.0) / 40.0))
             evaporation = 0.012 + heat * 0.045
             if cell.feature in (FeatureType.TREE, FeatureType.SAPLING):
                 evaporation *= 0.72
-            recharge = (baseline[y][x] - old) * 0.035
+            # Modest texture effect: sandy soils dry a little faster, clay slower.
+            texture = float(getattr(cell, "soil_texture", -1.0))
+            if texture < 0.0:
+                texture = 0.45
+            texture = max(0.0, min(1.0, texture))
+            evaporation *= 1.08 - 0.16 * texture
+            # Pull toward the water-/terrain-aware baseline a bit faster so rain
+            # and proximity reshapes local moisture more visibly.
+            recharge = (baseline[y][x] - old) * 0.055
             out[y][x] = max(0.0, min(1.0, old + rain_gain - evaporation + recharge))
     return out
 

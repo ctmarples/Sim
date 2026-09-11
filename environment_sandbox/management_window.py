@@ -150,14 +150,92 @@ def _niche_text(species: WildSpeciesDef) -> str:
     preferences: list[str] = []
     for label, niche in (("moisture", species.moisture_niche),
                          ("fertility", species.fertility_niche),
-                         ("disturbance", species.disturbance_niche)):
+                         ("disturbance", species.disturbance_niche),
+                         ("texture", species.texture_niche)):
         if niche is None:
             continue
         mid = (niche.optimum_low + niche.optimum_high) / 2
-        level = "low" if mid < .36 else "moderate" if mid < .68 else "high"
+        if label == "texture":
+            level = "sandy" if mid < .36 else "loamy" if mid < .68 else "clayey"
+        else:
+            level = "low" if mid < .36 else "moderate" if mid < .68 else "high"
         preferences.append(f"{level} {label}")
     suffix = f"; prefers {', '.join(preferences)}" if preferences else ""
     return f"Found on {terrain}{suffix}."
+
+
+def _niche_band_rows(species: WildSpeciesDef) -> list[tuple[str, object]]:
+    """Named niche axes that have a defined concentration range."""
+    return [
+        (label, niche)
+        for label, niche in (
+            ("Temperature", species.temperature_niche),
+            ("Moisture", species.moisture_niche),
+            ("Fertility", species.fertility_niche),
+            ("Disturbance", species.disturbance_niche),
+            ("Soil texture", species.texture_niche),
+        )
+        if niche is not None
+    ]
+
+
+def _niche_value_text(niche) -> str:
+    """Four-knot niche as min / ideal-lo / ideal-hi / max."""
+    return (
+        f"{float(niche.minimum):.2f} / {float(niche.optimum_low):.2f} / "
+        f"{float(niche.optimum_high):.2f} / {float(niche.maximum):.2f}"
+    )
+
+
+def _draw_niche_concentration_band(
+    surface: pygame.Surface,
+    label_font: pygame.font.Font,
+    value_font: pygame.font.Font,
+    label: str,
+    niche,
+    x: int,
+    y: int,
+    width: int,
+    label_w: int,
+) -> int:
+    """Draw a label, 0–1 concentration bar, and numeric knot values."""
+    gap = 10
+    bar_h = 10
+    value_gap = 3
+    bar_x = x + label_w + gap
+    bar_w = max(48, width - label_w - gap)
+    bar = pygame.Rect(bar_x, y, bar_w, bar_h)
+
+    label_surf = label_font.render(label, True, COLOUR_TEXT)
+    # Vertically centre the label against the bar.
+    label_y = bar.y + (bar.h - label_surf.get_height()) // 2
+    surface.blit(label_surf, (x, label_y))
+
+    pygame.draw.rect(surface, (210, 198, 178), bar, border_radius=3)
+    lo = max(0.0, min(1.0, float(niche.minimum)))
+    opt_lo = max(lo, min(1.0, float(niche.optimum_low)))
+    opt_hi = max(opt_lo, min(1.0, float(niche.optimum_high)))
+    hi = max(opt_hi, min(1.0, float(niche.maximum)))
+    shoulder = pygame.Rect(
+        bar.x + int(lo * bar.w),
+        bar.y,
+        max(1, int((hi - lo) * bar.w)),
+        bar.h,
+    )
+    pygame.draw.rect(surface, (168, 150, 118), shoulder, border_radius=3)
+    ideal = pygame.Rect(
+        bar.x + int(opt_lo * bar.w),
+        bar.y,
+        max(1, int((opt_hi - opt_lo) * bar.w)),
+        bar.h,
+    )
+    pygame.draw.rect(surface, (92, 128, 72), ideal, border_radius=2)
+    pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, bar, 1, border_radius=3)
+
+    value_surf = value_font.render(_niche_value_text(niche), True, COLOUR_TEXT_DIM)
+    value_y = bar.bottom + value_gap
+    surface.blit(value_surf, (bar.x, value_y))
+    return value_y + value_surf.get_height() + 8
 
 
 def _wild_description(species: WildSpeciesDef) -> str:
@@ -1850,6 +1928,28 @@ class ManagementWindow:
             for line in self._wrapped(body, max_width):
                 surface.blit(self.font_small.render(line, True, COLOUR_TEXT_DIM), (x, y))
                 y += 16
+            if heading == "Environment niche" and isinstance(species, WildSpeciesDef):
+                # Breathing room between the summary paragraph and the bands.
+                y += 12
+                band_rows = _niche_band_rows(species)
+                label_w = max(
+                    (self.font_small.size(label)[0] for label, _ in band_rows),
+                    default=0,
+                )
+                for label, niche in band_rows:
+                    if y + 28 > rect.bottom - 8:
+                        break
+                    y = _draw_niche_concentration_band(
+                        surface,
+                        self.font_small,
+                        self.font_tiny,
+                        label,
+                        niche,
+                        x,
+                        y,
+                        max_width,
+                        label_w,
+                    )
             y += 10
 
     def _draw_wildlife_filters(

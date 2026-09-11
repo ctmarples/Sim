@@ -75,6 +75,7 @@ from wild_species import (
     environment_allows_establishment,
     environmental_mortality_rate,
     normalize_temperature_c,
+    spawn_probability,
     WILD_PROPAGULE_NEIGHBOUR_BONUS,
     WILD_PROPAGULE_MAX_MULTIPLIER,
     format_environment_debug,
@@ -328,6 +329,8 @@ class Cell:
     terrain_cluster: int = 0
     terrain_shade: float = 0.55  # 0..1 seasonal wash strength for this subcluster
     fertility: float = 0.8  # 0–1 soil fertility (harvests deplete)
+    # Persistent sand→clay axis (0..1). −1 = unset (legacy / pre-generation).
+    soil_texture: float = -1.0
     weeds: float = 0.0  # 0–1 weed cover on farm crops
     weed_appearances: int = 0  # weed waves started this season
     compost_cycle_applied: bool = False
@@ -599,9 +602,11 @@ class World:
                     changed = True
                 if cell.terrain != terrain:
                     cell.terrain = terrain
-                    from soil import apply_terrain_fertility
+                    from soil import apply_terrain_fertility, fertility_noise_at
 
-                    apply_terrain_fertility(cell, reset=True)
+                    apply_terrain_fertility(
+                        cell, reset=True, noise=fertility_noise_at(self, x, y)
+                    )
                     self.mark_terrain_dirty(x, y)
                     changed = True
         if changed and bump_revision:
@@ -655,9 +660,11 @@ class World:
                         changed = True
                     if cell.terrain != TerrainType.FOREST_FLOOR:
                         cell.terrain = TerrainType.FOREST_FLOOR
-                        from soil import apply_terrain_fertility
+                        from soil import apply_terrain_fertility, fertility_noise_at
 
-                        apply_terrain_fertility(cell, reset=True)
+                        apply_terrain_fertility(
+                            cell, reset=True, noise=fertility_noise_at(self, x, y)
+                        )
                         self.mark_terrain_dirty(x, y)
                         changed = True
                     continue
@@ -677,9 +684,11 @@ class World:
                 cell.icon_variant = None
                 if cell.terrain != TerrainType.FOREST_FLOOR:
                     cell.terrain = TerrainType.FOREST_FLOOR
-                    from soil import apply_terrain_fertility
+                    from soil import apply_terrain_fertility, fertility_noise_at
 
-                    apply_terrain_fertility(cell, reset=True)
+                    apply_terrain_fertility(
+                        cell, reset=True, noise=fertility_noise_at(self, x, y)
+                    )
                     self.mark_terrain_dirty(x, y)
                 changed = True
         if changed:
@@ -844,8 +853,8 @@ class World:
         self._cull_isolated_terrain(TerrainType.GRASS, min_neighbours=1)
 
         # Thin riparian strips on ~50% of land cells touching water.
+        # Reeds / berries seed after soil_texture exists (end of generate).
         self._paint_riparian_strips(rng)
-        self._seed_initial_reeds(rng)
 
         for cx, cy in forest_centres:
             for ny, nx in self.neighbourhood(cx, cy, radius=3):
@@ -920,29 +929,6 @@ class World:
             else:
                 cell.deposit = rng.randint(ROCK_SMALL_MIN, ROCK_SMALL_MAX)
 
-        # Permanent berry bushes (fruit only in season; no natural spread).
-        from berry_bushes import BERRY_BUSH_KEYS
-        berry = WILD_BY_KEY["blackberry"]
-        berry_terrains = tuple(
-            TerrainType[n] for n in berry.terrains if n in TerrainType.__members__
-        )
-        target_bushes = max(0, int(BERRY_INITIAL_COUNT))
-        berry_sites = [
-            (x, y)
-            for y in range(self.rows)
-            for x in range(self.cols)
-            if self.cells[y][x].feature == FeatureType.NONE
-            and self.cells[y][x].terrain in berry_terrains
-        ]
-        rng.shuffle(berry_sites)
-        for i, (x, y) in enumerate(berry_sites[:target_bushes]):
-            cell = self.cells[y][x]
-            cell.feature = FeatureType.BERRY_BUSH
-            cell.crop_kind = BERRY_BUSH_KEYS[i % len(BERRY_BUSH_KEYS)]
-            cell.deposit = 0
-            cell.growth_ticks = 0
-            cell.tree_age_years = 1
-
         # Home near the centre-left so the starting area is clear.
         # Buildings occupy a square footprint; home_pos is the centre (glyph) cell.
         from settings import BUILDING_FOOTPRINT
@@ -975,7 +961,49 @@ class World:
         self.workstation_pos = (station_cx, station_cy)
 
         # Clear a small yard around home/workstation and choose a free start cell.
-        clear_centres = [self.home_pos, self.workstation_pos]
+        self._clear_settlement_yard()
+
+        start_candidates = [
+            (nx, ny)
+            for ny, nx in self.neighbourhood(home_cx, home_cy, radius=half + 1)
+            if (nx, ny) not in (self.home_pos, self.workstation_pos)
+            and self.cells[ny][nx].feature == FeatureType.NONE
+            and not is_water_terrain(self.cells[ny][nx].terrain)
+        ]
+        if start_candidates:
+            self.start_pos = start_candidates[0]
+        else:
+            self.start_pos = (home_cx, home_cy - half - 1 if home_cy > half else home_cy + half + 1)
+
+        # Ensure start cell is walkable / empty.
+        sx, sy = self.start_pos
+        if self.in_bounds(sx, sy):
+            self.cells[sy][sx].feature = FeatureType.NONE
+            if is_water_terrain(self.cells[sy][sx].terrain):
+                self.cells[sy][sx].terrain = TerrainType.GRASS
+        self.ensure_tree_ages(rng=rng)
+        self.update_forest_floor()
+        self._paint_terrain_subclusters(rng)
+        self._build_valley_heightfield()
+        # Soil texture is durable geology — generate once after terrain settles.
+        self.generate_soil_texture(rng=rng)
+        self.init_fertility()
+        # Flora niches need climate grids; bind a spring snapshot then clear.
+        prev_maps = self._bind_generation_env_maps()
+        try:
+            self._seed_initial_reeds(rng)
+            self._seed_initial_berries(rng)
+        finally:
+            self.env_maps = prev_maps
+        self._clear_settlement_yard()
+        self.bump_terrain()
+
+    def _clear_settlement_yard(self) -> None:
+        """Clear flora and force walkable grass around home / workstation."""
+        from settings import BUILDING_FOOTPRINT
+
+        half = max(1, int(BUILDING_FOOTPRINT)) // 2
+        clear_centres = [p for p in (self.home_pos, self.workstation_pos) if p]
         protected = {
             FeatureType.HOME,
             FeatureType.WORKSTATION,
@@ -1005,38 +1033,37 @@ class World:
                     elif cell.terrain == TerrainType.RIPARIAN:
                         cell.terrain = TerrainType.GRASS
 
-        start_candidates = [
-            (nx, ny)
-            for ny, nx in self.neighbourhood(home_cx, home_cy, radius=half + 1)
-            if (nx, ny) not in (self.home_pos, self.workstation_pos)
-            and self.cells[ny][nx].feature == FeatureType.NONE
-            and not is_water_terrain(self.cells[ny][nx].terrain)
-        ]
-        if start_candidates:
-            self.start_pos = start_candidates[0]
-        else:
-            self.start_pos = (home_cx, home_cy - half - 1 if home_cy > half else home_cy + half + 1)
+    def generate_soil_texture(self, rng: random.Random | None = None) -> None:
+        """Fill persistent per-cell soil_texture from the world seed."""
+        from soil_texture import generate_soil_texture as _generate
 
-        # Ensure start cell is walkable / empty.
-        sx, sy = self.start_pos
-        if self.in_bounds(sx, sy):
-            self.cells[sy][sx].feature = FeatureType.NONE
-            if is_water_terrain(self.cells[sy][sx].terrain):
-                self.cells[sy][sx].terrain = TerrainType.GRASS
-        self.ensure_tree_ages(rng=rng)
-        self.update_forest_floor()
-        self._paint_terrain_subclusters(rng)
-        self._build_valley_heightfield()
-        self.init_fertility()
-        self.bump_terrain()
+        # ``rng`` reserved for call-site clarity; field is seed-deterministic.
+        del rng
+        _generate(self)
+
+    def _bind_generation_env_maps(self):
+        """Temporary climate snapshot so initial flora uses niche scoring."""
+        from types import SimpleNamespace
+
+        from environment import soil_moisture_grid
+
+        prev = self.env_maps
+        cols, rows = self.cols, self.rows
+        self.env_maps = SimpleNamespace(
+            soil_moisture=soil_moisture_grid(self, 20),
+            temperature=[[15.0] * cols for _ in range(rows)],
+            rainfall=[[0.55] * cols for _ in range(rows)],
+        )
+        return prev
 
     def init_fertility(self) -> None:
-        """Set every cell's fertility from its terrain base (world gen / missing saves)."""
-        from soil import init_cell_fertility
+        """Set every cell's fertility from terrain base plus spatial variation."""
+        from soil import fertility_variation_grid, init_cell_fertility
 
-        for row in self.cells:
-            for cell in row:
-                init_cell_fertility(cell)
+        noise = fertility_variation_grid(self)
+        for y, row in enumerate(self.cells):
+            for x, cell in enumerate(row):
+                init_cell_fertility(cell, noise=noise[y][x])
 
     def _seed_wood_near_trees(self, rng: random.Random) -> None:
         """Place fallen wood on empty tiles adjacent to trees (forest edges)."""
@@ -1467,13 +1494,17 @@ class World:
 
     def species_suitability_at(self, x: int, y: int, species):
         """Evaluate a species from authoritative cached grids and live cell state."""
+        from soil_texture import effective_soil_texture
+
         cell = self.get_cell(x, y)
         maps = self.env_maps
+        texture = effective_soil_texture(cell) if cell is not None else 0.45
         if cell is None or maps is None:
             return species_environment_suitability(
-                species, temperature=.5, rainfall=.5, soil_moisture=.5,
+                species, temperature=.5, soil_moisture=.5,
                 fertility=float(getattr(cell, "fertility", .5)) if cell else .5,
                 disturbance=effective_disturbance_at(self, x, y),
+                soil_texture=texture,
             )
         def grid_value(grid, default):
             return float(grid[y][x]) if 0 <= y < len(grid) and 0 <= x < len(grid[y]) else default
@@ -1483,10 +1514,10 @@ class World:
         return species_environment_suitability(
             species,
             temperature=normalize_temperature_c(grid_value(maps.temperature, 12.5)),
-            rainfall=max(0.0, min(1.0, grid_value(maps.rainfall, .5))),
             soil_moisture=max(0.0, min(1.0, grid_value(maps.soil_moisture, .5))),
             fertility=max(0.0, min(1.0, float(cell.fertility))),
             disturbance=disturbance,
+            soil_texture=texture,
         )
 
     def _build_effective_disturbance_grid(self) -> list[list[float]]:
@@ -1520,21 +1551,28 @@ class World:
 
     def wild_species_debug_at(self, x: int, y: int, species, day: float) -> str:
         """Developer-facing cell report suitable for an inspector or log."""
+        from soil_texture import effective_soil_texture
+
         cell = self.get_cell(x, y)
         maps = self.env_maps
         def value(grid, default):
             return float(grid[y][x]) if grid and 0 <= y < len(grid) and 0 <= x < len(grid[y]) else default
         temp = normalize_temperature_c(value(getattr(maps, "temperature", None), 12.5))
-        rain = max(0.0, min(1.0, value(getattr(maps, "rainfall", None), .5)))
         moisture = max(0.0, min(1.0, value(getattr(maps, "soil_moisture", None), .5)))
         fertility = float(cell.fertility) if cell else .5
         disturbance = effective_disturbance_at(self, x, y)
-        score = species_environment_suitability(species, temperature=temp, rainfall=rain,
-                                                soil_moisture=moisture, fertility=fertility,
-                                                disturbance=disturbance)
-        return format_environment_debug(species, score, temperature=temp, rainfall=rain,
-                                        soil_moisture=moisture, fertility=fertility,
-                                        disturbance=disturbance, day=local_day(day, x, y))
+        texture = effective_soil_texture(cell) if cell else 0.45
+        score = species_environment_suitability(
+            species, temperature=temp,
+            soil_moisture=moisture, fertility=fertility,
+            disturbance=disturbance, soil_texture=texture,
+        )
+        return format_environment_debug(
+            species, score, temperature=temp,
+            soil_moisture=moisture, fertility=fertility,
+            disturbance=disturbance, soil_texture=texture,
+            day=local_day(day, x, y),
+        )
 
     def _seed_initial_reeds(self, rng: random.Random) -> None:
         """Place riparian plants from the wild-species catalogue."""
@@ -1550,7 +1588,7 @@ class World:
                 for species in riparian:
                     if species.initial_fraction <= 0:
                         continue
-                    if not self._species_can_occupy(x, y, species):
+                    if not self.species_can_establish_at(x, y, species):
                         continue
                     if rng.random() < species.initial_fraction:
                         try:
@@ -1559,6 +1597,57 @@ class World:
                             continue
                         cell.crop_kind = species.key
                         break
+
+    def _seed_initial_berries(self, rng: random.Random) -> None:
+        """Place permanent berry bushes using the same niche scoring as respawn."""
+        from berry_bushes import BERRY_BUSH_KEYS
+
+        target_bushes = max(0, int(BERRY_INITIAL_COUNT))
+        if target_bushes <= 0 or not BERRY_BUSH_KEYS:
+            return
+        # Rank eligible sites per species; place round-robin from best scores.
+        pools: dict[str, list[tuple[float, int, int]]] = {}
+        for kind in BERRY_BUSH_KEYS:
+            species = WILD_BY_KEY.get(kind)
+            if species is None:
+                continue
+            scored: list[tuple[float, int, int]] = []
+            for y in range(self.rows):
+                for x in range(self.cols):
+                    if not self.species_can_establish_at(x, y, species):
+                        continue
+                    suit = self.species_suitability_at(x, y, species).combined
+                    scored.append((suit + rng.random() * 0.01, x, y))
+            scored.sort(key=lambda item: -item[0])
+            pools[kind] = scored
+
+        used: set[tuple[int, int]] = set()
+        placed = 0
+        kind_index = 0
+        while placed < target_bushes:
+            progress = False
+            for _ in range(len(BERRY_BUSH_KEYS)):
+                kind = BERRY_BUSH_KEYS[kind_index % len(BERRY_BUSH_KEYS)]
+                kind_index += 1
+                pool = pools.get(kind) or []
+                while pool and (pool[0][1], pool[0][2]) in used:
+                    pool.pop(0)
+                pools[kind] = pool
+                if not pool:
+                    continue
+                _, x, y = pool.pop(0)
+                cell = self.cells[y][x]
+                cell.feature = FeatureType.BERRY_BUSH
+                cell.crop_kind = kind
+                cell.deposit = 0
+                cell.growth_ticks = 0
+                cell.tree_age_years = 1
+                used.add((x, y))
+                placed += 1
+                progress = True
+                break
+            if not progress:
+                break
 
     def _paint_riparian_strips(self, rng: random.Random) -> None:
         """Convert ~50% of land cells that touch water into riparian strips."""
@@ -2847,7 +2936,7 @@ class World:
                             suitability = self.species_suitability_at(x, y, species)
                             if not environment_allows_establishment(species, suitability):
                                 continue
-                            if self._forage_rng.random() >= suitability.combined:
+                            if self._forage_rng.random() >= spawn_probability(suitability.combined):
                                 continue
                             try:
                                 cell.feature = FeatureType[species.feature]
@@ -2883,7 +2972,7 @@ class World:
                     score = self.species_suitability_at(x, y, species)
                     if (
                         environment_allows_establishment(species, score)
-                        and self._forage_rng.random() < score.combined
+                        and self._forage_rng.random() < spawn_probability(score.combined)
                     ):
                         self.add_natural_object(
                             x,
@@ -2907,7 +2996,7 @@ class World:
                         species = WILD_BY_KEY[crop_key]
                         score = self.species_suitability_at(x, y, species)
                         if (environment_allows_establishment(species, score)
-                                and self._forage_rng.random() < score.combined):
+                                and self._forage_rng.random() < spawn_probability(score.combined)):
                             self._plant_wild_crop_patch(
                                 x, y, crop_key, wild_n=wild_n, total_n=total_n,
                                 environment_checked=True,
@@ -2938,7 +3027,9 @@ class World:
         terrain_weight = active_balance().get_float(
             f"FLORA_SPAWN_WEIGHT_{target.terrain.name}"
         )
-        if self._forage_rng.random() >= species.spread_chance * suitability * pressure * terrain_weight:
+        if self._forage_rng.random() >= (
+            species.spread_chance * spawn_probability(suitability) * pressure * terrain_weight
+        ):
             return False
         target.feature = FeatureType[species.feature]
         target.crop_kind = species.key

@@ -172,6 +172,7 @@ class GeneratedMap:
         # Convert cell-centre elevation to the corner grid expected by the game.
         world.height_corners = _centres_to_corners(self.elevation)
         world.bump_terrain()
+        world.generate_soil_texture()
         world.init_fertility()
 
 

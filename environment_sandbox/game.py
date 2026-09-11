@@ -548,6 +548,7 @@ class Game:
         self._height_warp_before_edit = HEIGHT_SAMPLE_ENABLED_DEFAULT
         self.map_edit_tool = MapEditTool.SELECT
         self.map_edit_terrain = TerrainType.GRASS
+        self.map_edit_ecology_terrain = TerrainType.GRASS
         self.map_edit_tree_species: str | None = None
         self.map_edit_crop_key: str = next(iter(CROP_BY_KEY), "sage")
         self.map_edit_building_kind = BuildingKind.HOME
@@ -3125,6 +3126,32 @@ class Game:
             self._world_layer_key = None
         self._sample_environment()
 
+    def _recalculate_terrain_ecology_layers(self) -> None:
+        """Rebuild fertility + climate grids after T-menu ecology edits."""
+        from environment import (
+            rainfall_modifier_grid,
+            soil_moisture_grid,
+            temperature_grid,
+        )
+
+        self.world.init_fertility()
+        day = int(self.calendar_day)
+        self.env_maps.soil_moisture = soil_moisture_grid(self.world, day)
+        self.env_maps.temperature = temperature_grid(self.world, day)
+        self.env_maps.rainfall_modifiers = rainfall_modifier_grid(self.world)
+        # Re-apply today's weather so rainfall immediately feeds the new baseline.
+        self.env_maps.update_weather(
+            self.world,
+            self.weather.intensity,
+            day,
+            self.weather.localisation_grid(self.world.rows, self.world.cols),
+        )
+        self._bake_erosion()
+        self._smooth_overlay_cache = None
+        self._refresh_indicators()
+        self._field_fertility_generation = getattr(self, "_field_fertility_generation", 0) + 1
+        self._set_status("Terrain ecology layers repopulated from bands.")
+
     def _editor_place_building(self, kind: BuildingKind, x: int, y: int) -> bool:
         """Place a completed, free building for authored map layouts."""
         plot_w, plot_h = default_building_plot(kind)
@@ -3979,6 +4006,54 @@ class Game:
                 self._set_overlay(OverlayMode[action.split(":", 1)[1]])
             except KeyError:
                 pass
+            return True
+        if action is not None and action.startswith("edit_ecology_terrain:"):
+            name = action.split(":", 1)[1]
+            try:
+                self.map_edit_ecology_terrain = TerrainType[name]
+            except KeyError:
+                return True
+            self.ui._panel_built = False
+            self._set_status(
+                f"Editing ecology bands for "
+                f"{TERRAIN_EDIT_LABELS.get(self.map_edit_ecology_terrain, name.title())}"
+            )
+            return True
+        if action is not None and action.startswith("edit_ecology:"):
+            parts = action.split(":")
+            if len(parts) == 4:
+                _prefix, field, part, direction = parts
+                steps = {
+                    ("soil_moisture", "centre"): 0.05,
+                    ("soil_moisture", "spread"): 0.02,
+                    ("fertility", "centre"): 0.05,
+                    ("fertility", "spread"): 0.02,
+                    ("temperature_offset_c", "centre"): 0.2,
+                    ("temperature_offset_c", "spread"): 0.1,
+                    ("rainfall_multiplier", "centre"): 0.05,
+                    ("rainfall_multiplier", "spread"): 0.02,
+                }
+                step = steps.get((field, part))
+                if step is not None:
+                    delta = step if direction == "+" else -step
+                    from developer_tools.terrain_editor import adjust_terrain_ecology_band_part
+
+                    value = adjust_terrain_ecology_band_part(
+                        self.map_edit_ecology_terrain.name,
+                        field,
+                        part,
+                        delta,
+                        persist=True,
+                    )
+                    self._set_status(
+                        f"{self.map_edit_ecology_terrain.name.title()} "
+                        f"{field.replace('_', ' ')} {part} → {value:.2f} "
+                        "(Repopulate layers to apply)"
+                    )
+                    self.ui._panel_built = False
+            return True
+        if action == "edit_ecology_repopulate":
+            self._recalculate_terrain_ecology_layers()
             return True
         if action is not None and action.startswith("edit_tree:"):
             from trees import TREE_KEYS
@@ -5695,6 +5770,27 @@ class Game:
             return
         self._set_status("Habitat test started with normal game simulation.")
 
+    def _open_niche_test(self) -> None:
+        """Start a full normal map with every cell already discovered (no shroud)."""
+        try:
+            self._begin_new_game()
+            self.discovered_cells = {
+                (x, y)
+                for y in range(self.world.rows)
+                for x in range(self.world.cols)
+            }
+            # Fill seasonal flora so the open map already shows niche placement.
+            self.world.respawn_flora(float(self.calendar_day))
+            self._invalidate_forage_index()
+            self._refresh_indicators()
+            self._set_status(
+                f"Niche test: full map ({self.world.cols}×{self.world.rows}), "
+                "no shroud."
+            )
+        except Exception as exc:
+            self._set_status(f"Could not start niche test: {exc}")
+            return
+
     def _set_sim_speed(self, speed: int) -> None:
         if speed not in SIM_SPEEDS:
             return
@@ -6786,9 +6882,13 @@ class Game:
 
     def _farm_produce_breakdown_at(self, x: int, y: int):
         """Shared yield factors for harvest + UI (same product)."""
-        from field_yield import calculate_tile_yield_breakdown
+        from field_yield import (
+            calculate_tile_yield_breakdown,
+            crop_moisture_texture_multipliers,
+        )
         from world import disturbance_activity_multiplier, effective_disturbance_at
         from soil import overlay_fertility, weed_yield_multiplier
+        from soil_texture import effective_soil_texture
 
         pest = self._farm_pest_control_at(x, y)
         poll = pollination_yield_multiplier(self._farm_pollination_at(x, y))
@@ -6803,6 +6903,17 @@ class Game:
         fert = overlay_fertility(cell) if cell is not None else 1.0
         weeds = float(getattr(cell, "weeds", 0.0)) if cell is not None else 0.0
         weed_mult = weed_yield_multiplier(weeds)
+        moisture_val = 0.5
+        if cell is not None and self.env_maps is not None:
+            grid = getattr(self.env_maps, "soil_moisture", None)
+            if grid and 0 <= y < len(grid) and 0 <= x < len(grid[y]):
+                moisture_val = float(grid[y][x])
+        texture_val = effective_soil_texture(cell) if cell is not None else 0.45
+        moist_mult, texture_mult = crop_moisture_texture_multipliers(
+            getattr(cell, "crop_kind", None) if cell is not None else None,
+            soil_moisture=moisture_val,
+            soil_texture=texture_val,
+        )
         from crops import CROP_HARVEST_MAX
         crop_base=CROP_HARVEST_MAX.get(getattr(cell,"crop_kind",None),farm_produce_yield()) if cell is not None else farm_produce_yield()
         return calculate_tile_yield_breakdown(
@@ -6814,6 +6925,8 @@ class Game:
             fertility=fert,
             weed_penalty=weed_mult,
             weeds=weeds,
+            moisture=moist_mult,
+            soil_texture=texture_mult,
         )
 
     def _farm_produce_yield_budget(self) -> int:
@@ -6988,6 +7101,8 @@ class Game:
             self._open_terrain_type_editor()
         elif action == "file_subtile_test":
             self._open_subtile_test()
+        elif action == "file_niche_test":
+            self._open_niche_test()
         elif action == "file_reset":
             self.reset()
         elif action == "file_time_demo":
@@ -11089,10 +11204,24 @@ class Game:
         if inventory is self.player.inventory:
             self.scenario.note_berry_collected(self, x, y, taken)
         seed_msg = ""
-        if self._drop_rng.random() < self._seed_chance(BERRY_SEED_DROP_CHANCE) and inventory.can_add(1, key=seed_key):
-            inventory.add_item(seed_key, 1)
-            self.record_produced(seed_key, 1)
-            seed_msg = f" +1 {resource_label(seed_key).lower()}"
+        from wild_species import WILD_BY_KEY
+
+        wild = WILD_BY_KEY.get(kind)
+        seed_chance = (
+            float(wild.seed_drop_chance)
+            if wild is not None and wild.seed_drop_chance > 0
+            else BERRY_SEED_DROP_CHANCE
+        )
+        seed_amount = self._drop_rng.randint(
+            1, max(1, int(wild.seed_amount_max if wild is not None else 1))
+        )
+        if (
+            self._drop_rng.random() < self._seed_chance(seed_chance)
+            and inventory.can_add(seed_amount, key=seed_key)
+        ):
+            inventory.add_item(seed_key, seed_amount)
+            self.record_produced(seed_key, seed_amount)
+            seed_msg = f" +{seed_amount} {resource_label(seed_key).lower()}"
         self.world.apply_extraction_disturbance(x, y)
         self._refresh_indicators()
         if status:
@@ -12365,18 +12494,6 @@ class Game:
                     if bid is not None:
                         self._update_workplace_worker(villager, bid)
                         acted = self._villager_has_active_action(villager)
-                        # Keep WORKING so a quiet tick does not cancel the job.
-                        if (
-                            not acted
-                            and villager.building_id is not None
-                            and villager.state
-                            not in (
-                                VillagerState.DELIVERING,
-                                VillagerState.HAULING,
-                                VillagerState.BUILDING,
-                            )
-                        ):
-                            villager.state = VillagerState.WORKING
                     elif villager.state != VillagerState.WORKING:
                         self._set_workplace_idle(villager)
                 elif villager.state not in (
@@ -13483,7 +13600,14 @@ class Game:
         done = building.advance_recipe_progress(
             recipe, split=self.player_craft_split
         )
-        self._finish_player_work()
+        skill, _ = skill_for_building(building.kind.name)
+        # Pace by craft skill; XP only on completion (not every progress tick).
+        self.player.energy = max(
+            0.0,
+            self.player.energy
+            - ENERGY_WORK_DRAIN * self._temp_energy_mult(self.player.inventory),
+        )
+        self.player.work_cooldown = self._player_work_interval(skill)
         label = recipe_label(recipe)
         if done:
             fuel = 1 if building.is_cooking_building() else 0
@@ -13493,6 +13617,13 @@ class Game:
                 self._apply_recipe_tracked(building, recipe, fuel_wood=fuel)
             if fuel:
                 building.fuel_wood = max(0, building.fuel_wood - 1)
+            action = "split" if self.player_craft_split else "craft"
+            self._gain_actor_skill(
+                self.player,
+                skill,
+                who="You",
+                amount=skill_xp_for_action(action),
+            )
             # Keep producing the same recipe while inputs remain.
             village_stock = self._village_stock_amounts()
             if (
@@ -15318,8 +15449,9 @@ class Game:
                 and self._work_target_valid(villager, building, villager.target)
             ):
                 return True
-            # Cheap presence probe — full pathfinding runs when selecting a target.
-            return self._forager_has_nearby_work(villager, building)
+            # Require a pathable forage target. Manhattan-only "nearby" probes
+            # falsely report primary work across rivers and block delivery/idle.
+            return self._find_work_in_building(villager, building) is not None
 
         return self._find_work_in_building(villager, building) is not None
 
@@ -17342,8 +17474,22 @@ class Game:
                 return
             if kind == FarmJobKind.TREAT:
                 self._farm_apply_repellant(villager, building, target)
+                progressed = True
             else:
-                self._villager_perform_farm(villager, building, target)
+                progressed = self._villager_perform_farm(villager, building, target)
+            if not progressed:
+                # No-op swing (full pack, nothing to clear, etc.) — deliver or
+                # drop the claim so the board can pick a different cell.
+                if self._gather_cargo_needs_delivery(villager, building) or (
+                    not villager.inventory.can_add(1)
+                ):
+                    villager.farm_job_kind = FarmJobKind.DELIVER.name
+                    self._force_assigned_delivery(villager, building)
+                else:
+                    villager.target = None
+                    villager.farm_job_kind = None
+                    self._clear_villager_path(villager)
+                return
             villager.target = None
             villager.farm_job_kind = None
             self._clear_villager_path(villager)
@@ -18321,10 +18467,19 @@ class Game:
                              for x, y in neighbours) / max(1, len(neighbours))
         ecology = disturbance_activity_multiplier(dist)
         from soil import fertility_base_for, overlay_fertility, weed_yield_multiplier
+        from soil_texture import effective_soil_texture
+        from field_yield import (
+            calculate_tile_yield_breakdown,
+            crop_moisture_texture_multipliers,
+        )
 
         fert_vals = []
         pot_vals = []
         weed_vals = []
+        moist_mults = []
+        texture_mults = []
+        moisture_raw = float(self.env_maps.farm_soil_moisture(cells))
+        texture_raw_vals = []
         for x, y in cells:
             cell = self.world.get_cell(x, y)
             if cell is None:
@@ -18332,17 +18487,33 @@ class Game:
             fert_vals.append(overlay_fertility(cell))
             pot_vals.append(fertility_base_for(cell.terrain))
             weed_vals.append(float(getattr(cell, "weeds", 0.0)))
+            texture_raw_vals.append(effective_soil_texture(cell))
+            cell_moist = moisture_raw
+            grid = getattr(self.env_maps, "soil_moisture", None)
+            if grid and 0 <= y < len(grid) and 0 <= x < len(grid[y]):
+                cell_moist = float(grid[y][x])
+            mm, tm = crop_moisture_texture_multipliers(
+                getattr(cell, "crop_kind", None),
+                soil_moisture=cell_moist,
+                soil_texture=effective_soil_texture(cell),
+            )
+            moist_mults.append(mm)
+            texture_mults.append(tm)
         fertility = (sum(fert_vals) / len(fert_vals)) if fert_vals else 0.0
         fertility_potential = (sum(pot_vals) / len(pot_vals)) if pot_vals else 1.0
         weeds = (sum(weed_vals) / len(weed_vals)) if weed_vals else 0.0
         weed_mult = weed_yield_multiplier(weeds)
+        moisture_mult = (sum(moist_mults) / len(moist_mults)) if moist_mults else 1.0
+        texture_mult = (sum(texture_mults) / len(texture_mults)) if texture_mults else 1.0
+        soil_texture_avg = (
+            (sum(texture_raw_vals) / len(texture_raw_vals)) if texture_raw_vals else 0.45
+        )
         erosion_grid = self.env_maps.erosion
         ero_vals = []
         for x, y in cells:
             if 0 <= y < len(erosion_grid) and 0 <= x < len(erosion_grid[y]):
                 ero_vals.append(float(erosion_grid[y][x]))
         erosion = (sum(ero_vals) / len(ero_vals)) if ero_vals else 0.0
-        from field_yield import calculate_tile_yield_breakdown
 
         base = farm_produce_yield()
         got = calculate_tile_yield_breakdown(
@@ -18354,6 +18525,8 @@ class Game:
             fertility=fertility,
             weed_penalty=weed_mult,
             weeds=weeds,
+            moisture=moisture_mult,
+            soil_texture=texture_mult,
         ).final_rounded
         return {
             "biodiversity": self.env_maps.farm_biodiversity(cells),
@@ -18367,7 +18540,10 @@ class Game:
             "pest_hi": self.balance.get_float("PEST_CONTROL_MULT_HIGH"),
             "health": health,
             "health_cap": cap,
-            "moisture": self.env_maps.farm_soil_moisture(cells),
+            "moisture": moisture_raw,
+            "moisture_mult": moisture_mult,
+            "soil_texture": soil_texture_avg,
+            "soil_texture_mult": texture_mult,
             "settlement_disturbance": urban_fraction * self.balance.get_float("DISTURBANCE_URBAN_LEVEL"),
             "foot_traffic": sum(min(1.0, self._path_traffic.get((x, y), 0.0) / max(1e-6, self.balance.get_float("PATH_TRAFFIC_OVERLAY_MAX"))) for x, y in cells) / max(1, len(cells)),
             "health_min": crop_health_min(),
@@ -18555,12 +18731,13 @@ class Game:
 
     def _villager_perform_farm(
         self, villager: Villager, building: Building, pos: tuple[int, int]
-    ) -> None:
+    ) -> bool:
+        """Apply one farm swing. Returns True when world/inventory progressed."""
         x, y = pos
         inv = villager.inventory
         cell = self.world.get_cell(x, y)
         if cell is None:
-            return
+            return False
         mode = building.work_mode
         allow_harvest = mode in (WorkMode.COLLECT, WorkMode.ALL)
         allow_plant = mode in (WorkMode.PLANT, WorkMode.ALL)
@@ -18575,22 +18752,24 @@ class Game:
                     self.world.apply_disturbance(x, y)
                     self._spend_work_energy(villager)
                     self._gain_job_skill(villager, building.kind.name)
-                return
+                    return True
+                return False
 
         # Harvest uses the crop actually on the tile (ripe = harvestable any season).
         if self.world.crop_herb_ready(x, y):
             if not allow_harvest:
-                return
+                return False
             crop = CROP_BY_KEY.get(cell.crop_kind or "sage", CROP_BY_KEY["sage"])
             phase = phase_for_crop(crop, self.season)
-            self._harvest_farm_herb(x, y, inv, status=False)
+            if not self._harvest_farm_herb(x, y, inv, status=False):
+                return False
             if phase == SeasonPhase.HARVEST_PLOUGH_PLANT and allow_plant:
                 self.world.plough_tile(x, y)
                 self.world.apply_extraction_disturbance(x, y)
                 self._refresh_indicators()
             self._spend_work_energy(villager)
             self._gain_job_skill(villager, building.kind.name)
-            return
+            return True
 
         if (
             cell.feature == FeatureType.CROP_HERB
@@ -18600,19 +18779,20 @@ class Game:
                 self.world.apply_disturbance(x, y)
                 self._spend_work_energy(villager)
                 self._gain_job_skill(villager, building.kind.name)
-            return
+                return True
+            return False
 
         if not allow_plant:
-            return
+            return False
         if cell.feature == FeatureType.CROP_HERB:
-            return
+            return False
         plan = self._plan_at_cell(building, x, y)
         if plan is None:
-            return
+            return False
         crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
         phase = phase_for_crop(crop, self.season)
         if not crop_allows_plant(crop, self.season):
-            return
+            return False
         if cell.terrain in SOIL_LIKE and cell.feature == FeatureType.NONE:
             seed_key = crop.seed_key
             if getattr(inv, seed_key, 0) <= 0:
@@ -18630,12 +18810,13 @@ class Game:
                 self._refresh_indicators()
                 self._spend_work_energy(villager)
                 self._gain_job_skill(villager, building.kind.name)
-            return
+                return True
+            return False
         # Plough: harvest wild crops / herbs into the pack first; saplings are lost.
         if cell.feature in (FeatureType.WILD_CROP, FeatureType.HERB):
             if not self._collect_herb(x, y, inv, status=False):
                 # Pack full — leave the plant and try another tile next tick.
-                return
+                return False
         # Carry available amendments with the ploughing trip. Each is consumed at
         # most once for this crop cycle and remains effective through harvest.
         self._farm_apply_preplant_treatments(villager, building, cell)
@@ -18644,6 +18825,7 @@ class Game:
         self._refresh_indicators()
         self._spend_work_energy(villager)
         self._gain_job_skill(villager, building.kind.name)
+        return True
 
     def _update_hunter(self, villager: Villager, building: Building) -> None:
         """Hunt in areas, or nearest animal if no area is drawn."""
@@ -22155,6 +22337,7 @@ class Game:
             map_edit_mode=self.height_edit_mode,
             map_edit_tool=self.map_edit_tool,
             map_edit_terrain=self.map_edit_terrain,
+            map_edit_ecology_terrain=self.map_edit_ecology_terrain,
             map_edit_tree_label=(
                 "Mixed" if self.map_edit_tree_species is None else
                 __import__("trees").resolve_tree(self.map_edit_tree_species).label

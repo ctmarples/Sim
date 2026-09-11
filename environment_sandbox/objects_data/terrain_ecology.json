@@ -1,62 +1,182 @@
 {
   "FOREST_FLOOR": {
-    "fertility": 1.0,
-    "rainfall_multiplier": 1.0,
-    "soil_moisture": 0.62,
-    "temperature_offset_c": -0.8
+    "fertility": {
+      "centre": 0.88,
+      "spread": 0.16
+    },
+    "rainfall_multiplier": {
+      "centre": 1.0,
+      "spread": 0.04
+    },
+    "soil_moisture": {
+      "centre": 0.62,
+      "spread": 0.1
+    },
+    "temperature_offset_c": {
+      "centre": -0.8,
+      "spread": 0.4
+    }
   },
   "GRASS": {
-    "fertility": 1.0,
-    "rainfall_multiplier": 1.0,
-    "soil_moisture": 0.43,
-    "temperature_offset_c": 0.0
+    "fertility": {
+      "centre": 0.62,
+      "spread": 0.16
+    },
+    "rainfall_multiplier": {
+      "centre": 1.0,
+      "spread": 0.04
+    },
+    "soil_moisture": {
+      "centre": 0.4,
+      "spread": 0.32
+    },
+    "temperature_offset_c": {
+      "centre": 0.0,
+      "spread": 0.4
+    }
   },
   "MEADOW": {
-    "fertility": 1.0,
-    "rainfall_multiplier": 1.0,
-    "soil_moisture": 0.47,
-    "temperature_offset_c": 0.2
+    "fertility": {
+      "centre": 0.72,
+      "spread": 0.16
+    },
+    "rainfall_multiplier": {
+      "centre": 1.0,
+      "spread": 0.04
+    },
+    "soil_moisture": {
+      "centre": 0.46,
+      "spread": 0.1
+    },
+    "temperature_offset_c": {
+      "centre": 0.2,
+      "spread": 0.4
+    }
   },
   "PATH": {
-    "fertility": 0.0,
-    "rainfall_multiplier": 1.0,
-    "soil_moisture": 0.12,
-    "temperature_offset_c": 0.8
+    "fertility": {
+      "centre": 0.0,
+      "spread": 0.0
+    },
+    "rainfall_multiplier": {
+      "centre": 1.0,
+      "spread": 0.0
+    },
+    "soil_moisture": {
+      "centre": 0.12,
+      "spread": 0.0
+    },
+    "temperature_offset_c": {
+      "centre": 0.8,
+      "spread": 0.0
+    }
   },
   "RIPARIAN": {
-    "fertility": 0.8,
-    "rainfall_multiplier": 1.06,
-    "soil_moisture": 0.76,
-    "temperature_offset_c": -0.8
+    "fertility": {
+      "centre": 0.78,
+      "spread": 0.16
+    },
+    "rainfall_multiplier": {
+      "centre": 1.08,
+      "spread": 0.04
+    },
+    "soil_moisture": {
+      "centre": 0.78,
+      "spread": 0.1
+    },
+    "temperature_offset_c": {
+      "centre": -0.8,
+      "spread": 0.4
+    }
   },
   "RIVER": {
-    "fertility": 0.0,
-    "rainfall_multiplier": 1.0,
-    "soil_moisture": 1.0,
-    "temperature_offset_c": 0.0
+    "fertility": {
+      "centre": 0.0,
+      "spread": 0.0
+    },
+    "rainfall_multiplier": {
+      "centre": 1.0,
+      "spread": 0.0
+    },
+    "soil_moisture": {
+      "centre": 1.0,
+      "spread": 0.0
+    },
+    "temperature_offset_c": {
+      "centre": 0.0,
+      "spread": 0.0
+    }
   },
   "ROCK": {
-    "fertility": 0.0,
-    "rainfall_multiplier": 1.0,
-    "soil_moisture": 0.08,
-    "temperature_offset_c": 1.5
+    "fertility": {
+      "centre": 0.0,
+      "spread": 0.0
+    },
+    "rainfall_multiplier": {
+      "centre": 1.0,
+      "spread": 0.0
+    },
+    "soil_moisture": {
+      "centre": 0.08,
+      "spread": 0.0
+    },
+    "temperature_offset_c": {
+      "centre": 1.5,
+      "spread": 0.0
+    }
   },
   "SOIL": {
-    "fertility": 1.0,
-    "rainfall_multiplier": 1.0,
-    "soil_moisture": 0.48,
-    "temperature_offset_c": 0.8
+    "fertility": {
+      "centre": 0.7,
+      "spread": 0.16
+    },
+    "rainfall_multiplier": {
+      "centre": 1.0,
+      "spread": 0.04
+    },
+    "soil_moisture": {
+      "centre": 0.48,
+      "spread": 0.5200000000000001
+    },
+    "temperature_offset_c": {
+      "centre": 0.8,
+      "spread": 0.4
+    }
   },
   "URBAN": {
-    "fertility": 0.0,
-    "rainfall_multiplier": 1.0,
-    "soil_moisture": 0.04,
-    "temperature_offset_c": 2.0
+    "fertility": {
+      "centre": 0.0,
+      "spread": 0.0
+    },
+    "rainfall_multiplier": {
+      "centre": 1.0,
+      "spread": 0.0
+    },
+    "soil_moisture": {
+      "centre": 0.04,
+      "spread": 0.0
+    },
+    "temperature_offset_c": {
+      "centre": 2.0,
+      "spread": 0.0
+    }
   },
   "WATER": {
-    "fertility": 0.0,
-    "rainfall_multiplier": 1.0,
-    "soil_moisture": 1.0,
-    "temperature_offset_c": 0.0
+    "fertility": {
+      "centre": 0.0,
+      "spread": 0.0
+    },
+    "rainfall_multiplier": {
+      "centre": 1.0,
+      "spread": 0.0
+    },
+    "soil_moisture": {
+      "centre": 1.0,
+      "spread": 0.0
+    },
+    "temperature_offset_c": {
+      "centre": 0.0,
+      "spread": 0.0
+    }
   }
 }

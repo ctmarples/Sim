@@ -34,20 +34,23 @@ class NicheRange:
 @dataclass(frozen=True)
 class PlantSuitability:
     temperature: float
-    rainfall: float
     moisture: float
     fertility: float
     disturbance: float
+    soil_texture: float
     combined: float
 
 
 ENVIRONMENT_WEIGHTS = {
-    "soil_moisture": 0.35,
+    "soil_moisture": 0.40,
     "temperature": 0.20,
-    "fertility": 0.20,
-    "disturbance": 0.20,
-    "rainfall": 0.05,
+    "fertility": 0.15,
+    "disturbance": 0.10,
+    "soil_texture": 0.25,
 }
+# Soft spawn/spread rolls raise combined to this power so middling sites lose
+# more often (1.0 = linear; higher = stronger spatial targeting).
+SPAWN_SUITABILITY_EXPONENT = 1.5
 MIN_NICHE_RESPONSE_FOR_ESTABLISHMENT = 0.05
 PLANT_STRESS_THRESHOLD = 0.35
 PLANT_SEVERE_STRESS_THRESHOLD = 0.15
@@ -129,10 +132,11 @@ class WildSpeciesDef:
     # Species that share one spawn roll (wild crops). First entry's envelope wins.
     spawn_group: str | None = None
     temperature_niche: NicheRange | None = None
-    rainfall_niche: NicheRange | None = None
     moisture_niche: NicheRange | None = None
     fertility_niche: NicheRange | None = None
     disturbance_niche: NicheRange | None = None
+    # Optional sand(0)→clay(1) preference; None = unconstrained (legacy behaviour).
+    texture_niche: NicheRange | None = None
     ecology_tags: tuple[str, ...] = ()
 
 
@@ -164,6 +168,8 @@ def _wild_crop(
     label: str,
     terrains: tuple[str, ...],
     niches: tuple[tuple[float, float, float, float], ...],
+    *,
+    texture_niche: NicheRange | None = None,
 ) -> WildSpeciesDef:
     return WildSpeciesDef(
         key=key,
@@ -186,10 +192,10 @@ def _wild_crop(
         despawn_leftover_chance=_WC_LEFTOVER_CHANCE,
         spawn_group="wild_crop",
         temperature_niche=NicheRange(*niches[0]),
-        rainfall_niche=NicheRange(*niches[1]),
-        moisture_niche=NicheRange(*niches[2]),
-        fertility_niche=NicheRange(*niches[3]),
-        disturbance_niche=NicheRange(*niches[4]),
+        moisture_niche=NicheRange(*niches[1]),
+        fertility_niche=NicheRange(*niches[2]),
+        disturbance_niche=NicheRange(*niches[3]),
+        texture_niche=texture_niche,
         ecology_tags=("feral_crop", "grazer_forage"),
     )
 
@@ -214,9 +220,11 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
         fruit_rise=(26.0, 36.0),
         fruit_fall=(48.0, 58.0),
         counts_toward_cap=True,
-        temperature_niche=NicheRange(.20,.35,.65,.85), rainfall_niche=NicheRange(.25,.40,.70,.90),
+        temperature_niche=NicheRange(.20,.35,.65,.85),
         moisture_niche=NicheRange(.25,.40,.70,.85), fertility_niche=NicheRange(.25,.40,.75,.95),
-        disturbance_niche=NicheRange(.00,.05,.25,.60), ecology_tags=("flowering", "pollinator_food", "grazer_forage"),
+        disturbance_niche=NicheRange(.00,.05,.25,.60),
+        texture_niche=NicheRange(.10,.25,.65,.85),
+        ecology_tags=("flowering", "pollinator_food", "grazer_forage"),
     ),
     WildSpeciesDef(
         key="sloe",
@@ -236,9 +244,11 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
         fruit_rise=(26.0, 36.0),
         fruit_fall=(48.0, 58.0),
         counts_toward_cap=True,
-        temperature_niche=NicheRange(.18,.32,.62,.82), rainfall_niche=NicheRange(.20,.35,.65,.85),
+        temperature_niche=NicheRange(.18,.32,.62,.82),
         moisture_niche=NicheRange(.20,.35,.65,.80), fertility_niche=NicheRange(.20,.35,.70,.90),
-        disturbance_niche=NicheRange(.00,.05,.25,.55), ecology_tags=("flowering", "pollinator_food", "grazer_forage"),
+        disturbance_niche=NicheRange(.00,.05,.25,.55),
+        texture_niche=NicheRange(.20,.40,.75,.95),
+        ecology_tags=("flowering", "pollinator_food", "grazer_forage"),
     ),
     WildSpeciesDef(
         key="elderberry",
@@ -258,9 +268,11 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
         fruit_rise=(26.0, 36.0),
         fruit_fall=(48.0, 58.0),
         counts_toward_cap=True,
-        temperature_niche=NicheRange(.22,.38,.68,.88), rainfall_niche=NicheRange(.28,.42,.72,.92),
+        temperature_niche=NicheRange(.22,.38,.68,.88),
         moisture_niche=NicheRange(.28,.42,.72,.88), fertility_niche=NicheRange(.28,.42,.78,.95),
-        disturbance_niche=NicheRange(.00,.05,.22,.55), ecology_tags=("flowering", "pollinator_food", "grazer_forage"),
+        disturbance_niche=NicheRange(.00,.05,.22,.55),
+        texture_niche=NicheRange(.30,.45,.75,.95),
+        ecology_tags=("flowering", "pollinator_food", "grazer_forage"),
     ),
     WildSpeciesDef(
         key="hazel",
@@ -280,9 +292,11 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
         fruit_rise=(48.0, 58.0),
         fruit_fall=(70.0, 80.0),
         counts_toward_cap=True,
-        temperature_niche=NicheRange(.15,.30,.60,.80), rainfall_niche=NicheRange(.22,.38,.68,.88),
+        temperature_niche=NicheRange(.15,.30,.60,.80),
         moisture_niche=NicheRange(.22,.38,.68,.85), fertility_niche=NicheRange(.25,.40,.75,.95),
-        disturbance_niche=NicheRange(.00,.05,.20,.50), ecology_tags=("flowering", "grazer_forage"),
+        disturbance_niche=NicheRange(.00,.05,.20,.50),
+        texture_niche=NicheRange(.25,.40,.70,.90),
+        ecology_tags=("flowering", "grazer_forage"),
     ),
     WildSpeciesDef(
         key="reed",
@@ -299,7 +313,7 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
         spawn_fall=(52.0, 58.0),
         spawn_activity=0.85,
         counts_toward_cap=True,
-        temperature_niche=NicheRange(.15,.30,.75,.95), rainfall_niche=NicheRange(.30,.50,.90,1),
+        temperature_niche=NicheRange(.15,.30,.75,.95),
         moisture_niche=NicheRange(.65,.80,1,1), fertility_niche=NicheRange(.20,.40,.90,1),
         disturbance_niche=NicheRange(0,.10,.40,.75), ecology_tags=("wetland_cover",),
     ),
@@ -319,7 +333,7 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
         spawn_fall=(52.0, 58.0),
         spawn_activity=0.85,
         counts_toward_cap=True,
-        temperature_niche=NicheRange(.10,.25,.70,.90), rainfall_niche=NicheRange(.25,.45,.85,1),
+        temperature_niche=NicheRange(.10,.25,.70,.90),
         moisture_niche=NicheRange(.50,.65,.90,1), fertility_niche=NicheRange(.10,.25,.70,.90),
         disturbance_niche=NicheRange(0,.05,.30,.65), ecology_tags=("wetland_cover",),
     ),
@@ -338,7 +352,7 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
         spawn_fall=(52.0, 58.0),
         spawn_activity=0.85,
         counts_toward_cap=True,
-        temperature_niche=NicheRange(.20,.40,.80,1), rainfall_niche=NicheRange(.35,.55,.95,1),
+        temperature_niche=NicheRange(.20,.40,.80,1),
         moisture_niche=NicheRange(.75,.90,1,1), fertility_niche=NicheRange(.35,.60,1,1),
         disturbance_niche=NicheRange(0,.10,.45,.75), ecology_tags=("wetland_cover", "amphibian_habitat"),
     ),
@@ -362,7 +376,7 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
         clear_from_day=84.0,
         clear_ramp_days=4.0,
         counts_toward_cap=False,
-        temperature_niche=NicheRange(.05,.20,.55,.75), rainfall_niche=NicheRange(.45,.60,1,1),
+        temperature_niche=NicheRange(.05,.20,.55,.75),
         # Autumn forest floor can be viable before the cached soil-water layer
         # fully recharges. Keep bone-dry cells poor, without excluding nearly
         # every tree-adjacent site after a dry summer.
@@ -391,24 +405,24 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
         counts_toward_cap=False,
     ),
     # --- Wild crops by terrain (art from crops.CropDef) --------------------
-    _wild_crop("flax", "Flax", ("MEADOW",), ((.20,.35,.65,.80),(.25,.40,.70,.85),(.30,.45,.70,.80),(.30,.45,.75,.90),(.10,.30,.55,.75))),
-    _wild_crop("hemp", "Hemp", ("MEADOW",), ((.30,.50,.80,.95),(.25,.40,.75,.90),(.30,.45,.75,.90),(.45,.65,1,1),(.10,.30,.60,.80))),
-    _wild_crop("sage", "Sage", ("MEADOW",), ((.35,.55,.85,1),(.00,.10,.40,.65),(.10,.20,.45,.65),(.10,.25,.60,.80),(.05,.20,.45,.70))),
-    _wild_crop("mint", "Mint", ("MEADOW",), ((.15,.30,.70,.90),(.35,.50,.85,1),(.45,.60,.90,1),(.25,.45,.85,1),(.05,.15,.40,.65))),
-    _wild_crop("wheat", "Wheat", ("GRASS",), ((.20,.40,.70,.85),(.15,.30,.60,.80),(.20,.35,.60,.75),(.45,.65,1,1),(.15,.35,.65,.85))),
-    _wild_crop("rye", "Rye", ("GRASS",), ((.05,.25,.60,.80),(.10,.25,.60,.80),(.15,.25,.55,.70),(.15,.30,.65,.85),(.10,.30,.60,.85))),
-    _wild_crop("barley", "Barley", ("GRASS",), ((.20,.35,.70,.85),(.10,.25,.55,.75),(.15,.30,.60,.75),(.35,.55,.90,1),(.15,.35,.65,.85))),
-    _wild_crop("peas", "Peas", ("MEADOW", "FOREST_FLOOR"), ((.10,.25,.60,.78),(.25,.40,.75,.90),(.30,.45,.80,.95),(.40,.60,.95,1),(.05,.20,.50,.75))),
-    _wild_crop("beans", "Beans", ("MEADOW",), ((.30,.45,.80,.95),(.25,.40,.75,.90),(.30,.45,.80,.95),(.45,.65,1,1),(.05,.20,.50,.75))),
-    _wild_crop("onion", "Onion", ("SOIL", "FOREST_FLOOR"), ((.20,.35,.70,.85),(.15,.30,.60,.80),(.20,.35,.60,.75),(.35,.55,.85,1),(.15,.35,.65,.85))),
-    _wild_crop("cabbage", "Cabbage", ("SOIL", "FOREST_FLOOR"), ((.10,.25,.60,.75),(.30,.45,.75,.90),(.35,.50,.75,.90),(.55,.70,1,1),(.10,.30,.60,.80))),
-    _wild_crop("carrot", "Carrot", ("SOIL", "FOREST_FLOOR"), ((.15,.30,.70,.85),(.20,.35,.65,.80),(.20,.35,.65,.80),(.30,.45,.80,.95),(.15,.35,.70,.90))),
-    _wild_crop("turnip", "Turnip", ("SOIL", "FOREST_FLOOR"), ((.05,.20,.60,.78),(.25,.40,.75,.90),(.30,.45,.80,.95),(.45,.65,1,1),(.10,.30,.60,.80))),
-    _wild_crop("garlic", "Garlic", ("SOIL", "FOREST_FLOOR"), ((.10,.25,.65,.80),(.15,.30,.60,.80),(.20,.35,.60,.75),(.30,.45,.80,.95),(.10,.30,.60,.80))),
-    WildSpeciesDef(key="clover", label="Clover", feature="HERB", terrains=("GRASS","MEADOW"), icon_base="flower_plant", icon_recolour=(("stem", (65, 145, 65)), ("flower", (65, 145, 65))), spawn_peak=.035, spawn_rise=_WC_RISE, spawn_fall=_WC_FALL, spawn_activity=.55, spread_chance=.01, temperature_niche=NicheRange(.20,.35,.70,.85), rainfall_niche=NicheRange(.20,.35,.70,.85), moisture_niche=NicheRange(.25,.40,.70,.85), fertility_niche=NicheRange(.20,.35,.70,.90), disturbance_niche=NicheRange(.05,.20,.45,.70), ecology_tags=("flowering","pollinator_food","grazer_forage")),
-    WildSpeciesDef(key="yarrow", label="Yarrow", feature="HERB", terrains=("GRASS","MEADOW","SOIL"), icon_base="flower_plant", icon_recolour=(("stem", (75, 130, 60)), ("flower", (240, 240, 225))), spawn_peak=.035, spawn_rise=_WC_RISE, spawn_fall=_WC_FALL, spawn_activity=.55, spread_chance=.01, temperature_niche=NicheRange(.25,.45,.80,.95), rainfall_niche=NicheRange(.05,.15,.45,.70), moisture_niche=NicheRange(.10,.20,.50,.70), fertility_niche=NicheRange(.05,.20,.55,.75), disturbance_niche=NicheRange(.10,.25,.55,.80), ecology_tags=("flowering","pollinator_food","grazer_forage")),
-    WildSpeciesDef(key="meadowsweet", label="Meadowsweet", feature="HERB", terrains=("MEADOW","RIPARIAN"), icon_base="flower_plant", icon_recolour=(("stem", (115, 170, 90)), ("flower", (225, 240, 210))), spawn_peak=.035, spawn_rise=_WC_RISE, spawn_fall=_WC_FALL, spawn_activity=.55, spread_chance=.01, temperature_niche=NicheRange(.15,.30,.70,.85), rainfall_niche=NicheRange(.35,.50,.90,1), moisture_niche=NicheRange(.45,.60,.90,1), fertility_niche=NicheRange(.25,.40,.80,.95), disturbance_niche=NicheRange(0,.10,.30,.55), ecology_tags=("flowering","pollinator_food","wetland_cover")),
-    WildSpeciesDef(key="nettle", label="Nettle", feature="HERB", terrains=("GRASS","MEADOW","SOIL","FOREST_FLOOR"), icon_base="flower_plant", icon_recolour=(("stem", (35, 90, 45)), ("flower", (35, 90, 45))), spawn_peak=.035, spawn_rise=_WC_RISE, spawn_fall=_WC_FALL, spawn_activity=.55, spread_chance=.01, temperature_niche=NicheRange(.20,.40,.75,.90), rainfall_niche=NicheRange(.20,.35,.75,.90), moisture_niche=NicheRange(.25,.40,.75,.90), fertility_niche=NicheRange(.55,.75,1,1), disturbance_niche=NicheRange(.15,.35,.65,.85), ecology_tags=("flowering","pollinator_food")),
+    _wild_crop("flax", "Flax", ("MEADOW",), ((.20,.35,.65,.80),(.30,.45,.70,.80),(.30,.45,.75,.90),(.10,.30,.55,.75)), texture_niche=NicheRange(.15,.28,.55,.72)),
+    _wild_crop("hemp", "Hemp", ("MEADOW",), ((.30,.50,.80,.95),(.30,.45,.75,.90),(.45,.65,1,1),(.10,.30,.60,.80)), texture_niche=NicheRange(.15,.35,.65,.82)),
+    _wild_crop("sage", "Sage", ("MEADOW",), ((.35,.55,.85,1),(.10,.20,.45,.65),(.10,.25,.60,.80),(.05,.20,.45,.70)), texture_niche=NicheRange(.00,.08,.40,.58)),
+    _wild_crop("mint", "Mint", ("MEADOW",), ((.15,.30,.70,.90),(.45,.60,.90,1),(.25,.45,.85,1),(.05,.15,.40,.65)), texture_niche=NicheRange(.20,.40,.75,.95)),
+    _wild_crop("wheat", "Wheat", ("GRASS",), ((.20,.40,.70,.85),(.20,.35,.60,.75),(.45,.65,1,1),(.15,.35,.65,.85)), texture_niche=NicheRange(.15,.35,.70,.90)),
+    _wild_crop("rye", "Rye", ("GRASS",), ((.05,.25,.60,.80),(.15,.25,.55,.70),(.15,.30,.65,.85),(.10,.30,.60,.85)), texture_niche=NicheRange(.00,.10,.40,.62)),
+    _wild_crop("barley", "Barley", ("GRASS",), ((.20,.35,.70,.85),(.15,.30,.60,.75),(.35,.55,.90,1),(.15,.35,.65,.85)), texture_niche=NicheRange(.05,.20,.52,.72)),
+    _wild_crop("peas", "Peas", ("MEADOW", "FOREST_FLOOR"), ((.10,.25,.60,.78),(.30,.45,.80,.95),(.40,.60,.95,1),(.05,.20,.50,.75)), texture_niche=NicheRange(.10,.30,.60,.80)),
+    _wild_crop("beans", "Beans", ("MEADOW",), ((.30,.45,.80,.95),(.30,.45,.80,.95),(.45,.65,1,1),(.05,.20,.50,.75)), texture_niche=NicheRange(.20,.40,.72,.92)),
+    _wild_crop("onion", "Onion", ("SOIL", "FOREST_FLOOR"), ((.20,.35,.70,.85),(.20,.35,.60,.75),(.35,.55,.85,1),(.15,.35,.65,.85)), texture_niche=NicheRange(.00,.15,.45,.65)),
+    _wild_crop("cabbage", "Cabbage", ("SOIL", "FOREST_FLOOR"), ((.10,.25,.60,.75),(.35,.50,.75,.90),(.55,.70,1,1),(.10,.30,.60,.80)), texture_niche=NicheRange(.25,.50,.80,.98)),
+    _wild_crop("carrot", "Carrot", ("SOIL", "FOREST_FLOOR"), ((.15,.30,.70,.85),(.20,.35,.65,.80),(.30,.45,.80,.95),(.15,.35,.70,.90)), texture_niche=NicheRange(.00,.10,.35,.55)),
+    _wild_crop("turnip", "Turnip", ("SOIL", "FOREST_FLOOR"), ((.05,.20,.60,.78),(.30,.45,.80,.95),(.45,.65,1,1),(.10,.30,.60,.80)), texture_niche=NicheRange(.10,.30,.60,.80)),
+    _wild_crop("garlic", "Garlic", ("SOIL", "FOREST_FLOOR"), ((.10,.25,.65,.80),(.20,.35,.60,.75),(.30,.45,.80,.95),(.10,.30,.60,.80)), texture_niche=NicheRange(.00,.15,.45,.65)),
+    WildSpeciesDef(key="clover", label="Clover", feature="HERB", terrains=("GRASS","MEADOW"), icon_base="flower_plant", icon_recolour=(("stem", (65, 145, 65)), ("flower", (65, 145, 65))), spawn_peak=.035, spawn_rise=_WC_RISE, spawn_fall=_WC_FALL, spawn_activity=.55, spread_chance=.01, temperature_niche=NicheRange(.20,.35,.70,.85), moisture_niche=NicheRange(.25,.40,.70,.85), fertility_niche=NicheRange(.20,.35,.70,.90), disturbance_niche=NicheRange(.05,.20,.45,.70), texture_niche=NicheRange(.10,.30,.70,.90), ecology_tags=("flowering","pollinator_food","grazer_forage")),
+    WildSpeciesDef(key="yarrow", label="Yarrow", feature="HERB", terrains=("GRASS","MEADOW","SOIL"), icon_base="flower_plant", icon_recolour=(("stem", (75, 130, 60)), ("flower", (240, 240, 225))), spawn_peak=.035, spawn_rise=_WC_RISE, spawn_fall=_WC_FALL, spawn_activity=.55, spread_chance=.01, temperature_niche=NicheRange(.25,.45,.80,.95), moisture_niche=NicheRange(.10,.20,.50,.70), fertility_niche=NicheRange(.05,.20,.55,.75), disturbance_niche=NicheRange(.10,.25,.55,.80), texture_niche=NicheRange(.00,.05,.35,.55), ecology_tags=("flowering","pollinator_food","grazer_forage")),
+    WildSpeciesDef(key="meadowsweet", label="Meadowsweet", feature="HERB", terrains=("MEADOW","RIPARIAN"), icon_base="flower_plant", icon_recolour=(("stem", (115, 170, 90)), ("flower", (225, 240, 210))), spawn_peak=.035, spawn_rise=_WC_RISE, spawn_fall=_WC_FALL, spawn_activity=.55, spread_chance=.01, temperature_niche=NicheRange(.15,.30,.70,.85), moisture_niche=NicheRange(.45,.60,.90,1), fertility_niche=NicheRange(.25,.40,.80,.95), disturbance_niche=NicheRange(0,.10,.30,.55), texture_niche=NicheRange(.30,.50,.80,1), ecology_tags=("flowering","pollinator_food","wetland_cover")),
+    WildSpeciesDef(key="nettle", label="Nettle", feature="HERB", terrains=("GRASS","MEADOW","SOIL","FOREST_FLOOR"), icon_base="flower_plant", icon_recolour=(("stem", (35, 90, 45)), ("flower", (35, 90, 45))), spawn_peak=.035, spawn_rise=_WC_RISE, spawn_fall=_WC_FALL, spawn_activity=.55, spread_chance=.01, temperature_niche=NicheRange(.20,.40,.75,.90), moisture_niche=NicheRange(.25,.40,.75,.90), fertility_niche=NicheRange(.55,.75,1,1), disturbance_niche=NicheRange(.15,.35,.65,.85), ecology_tags=("flowering","pollinator_food")),
 )
 
 WILD_BY_KEY: dict[str, WildSpeciesDef] = {s.key: s for s in WILD_SPECIES}
@@ -615,39 +629,49 @@ def normalize_temperature_c(value: float) -> float:
 
 
 def species_environment_suitability(
-    species: WildSpeciesDef, *, temperature: float, rainfall: float,
+    species: WildSpeciesDef, *, temperature: float,
     soil_moisture: float, fertility: float, disturbance: float,
+    soil_texture: float = 0.45,
 ) -> PlantSuitability:
     """Score cached environmental state; temperature is normalized 0..1 here."""
     values = {
         "temperature": (temperature, species.temperature_niche),
-        "rainfall": (rainfall, species.rainfall_niche),
         "soil_moisture": (soil_moisture, species.moisture_niche),
         "fertility": (fertility, species.fertility_niche),
         "disturbance": (disturbance, species.disturbance_niche),
+        "soil_texture": (soil_texture, species.texture_niche),
     }
     scores = {name: niche_response(value, niche) for name, (value, niche) in values.items()}
     included = [(ENVIRONMENT_WEIGHTS[name], scores[name]) for name, (_, niche) in values.items()
                 if niche is not None]
     total = sum(weight for weight, _ in included)
     combined = sum(weight * score for weight, score in included) / total if total else 1.0
-    return PlantSuitability(scores["temperature"], scores["rainfall"],
-                            scores["soil_moisture"], scores["fertility"],
-                            scores["disturbance"], max(0.0, min(1.0, combined)))
+    return PlantSuitability(
+        scores["temperature"],
+        scores["soil_moisture"], scores["fertility"],
+        scores["disturbance"], scores["soil_texture"],
+        max(0.0, min(1.0, combined)),
+    )
+
+
+def spawn_probability(combined: float) -> float:
+    """Map suitability to a soft spawn/spread roll probability."""
+    value = max(0.0, min(1.0, float(combined)))
+    return value ** SPAWN_SUITABILITY_EXPONENT
 
 
 def environment_allows_establishment(species: WildSpeciesDef, suitability: PlantSuitability) -> bool:
-    """Apply hard failure to persistent site dimensions, not daily rainfall.
+    """Hard-fail persistent site axes that make physiology impossible.
 
-    Rainfall is instantaneous weather in the authoritative grid and already
-    feeds soil moisture.  Its response therefore modifies annual abundance
-    through ``combined`` without making every rainless day impossible.
+    Daily rainfall is not a niche axis: weather already recharges
+    ``soil_moisture``, which remains the hard water gate alongside temperature
+    and soil texture.
     """
-    # Temperature and moisture can make plant physiology impossible. Rainfall
-    # is transient, while fertility and disturbance describe competitive
-    # advantage rather than absolute survival; those remain weighted quality.
-    pairs = ((species.temperature_niche, suitability.temperature),
-             (species.moisture_niche, suitability.moisture))
+    pairs = (
+        (species.temperature_niche, suitability.temperature),
+        (species.moisture_niche, suitability.moisture),
+        (species.texture_niche, suitability.soil_texture),
+    )
     return all(niche is None or score >= MIN_NICHE_RESPONSE_FOR_ESTABLISHMENT
                for niche, score in pairs)
 
@@ -661,28 +685,29 @@ def environmental_mortality_rate(suitability: float) -> float:
 
 
 NICHE_AUDIT_SCENARIOS = {
-    "cool_wet_low_disturbance": (.35, .80, .82, .45, .10),
-    "warm_wet_low_disturbance": (.68, .78, .82, .55, .12),
-    "warm_dry_low_disturbance": (.75, .25, .28, .30, .15),
-    "warm_fertile_disturbed": (.65, .55, .55, .90, .50),
-    "cool_poor_disturbed": (.30, .35, .35, .20, .50),
-    "saturated_fertile": (.65, .90, .96, .92, .20),
-    "saturated_nutrient_poor": (.50, .85, .90, .25, .12),
+    # temperature, moisture, fertility, disturbance
+    "cool_wet_low_disturbance": (.35, .82, .45, .10),
+    "warm_wet_low_disturbance": (.68, .82, .55, .12),
+    "warm_dry_low_disturbance": (.75, .28, .30, .15),
+    "warm_fertile_disturbed": (.65, .55, .90, .50),
+    "cool_poor_disturbed": (.30, .35, .20, .50),
+    "saturated_fertile": (.65, .96, .92, .20),
+    "saturated_nutrient_poor": (.50, .90, .25, .12),
 }
 
 
 def niche_audit(top_n: int = 5) -> dict[str, tuple[tuple[str, float], ...]]:
     """Deterministic tuning diagnostic, independent of terrain availability."""
     result = {}
-    for name, (temp, rain, moisture, fertility, disturbance) in NICHE_AUDIT_SCENARIOS.items():
+    for name, (temp, moisture, fertility, disturbance) in NICHE_AUDIT_SCENARIOS.items():
         ranked = []
         for species in WILD_SPECIES:
-            if not any((species.temperature_niche, species.rainfall_niche,
+            if not any((species.temperature_niche,
                         species.moisture_niche, species.fertility_niche,
-                        species.disturbance_niche)):
+                        species.disturbance_niche, species.texture_niche)):
                 continue
             score = species_environment_suitability(
-                species, temperature=temp, rainfall=rain, soil_moisture=moisture,
+                species, temperature=temp, soil_moisture=moisture,
                 fertility=fertility, disturbance=disturbance)
             if environment_allows_establishment(species, score):
                 ranked.append((species.key, score.combined))
@@ -691,14 +716,15 @@ def niche_audit(top_n: int = 5) -> dict[str, tuple[tuple[str, float], ...]]:
 
 
 def format_environment_debug(species: WildSpeciesDef, suitability: PlantSuitability,
-                             *, temperature: float, rainfall: float,
+                             *, temperature: float,
                              soil_moisture: float, fertility: float,
-                             disturbance: float, day: float) -> str:
+                             disturbance: float, day: float,
+                             soil_texture: float = 0.45) -> str:
     rows = (("Temperature", temperature, suitability.temperature),
-            ("Rainfall", rainfall, suitability.rainfall),
             ("Soil moisture", soil_moisture, suitability.moisture),
             ("Fertility", fertility, suitability.fertility),
-            ("Disturbance", disturbance, suitability.disturbance))
+            ("Disturbance", disturbance, suitability.disturbance),
+            ("Soil texture", soil_texture, suitability.soil_texture))
     lines = [f"Species: {species.label}"]
     lines.extend(f"{label:<16} {value:5.2f}   suitability {score:5.2f}"
                  for label, value, score in rows)

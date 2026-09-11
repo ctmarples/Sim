@@ -140,7 +140,7 @@
         0.35,
         0.55,
         0.9,
-        1.0
+        1
       ],
       "footprint": [
         4
@@ -174,12 +174,6 @@
         1,
         4
       ],
-      "rainfall_niche": [
-        0.1,
-        0.25,
-        0.55,
-        0.75
-      ],
       "recolour": {
         "stem": [
           190,
@@ -212,6 +206,12 @@
       ],
       "terrains": [
         "MEADOW"
+      ],
+      "texture_niche": [
+        0.05,
+        0.2,
+        0.52,
+        0.72
       ]
     }
   },
@@ -376,8 +376,8 @@
       "fertility_niche": [
         0.45,
         0.65,
-        1.0,
-        1.0
+        1,
+        1
       ],
       "footprint": [
         4
@@ -408,12 +408,6 @@
       "patch_extras": [
         1,
         4
-      ],
-      "rainfall_niche": [
-        0.25,
-        0.4,
-        0.75,
-        0.9
       ],
       "recolour": {
         "flower": [
@@ -451,6 +445,12 @@
       ],
       "terrains": [
         "MEADOW"
+      ],
+      "texture_niche": [
+        0.2,
+        0.4,
+        0.72,
+        0.92
       ]
     }
   },
@@ -642,12 +642,6 @@
         0,
         0
       ],
-      "rainfall_niche": [
-        0.25,
-        0.4,
-        0.7,
-        0.9
-      ],
       "recolour": {
         "berry": [
           160,
@@ -830,12 +824,6 @@
         1,
         4
       ],
-      "rainfall_niche": [
-        0.3,
-        0.45,
-        0.75,
-        0.9
-      ],
       "recolour": {
         "stem": [
           70,
@@ -865,7 +853,13 @@
         0.6,
         0.75
       ],
-      "terrains": []
+      "terrains": [],
+      "texture_niche": [
+        0.25,
+        0.5,
+        0.8,
+        0.98
+      ]
     }
   },
   "carrot": {
@@ -1002,12 +996,6 @@
         1,
         4
       ],
-      "rainfall_niche": [
-        0.2,
-        0.35,
-        0.65,
-        0.8
-      ],
       "recolour": {
         "flower": [
           220,
@@ -1044,6 +1032,12 @@
       ],
       "terrains": [
         "SOIL"
+      ],
+      "texture_niche": [
+        0.0,
+        0.1,
+        0.35,
+        0.55
       ]
     }
   },
@@ -1168,7 +1162,7 @@
       "despawn_leftover_chance": 0.0,
       "despawn_leftover_from": -1.0,
       "disturbance_niche": [
-        0.0,
+        0,
         0.1,
         0.45,
         0.75
@@ -1188,8 +1182,8 @@
       "fertility_niche": [
         0.35,
         0.6,
-        1.0,
-        1.0
+        1,
+        1
       ],
       "footprint": [
         0,
@@ -1215,20 +1209,14 @@
       "moisture_niche": [
         0.75,
         0.9,
-        1.0,
-        1.0
+        1,
+        1
       ],
       "near_feature": null,
       "omit_classes": [],
       "patch_extras": [
         0,
         0
-      ],
-      "rainfall_niche": [
-        0.35,
-        0.55,
-        0.95,
-        1.0
       ],
       "recolour": {
         "fill": [
@@ -1257,7 +1245,7 @@
         0.2,
         0.4,
         0.8,
-        1.0
+        1
       ],
       "terrains": [
         "WATER"
@@ -1426,12 +1414,6 @@
         0,
         0
       ],
-      "rainfall_niche": [
-        0.0,
-        0.25,
-        0.75,
-        1.0
-      ],
       "recolour": {
         "canopy": [
           30,
@@ -1547,12 +1529,6 @@
         0,
         0
       ],
-      "rainfall_niche": [
-        0.2,
-        0.35,
-        0.7,
-        0.85
-      ],
       "recolour": {
         "flower": [
           65,
@@ -1590,6 +1566,12 @@
       "terrains": [
         "GRASS",
         "MEADOW"
+      ],
+      "texture_niche": [
+        0.1,
+        0.3,
+        0.7,
+        0.9
       ]
     }
   },
@@ -1769,12 +1751,6 @@
       "patch_extras": [
         0,
         0
-      ],
-      "rainfall_niche": [
-        0.15,
-        0.3,
-        0.7,
-        0.85
       ],
       "recolour": {
         "flower": [
@@ -1996,12 +1972,6 @@
         0,
         0
       ],
-      "rainfall_niche": [
-        0.15,
-        0.25,
-        0.7,
-        0.9
-      ],
       "recolour": {
         "flower": [
           222,
@@ -2179,12 +2149,6 @@
         1,
         4
       ],
-      "rainfall_niche": [
-        0.25,
-        0.4,
-        0.7,
-        0.85
-      ],
       "recolour": {
         "flower": [
           150,
@@ -2221,6 +2185,12 @@
       ],
       "terrains": [
         "MEADOW"
+      ],
+      "texture_niche": [
+        0.15,
+        0.28,
+        0.55,
+        0.72
       ]
     }
   },
@@ -2358,12 +2328,6 @@
         1,
         4
       ],
-      "rainfall_niche": [
-        0.15,
-        0.3,
-        0.6,
-        0.8
-      ],
       "recolour": {
         "flower": [
           230,
@@ -2401,6 +2365,12 @@
       "terrains": [
         "FOREST_FLOOR",
         "SOIL"
+      ],
+      "texture_niche": [
+        0.0,
+        0.15,
+        0.45,
+        0.65
       ]
     }
   },
@@ -2538,12 +2508,6 @@
         1,
         4
       ],
-      "rainfall_niche": [
-        0.25,
-        0.4,
-        0.75,
-        0.9
-      ],
       "recolour": {
         "flower": [
           170,
@@ -2580,6 +2544,12 @@
       ],
       "terrains": [
         "MEADOW"
+      ],
+      "texture_niche": [
+        0.15,
+        0.35,
+        0.65,
+        0.82
       ]
     }
   },
@@ -2745,12 +2715,6 @@
         0,
         0
       ],
-      "rainfall_niche": [
-        0.0,
-        0.25,
-        0.75,
-        1.0
-      ],
       "recolour": {
         "canopy": [
           90,
@@ -2866,12 +2830,6 @@
         0,
         0
       ],
-      "rainfall_niche": [
-        0.35,
-        0.5,
-        0.9,
-        1
-      ],
       "recolour": {
         "flower": [
           225,
@@ -2909,6 +2867,12 @@
       "terrains": [
         "MEADOW",
         "RIPARIAN"
+      ],
+      "texture_niche": [
+        0.3,
+        0.5,
+        0.8,
+        1
       ]
     }
   },
@@ -3046,12 +3010,6 @@
         1,
         4
       ],
-      "rainfall_niche": [
-        0.35,
-        0.5,
-        0.85,
-        1
-      ],
       "recolour": {
         "flower": [
           217,
@@ -3088,6 +3046,12 @@
       ],
       "terrains": [
         "MEADOW"
+      ],
+      "texture_niche": [
+        0.2,
+        0.4,
+        0.75,
+        0.95
       ]
     }
   },
@@ -3167,12 +3131,6 @@
       "patch_extras": [
         0,
         0
-      ],
-      "rainfall_niche": [
-        0.2,
-        0.35,
-        0.75,
-        0.9
       ],
       "recolour": {
         "flower": [
@@ -3378,12 +3336,6 @@
         0,
         0
       ],
-      "rainfall_niche": [
-        0.0,
-        0.25,
-        0.75,
-        1.0
-      ],
       "recolour": {
         "canopy": [
           34,
@@ -3579,7 +3531,7 @@
         0.35,
         0.55,
         0.85,
-        1.0
+        1
       ],
       "footprint": [
         4
@@ -3610,12 +3562,6 @@
       "patch_extras": [
         1,
         4
-      ],
-      "rainfall_niche": [
-        0.15,
-        0.3,
-        0.6,
-        0.8
       ],
       "recolour": {
         "flower": [
@@ -3656,6 +3602,12 @@
       "terrains": [
         "MEADOW",
         "SOIL"
+      ],
+      "texture_niche": [
+        0.0,
+        0.15,
+        0.45,
+        0.65
       ]
     }
   },
@@ -3793,12 +3745,6 @@
         1,
         4
       ],
-      "rainfall_niche": [
-        0.25,
-        0.4,
-        0.75,
-        0.9
-      ],
       "recolour": {
         "flower": [
           235,
@@ -3835,6 +3781,12 @@
       ],
       "terrains": [
         "MEADOW"
+      ],
+      "texture_niche": [
+        0.1,
+        0.3,
+        0.6,
+        0.8
       ]
     }
   },
@@ -4000,12 +3952,6 @@
         0,
         0
       ],
-      "rainfall_niche": [
-        0.0,
-        0.25,
-        0.75,
-        1.0
-      ],
       "recolour": {
         "canopy": [
           20,
@@ -4166,7 +4112,7 @@
       "despawn_leftover_chance": 0.0,
       "despawn_leftover_from": -1.0,
       "disturbance_niche": [
-        0.0,
+        0,
         0.1,
         0.4,
         0.75
@@ -4184,7 +4130,7 @@
         0.2,
         0.4,
         0.9,
-        1.0
+        1
       ],
       "footprint": [
         0,
@@ -4210,20 +4156,14 @@
       "moisture_niche": [
         0.65,
         0.8,
-        1.0,
-        1.0
+        1,
+        1
       ],
       "near_feature": null,
       "omit_classes": [],
       "patch_extras": [
         0,
         0
-      ],
-      "rainfall_niche": [
-        0.3,
-        0.5,
-        0.9,
-        1.0
       ],
       "recolour": {
         "fill": [
@@ -4460,12 +4400,6 @@
         1,
         4
       ],
-      "rainfall_niche": [
-        0.1,
-        0.25,
-        0.6,
-        0.8
-      ],
       "recolour": {
         "stem": [
           170,
@@ -4498,6 +4432,12 @@
       ],
       "terrains": [
         "MEADOW"
+      ],
+      "texture_niche": [
+        0.0,
+        0.1,
+        0.4,
+        0.62
       ]
     }
   },
@@ -4660,12 +4600,6 @@
         1,
         4
       ],
-      "rainfall_niche": [
-        0.0,
-        0.1,
-        0.4,
-        0.65
-      ],
       "recolour": {
         "flower": [
           70,
@@ -4702,6 +4636,12 @@
       ],
       "terrains": [
         "MEADOW"
+      ],
+      "texture_niche": [
+        0.0,
+        0.08,
+        0.4,
+        0.58
       ]
     }
   },
@@ -4826,7 +4766,7 @@
       "despawn_leftover_chance": 0.0,
       "despawn_leftover_from": -1.0,
       "disturbance_niche": [
-        0.0,
+        0,
         0.05,
         0.3,
         0.65
@@ -4871,19 +4811,13 @@
         0.5,
         0.65,
         0.9,
-        1.0
+        1
       ],
       "near_feature": null,
       "omit_classes": [],
       "patch_extras": [
         0,
         0
-      ],
-      "rainfall_niche": [
-        0.25,
-        0.45,
-        0.85,
-        1.0
       ],
       "recolour": {
         "fill": [
@@ -5053,12 +4987,6 @@
         1,
         4
       ],
-      "rainfall_niche": [
-        0.25,
-        0.4,
-        0.75,
-        0.9
-      ],
       "recolour": {
         "flower": [
           225,
@@ -5096,6 +5024,12 @@
       "terrains": [
         "FOREST_FLOOR",
         "SOIL"
+      ],
+      "texture_niche": [
+        0.1,
+        0.3,
+        0.6,
+        0.8
       ]
     }
   },
@@ -5265,8 +5199,8 @@
       "fertility_niche": [
         0.45,
         0.65,
-        1.0,
-        1.0
+        1,
+        1
       ],
       "footprint": [
         4
@@ -5300,12 +5234,6 @@
         1,
         4
       ],
-      "rainfall_niche": [
-        0.15,
-        0.3,
-        0.6,
-        0.8
-      ],
       "recolour": {
         "stem": [
           200,
@@ -5338,6 +5266,12 @@
       ],
       "terrains": [
         "MEADOW"
+      ],
+      "texture_niche": [
+        0.15,
+        0.35,
+        0.7,
+        0.9
       ]
     }
   },
@@ -5419,12 +5353,6 @@
         0,
         0
       ],
-      "rainfall_niche": [
-        0.05,
-        0.15,
-        0.45,
-        0.7
-      ],
       "recolour": {
         "flower": [
           240,
@@ -5462,6 +5390,12 @@
       "terrains": [
         "GRASS",
         "MEADOW"
+      ],
+      "texture_niche": [
+        0.0,
+        0.05,
+        0.35,
+        0.55
       ]
     }
   }

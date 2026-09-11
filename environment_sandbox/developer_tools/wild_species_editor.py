@@ -74,7 +74,7 @@ def validate_species(item) -> ValidationReport:
         if value not in known_terrains:report.add(ValidationSeverity.ERROR,"invalid_terrain",f"Unknown terrain {value}",field="terrains")
     if item.resource_key and item.resource_key not in RESOURCE_KEYS:report.add(ValidationSeverity.ERROR,"invalid_resource",f"Unknown resource {item.resource_key}",field="resource_key")
     if item.icon_base and not (has_icon(item.icon_base) or variant_names(item.icon_base)):report.add(ValidationSeverity.ERROR,"invalid_icon",f"Unknown icon {item.icon_base}",field="icon_base")
-    for name in ("temperature_niche","rainfall_niche","moisture_niche","fertility_niche","disturbance_niche"):
+    for name in ("temperature_niche","moisture_niche","fertility_niche","disturbance_niche","texture_niche"):
         niche=getattr(item,name)
         if niche is not None:
             values=(niche.minimum,niche.optimum_low,niche.optimum_high,niche.maximum)

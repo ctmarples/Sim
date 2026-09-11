@@ -673,3 +673,7 @@ COLOUR_EROSION_LOW: Colour = (40, 36, 28)
 COLOUR_EROSION_HIGH: Colour = (210, 90, 40)
 COLOUR_FERTILITY_LOW: Colour = (90, 40, 30)
 COLOUR_FERTILITY_HIGH: Colour = (70, 200, 80)
+# Soil texture overlay: sandy yellow → white loam → orange-red clay.
+COLOUR_SOIL_TEXTURE_SANDY: Colour = (235, 200, 70)
+COLOUR_SOIL_TEXTURE_LOAM: Colour = (245, 245, 240)
+COLOUR_SOIL_TEXTURE_CLAY: Colour = (220, 75, 35)

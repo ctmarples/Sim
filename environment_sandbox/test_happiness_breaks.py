@@ -144,17 +144,8 @@ class HappinessBreakTriggerTests(unittest.TestCase):
             if bid is not None:
                 game._update_workplace_worker(v, bid)
                 acted = game._villager_has_active_action(v)
-                if (
-                    not acted
-                    and v.building_id is not None
-                    and v.state
-                    not in (
-                        VillagerState.DELIVERING,
-                        VillagerState.HAULING,
-                        VillagerState.BUILDING,
-                    )
-                ):
-                    v.state = VillagerState.WORKING
+                # Promotion latch removed: IDLE must stay idle, but an already
+                # WORKING villager is not demoted by a quiet tick either.
             elif v.state != VillagerState.WORKING:
                 game._set_workplace_idle(v)
         elif v.state not in (
@@ -167,6 +158,57 @@ class HappinessBreakTriggerTests(unittest.TestCase):
         self.assertEqual(v.state, VillagerState.WORKING)
         game._set_workplace_idle.assert_not_called()
         game._park_idle_decision.assert_not_called()
+        self.assertFalse(acted)
+
+    def test_quiet_tick_does_not_promote_idle_to_working(self) -> None:
+        """Unreachable forage idle must not be forced back into WORKING."""
+        from entities import WorkPriority
+
+        game = self._game()
+        building = SimpleNamespace(
+            id=7,
+            center_cell=Mock(return_value=(5, 5)),
+            kind=SimpleNamespace(name="FORAGER"),
+        )
+        game.buildings = {7: building}
+        game._construction_delivery_active = Mock(return_value=False)
+        game._leftover_build_mats_need_home = Mock(return_value=False)
+        game._is_general_hauler = Mock(return_value=False)
+        game._try_idle_transport = Mock(return_value=False)
+        game._villager_workplace_ids = Mock(return_value=[7])
+        game._pick_workplace_building = Mock(return_value=7)
+
+        def _idle_worker(villager, _bid):
+            villager.state = VillagerState.IDLE
+            villager.target = None
+
+        game._update_workplace_worker = Mock(side_effect=_idle_worker)
+        game._park_idle_decision = Mock()
+
+        v = Villager(id=1, x=5, y=5, building_id=7)
+        v.state = VillagerState.WORKING
+        v.priorities = [WorkPriority.WORKPLACE, WorkPriority.NONE, WorkPriority.NONE]
+        v.happiness = 0.7
+        game.villagers = [v]
+        # Drive one priority pass with hunger/happiness gates skipped.
+        game._update_happiness_break = Mock(return_value=False)
+        game._villager_needs_food = Mock(return_value=False)
+        game._try_start_happiness_break = Mock(return_value=False)
+        game._update_villager_building_transition = Mock()
+        game._tick_villager_building_transition = Mock()
+        # Minimal world tick pieces used before workplace update.
+        game._advance_decision_cooldowns = Mock()
+        # Call the workplace branch the same way _update_villagers does.
+        prios = [WorkPriority.WORKPLACE]
+        acted = False
+        if WorkPriority.WORKPLACE in prios and v.building_id is not None:
+            bid = game._pick_workplace_building(v)
+            if bid is not None:
+                game._update_workplace_worker(v, bid)
+                acted = game._villager_has_active_action(v)
+        self.assertEqual(v.state, VillagerState.IDLE)
+        self.assertIsNone(v.target)
+        self.assertFalse(acted)
 
     def test_cannot_interrupt_empty_hauler(self) -> None:
         game = self._game()

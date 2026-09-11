@@ -37,6 +37,55 @@ class YieldBreakdownTests(unittest.TestCase):
         self.assertEqual(a.final_unrounded, b.final_unrounded)
         self.assertEqual(a.final_rounded, 9)
 
+    def test_moisture_and_texture_enter_product(self) -> None:
+        neutral = calculate_tile_yield_breakdown(
+            base=10,
+            pest_control=1.0,
+            crop_health=1.0,
+            pollination=1.0,
+            ecology=1.0,
+            fertility=1.0,
+            weed_penalty=1.0,
+            moisture=1.0,
+            soil_texture=1.0,
+        )
+        stressed = calculate_tile_yield_breakdown(
+            base=10,
+            pest_control=1.0,
+            crop_health=1.0,
+            pollination=1.0,
+            ecology=1.0,
+            fertility=1.0,
+            weed_penalty=1.0,
+            moisture=0.8,
+            soil_texture=0.9,
+        )
+        self.assertAlmostEqual(neutral.final_unrounded, 10.0)
+        self.assertAlmostEqual(stressed.final_unrounded, 10.0 * 0.8 * 0.9)
+
+    def test_crop_niche_multipliers_neutral_without_species(self) -> None:
+        from field_yield import crop_moisture_texture_multipliers
+
+        m, t = crop_moisture_texture_multipliers(
+            "not_a_real_crop", soil_moisture=0.2, soil_texture=0.9
+        )
+        self.assertEqual(m, 1.0)
+        self.assertEqual(t, 1.0)
+
+    def test_crop_niche_multipliers_follow_wild_niche(self) -> None:
+        from field_yield import crop_moisture_texture_multipliers
+        from wild_species import WILD_BY_KEY
+
+        # Sage prefers dry/coarse conditions.
+        self.assertIsNotNone(WILD_BY_KEY["sage"].moisture_niche)
+        dry, _ = crop_moisture_texture_multipliers(
+            "sage", soil_moisture=0.3, soil_texture=0.25
+        )
+        wet, _ = crop_moisture_texture_multipliers(
+            "sage", soil_moisture=0.95, soil_texture=0.25
+        )
+        self.assertGreater(dry, wet)
+
     def test_staircase_matches_product(self) -> None:
         bd = calculate_tile_yield_breakdown(
             base=9,

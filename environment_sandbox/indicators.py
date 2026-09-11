@@ -24,6 +24,9 @@ from settings import (
     COLOUR_EROSION_LOW,
     COLOUR_FERTILITY_HIGH,
     COLOUR_FERTILITY_LOW,
+    COLOUR_SOIL_TEXTURE_CLAY,
+    COLOUR_SOIL_TEXTURE_LOAM,
+    COLOUR_SOIL_TEXTURE_SANDY,
     COLOUR_SPECIES_DIVERSITY_HIGH,
     COLOUR_SPECIES_DIVERSITY_LOW,
     COLOUR_TREE_DENSITY_HIGH,
@@ -58,6 +61,7 @@ class OverlayMode(Enum):
     TEMPERATURE = auto()
     RAINFALL = auto()
     FERTILITY = auto()
+    SOIL_TEXTURE = auto()
     FIELD_YIELD = auto()
 
 
@@ -75,6 +79,7 @@ OVERLAY_LABELS: dict[OverlayMode, str] = {
     OverlayMode.TEMPERATURE: "Temperature",
     OverlayMode.RAINFALL: "Rainfall",
     OverlayMode.FERTILITY: "Soil fertility",
+    OverlayMode.SOIL_TEXTURE: "Soil texture",
     OverlayMode.FIELD_YIELD: "Field yield",
 }
 
@@ -110,6 +115,8 @@ def overlay_help(mode: OverlayMode) -> str:
             "Relative rainfall intensity on this tile right now.",
         OverlayMode.FERTILITY:
             "Soil fertility available to crops. Darker field soil is usually more fertile.",
+        OverlayMode.SOIL_TEXTURE:
+            "Persistent soil texture from sandy/coarse through loam to clayey/fine.",
         OverlayMode.FIELD_YIELD:
             "Expected harvest for the selected field as a share of its base yield.",
     }
@@ -132,6 +139,10 @@ def format_overlay_value(mode: OverlayMode, value: float) -> str:
         return f"{value:.1f} C"
     if mode == OverlayMode.RAINFALL:
         return f"{value * 100:.0f}% intensity"
+    if mode == OverlayMode.SOIL_TEXTURE:
+        from soil_texture import texture_band_label
+
+        return f"{texture_band_label(value)} ({value * 100:.0f}%)"
     # Most live overlays are 0–1 fractions mapped to the colour ramp.
     return f"{value * 100:.0f}%"
 
@@ -204,6 +215,15 @@ def fertility_value(world: World, x: int, y: int) -> float:
     if cell is None:
         return 0.0
     return overlay_fertility(cell)
+
+
+def soil_texture_value(world: World, x: int, y: int) -> float:
+    from soil_texture import effective_soil_texture
+
+    cell = world.get_cell(x, y)
+    if cell is None:
+        return 0.45
+    return effective_soil_texture(cell)
 
 
 def species_on_cell(cell) -> set[str]:
@@ -430,6 +450,8 @@ def indicator_value(world: World, mode: OverlayMode, x: int, y: int) -> float:
         return disturbance_value(world, x, y)
     if mode == OverlayMode.FERTILITY:
         return fertility_value(world, x, y)
+    if mode == OverlayMode.SOIL_TEXTURE:
+        return soil_texture_value(world, x, y)
     # Biodiversity / floral / pollination / erosion are supplied by Game.
     return 0.0
 
@@ -465,6 +487,12 @@ def overlay_colour(mode: OverlayMode, value: float) -> Colour:
         return lerp_colour((215, 220, 210), (35, 105, 225), value)
     if mode == OverlayMode.FERTILITY:
         return lerp_colour(COLOUR_FERTILITY_LOW, COLOUR_FERTILITY_HIGH, value)
+    if mode == OverlayMode.SOIL_TEXTURE:
+        # Sandy yellow → white midpoint → orange-red clay (matches temperature-style ramp).
+        t = max(0.0, min(1.0, float(value)))
+        if t < 0.5:
+            return lerp_colour(COLOUR_SOIL_TEXTURE_SANDY, COLOUR_SOIL_TEXTURE_LOAM, t * 2.0)
+        return lerp_colour(COLOUR_SOIL_TEXTURE_LOAM, COLOUR_SOIL_TEXTURE_CLAY, (t - 0.5) * 2.0)
     if mode == OverlayMode.FIELD_YIELD:
         # Green good → red poor (value already normalised high=good)
         return lerp_colour(COLOUR_DISTURBANCE_HIGH, COLOUR_FERTILITY_HIGH, value)
