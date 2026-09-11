@@ -29,8 +29,8 @@ class FarmJobKind(Enum):
 FARM_JOB_PRIORITY: tuple[FarmJobKind, ...] = (
     FarmJobKind.DELIVER,  # unload full harvest pack to barn / farm
     FarmJobKind.WEED,
+    FarmJobKind.HARVEST,  # ripe standing crops before new sowing
     FarmJobKind.SOW,
-    FarmJobKind.HARVEST,
     FarmJobKind.TREAT,
     FarmJobKind.PLOUGH,
     FarmJobKind.THRESH,

@@ -796,6 +796,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "crop_target": list(a.crop_target) if a.crop_target else None,
             "crop_arrived_day": a.crop_arrived_day,
             "age_days": round(float(getattr(a, "age_days", 0.0)), 2),
+            "hp": int(getattr(a, "hp", 0) or 0),
+            "max_hp": int(getattr(a, "max_hp", 0) or 0),
         }
         for a in game.wildlife.animals
         if a.kind in (AnimalKind.DEER, AnimalKind.BOAR, AnimalKind.OWL, AnimalKind.HAWK)
@@ -845,6 +847,8 @@ def serialize_game(game: Game) -> dict[str, Any]:
                     "world_x": round(float(m.world_x if m.world_x is not None else m.x), 4),
                     "world_y": round(float(m.world_y if m.world_y is not None else m.y), 4),
                     "move_cooldown": m.move_cooldown,
+                    "hp": int(getattr(m, "hp", 0) or 0),
+                    "max_hp": int(getattr(m, "max_hp", 0) or 0),
                 }
                 for m in p.members
             ],
@@ -1207,6 +1211,10 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     world._herb_timer = int(world_data.get("herb_timer", world._herb_timer))
 
     game.world = world
+    if hasattr(game, "env_maps"):
+        # Flora suitability / reed seeding read world.env_maps; keep it wired
+        # to the game's live climate grids (also refreshed below).
+        game.world.env_maps = game.env_maps
     if hasattr(game, "_invalidate_fishing_shore_cache"):
         game._invalidate_fishing_shore_cache()
     game.height_sample = generate_height_sample(
@@ -1916,6 +1924,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                 age_days=float(a.get("age_days", 224.0)),
                 world_x=float(a.get("world_x", a["x"])),
                 world_y=float(a.get("world_y", a["y"])),
+                hp=int(a.get("hp", 0) or 0),
+                max_hp=int(a.get("max_hp", 0) or 0),
             )
         )
     game.wildlife.next_id = int(wild.get("next_id", 1))
@@ -1975,6 +1985,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                     move_cooldown=int(m.get("move_cooldown", 0)),
                     world_x=float(m.get("world_x", m["x"])),
                     world_y=float(m.get("world_y", m["y"])),
+                    hp=int(m.get("hp", 0) or 0),
+                    max_hp=int(m.get("max_hp", 0) or 0),
                 )
             )
         if not members:
@@ -1986,6 +1998,15 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             pack_kind = AnimalKind.WOLF
         if pack_kind not in (AnimalKind.WOLF, AnimalKind.FOX):
             pack_kind = AnimalKind.WOLF
+        from entities import hunt_max_hp
+
+        desired_hp = hunt_max_hp(pack_kind.name)
+        raw_members = p.get("members", [])
+        for index, member in enumerate(members):
+            raw = raw_members[index] if index < len(raw_members) else {}
+            if int(raw.get("max_hp", 0) or 0) <= 0:
+                member.max_hp = desired_hp
+                member.hp = desired_hp
         # Prefer countdown; migrate legacy absolute fed_until_day (year-wrap bug).
         if "fed_days_remaining" in p:
             remaining = float(p.get("fed_days_remaining", 0) or 0)
@@ -2169,6 +2190,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     # Restore cyclic env layers (biodiversity / floral / pollination / pest-control).
     if hasattr(game, "env_maps"):
         game.env_maps.resize(game.world.rows, game.world.cols)
+        game.world.env_maps = game.env_maps
         saved_env = data.get("env_maps")
         if saved_env:
             game.env_maps.load_save_dict(saved_env)
@@ -2187,6 +2209,21 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             game._sample_environment()
         elif hasattr(game, "_sample_biodiversity"):
             game._sample_biodiversity()
+        # Saves authored while world.env_maps was unwired never established reeds
+        # (moisture niche fell back to 0.5 and failed). Seed once when missing.
+        from world import FeatureType
+
+        has_reed = any(
+            cell.feature == FeatureType.REED
+            for row in game.world.cells
+            for cell in row
+        )
+        if not has_reed:
+            import random
+
+            game.world._seed_initial_reeds(
+                random.Random(int(game.world.seed) ^ 0x4EED)
+            )
     elif hasattr(game, "_biodiversity_samples"):
         game._biodiversity_samples.clear()
         if hasattr(game, "_sample_biodiversity"):

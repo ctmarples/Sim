@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
@@ -90,7 +91,36 @@ CLOTHING_KEYS: tuple[str, ...] = tuple(CLOTHING_ITEM_SLOT)
 # Chebyshev range for bow shots (hunter skill 4+).
 HUNTER_BOW_RANGE: int = 5
 HUNTER_BOW_MIN_SKILL: int = 4
+# Legacy flat hit chance — prefer hunter_bow_hit_chance(skill).
 HUNTER_BOW_HIT_CHANCE: float = 0.5
+# Hit points so spear takes ~2 / 3 / 3 / 2 strikes (deer / boar / wolf / fox).
+HUNT_MAX_HP: dict[str, int] = {
+    "DEER": 2,
+    "BOAR": 3,
+    "WOLF": 3,
+    "FOX": 2,
+}
+
+
+def hunt_max_hp(kind_name: str) -> int:
+    return int(HUNT_MAX_HP.get(str(kind_name).upper(), 2))
+
+
+def spear_hunt_damage(rng: random.Random) -> int:
+    """Spear strike: usually 1 HP, sometimes 2 (finishes early)."""
+    return 2 if rng.random() < 0.22 else 1
+
+
+def arrow_hunt_damage(rng: random.Random) -> int:
+    """Arrow hits harder than a spear strike."""
+    return 3 if rng.random() < 0.35 else 2
+
+
+def hunter_bow_hit_chance(hunting_skill: int) -> float:
+    """Miss chance falls as hunting skill rises (skill 1 ≈ 43%, 4 ≈ 67%, 10 ≈ 95%)."""
+    skill = max(1, int(hunting_skill))
+    return max(0.25, min(0.95, 0.35 + 0.08 * (skill - 1)))
+
 
 # Pull CSV clothing_slot overrides after recipes finish loading.
 try:
@@ -3933,8 +3963,10 @@ class Villager:
     hunt_meat_pos: tuple[int, int] | None = None
     # After a job change: walk to storehouse and deposit old cargo/tools first.
     job_change_deposit: bool = False
-    # Pending bow shot resolution (animal_id, hit, ticks_remaining).
-    hunt_shot: tuple[int, bool, int] | None = None
+    # Pending bow shot resolution (animal_id, hit, damage, ticks_remaining).
+    hunt_shot: tuple[int, bool, int, int] | None = None
+    # Ticks until the next spear/bow strike may land (track prey meanwhile).
+    hunt_strike_cooldown: int = 0
     fish_target_id: int | None = None
     fish_catch_pos: tuple[int, int] | None = None
     fish_post_pos: tuple[int, int] | None = None
@@ -4036,6 +4068,7 @@ class Villager:
         self.hunt_colony_id = None
         self.hunt_meat_pos = None
         self.hunt_shot = None
+        self.hunt_strike_cooldown = 0
         self.fish_target_id = None
         self.fish_catch_pos = None
         self.fish_post_pos = None
@@ -4405,6 +4438,12 @@ class Player:
     # Continuous world position; x/y remain the logical resource-grid cell.
     world_x: float | None = None
     world_y: float | None = None
+    # Locked prey for strike-based hunting (same model as villager hunters).
+    hunt_animal_id: int | None = None
+    # In-flight bow shot: (animal_id, hit, damage, ticks_left).
+    hunt_shot: tuple[int, bool, int, int] | None = None
+    # Ticks until the next spear/bow strike may land.
+    hunt_strike_cooldown: int = 0
 
     def __post_init__(self) -> None:
         if self.world_x is None:
@@ -4436,6 +4475,9 @@ class Player:
         self.move_cooldown = 0
         self.work_cooldown = 0
         self.work_in_progress = False
+        self.hunt_animal_id = None
+        self.hunt_shot = None
+        self.hunt_strike_cooldown = 0
         self.satiation = 0.75
         self.energy = 1.0
         self.happiness = 0.7

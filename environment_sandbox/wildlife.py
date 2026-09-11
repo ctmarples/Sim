@@ -273,6 +273,9 @@ class Animal:
     crop_arrived_day: float | None = None
     world_x: float | None = None
     world_y: float | None = None
+    # Hunting wound state (non-colony animals). Colony harvest is separate.
+    hp: int = 0
+    max_hp: int = 0
     # Runtime-only path cache for migration / blocked steps (not saved).
     _path_cache: list[tuple[int, int]] | None = field(
         default=None, repr=False, compare=False
@@ -284,6 +287,12 @@ class Animal:
     def __post_init__(self) -> None:
         self.world_x = float(self.x) if self.world_x is None else float(self.world_x)
         self.world_y = float(self.y) if self.world_y is None else float(self.world_y)
+        if self.max_hp <= 0:
+            from entities import hunt_max_hp
+
+            self.max_hp = hunt_max_hp(self.kind.name)
+        if self.hp <= 0:
+            self.hp = int(self.max_hp)
 
 
 @dataclass
@@ -336,10 +345,19 @@ class WolfMember:
     move_cooldown: int = 0
     world_x: float | None = None
     world_y: float | None = None
+    hp: int = 0
+    max_hp: int = 0
 
     def __post_init__(self) -> None:
         self.world_x = float(self.x) if self.world_x is None else float(self.world_x)
         self.world_y = float(self.y) if self.world_y is None else float(self.world_y)
+        if self.max_hp <= 0:
+            # Kind is on the pack; default to wolf until assigned.
+            from entities import hunt_max_hp
+
+            self.max_hp = hunt_max_hp("WOLF")
+        if self.hp <= 0:
+            self.hp = int(self.max_hp)
 
 
 @dataclass
@@ -620,6 +638,50 @@ class WildlifeManager:
         self.animals.remove(animal)
         self._by_id.pop(animal_id, None)
         return pos
+
+    def apply_hunt_damage(
+        self, animal_id: int, damage: int
+    ) -> tuple[bool, int, int, AnimalKind, int, int] | None:
+        """Wound a huntable animal. Returns (dead, x, y, kind, hp, max_hp) or None."""
+        from entities import hunt_max_hp
+
+        dmg = max(0, int(damage))
+        if animal_id < 0:
+            pack_id, member_index = self._predator_target_parts(animal_id)
+            for pack in self.wolf_packs:
+                if pack.id != pack_id or not (0 <= member_index < len(pack.members)):
+                    continue
+                member = pack.members[member_index]
+                desired = hunt_max_hp(pack.kind.name)
+                if member.max_hp <= 0 or (
+                    member.hp >= member.max_hp and member.max_hp != desired
+                ):
+                    member.max_hp = desired
+                    member.hp = desired
+                member.hp = max(0, int(member.hp) - dmg)
+                if member.hp <= 0:
+                    killed = self.kill_animal(animal_id)
+                    if killed is None:
+                        return None
+                    x, y, kind = killed
+                    return True, x, y, kind, 0, desired
+                return False, member.x, member.y, pack.kind, member.hp, member.max_hp
+            return None
+        self._index_animals()
+        animal = self._by_id.get(animal_id)
+        if animal is None:
+            return None
+        if animal.max_hp <= 0:
+            animal.max_hp = hunt_max_hp(animal.kind.name)
+            animal.hp = animal.max_hp
+        animal.hp = max(0, int(animal.hp) - dmg)
+        if animal.hp <= 0:
+            killed = self.kill_animal(animal_id)
+            if killed is None:
+                return None
+            x, y, kind = killed
+            return True, x, y, kind, 0, animal.max_hp
+        return False, animal.x, animal.y, animal.kind, animal.hp, animal.max_hp
 
     def scare_from_kill(
         self,
@@ -1488,12 +1550,12 @@ class WildlifeManager:
             pack = self.rng.choice(lone_packs)
             lone = pack.members[0]
             pack.members.append(
-                WolfMember(
-                    sex=(AnimalSex.FEMALE
-                         if lone.sex == AnimalSex.MALE else AnimalSex.MALE),
-                    x=pack.x,
-                    y=pack.y,
-                    move_cooldown=animal_roam_interval(),
+                self._new_pack_member(
+                    pack.kind,
+                    (AnimalSex.FEMALE
+                     if lone.sex == AnimalSex.MALE else AnimalSex.MALE),
+                    pack.x,
+                    pack.y,
                 )
             )
             spawned += 1
@@ -3413,11 +3475,27 @@ class WildlifeManager:
         for sex in sexes:
             mx, my = self._place_wolf_near(world, pack, x, y)
             pack.members.append(
-                WolfMember(sex=sex, x=mx, y=my, move_cooldown=animal_roam_interval())
+                self._new_pack_member(pack.kind, sex, mx, my)
             )
         pack.move_cooldown = animal_roam_interval()
         self.wolf_packs.append(pack)
         return pack
+
+    @staticmethod
+    def _new_pack_member(
+        kind: AnimalKind, sex: AnimalSex, x: int, y: int
+    ) -> WolfMember:
+        from entities import hunt_max_hp
+
+        hp = hunt_max_hp(kind.name)
+        return WolfMember(
+            sex=sex,
+            x=x,
+            y=y,
+            move_cooldown=animal_roam_interval(),
+            max_hp=hp,
+            hp=hp,
+        )
 
     def _place_wolf_near(
         self, world: World, pack: WolfPack, x: int, y: int
@@ -4035,9 +4113,7 @@ class WildlifeManager:
                     continue
                 mx, my = self._place_wolf_near(world, pack, pack.x, pack.y)
                 pack.members.append(
-                    WolfMember(
-                        sex=sex, x=mx, y=my, move_cooldown=animal_roam_interval()
-                    )
+                    self._new_pack_member(pack_kind, sex, mx, my)
                 )
 
         self._cull_excess_predators()

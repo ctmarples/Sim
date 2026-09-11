@@ -30,7 +30,6 @@ from resource_balance import (
     BERRY_SEED_DROP_CHANCE,
     farm_produce_yield,
     FARM_SEED_AMOUNTS,
-    FISH_YIELD,
     FISH_POST_LOCAL_RADIUS,
     FISH_POST_MIN_FISH,
     FISH_POST_SCORE_RADIUS,
@@ -92,9 +91,11 @@ from entities import (
     WORKPLACE_EXTRA_TOOLS,
     WORKPLACE_ALSO_REQUIRES,
     WORKPLACE_TOOL,
-    HUNTER_BOW_HIT_CHANCE,
     HUNTER_BOW_MIN_SKILL,
     HUNTER_BOW_RANGE,
+    arrow_hunt_damage,
+    hunter_bow_hit_chance,
+    spear_hunt_damage,
     Villager,
     VillagerState,
     WorkMode,
@@ -1879,6 +1880,7 @@ class Game:
             or villager.hunt_meat_pos is not None
             or villager.fish_target_id is not None
             or villager.fish_catch_pos is not None
+            or villager.fish_post_pos is not None
             or villager.forage_colony_id is not None
             or villager.craft_recipe_name is not None
             or villager.farm_job_kind is not None
@@ -7205,9 +7207,35 @@ class Game:
                 building, show_player=show_player, detail_only=detail_only
             )
             return
+        # Contract recruitment: hiring hall opens the traveller list directly.
+        if (
+            building.kind == BuildingKind.WORKSTATION
+            and self._recruitment_policy_is_contract()
+        ):
+            self.building_inspect.close()
+            self.field_plan_dialog.close()
+            self.villager_inspect.close()
+            self.resource_inspect.close()
+            self.management.close()
+            self.villager_roster.open_hire()
+            hired_count = len(self.villagers)
+            self._set_status(
+                f"Hiring hall — travellers ({len(self.hire_candidates)}). "
+                f"Hired {hired_count}/{MAX_VILLAGERS}."
+            )
+            return
         self._open_building_inspect(
             building, show_player=show_player, detail_only=detail_only
         )
+
+    def _recruitment_policy_is_contract(self) -> bool:
+        from sociopolitical import RecruitmentPolicy
+
+        state = getattr(self, "political", None)
+        if state is None:
+            return True
+        policy = getattr(state, "recruitment_policy", RecruitmentPolicy.CONTRACT)
+        return policy == RecruitmentPolicy.CONTRACT
 
     def _select_construction(
         self, site: ConstructionSite, *, detail_only: bool = False
@@ -9167,7 +9195,10 @@ class Game:
                 if (
                     cell.feature != FeatureType.NONE
                     and cell.feature not in BUILDING_FEATURES
-                    and cell.feature != FeatureType.CROP_HERB
+                    and (
+                        cell.feature != FeatureType.CROP_HERB
+                        or self.world.crop_herb_ready(x, y)
+                    )
                 ):
                     objects.append(
                         (
@@ -9260,6 +9291,35 @@ class Game:
         _distance, y, x, kind = min(candidates)
         return x, y, kind
 
+    def _player_ripe_crop_near(
+        self, x: int, y: int, *, radius: int = 1
+    ) -> tuple[int, int] | None:
+        """Nearest harvest-ready farm crop within Chebyshev ``radius``."""
+        best: tuple[int, int] | None = None
+        best_rank: tuple[int, float] | None = None
+        px = float(self.player.world_x)
+        py = float(self.player.world_y)
+        for cy in range(y - radius, y + radius + 1):
+            for cx in range(x - radius, x + radius + 1):
+                if not self.world.crop_herb_ready(cx, cy):
+                    continue
+                dist = max(abs(cx - x), abs(cy - y))
+                world_dist = math.hypot(px - (cx + 0.5), py - (cy + 0.5))
+                rank = (dist, world_dist)
+                if best_rank is None or rank < best_rank:
+                    best = (cx, cy)
+                    best_rank = rank
+        return best
+
+    def _player_begin_harvest_crop(self, x: int, y: int) -> None:
+        self._player_focus_world_job(
+            action="harvest_crop",
+            x=x,
+            y=y,
+            skill=SkillType.FARMING,
+            label="Harvesting crop",
+        )
+
     def _interact_at_player(self) -> None:
         if getattr(self, "control_mode", "dog") != "dog":
             self._set_status("Switch to Dog mode to control the player dog.")
@@ -9325,6 +9385,12 @@ class Game:
                 self._set_status("This construction belongs to another group.")
                 return
             self._player_work_construction(site)
+            return
+
+        # Ripe farm crops beat plough/sow on neighbouring bare field tiles.
+        ripe = self._player_ripe_crop_near(x, y)
+        if ripe is not None:
+            self._player_begin_harvest_crop(*ripe)
             return
 
         field_b = self._field_building_at(x, y)
@@ -9418,8 +9484,8 @@ class Game:
             self._player_harvest_honey(bee)
             return
 
-        # Hunt adjacent deer/boar (spear or bow+arrows).
-        prey = self._adjacent_animal(x, y)
+        # Hunt deer/boar/predators — always prefer nearby prey over planting.
+        prey = self._huntable_near(x, y, radius=HUNTER_BOW_RANGE)
         if prey is not None:
             self._player_hunt(prey)
             return
@@ -9510,6 +9576,10 @@ class Game:
         if cell.feature == FeatureType.CROP_HERB:
             weeds = float(getattr(cell, "weeds", 0.0))
             hoe = self.player.inventory.has_equipped_tool("hoe")
+            # Harvest-ready tiles first — weeds can wait until produce is in.
+            if self.world.crop_herb_ready(x, y):
+                self._player_begin_harvest_crop(x, y)
+                return
             if weeds > 0.05 and hoe:
                 self._player_focus_world_job(
                     action="weeds",
@@ -9519,16 +9589,10 @@ class Game:
                     label="Pulling weeds",
                 )
                 return
-            if self.world.crop_herb_ready(x, y):
-                self._player_focus_world_job(
-                    action="harvest_crop",
-                    x=x,
-                    y=y,
-                    skill=SkillType.FARMING,
-                    label="Harvesting crop",
-                )
-            elif self._try_apply_alchemist_treatment(x, y):
+            if self._try_apply_alchemist_treatment(x, y):
                 return
+            if int(getattr(cell, "deposit", 0) or 0) < 0:
+                self._set_status("Already harvested — waits until next growth.")
             elif weeds > 0.05 and not hoe:
                 self._set_status("Equip a hoe (Q) to pull weeds.")
             else:
@@ -9581,7 +9645,7 @@ class Game:
                 return
             if self.place_kind is not None:
                 self._try_build(self.place_kind, x, y)
-            else:
+            elif self._player_can_plant_here(x, y):
                 self._player_focus_world_job(
                     action="plant",
                     x=x,
@@ -9589,6 +9653,10 @@ class Game:
                     skill=SkillType.FARMING,
                     label="Planting",
                 )
+            elif self._player_has_hunt_weapon():
+                self._set_status("No prey in hunting range.")
+            else:
+                self._set_status("Nothing to plant here.")
             return
 
         if cell.feature == FeatureType.SAPLING:
@@ -10473,6 +10541,22 @@ class Game:
                     villager.state = VillagerState.IDLE
                     villager.target = None
                     villager._sleep_position = None  # type: ignore[attr-defined]
+                else:
+                    # Daytime exhaustion nap: recover at home, then resume work.
+                    # (Night-only refill left collapsed villagers stuck asleep all day.)
+                    tick_count = max(
+                        1.0, day_frac / max(1e-12, self._calendar_rate_per_tick())
+                    )
+                    villager.energy = min(
+                        1.0,
+                        float(villager.energy)
+                        + self._legacy_per_tick(ENERGY_SLEEP_GAIN) * tick_count,
+                    )
+                    nap_wake = max(0.65, float(ENERGY_SLEEP_THRESHOLD) + 0.35)
+                    if float(villager.energy) >= nap_wake:
+                        villager.state = VillagerState.IDLE
+                        villager.target = None
+                        villager._sleep_position = None  # type: ignore[attr-defined]
             elif house is not None:
                 villager.target = sleep_position or house.center_cell()
             else:
@@ -11882,14 +11966,97 @@ class Game:
 
     def _adjacent_animal(self, x: int, y: int):
         """Huntable animal on this cell or within Chebyshev distance 1."""
+        return self._huntable_near(x, y, radius=1)
+
+    def _player_hunt_kinds(self) -> set:
+        """Kinds the player may spear/bow hunt (not birds)."""
+        return {
+            AnimalKind.DEER,
+            AnimalKind.BOAR,
+            AnimalKind.WOLF,
+            AnimalKind.FOX,
+        }
+
+    def _huntable_near(self, x: int, y: int, *, radius: int):
+        """Nearest spear/bow prey within Chebyshev ``radius`` of (x, y)."""
         best = None
         best_dist = 99
+        r = max(0, int(radius))
+        kinds = self._player_hunt_kinds()
         for animal in self.wildlife.huntable_animals():
+            if animal.kind not in kinds:
+                continue
             dist = max(abs(animal.x - x), abs(animal.y - y))
-            if dist <= 1 and dist < best_dist:
+            if dist <= r and dist < best_dist:
                 best = animal
                 best_dist = dist
         return best
+
+    def _player_can_ranged(self) -> bool:
+        """True when the player can fire a bow (skill, bow equipped, arrows)."""
+        if villager_skill_level(self.player, SkillType.HUNTING) < HUNTER_BOW_MIN_SKILL:
+            return False
+        inv = self.player.inventory
+        if not inv.has_equipped_tool("bow"):
+            return False
+        return int(getattr(inv, "stone_arrows", 0)) > 0
+
+    def _player_has_hunt_weapon(self) -> bool:
+        inv = self.player.inventory
+        if inv.has_equipped_tool("spear"):
+            return True
+        if inv.has_equipped_tool("bow") and int(getattr(inv, "stone_arrows", 0)) > 0:
+            return True
+        return False
+
+    def _player_hunt_engage_radius(self) -> int:
+        """How far away the player can lock onto prey (chase / bow leash)."""
+        return HUNTER_BOW_RANGE
+
+    def _player_hunt_strike_radius(self) -> int:
+        """How close the player must be to land a spear strike or bow shot."""
+        if self._player_can_ranged():
+            return HUNTER_BOW_RANGE
+        if self.player.inventory.has_equipped_tool("spear"):
+            return 1
+        return 0
+
+    def _player_hunt_animal_near(self, x: int, y: int):
+        """Nearest prey the player can engage from (x, y)."""
+        return self._huntable_near(x, y, radius=self._player_hunt_engage_radius())
+
+    def _hunt_draw_entity(self, animal_id: int):
+        """Live animal / pack member used for hunt bar anchoring."""
+        if animal_id is None:
+            return None
+        aid = int(animal_id)
+        if aid >= 0:
+            return self.wildlife.huntable_by_id(aid)
+        pack_id, member_index = self.wildlife._predator_target_parts(aid)
+        for pack in self.wildlife.wolf_packs:
+            if pack.id == pack_id and 0 <= member_index < len(pack.members):
+                return pack.members[member_index]
+        return None
+
+    def _player_can_plant_here(self, x: int, y: int) -> bool:
+        """True when empty land interact should start a planting job."""
+        from berry_bushes import first_carried_berry_seed
+
+        inv = self.player.inventory
+        has_sapling = inv.first_sapling_key() is not None
+        cell = self.world.get_cell(x, y)
+        has_berry = (
+            cell is not None
+            and cell.terrain == TerrainType.GRASS
+            and first_carried_berry_seed(inv) is not None
+        )
+        if not has_sapling and not has_berry:
+            return False
+        # Prey in leash range still wins via the hunt branch of interact; do not
+        # block planting merely because a spear/bow is equipped.
+        if self._huntable_near(x, y, radius=HUNTER_BOW_RANGE) is not None:
+            return False
+        return True
 
     def _adjacent_colony(self, x: int, y: int, *, kind: AnimalKind | None = None):
         """Colony nest on this cell or within Chebyshev distance 1."""
@@ -11950,21 +12117,149 @@ class Game:
         )
 
     def _player_hunt(self, animal) -> None:
+        """Lock onto prey and strike immediately (villager-style, no work bar)."""
         inv = self.player.inventory
         has_spear = inv.has_equipped_tool("spear")
-        has_bow = inv.has_equipped_tool("bow") and int(getattr(inv, "stone_arrows", 0)) > 0
-        if not has_spear and not has_bow:
+        has_bow = inv.has_equipped_tool("bow")
+        has_arrows = int(getattr(inv, "stone_arrows", 0)) > 0
+        if not has_spear and not (has_bow and has_arrows):
             self._set_status("Equip a spear or bow+arrows (I or Q) to hunt.")
             return
-        self._player_focus_world_job(
-            action="hunt",
-            x=animal.x,
-            y=animal.y,
-            skill=SkillType.HUNTING,
-            label=f"Hunting {animal.kind.name.lower()}",
-            tag=f"animal:{animal.id}",
-            meta={"animal_id": animal.id},
+        if (
+            not has_spear
+            and has_bow
+            and has_arrows
+            and villager_skill_level(self.player, SkillType.HUNTING) < HUNTER_BOW_MIN_SKILL
+        ):
+            self._set_status(
+                f"Hunting skill {HUNTER_BOW_MIN_SKILL}+ required to hunt with a bow."
+            )
+            return
+        dist = max(abs(animal.x - self.player.x), abs(animal.y - self.player.y))
+        if dist > self._player_hunt_engage_radius():
+            self._set_status("Too far to hunt.")
+            return
+        self._player_cancel_world_jobs()
+        self.player.hunt_animal_id = animal.id
+        self._player_try_hunt_strike(animal)
+
+    def _player_cancel_world_jobs(self) -> None:
+        """Clear any active world-work bars (plant/hunt-job leftovers, etc.)."""
+        for key in list(self._player_world_jobs):
+            self._player_clear_world_job(key)
+
+    def _player_cancel_non_hunt_jobs(self) -> None:
+        self._player_cancel_world_jobs()
+
+    def _player_strike_cooldown_ticks(self) -> int:
+        return max(
+            1,
+            int(
+                round(
+                    self._player_work_interval(SkillType.HUNTING)
+                    * float(work_effort_mult("hunt"))
+                )
+            ),
         )
+
+    def _player_spend_hunt_effort(self) -> None:
+        self.player.energy = max(
+            0.0,
+            self.player.energy
+            - ENERGY_WORK_DRAIN * self._temp_energy_mult(self.player.inventory),
+        )
+        from society import SKILL_XP_PER_ACTION
+
+        self._gain_actor_skill(
+            self.player,
+            SkillType.HUNTING,
+            who="You",
+            amount=float(SKILL_XP_PER_ACTION) * float(work_effort_mult("hunt")),
+        )
+
+    def _player_try_hunt_strike(self, animal=None) -> None:
+        """Land a spear strike or bow shot if in range and not cooling down."""
+        p = self.player
+        if p.hunt_shot is not None or int(p.hunt_strike_cooldown) > 0:
+            return
+        if animal is None:
+            if p.hunt_animal_id is None:
+                return
+            animal = self.wildlife.huntable_by_id(p.hunt_animal_id)
+            if animal is None:
+                p.hunt_animal_id = None
+                return
+        inv = p.inventory
+        has_spear = inv.has_equipped_tool("spear")
+        can_ranged = self._player_can_ranged()
+        if not has_spear and not can_ranged:
+            p.hunt_animal_id = None
+            return
+        dist = max(abs(animal.x - p.x), abs(animal.y - p.y))
+        if can_ranged and dist <= HUNTER_BOW_RANGE:
+            self._player_fire_bow(animal)
+            return
+        if has_spear and dist <= 1:
+            self._player_spear_strike(animal)
+            return
+        self._set_status(
+            f"Chasing {animal.kind.name.lower()} — get closer to strike."
+        )
+
+    def _player_spear_strike(self, animal) -> None:
+        from resource_balance import HUNT_SCARE_STEPS
+
+        dmg = spear_hunt_damage(random)
+        outcome = self.wildlife.apply_hunt_damage(animal.id, dmg)
+        self.player.hunt_strike_cooldown = self._player_strike_cooldown_ticks()
+        self._player_spend_hunt_effort()
+        if outcome is None:
+            self.player.hunt_animal_id = None
+            self._set_status("Animal got away.")
+            return
+        dead, hx, hy, kind, hp_left, max_hp = outcome
+        if kind in (AnimalKind.DEER, AnimalKind.BOAR):
+            self.wildlife.scare_from_kill(
+                hx, hy, steps=max(2, HUNT_SCARE_STEPS // 3)
+            )
+        if dead:
+            self._player_finish_hunt_kill(hx, hy, kind)
+            return
+        self.player.hunt_animal_id = animal.id
+        self._set_status(
+            f"Wounded {kind.name.lower()} with spear ({hp_left}/{max_hp} hp)."
+        )
+
+    def _player_finish_hunt_kill(self, x: int, y: int, kind: AnimalKind) -> None:
+        has_knife = self.player.inventory.has_equipped_tool("knife")
+        meat = self._drop_hunt_yields(x, y, kind, has_knife=has_knife)
+        self.world.apply_extraction_disturbance(x, y)
+        if kind in (AnimalKind.DEER, AnimalKind.BOAR):
+            self.wildlife.scare_from_kill(x, y)
+        self._refresh_indicators()
+        self.player.hunt_animal_id = None
+        loot = ", ".join(
+            self._hunt_recipe_status_bits(kind.name.lower(), has_knife=has_knife)
+        ) or f"{meat} meat"
+        self._set_status(f"Hunted {kind.name.lower()}. {loot} on ({x}, {y}).")
+
+    def _tick_player_hunt(self, ticks: int = 1) -> None:
+        """Advance strike cooldown, resolve arrows, and auto-strike locked prey."""
+        p = self.player
+        if ticks > 0 and int(p.hunt_strike_cooldown) > 0:
+            p.hunt_strike_cooldown = max(0, int(p.hunt_strike_cooldown) - int(ticks))
+        self._tick_player_hunt_shot(ticks)
+        if p.hunt_animal_id is None:
+            return
+        animal = self.wildlife.huntable_by_id(p.hunt_animal_id)
+        if animal is None:
+            p.hunt_animal_id = None
+            return
+        dist = max(abs(animal.x - p.x), abs(animal.y - p.y))
+        if dist > self._player_hunt_engage_radius():
+            p.hunt_animal_id = None
+            return
+        self._player_try_hunt_strike(animal)
 
     def _hunt_threat_positions(self) -> list[tuple[int, int]]:
         """Player + all villagers — wildlife flees these positions."""
@@ -12457,11 +12752,12 @@ class Game:
                             acted = True
                             break
                         # Workplace quiet (e.g. frozen lake): help village haul.
-                        # Cooks are dedicated: outside transport must not pull them
-                        # away while kitchen ingredients can still make food.
+                        # Cooks and fishers stay on their primary craft — outside
+                        # haul must not pull them away while their job can still run.
                         if (
                             building is not None
-                            and building.kind != BuildingKind.KITCHEN
+                            and building.kind
+                            not in (BuildingKind.KITCHEN, BuildingKind.FISHER)
                             and self._transport_has_work(villager)
                         ):
                             self._update_hauler(villager)
@@ -12825,6 +13121,8 @@ class Game:
             if int(job.get("done", 0) or 0) <= 0:
                 job["need"] = need
         self._player_active_job_key = key
+        if action != "hunt":
+            self.player.hunt_animal_id = None
         frac = int(100 * int(job["done"]) / max(1, int(job["need"])))
         self._set_status(f"{label}… {frac}%.")
 
@@ -12868,7 +13166,8 @@ class Game:
             animal = self.wildlife.huntable_by_id(animal_id) if animal_id is not None else None
             if animal is None:
                 return False
-            return max(abs(animal.x - self.player.x), abs(animal.y - self.player.y)) <= 1
+            dist = max(abs(animal.x - self.player.x), abs(animal.y - self.player.y))
+            return dist <= self._player_hunt_strike_radius()
 
         if action == "fish_catch":
             fish_id = meta.get("fish_id")
@@ -12880,7 +13179,7 @@ class Game:
             )
 
         # Cell / deposit work: same reach rules as natural interaction.
-        if action in ("meat", "fish_deposit"):
+        if action in ("meat", "fish_deposit", "harvest_crop", "weeds"):
             return max(abs(x - self.player.x), abs(y - self.player.y)) <= 1
 
         natural = self._player_natural_interaction_target()
@@ -12954,7 +13253,19 @@ class Game:
             return self.wildlife.huntable_by_id(meta.get("animal_id")) is not None
         if action == "fish_catch":
             return any(f.id == meta.get("fish_id") for f in self.fish.fish)
-        if action in ("plough", "sow", "plant"):
+        if action == "plough":
+            return (
+                cell is not None
+                and cell.feature != FeatureType.CROP_HERB
+                and not bool(getattr(cell, "ploughed", False))
+            )
+        if action == "sow":
+            return (
+                cell is not None
+                and cell.feature == FeatureType.NONE
+                and bool(getattr(cell, "ploughed", False))
+            )
+        if action == "plant":
             return cell is not None
         return True
 
@@ -13039,35 +13350,8 @@ class Game:
             self._set_status(f"Hunted warren. {loot}.")
             return True
         if action == "hunt":
-            animal = self.wildlife.huntable_by_id(meta.get("animal_id"))
-            if animal is None:
-                return False
-            has_knife = inv.has_equipped_tool("knife")
-            has_spear = inv.has_equipped_tool("spear")
-            has_bow = inv.has_equipped_tool("bow") and int(
-                getattr(inv, "stone_arrows", 0)
-            ) > 0
-            result = self.wildlife.kill_animal(animal.id)
-            if result is None:
-                self._set_status("Animal got away.")
-                return False
-            if has_bow and not has_spear:
-                inv.consume_item("stone_arrows", 1)
-                self.record_consumed("stone_arrows", 1)
-            hx, hy, kind = result
-            meat = self._drop_hunt_yields(hx, hy, kind, has_knife=has_knife)
-            self.world.apply_extraction_disturbance(hx, hy)
-            if kind in (AnimalKind.DEER, AnimalKind.BOAR):
-                self.wildlife.scare_from_kill(hx, hy)
-            self._refresh_indicators()
-            weapon = "spear" if has_spear else "bow"
-            loot = ", ".join(
-                self._hunt_recipe_status_bits(kind.name.lower(), has_knife=has_knife)
-            ) or f"{meat} meat"
-            self._set_status(
-                f"Hunted {kind.name.lower()} with {weapon}. {loot} on ({hx}, {hy})."
-            )
-            return True
+            # Process-bar hunting retired; strikes are handled by _tick_player_hunt.
+            return False
         if action == "fish_catch":
             from wildlife import fish_yield_for
 
@@ -13162,12 +13446,34 @@ class Game:
             self._player_active_job_key = None
             self.player.work_in_progress = False
             return
+        action = str(job.get("action") or "")
+        # Legacy process-bar hunting removed — drop any leftover hunt jobs.
+        if action == "hunt":
+            self._player_clear_world_job(key)
+            self.player.work_in_progress = False
+            return
+        # A leftover plant/gather job must not keep filling while prey is on you.
+        if action in ("plant", "plough", "sow") and self._player_has_hunt_weapon():
+            if (
+                self._huntable_near(
+                    self.player.x, self.player.y, radius=HUNTER_BOW_RANGE
+                )
+                is not None
+            ):
+                self._player_clear_world_job(key)
+                self.player.work_in_progress = False
+                return
         if not self._player_job_still_valid(job):
             self._player_clear_world_job(key)
             self.player.work_in_progress = False
             return
         if not self._player_job_in_range(job):
             self.player.work_in_progress = False
+            return
+
+        # Hold the hunt bar while a loosed arrow is still in flight.
+        if action == "hunt" and self.player.hunt_shot is not None:
+            self.player.work_in_progress = True
             return
 
         self.player.work_in_progress = True
@@ -13200,7 +13506,11 @@ class Game:
 
             xp = float(job.get("xp", SKILL_XP_PER_ACTION) or SKILL_XP_PER_ACTION)
             self._gain_actor_skill(self.player, skill, who="You", amount=xp)
-        # One swing done — clear job (trees/rocks now finish in a single scaled swing).
+        # Multi-strike hunt keeps the job (done reset); other actions clear.
+        if job.get("keep"):
+            job.pop("keep", None)
+            self.player.work_in_progress = self._player_job_in_range(job)
+            return
         self._player_clear_world_job(key)
         self.player.work_in_progress = False
 
@@ -13212,6 +13522,9 @@ class Game:
                 continue
             if not self._player_job_still_valid(job):
                 continue
+            action = str(job.get("action") or "")
+            if action == "hunt":
+                continue
             if not self._player_job_in_range(job):
                 continue
             need = max(1, int(job.get("need", 1) or 1))
@@ -13219,18 +13532,11 @@ class Game:
             frac = max(0.0, min(1.0, done / need))
             x, y = int(job["x"]), int(job["y"])
             meta = job.get("meta") or {}
-            action = str(job.get("action") or "")
             if action in ("honey", "warren"):
                 colony = self.wildlife.colony_by_id(meta.get("colony_id"))
                 if colony is None:
                     continue
                 cx, cy = self._cell_center(float(colony.x), float(colony.y))
-            elif action == "hunt":
-                animal = self.wildlife.huntable_by_id(meta.get("animal_id"))
-                if animal is None:
-                    continue
-                ax, ay = entity_draw_xy(animal)
-                cx, cy = self._cell_center(ax, ay)
             elif action == "fish_catch":
                 fish = next(
                     (f for f in self.fish.fish if f.id == meta.get("fish_id")), None
@@ -13660,6 +13966,7 @@ class Game:
         p = self.player
         p.move_cooldown = max(0, p.move_cooldown - ticks)
         p.work_cooldown = max(0, p.work_cooldown - ticks)
+        self._tick_player_hunt(ticks)
         self._tick_player_world_work(ticks)
         p.satiation = max(
             0.0,
@@ -14587,7 +14894,11 @@ class Game:
                     cell = self.world.get_cell(x, y)
                     if cell is None:
                         continue
-                    if cell.terrain in SOIL_LIKE and cell.feature == FeatureType.NONE:
+                    if (
+                        cell.terrain in SOIL_LIKE
+                        and cell.feature == FeatureType.NONE
+                        and bool(getattr(cell, "ploughed", False))
+                    ):
                         n += 1
                 if n > 0:
                     counts[key] = counts.get(key, 0) + n
@@ -14633,9 +14944,9 @@ class Game:
                     return False
             return True
         if building.kind == BuildingKind.FISHER:
-            # Deposit fish at the hut whenever the next catch won't fit.
+            # Deposit whenever another fish unit will not fit (yield varies 1–4).
             return int(getattr(inv, "fish", 0)) > 0 and not inv.can_add(
-                FISH_YIELD, key="fish"
+                1, key="fish"
             )
         if building.kind == BuildingKind.HUNTER:
             return building.has_gather_cargo(inv) and not inv.can_add(1)
@@ -14862,10 +15173,8 @@ class Game:
             return
         for key in barn_sheaf_keys():
             while int(getattr(farm, key, 0)) > 0 and barn.space_for_key(key) > 0:
-                if not barn.can_add(1, key=key):
-                    break
                 setattr(farm, key, int(getattr(farm, key, 0)) - 1)
-                barn.add_item(key, 1)
+                setattr(barn, key, int(getattr(barn, key, 0)) + 1)
 
     def _barn_sheaf_have(
         self,
@@ -16782,12 +17091,12 @@ class Game:
         ):
             self._maybe_assigned_transport(villager, building)
             return
-        # Collect / split / plant before storehouse sapling trips.
+        # Pull saplings before field work so plant areas are not visited empty-handed.
+        if self._update_plant_stock_withdraw(villager, building):
+            return
         if self._workplace_primary_available(villager, building):
             pass
         elif self._maybe_assigned_transport(villager, building):
-            return
-        elif self._update_plant_stock_withdraw(villager, building):
             return
         elif self._workplace_accepts_carry(villager, building):
             self._force_assigned_delivery(villager, building)
@@ -16811,23 +17120,19 @@ class Game:
                 self._clear_villager_path(villager)
                 sticky = None
 
-        # Keep sticky collect/plant while walking/working — only re-scan when
-        # idle, or when a craftable split should preempt field work.
+        # Keep sticky collect/plant while walking/working. Lodge split must not
+        # yank foresters off indicated plant tiles; re-pick when idle instead.
         kind: str
         target: tuple[int, int]
         if sticky is not None and sticky_ok and sticky != (bx, by):
-            split_recipe = self._craftable_split_recipe(building, worker=villager)
-            if split_recipe is not None:
-                target, kind = (bx, by), "split"
+            target = sticky
+            cell = self.world.get_cell(sticky[0], sticky[1])
+            if cell is not None and self._cell_matches_manage_plant(
+                cell, can_plant_sapling=True
+            ):
+                kind = "plant"
             else:
-                target = sticky
-                cell = self.world.get_cell(sticky[0], sticky[1])
-                if cell is not None and self._cell_matches_manage_plant(
-                    cell, can_plant_sapling=True
-                ):
-                    kind = "plant"
-                else:
-                    kind = "collect"
+                kind = "collect"
         elif sticky is not None and sticky_ok and sticky == (bx, by):
             target, kind = (bx, by), "split"
         else:
@@ -16925,26 +17230,12 @@ class Game:
         """Return (target, kind) for ALL mode using recipe priorities.
 
         ``kind`` is ``split``, ``collect``, or ``plant``. Lower priority number
-        wins; ties prefer split, then collect, then plant.
+        wins. When plant-area work is available, plant beats lodge split so
+        indicated plant zones are not starved by forever-craftable log splits.
         """
         candidates: list[tuple[int, int, tuple[int, int], str]] = []
 
-        split_recipe = self._craftable_split_recipe(building, worker=villager)
-        if split_recipe is not None:
-            candidates.append(
-                (
-                    building.get_recipe_priority(split_recipe.name),
-                    0,
-                    building.center_cell(),
-                    "split",
-                )
-            )
-
-        collect = self._find_forester_collect_by_priority(villager, building)
-        if collect is not None:
-            target, prio = collect
-            candidates.append((prio, 1, target, "collect"))
-
+        plant_target: tuple[int, int] | None = None
         can_plant_sapling, _, _ = self._can_plant_from(villager, building)
         if can_plant_sapling and building.allows_planting():
             claimed = self._claimed_work_cells(villager.id)
@@ -16955,15 +17246,34 @@ class Game:
                     villager, building, claimed, recipe_name=recipe.name
                 )
                 if plant is not None:
+                    plant_target = plant
                     candidates.append(
                         (
                             building.get_recipe_priority(recipe.name),
-                            2,
+                            0 if building.areas else 2,
                             plant,
                             "plant",
                         )
                     )
                     break
+
+        # Prefer indicated plant work over lodge splitting when plant targets exist.
+        split_tie = 2 if plant_target is not None else 0
+        split_recipe = self._craftable_split_recipe(building, worker=villager)
+        if split_recipe is not None:
+            candidates.append(
+                (
+                    building.get_recipe_priority(split_recipe.name),
+                    split_tie,
+                    building.center_cell(),
+                    "split",
+                )
+            )
+
+        collect = self._find_forester_collect_by_priority(villager, building)
+        if collect is not None:
+            target, prio = collect
+            candidates.append((prio, 1, target, "collect"))
 
         if not candidates:
             return None
@@ -17046,6 +17356,26 @@ class Game:
                     continue
                 for x, y in area.cells():
                     consider(x, y)
+            # Plant-only areas mark where to plant, not a ban on chopping. Without
+            # a chop/manage zone, still gather nearby trees so softwood saplings
+            # (pine/cedar) can replenish for plant_softwood.
+            has_chop_area = any(
+                a.task_type
+                in (
+                    TaskType.CHOP_TREES,
+                    TaskType.FULL_MANAGE,
+                    TaskType.FULL_FORAGE,
+                )
+                for a in building.areas
+            )
+            if not has_chop_area:
+                r = WORK_SEARCH_RADIUS
+                rows, cols = self.world.rows, self.world.cols
+                for y in range(max(0, by - r), min(rows, by + r + 1)):
+                    for x in range(max(0, bx - r), min(cols, bx + r + 1)):
+                        if abs(x - bx) + abs(y - by) > r:
+                            continue
+                        consider(x, y)
         else:
             r = WORK_SEARCH_RADIUS
             rows, cols = self.world.rows, self.world.cols
@@ -17317,18 +17647,11 @@ class Game:
         if self._fields_near_farm(building):
             # Existing crops deteriorate while unsown soil can safely wait. This
             # ordering is important on large saves such as lake.json, where a
-            # standing sow backlog otherwise starves weeding indefinitely.
+            # standing sow backlog otherwise starves weeding / harvest.
             if preview or self._ensure_work_tool(villager, "hoe"):
                 weed = self._find_farm_weed_work(villager, building)
                 if weed is not None:
                     return FarmJob(FarmJobKind.WEED, bid, cell=weed)
-
-            sow = self._find_farm_sow_work(villager, building)
-            if sow is not None:
-                if not preview and not self._ensure_work_tool(villager, "hoe"):
-                    sow = None
-                if sow is not None:
-                    return FarmJob(FarmJobKind.SOW, bid, cell=sow)
 
             harvest = self._find_farm_harvest(
                 villager, building, in_season_only=True
@@ -17338,6 +17661,13 @@ class Game:
                     harvest = None
                 if harvest is not None:
                     return FarmJob(FarmJobKind.HARVEST, bid, cell=harvest)
+
+            sow = self._find_farm_sow_work(villager, building)
+            if sow is not None:
+                if not preview and not self._ensure_work_tool(villager, "hoe"):
+                    sow = None
+                if sow is not None:
+                    return FarmJob(FarmJobKind.SOW, bid, cell=sow)
 
             treatment = self._find_farm_repellant_work(villager, building)
             if treatment is not None:
@@ -18208,6 +18538,12 @@ class Game:
         if not crop_allows_plant(crop, self.season):
             return False
         if cell.terrain in SOIL_LIKE and cell.feature == FeatureType.NONE:
+            ploughed = bool(getattr(cell, "ploughed", False))
+            job = getattr(villager, "farm_job_kind", None)
+            if job == FarmJobKind.PLOUGH.name:
+                return not ploughed
+            if job == FarmJobKind.SOW.name:
+                return ploughed
             return True
         if not is_water_terrain(cell.terrain) and cell.terrain != TerrainType.ROCK:
             return True
@@ -18235,7 +18571,11 @@ class Game:
                         cell = self.world.get_cell(x, y)
                         if cell is None or cell.feature == FeatureType.CROP_HERB:
                             continue
-                        if cell.terrain in SOIL_LIKE and cell.feature == FeatureType.NONE:
+                        if (
+                            cell.terrain in SOIL_LIKE
+                            and cell.feature == FeatureType.NONE
+                            and bool(getattr(cell, "ploughed", False))
+                        ):
                             tiles.append((x, y, seed_key))
             if cache is not None:
                 cache[building.id] = tiles
@@ -18789,6 +19129,16 @@ class Game:
         if not crop_allows_plant(crop, self.season):
             return False
         if cell.terrain in SOIL_LIKE and cell.feature == FeatureType.NONE:
+            # Furrow first — sow_crop used to run here and skip plough forever,
+            # leaving PLOUGH jobs reclaiming the same tile with no progress.
+            if not bool(getattr(cell, "ploughed", False)):
+                self._farm_apply_preplant_treatments(villager, building, cell)
+                self.world.plough_tile(x, y)
+                self.world.apply_extraction_disturbance(x, y)
+                self._refresh_indicators()
+                self._spend_work_energy(villager)
+                self._gain_job_skill(villager, building.kind.name)
+                return True
             seed_key = crop.seed_key
             if getattr(inv, seed_key, 0) <= 0:
                 if not building.give_item_to(inv, seed_key):
@@ -18856,10 +19206,20 @@ class Game:
         elif self._try_addon_craft(villager, building):
             return
 
-        # Resolve a pending bow shot (animation + hit/miss).
+        # Resolve a pending bow shot (animation + hit/miss). Track prey while
+        # the arrow is in flight instead of freezing the hunter in place.
         if villager.hunt_shot is not None:
-            self._tick_hunter_shot(villager)
-            return
+            self._tick_hunter_shot(villager, building)
+            if villager.hunt_shot is not None:
+                animal = self._resolve_hunt_animal(villager, building)
+                if animal is not None:
+                    self._hunter_chase_animal(villager, animal)
+                return
+
+        if int(getattr(villager, "hunt_strike_cooldown", 0) or 0) > 0:
+            villager.hunt_strike_cooldown = max(
+                0, int(villager.hunt_strike_cooldown) - 1
+            )
 
         meat_pos = villager.hunt_meat_pos
         if meat_pos is not None:
@@ -18999,50 +19359,38 @@ class Game:
         dist = max(abs(animal.x - villager.x), abs(animal.y - villager.y))
         can_ranged = self._hunter_can_ranged(villager)
         has_spear = villager.inventory.has_equipped_tool("spear")
+        cooling = int(getattr(villager, "hunt_strike_cooldown", 0) or 0) > 0
 
-        if can_ranged and dist <= HUNTER_BOW_RANGE:
-            if not self._work_swing_complete(
-                villager, effort=work_effort_mult("hunt")
-            ):
-                return
+        if can_ranged and dist <= HUNTER_BOW_RANGE and not cooling:
             self._hunter_fire_bow(villager, building, animal)
             return
 
-        if has_spear and dist <= 1:
-            if not self._work_swing_complete(
-                villager, effort=work_effort_mult("hunt")
-            ):
-                return
-            result = self.wildlife.kill_animal(animal.id)
-            villager.hunt_animal_id = None
-            if result is not None:
-                x, y, kind = result
-                self._drop_hunt_yields(
-                    x,
-                    y,
-                    kind,
-                    building=building,
-                    has_knife=villager.inventory.has_equipped_tool("knife"),
-                )
-                self.world.apply_extraction_disturbance(x, y)
-                if kind in (AnimalKind.DEER, AnimalKind.BOAR):
-                    self.wildlife.scare_from_kill(x, y)
-                self._refresh_indicators()
-                villager.hunt_meat_pos = (x, y)
-                self._register_field_claim(villager, (x, y))
-                self._spend_work_energy(villager)
-                self._gain_job_skill(villager, building.kind.name)
+        if has_spear and dist <= 1 and not cooling:
+            self._hunter_spear_strike(villager, building, animal)
             return
 
         self._abort_work_swing(villager)
+        self._hunter_chase_animal(villager, animal)
+
+    def _hunter_strike_cooldown_ticks(self, villager: Villager) -> int:
+        return max(
+            1,
+            int(
+                round(
+                    self._villager_work_interval(villager)
+                    * float(work_effort_mult("hunt"))
+                )
+            ),
+        )
+
+    def _hunter_chase_animal(self, villager: Villager, animal) -> None:
+        """Path toward prey; used between strikes and while cooling down."""
         approach = (animal.x, animal.y)
         if not self.world.is_walkable(*approach):
             for ny, nx in self.world.neighbourhood(animal.x, animal.y, radius=1):
                 if self.world.is_walkable(nx, ny):
                     approach = (nx, ny)
                     break
-        # Keep chasing the last approach cell while prey is still nearby so we
-        # do not re-BFS every tick as the animal flees one tile at a time.
         cache_goal = getattr(villager, "_path_goal", None)
         if (
             cache_goal is not None
@@ -19054,47 +19402,15 @@ class Game:
             villager.hunt_animal_id = None
             self._clear_villager_path(villager)
 
-    def _hunter_fire_bow(self, villager: Villager, building: Building, animal) -> None:
-        """Consume one arrow, spawn flight FX, and queue hit/miss resolution."""
-        inv = villager.inventory
-        if int(getattr(inv, "stone_arrows", 0)) <= 0:
-            return
-        inv.consume_item("stone_arrows", 1)
-        hit = random.random() < HUNTER_BOW_HIT_CHANCE
-        duration = max(4, self._villager_work_interval(villager) // 2)
-        villager.hunt_shot = (animal.id, hit, duration)
-        self._arrow_shots.append(
-            (
-                float(villager.x),
-                float(villager.y),
-                float(animal.x),
-                float(animal.y),
-                0,
-                duration,
-                hit,
-            )
-        )
-        self._spend_work_energy(villager)
-
-    def _tick_hunter_shot(self, villager: Villager) -> None:
-        shot = villager.hunt_shot
-        if shot is None:
-            return
-        animal_id, hit, ticks_left = shot
-        ticks_left -= 1
-        if ticks_left > 0:
-            villager.hunt_shot = (animal_id, hit, ticks_left)
-            villager.state = VillagerState.WORKING
-            return
-        villager.hunt_shot = None
+    def _hunter_finish_kill(
+        self,
+        villager: Villager,
+        building: Building | None,
+        x: int,
+        y: int,
+        kind: AnimalKind,
+    ) -> None:
         villager.hunt_animal_id = None
-        if not hit:
-            return
-        result = self.wildlife.kill_animal(animal_id)
-        if result is None:
-            return
-        x, y, kind = result
-        building = self.buildings.get(villager.building_id) if villager.building_id else None
         self._drop_hunt_yields(
             x,
             y,
@@ -19108,7 +19424,150 @@ class Game:
         self._refresh_indicators()
         villager.hunt_meat_pos = (x, y)
         self._register_field_claim(villager, (x, y))
+        self._spend_work_energy(villager)
         if building is not None:
+            self._gain_job_skill(villager, building.kind.name)
+
+    def _hunter_spear_strike(
+        self, villager: Villager, building: Building, animal
+    ) -> None:
+        from resource_balance import HUNT_SCARE_STEPS
+
+        dmg = spear_hunt_damage(random)
+        outcome = self.wildlife.apply_hunt_damage(animal.id, dmg)
+        villager.hunt_strike_cooldown = self._hunter_strike_cooldown_ticks(villager)
+        self._abort_work_swing(villager)
+        if outcome is None:
+            villager.hunt_animal_id = None
+            return
+        dead, x, y, kind, _hp_left, _max_hp = outcome
+        if kind in (AnimalKind.DEER, AnimalKind.BOAR):
+            self.wildlife.scare_from_kill(x, y, steps=max(2, HUNT_SCARE_STEPS // 3))
+        if dead:
+            self._hunter_finish_kill(villager, building, x, y, kind)
+        else:
+            self._spend_work_energy(villager)
+            self._gain_job_skill(villager, building.kind.name)
+
+    def _hunter_fire_bow(self, villager: Villager, building: Building, animal) -> None:
+        """Consume one arrow, spawn flight FX, and queue hit/miss resolution."""
+        inv = villager.inventory
+        if int(getattr(inv, "stone_arrows", 0)) <= 0:
+            return
+        inv.consume_item("stone_arrows", 1)
+        self.record_consumed("stone_arrows", 1)
+        skill = villager_skill_level(villager, SkillType.HUNTING)
+        hit = random.random() < hunter_bow_hit_chance(skill)
+        damage = arrow_hunt_damage(random) if hit else 0
+        duration = max(4, self._villager_work_interval(villager) // 2)
+        villager.hunt_shot = (animal.id, hit, damage, duration)
+        villager.hunt_strike_cooldown = self._hunter_strike_cooldown_ticks(villager)
+        self._arrow_shots.append(
+            (
+                float(villager.x),
+                float(villager.y),
+                float(animal.x),
+                float(animal.y),
+                0,
+                duration,
+                hit,
+            )
+        )
+        self._spend_work_energy(villager)
+
+    def _player_fire_bow(self, animal) -> None:
+        """Player bow shot: consume arrow, flight FX, queue damage on impact."""
+        inv = self.player.inventory
+        if int(getattr(inv, "stone_arrows", 0)) <= 0:
+            return
+        inv.consume_item("stone_arrows", 1)
+        self.record_consumed("stone_arrows", 1)
+        skill = villager_skill_level(self.player, SkillType.HUNTING)
+        hit = random.random() < hunter_bow_hit_chance(skill)
+        damage = arrow_hunt_damage(random) if hit else 0
+        duration = max(4, self._player_work_interval(SkillType.HUNTING) // 2)
+        self.player.hunt_shot = (animal.id, hit, damage, duration)
+        self.player.hunt_strike_cooldown = self._player_strike_cooldown_ticks()
+        self.player.hunt_animal_id = animal.id
+        self._arrow_shots.append(
+            (
+                float(self.player.x),
+                float(self.player.y),
+                float(animal.x),
+                float(animal.y),
+                0,
+                duration,
+                hit,
+            )
+        )
+        self._player_spend_hunt_effort()
+        if hit:
+            self._set_status(f"Arrow loosed at {animal.kind.name.lower()}…")
+        else:
+            self._set_status("Arrow missed.")
+
+    def _tick_player_hunt_shot(self, ticks: int = 1) -> None:
+        """Resolve player bow damage when the flight timer expires."""
+        from resource_balance import HUNT_SCARE_STEPS
+
+        shot = self.player.hunt_shot
+        if shot is None or ticks <= 0:
+            return
+        animal_id, hit, damage, ticks_left = shot
+        ticks_left -= int(ticks)
+        if ticks_left > 0:
+            self.player.hunt_shot = (animal_id, hit, damage, ticks_left)
+            return
+        self.player.hunt_shot = None
+        if not hit or damage <= 0:
+            return
+        outcome = self.wildlife.apply_hunt_damage(animal_id, damage)
+        if outcome is None:
+            self._set_status("Arrow found nothing.")
+            return
+        dead, x, y, kind, hp_left, max_hp = outcome
+        if kind in (AnimalKind.DEER, AnimalKind.BOAR):
+            self.wildlife.scare_from_kill(x, y, steps=max(2, HUNT_SCARE_STEPS // 3))
+        if dead:
+            self._player_finish_hunt_kill(x, y, kind)
+            return
+        self.player.hunt_animal_id = animal_id
+        self._set_status(
+            f"Arrow wounded {kind.name.lower()} ({hp_left}/{max_hp} hp)."
+        )
+
+    def _tick_hunter_shot(
+        self, villager: Villager, building: Building | None = None
+    ) -> None:
+        from resource_balance import HUNT_SCARE_STEPS
+
+        shot = villager.hunt_shot
+        if shot is None:
+            return
+        if len(shot) == 3:
+            animal_id, hit, ticks_left = shot
+            damage = arrow_hunt_damage(random) if hit else 0
+        else:
+            animal_id, hit, damage, ticks_left = shot
+        ticks_left -= 1
+        if ticks_left > 0:
+            villager.hunt_shot = (animal_id, hit, damage, ticks_left)
+            villager.state = VillagerState.WORKING
+            return
+        villager.hunt_shot = None
+        if not hit or damage <= 0:
+            return
+        outcome = self.wildlife.apply_hunt_damage(animal_id, damage)
+        if outcome is None:
+            return
+        dead, x, y, kind, _hp, _max_hp = outcome
+        if kind in (AnimalKind.DEER, AnimalKind.BOAR):
+            self.wildlife.scare_from_kill(x, y, steps=max(2, HUNT_SCARE_STEPS // 3))
+        if dead:
+            if building is None and villager.building_id is not None:
+                building = self.buildings.get(villager.building_id)
+            self._hunter_finish_kill(villager, building, x, y, kind)
+        elif building is not None:
             self._gain_job_skill(villager, building.kind.name)
 
     def _tick_arrow_shots(self) -> None:
@@ -19508,7 +19967,7 @@ class Game:
         ]
         if not catchable:
             if int(getattr(villager.inventory, "fish", 0)) > 0 and not villager.inventory.can_add(
-                FISH_YIELD, key="fish"
+                1, key="fish"
             ):
                 self._force_assigned_delivery(villager, building)
                 return
@@ -20425,8 +20884,12 @@ class Game:
             return True
         if building.kind != BuildingKind.FORESTER:
             return False
-        stocked = any(self._plant_stock_at(building, key) > 0 for key in keys)
-        return stocked and any(inv.can_add(1, key=key) for key in keys)
+        if not any(inv.can_add(1, key=key) for key in keys):
+            return False
+        if any(self._plant_stock_at(building, key) > 0 for key in keys):
+            return True
+        # Count storehouse stock so workers will walk to withdraw pine/cedar/etc.
+        return any(getattr(self.home_storage, key, 0) > 0 for key in keys)
 
     def _ensure_sapling_for_recipe(
         self, villager: Villager, building: Building, recipe_name: str
@@ -25101,6 +25564,7 @@ class Game:
                 )
             else:
                 blit_icon(self.screen, name, cx, cy, size)
+            self._draw_hunt_hp_bar(animal, cx, cy, size)
 
         # Colony nests + members — use SVG colours (no body wash).
         member_size = max(8, size * 2 // 3)
@@ -25138,6 +25602,7 @@ class Game:
                     pack_key, female=member.sex == AnimalSex.FEMALE
                 )
                 blit_icon(self.screen, name, cx, cy, size)
+                self._draw_hunt_hp_bar(member, cx, cy, size)
 
         # Hawks / owls — directional icons.
         for animal in self.wildlife.animals:
@@ -25231,6 +25696,26 @@ class Game:
         if fill_w > 0:
             fill = pygame.Rect(bx, by, fill_w, bar_h)
             pygame.draw.rect(self.screen, colour, fill, border_radius=2)
+        pygame.draw.rect(self.screen, (70, 70, 78), bg, 1, border_radius=2)
+
+    def _draw_hunt_hp_bar(self, animal, cx: int, cy: int, cell_px: int) -> None:
+        """Red remaining-HP bar above wounded huntable animals."""
+        max_hp = int(getattr(animal, "max_hp", 0) or 0)
+        hp = int(getattr(animal, "hp", 0) or 0)
+        if max_hp <= 0 or hp >= max_hp:
+            return
+        frac = max(0.0, min(1.0, hp / float(max_hp)))
+        # Slightly higher than the green work bar so both can show at once.
+        bar_w = max(10, cell_px // 2)
+        bar_h = max(3, cell_px // 8)
+        bx = cx - bar_w // 2
+        by = cy - max(16, (cell_px * 7) // 8)
+        bg = pygame.Rect(bx, by, bar_w, bar_h)
+        pygame.draw.rect(self.screen, (25, 25, 30), bg, border_radius=2)
+        fill_w = max(0, int(round(bar_w * frac)))
+        if fill_w > 0:
+            fill = pygame.Rect(bx, by, fill_w, bar_h)
+            pygame.draw.rect(self.screen, (200, 55, 50), fill, border_radius=2)
         pygame.draw.rect(self.screen, (70, 70, 78), bg, 1, border_radius=2)
 
     def _draw_villagers(self) -> None:

@@ -23,6 +23,7 @@ class FieldFenceWorkTests(unittest.TestCase):
         game._harvest_farm_herb = Mock(return_value=True)
         game._finish_player_work = Mock()
         game._player_work_construction = Mock()
+        game._player_ripe_crop_near = Mock(return_value=None)
 
         game._interact_at_player()
 
@@ -30,6 +31,28 @@ class FieldFenceWorkTests(unittest.TestCase):
             4, 5, game.player.inventory, status=True
         )
         game._player_work_construction.assert_not_called()
+
+    def test_player_harvests_adjacent_ripe_crop_before_ploughing_field(self) -> None:
+        game = Game.__new__(Game)
+        game.control_mode = "dog"
+        game.sim_speed = 1
+        game.player = Player(5, 5)
+        game.player.world_x = 5.5
+        game.player.world_y = 5.5
+        bare = Mock(feature=FeatureType.NONE)
+        game.world = Mock()
+        game.world.get_cell.return_value = bare
+        game.world.crop_herb_ready.side_effect = lambda cx, cy: (cx, cy) == (4, 5)
+        game._construction_at = Mock(return_value=None)
+        game._field_building_at = Mock(return_value=Mock())
+        game._player_tend_field_cell = Mock(return_value=True)
+        game._player_begin_harvest_crop = Mock()
+        game._player_ripe_crop_near = Game._player_ripe_crop_near.__get__(game, Game)
+
+        game._interact_at_player()
+
+        game._player_begin_harvest_crop.assert_called_once_with(4, 5)
+        game._player_tend_field_cell.assert_not_called()
 
     def test_builder_movement_target_tracks_claimed_fence_site(self) -> None:
         game = Game.__new__(Game)

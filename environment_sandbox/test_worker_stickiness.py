@@ -133,6 +133,23 @@ class WorkerStickinessTests(unittest.TestCase):
 
         self.assertEqual(orin.target, hunter.center_cell())
 
+    def test_fish_post_counts_as_active_workplace_action(self) -> None:
+        fisher = Villager(id=2, x=5, y=5)
+        fisher.fish_post_pos = (9, 5)
+        self.assertTrue(Game._villager_has_active_action(fisher))
+
+    def test_fisher_does_not_deliver_while_small_fish_still_fit(self) -> None:
+        game = Game.__new__(Game)
+        hut = Building(id=11, kind=BuildingKind.FISHER, x=5, y=5)
+        apply_building_storage(hut)
+        fisher = Villager(id=2, x=5, y=5)
+        fisher.inventory.fish = 1
+        # Leave a few free slots — max fish yield is >1, but small catches still fit.
+        fisher.inventory.capacity = fisher.inventory.cargo_total + 2
+        self.assertFalse(game._gather_cargo_needs_delivery(fisher, hut))
+        fisher.inventory.capacity = fisher.inventory.cargo_total
+        self.assertTrue(game._gather_cargo_needs_delivery(fisher, hut))
+
 
 if __name__ == "__main__":
     unittest.main()
