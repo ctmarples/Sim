@@ -68,6 +68,11 @@ class OverlayMode(Enum):
     HYDROLOGICAL_POSITION = auto()
     MOISTURE_BASELINE = auto()
     LANDSCAPE_COMBINED = auto()
+    LF_PLANT_FERTILITY = auto()
+    LF_PLANT_TEMPERATURE = auto()
+    LF_PLANT_DISTURBANCE = auto()
+    SPECIES_SUITABILITY = auto()
+    DOMINANT_SPECIES = auto()
 
 
 OVERLAY_LABELS: dict[OverlayMode, str] = {
@@ -88,8 +93,13 @@ OVERLAY_LABELS: dict[OverlayMode, str] = {
     OverlayMode.FIELD_YIELD: "Field yield",
     OverlayMode.FERTILITY_POTENTIAL: "Fertility potential",
     OverlayMode.HYDROLOGICAL_POSITION: "Hydrological position",
-    OverlayMode.MOISTURE_BASELINE: "Moisture baseline",
+    OverlayMode.MOISTURE_BASELINE: "Soil moisture (preview)",
     OverlayMode.LANDSCAPE_COMBINED: "Landscape combined",
+    OverlayMode.LF_PLANT_FERTILITY: "Fertility (preview)",
+    OverlayMode.LF_PLANT_TEMPERATURE: "Temperature (preview)",
+    OverlayMode.LF_PLANT_DISTURBANCE: "Disturbance (preview)",
+    OverlayMode.SPECIES_SUITABILITY: "Species suitability",
+    OverlayMode.DOMINANT_SPECIES: "Dominant species",
 }
 
 LANDSCAPE_FIELD_OVERLAYS = frozenset(
@@ -98,6 +108,11 @@ LANDSCAPE_FIELD_OVERLAYS = frozenset(
         OverlayMode.HYDROLOGICAL_POSITION,
         OverlayMode.MOISTURE_BASELINE,
         OverlayMode.LANDSCAPE_COMBINED,
+        OverlayMode.LF_PLANT_FERTILITY,
+        OverlayMode.LF_PLANT_TEMPERATURE,
+        OverlayMode.LF_PLANT_DISTURBANCE,
+        OverlayMode.SPECIES_SUITABILITY,
+        OverlayMode.DOMINANT_SPECIES,
     }
 )
 
@@ -145,6 +160,16 @@ def overlay_help(mode: OverlayMode) -> str:
             "Experimental moisture tendency before daily weather dynamics.",
         OverlayMode.LANDSCAPE_COMBINED:
             "RGB blend of texture / fertility potential / hydrology (prototype).",
+        OverlayMode.LF_PLANT_FERTILITY:
+            "Plant-facing fertility preview (= fertility potential).",
+        OverlayMode.LF_PLANT_TEMPERATURE:
+            "Plant-facing temperature preview (niche-normalised).",
+        OverlayMode.LF_PLANT_DISTURBANCE:
+            "Plant-facing disturbance preview (virgin baseline).",
+        OverlayMode.SPECIES_SUITABILITY:
+            "Selected wild species suitability from real niche scoring.",
+        OverlayMode.DOMINANT_SPECIES:
+            "Highest-suitability wild species per tile (diagnostic).",
     }
     return help_text.get(mode, "")
 
@@ -174,6 +199,11 @@ def format_overlay_value(mode: OverlayMode, value: float) -> str:
         OverlayMode.HYDROLOGICAL_POSITION,
         OverlayMode.MOISTURE_BASELINE,
         OverlayMode.LANDSCAPE_COMBINED,
+        OverlayMode.LF_PLANT_FERTILITY,
+        OverlayMode.LF_PLANT_TEMPERATURE,
+        OverlayMode.LF_PLANT_DISTURBANCE,
+        OverlayMode.SPECIES_SUITABILITY,
+        OverlayMode.DOMINANT_SPECIES,
     ):
         return f"{value * 100:.0f}%"
     # Most live overlays are 0–1 fractions mapped to the colour ramp.
@@ -536,6 +566,20 @@ def overlay_colour(mode: OverlayMode, value: float) -> Colour:
         # value is unused; colouring is overridden when drawing combined grids.
         t = max(0.0, min(1.0, float(value)))
         return lerp_colour((80, 80, 80), (200, 200, 180), t)
+    if mode == OverlayMode.LF_PLANT_FERTILITY:
+        return lerp_colour(COLOUR_FERTILITY_LOW, COLOUR_FERTILITY_HIGH, value)
+    if mode == OverlayMode.LF_PLANT_TEMPERATURE:
+        t = max(0.0, min(1.0, float(value)))
+        if t < 0.5:
+            return lerp_colour((35, 85, 205), (225, 225, 205), t * 2.0)
+        return lerp_colour((225, 225, 205), (220, 55, 35), (t - 0.5) * 2.0)
+    if mode == OverlayMode.LF_PLANT_DISTURBANCE:
+        return lerp_colour(COLOUR_DISTURBANCE_LOW, COLOUR_DISTURBANCE_HIGH, value)
+    if mode == OverlayMode.SPECIES_SUITABILITY:
+        return lerp_colour((40, 40, 45), (70, 210, 90), value)
+    if mode == OverlayMode.DOMINANT_SPECIES:
+        t = max(0.0, min(1.0, float(value)))
+        return lerp_colour((50, 50, 55), (180, 140, 220), t)
     if mode == OverlayMode.FIELD_YIELD:
         # Green good → red poor (value already normalised high=good)
         return lerp_colour(COLOUR_DISTURBANCE_HIGH, COLOUR_FERTILITY_HIGH, value)
@@ -558,6 +602,11 @@ def build_overlay_grid(world: World, mode: OverlayMode) -> list[list[float]]:
         OverlayMode.HYDROLOGICAL_POSITION,
         OverlayMode.MOISTURE_BASELINE,
         OverlayMode.LANDSCAPE_COMBINED,
+        OverlayMode.LF_PLANT_FERTILITY,
+        OverlayMode.LF_PLANT_TEMPERATURE,
+        OverlayMode.LF_PLANT_DISTURBANCE,
+        OverlayMode.SPECIES_SUITABILITY,
+        OverlayMode.DOMINANT_SPECIES,
     ):
         return [[0.0] * world.cols for _ in range(world.rows)]
     return [

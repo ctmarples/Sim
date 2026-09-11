@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, replace
 
 import pygame
 
-from seasons import DAYS_PER_SEASON, YEAR_DAYS
+from seasons import HALF_SEASON_NAMES, half_season_index
 from world import TerrainType
 
 Colour = tuple[int, int, int]
@@ -32,16 +32,7 @@ DENSITY_KEYS: tuple[str, ...] = (
     "cluster_heavy",
 )
 
-_PERIOD_NAMES: tuple[str, ...] = (
-    "spring early",
-    "spring late",
-    "summer early",
-    "summer late",
-    "autumn early",
-    "autumn late",
-    "winter early",
-    "winter late",
-)
+_PERIOD_NAMES: tuple[str, ...] = HALF_SEASON_NAMES
 
 # Mask tags → terrain types (recipes can target any land cover).
 MASK_TYPES: dict[str, frozenset[TerrainType]] = {
@@ -118,10 +109,8 @@ def clear_fleck_cache() -> None:
 
 
 def period_for_day(calendar_day: int) -> int:
-    d = int(calendar_day) % YEAR_DAYS
-    season_i = d // DAYS_PER_SEASON
-    half = 0 if (d % DAYS_PER_SEASON) < (DAYS_PER_SEASON // 2) else 1
-    return season_i * 2 + half
+    """Half-season index 0..7 — shared calendar with env sampling / flora activity."""
+    return half_season_index(calendar_day)
 
 
 def period_name(period: int) -> str:

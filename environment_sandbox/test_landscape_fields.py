@@ -78,6 +78,29 @@ class LandscapeFieldsTests(unittest.TestCase):
             world.cells[3][3].soil_texture, state.soil_texture[3][3], places=5
         )
 
+    def test_species_suitability_deterministic_and_differentiated(self):
+        from wild_species import WILD_BY_KEY
+        from landscape_fields import suitability_grid
+
+        world, state = self._generate(4201)
+        yarrow = suitability_grid(world, state, WILD_BY_KEY["yarrow"])
+        meadow = suitability_grid(world, state, WILD_BY_KEY["meadowsweet"])
+        world2, state2 = self._generate(4201)
+        self.assertEqual(yarrow, suitability_grid(world2, state2, WILD_BY_KEY["yarrow"]))
+        y_hi = sum(1 for row in yarrow for v in row if v >= 0.5)
+        m_hi = sum(1 for row in meadow for v in row if v >= 0.5)
+        overlap = sum(
+            1
+            for y, row in enumerate(yarrow)
+            for x, v in enumerate(row)
+            if v >= 0.5 and meadow[y][x] >= 0.5
+        )
+        self.assertGreater(y_hi, 50)
+        self.assertGreater(m_hi, 0)
+        # Specialists should mostly diverge; allow a little transitional overlap
+        # on full-size maps with mixed cover.
+        self.assertLess(overlap / max(1, min(y_hi, m_hi)), 0.35)
+
 
 if __name__ == "__main__":
     unittest.main()

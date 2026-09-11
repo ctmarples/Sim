@@ -357,7 +357,6 @@ class UI:
         *,
         map_edit_tool: MapEditTool,
         map_edit_terrain: TerrainType,
-        map_edit_ecology_terrain: TerrainType,
         map_edit_tree_label: str,
         map_edit_crop_label: str,
         map_edit_building_kind: BuildingKind,
@@ -445,6 +444,11 @@ class UI:
                 OverlayMode.HYDROLOGICAL_POSITION,
                 OverlayMode.MOISTURE_BASELINE,
                 OverlayMode.LANDSCAPE_COMBINED,
+                OverlayMode.LF_PLANT_FERTILITY,
+                OverlayMode.LF_PLANT_TEMPERATURE,
+                OverlayMode.LF_PLANT_DISTURBANCE,
+                OverlayMode.SPECIES_SUITABILITY,
+                OverlayMode.DOMINANT_SPECIES,
             )
         )
         col_w = (PANEL_WIDTH - 28) // 2
@@ -559,82 +563,17 @@ class UI:
                 row_y += btn_h + gap
             y = row_y + 4
 
-        y = _blit_text(content, self.font_title, "Terrain ecology bands", (x, y))
+        y = _blit_text(content, self.font_title, "Environment", (x, y))
         y = _blit_text(
             content, self.font_small,
-            "Centre ± spread · then Repopulate",
+            "Rebuild fertility, moisture, temp, rain from terrain",
             (x, y), COLOUR_TEXT_DIM,
         )
-        from developer_tools.terrain_editor import ecology_bands_for, ecology_terrain_keys
-        from world import TerrainType as _TerrainType
-
-        eco_keys = ecology_terrain_keys()
-        col_w = (PANEL_WIDTH - 28) // 2
-        col = 0
-        row_y = y
-        for key in eco_keys:
-            try:
-                terrain = _TerrainType[key]
-            except KeyError:
-                continue
-            label = TERRAIN_EDIT_LABELS.get(terrain, key.replace("_", " ").title())
-            tx = x + col * (col_w + 4)
-            self._draw_labelled_tool_button(
-                content, tx, row_y, col_w, btn_h, label,
-                f"edit_ecology_terrain:{key}",
-                f"Edit {label} ecology bands",
-                active=map_edit_ecology_terrain.name == key,
-                local_mouse=local_mouse,
-            )
-            col += 1
-            if col >= 2:
-                col = 0
-                row_y += btn_h + gap
-        if col != 0:
-            row_y += btn_h + gap
-        y = row_y + 4
-
-        eco = ecology_bands_for(map_edit_ecology_terrain)
-        eco_label = TERRAIN_EDIT_LABELS.get(
-            map_edit_ecology_terrain, map_edit_ecology_terrain.name.title()
-        )
-        y = _blit_text(content, self.font_small, eco_label, (x, y), COLOUR_TEXT)
-        ecology_rows = (
-            ("soil_moisture", "Moisture", "{:.2f}"),
-            ("fertility", "Fertility", "{:.2f}"),
-            ("temperature_offset_c", "Temp °C", "{:+.1f}"),
-            ("rainfall_multiplier", "Rain ×", "{:.2f}"),
-        )
-        for field, label, fmt in ecology_rows:
-            band = eco[field]
-            y = _blit_text(
-                content, self.font_small,
-                f"{label}  {fmt.format(band['centre'])} ± {fmt.format(band['spread']).lstrip('+')}",
-                (x, y), COLOUR_TEXT,
-            )
-            bx = x
-            for glyph, part, tip in (
-                ("c−", "centre", f"Decrease {label} centre"),
-                ("c+", "centre", f"Increase {label} centre"),
-                ("±−", "spread", f"Decrease {label} spread"),
-                ("±+", "spread", f"Increase {label} spread"),
-            ):
-                direction = "-" if glyph.endswith("−") else "+"
-                self._register_tool_button(
-                    content,
-                    pygame.Rect(bx, y, 34, 22),
-                    glyph,
-                    f"edit_ecology:{field}:{part}:{direction}",
-                    tip,
-                    active=False,
-                    local_mouse=local_mouse,
-                )
-                bx += 38
-            y += 28
+        y += 4
         self._draw_labelled_tool_button(
-            content, x, y, 148, btn_h, "Repopulate layers",
+            content, x, y, 200, btn_h, "Recalculate env layers",
             "edit_ecology_repopulate",
-            "Rebuild fertility, moisture, temperature, and rainfall from terrain bands",
+            "Reset cell fertility and rebuild moisture / temperature / rainfall from current terrain",
             active=False, local_mouse=local_mouse,
         )
         y += btn_h + 8
@@ -1345,7 +1284,6 @@ class UI:
         map_edit_mode: bool = False,
         map_edit_tool: MapEditTool = MapEditTool.HEIGHT_SET,
         map_edit_terrain: TerrainType = TerrainType.GRASS,
-        map_edit_ecology_terrain: TerrainType = TerrainType.GRASS,
         map_edit_tree_label: str = "Mixed",
         map_edit_crop_label: str = "Crop",
         map_edit_building_kind: BuildingKind = BuildingKind.HOME,
@@ -1450,7 +1388,6 @@ class UI:
                 y,
                 map_edit_tool=map_edit_tool,
                 map_edit_terrain=map_edit_terrain,
-                map_edit_ecology_terrain=map_edit_ecology_terrain,
                 map_edit_tree_label=map_edit_tree_label,
                 map_edit_crop_label=map_edit_crop_label,
                 map_edit_building_kind=map_edit_building_kind,

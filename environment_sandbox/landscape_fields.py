@@ -20,14 +20,19 @@ from soil_texture import (
     value_noise_field,
 )
 
+try:
+    from settings import WORLD_COLS, WORLD_ROWS
+except Exception:  # pragma: no cover - headless fallback
+    WORLD_COLS, WORLD_ROWS = 96, 72
+
 if TYPE_CHECKING:
     from world import World
 
 # ---------------------------------------------------------------------------
 # Defaults — broad coherent regions with independent fertility / hydrology.
 # ---------------------------------------------------------------------------
-DEFAULT_WIDTH = 48
-DEFAULT_HEIGHT = 36
+DEFAULT_WIDTH = WORLD_COLS
+DEFAULT_HEIGHT = WORLD_ROWS
 DEFAULT_SEED = 4201
 
 # Soil texture: very broad structure, weak meso, near-zero micro.
@@ -69,13 +74,28 @@ class LandscapeFieldsParams:
 
 @dataclass
 class LandscapeFieldsState:
-    """Experimental grids — not production Cell.fertility / EnvMaps moisture."""
+    """Experimental grids — not production Cell.fertility / EnvMaps moisture.
+
+    Intermediate landscape structure:
+        soil_texture, fertility_potential, hydrological_position
+
+    Plant-facing preview environment (fed to wild_species niche scoring):
+        soil_moisture ← moisture baseline (hydro + texture retention + …)
+        fertility ← fertility_potential (pre-management site quality)
+        temperature ← static niche-normalised preview (not live EnvMaps °C)
+        disturbance ← virgin-map baseline
+    """
 
     params: LandscapeFieldsParams
     soil_texture: list[list[float]] = field(default_factory=list)
     fertility_potential: list[list[float]] = field(default_factory=list)
     hydrological_position: list[list[float]] = field(default_factory=list)
     soil_moisture_baseline: list[list[float]] = field(default_factory=list)
+    # Plant-facing mirrors / previews
+    soil_moisture: list[list[float]] = field(default_factory=list)
+    fertility: list[list[float]] = field(default_factory=list)
+    temperature: list[list[float]] = field(default_factory=list)
+    disturbance: list[list[float]] = field(default_factory=list)
     elevation: list[list[float]] = field(default_factory=list)
     water_mask: list[list[bool]] = field(default_factory=list)
 
@@ -86,9 +106,22 @@ class LandscapeFieldsState:
             "soil_texture": round(self.soil_texture[y][x], 2),
             "fertility_potential": round(self.fertility_potential[y][x], 2),
             "hydrological_position": round(self.hydrological_position[y][x], 2),
-            "soil_moisture_baseline": round(self.soil_moisture_baseline[y][x], 2),
+            "soil_moisture": round(self.soil_moisture[y][x], 2),
+            "fertility": round(self.fertility[y][x], 2),
+            "temperature": round(self.temperature[y][x], 2),
+            "disturbance": round(self.disturbance[y][x], 2),
             "elevation": round(self.elevation[y][x], 2),
             "water": bool(self.water_mask[y][x]),
+        }
+
+    def plant_env(self, x: int, y: int) -> dict[str, float]:
+        """Values consumed by ``species_environment_suitability`` (temp already 0..1)."""
+        return {
+            "temperature": float(self.temperature[y][x]),
+            "soil_moisture": float(self.soil_moisture[y][x]),
+            "fertility": float(self.fertility[y][x]),
+            "disturbance": float(self.disturbance[y][x]),
+            "soil_texture": float(self.soil_texture[y][x]),
         }
 
 
@@ -99,106 +132,29 @@ def _spacing_from_scale(short: int, scale: float, *, lo: int, hi: int) -> int:
 
 
 def build_landscape_fields_map(params: LandscapeFieldsParams):
-    """Deterministic test landform with lake + elevation for hydrology tests."""
-    from random_map_generator import GeneratedMap, MapOptions
+    """Full-size production-style map (usual terrain mix) for the lab.
 
-    w = max(16, min(96, int(params.width)))
-    h = max(12, min(72, int(params.height)))
-    seed = int(params.seed)
-    rng = random.Random(seed ^ 0x14D05C4E)
+    Uses ``generate_map`` so cover includes forest, grass, meadow, soil, rock,
+    water, river, and riparian — not a miniature single-basin toy landform.
+    Experimental landscape fields are layered afterward from water/elevation.
+    """
+    from random_map_generator import MapOptions, generate_map
 
-    short = max(8, min(w, h))
-    elev_noise = value_noise_field(
-        w, h, random.Random(seed ^ 0xE1E70001), spacing=max(8, short // 3), persistence=0.52
-    )
-    ridge = value_noise_field(
-        w, h, random.Random(seed ^ 0x51D60002), spacing=max(6, short // 5), persistence=0.48
-    )
-
-    # Offset lake centre slightly per seed so hydrology varies.
-    lake_cx = w * (0.42 + 0.16 * ((seed * 0.618) % 1.0))
-    lake_cy = h * (0.45 + 0.14 * (((seed * 1.414) % 1.0)))
-    lake_rx = max(3.5, w * 0.11)
-    lake_ry = max(2.8, h * 0.10)
-
-    elevation = [[0.0] * w for _ in range(h)]
-    terrain = [["grass"] * w for _ in range(h)]
-    for y in range(h):
-        for x in range(w):
-            nx = (x - (w - 1) * 0.5) / max(1.0, w * 0.5)
-            ny = (y - (h - 1) * 0.5) / max(1.0, h * 0.5)
-            rim = math.sqrt(nx * nx + ny * ny)  # 0 centre → ~1 corners
-            # Bowl: higher at edges; noise breaks radial symmetry.
-            elev = (
-                0.28 * elev_noise[y][x]
-                + 0.18 * ridge[y][x]
-                + 0.54 * min(1.0, rim * 0.92)
-            )
-            # Extra local depression around the lake focus.
-            dx = (x - lake_cx) / lake_rx
-            dy = (y - lake_cy) / lake_ry
-            basin = math.exp(-0.5 * (dx * dx + dy * dy))
-            elev -= 0.22 * basin
-            elevation[y][x] = max(0.02, min(0.98, elev))
-
-    # Water from absolute lows + basin core.
-    sorted_elev = sorted(v for row in elevation for v in row)
-    water_cut = sorted_elev[max(0, int(len(sorted_elev) * 0.07))]
-    for y in range(h):
-        for x in range(w):
-            dx = (x - lake_cx) / lake_rx
-            dy = (y - lake_cy) / lake_ry
-            in_core = (dx * dx + dy * dy) <= 1.0
-            if elevation[y][x] <= water_cut or in_core and elevation[y][x] < water_cut + 0.06:
-                terrain[y][x] = "water"
-                elevation[y][x] = min(elevation[y][x], water_cut * 0.85)
-
-    # Soft riparian ring + meadow/soil bands from elevation (cover only).
-    for y in range(h):
-        for x in range(w):
-            if terrain[y][x] == "water":
-                continue
-            near_water = any(
-                0 <= nx < w
-                and 0 <= ny < h
-                and terrain[ny][nx] == "water"
-                for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1),
-                               (x - 1, y - 1), (x + 1, y - 1), (x - 1, y + 1), (x + 1, y + 1))
-            )
-            if near_water:
-                terrain[y][x] = "riparian"
-            elif elevation[y][x] > 0.72 and rng.random() < 0.35:
-                terrain[y][x] = "rock"
-            elif elevation[y][x] > 0.58:
-                terrain[y][x] = "meadow"
-            elif elevation[y][x] < 0.38:
-                terrain[y][x] = "soil"
-            else:
-                terrain[y][x] = "grass"
-
-    start = (max(1, w // 2), max(1, min(h - 2, int(lake_cy) + int(lake_ry) + 3)))
-    if terrain[start[1]][start[0]] == "water":
-        start = (start[0], min(h - 2, start[1] + 2))
-    terrain[start[1]][start[0]] = "grass"
-
-    # Map generator elevation is roughly 0..1-ish centres; apply_to_world ×80.
+    w = max(16, min(256, int(params.width) or DEFAULT_WIDTH))
+    h = max(12, min(256, int(params.height) or DEFAULT_HEIGHT))
     options = MapOptions(
         width=w,
         height=h,
-        seed=seed,
+        seed=int(params.seed),
         composition="valley",
         climate="temperate",
         temperature=0.5,
         rainfall=0.55,
-        roughness=0.3,
+        roughness=0.45,
         generate_lake=True,
-        generate_river=False,
+        generate_river=True,
     ).normalized()
-    moisture = [
-        [0.9 if terrain[y][x] == "water" else 0.55 for x in range(w)]
-        for y in range(h)
-    ]
-    return GeneratedMap(options, terrain, elevation, moisture, start)
+    return generate_map(options)
 
 
 def generate_landscape_fields(
@@ -357,12 +313,52 @@ def generate_landscape_fields(
         for y in range(rows)
     ]
 
+    # --- 5. Plant-facing previews (explicit derivations; not live EnvMaps) ---
+    # Fertility preview := fertility_potential (pre-management site quality).
+    plant_fertility = [row[:] for row in fertility]
+    # Moisture preview := moisture baseline (already hydro + texture + …).
+    plant_moisture = [row[:] for row in moisture]
+
+    # Temperature: niche-normalised 0..1 preview. Warm open rises, cooler wet hollows.
+    # Not production temperature_grid / seasonal °C.
+    temp_noise = value_noise_field(
+        cols, rows, random.Random(seed ^ 0x7E400005), spacing=max(6, short // 4), persistence=0.45
+    )
+    temperature = [[0.0] * cols for _ in range(rows)]
+    for y in range(rows):
+        for x in range(cols):
+            if water_mask[y][x]:
+                temperature[y][x] = 0.42  # cool water bodies
+                continue
+            temperature[y][x] = clamp01(
+                0.50
+                + (1.0 - elev_norm[y][x]) * 0.10
+                - hydrological[y][x] * 0.12
+                + (temp_noise[y][x] - 0.5) * 0.08
+            )
+
+    # Disturbance: low virgin baseline with mild spatial noise (no traffic yet).
+    dist_noise = value_noise_field(
+        cols, rows, random.Random(seed ^ 0xD1570006), spacing=max(4, short // 6), persistence=0.40
+    )
+    disturbance = [[0.0] * cols for _ in range(rows)]
+    for y in range(rows):
+        for x in range(cols):
+            if water_mask[y][x]:
+                disturbance[y][x] = 0.0
+                continue
+            disturbance[y][x] = clamp01(0.08 + (dist_noise[y][x] - 0.5) * 0.10)
+
     return LandscapeFieldsState(
         params=p,
         soil_texture=soil_texture,
         fertility_potential=fertility,
         hydrological_position=hydrological,
         soil_moisture_baseline=moisture,
+        soil_moisture=plant_moisture,
+        fertility=plant_fertility,
+        temperature=temperature,
+        disturbance=disturbance,
         elevation=elev_norm,
         water_mask=water_mask,
     )
@@ -433,3 +429,315 @@ def summarise_fields(state: LandscapeFieldsState) -> dict[str, Any]:
         "clayey_share": band_share(state.soil_texture, 0.65, 1.01),
         "correlations": corr,
     }
+
+
+# ---------------------------------------------------------------------------
+# Ecology diagnostics — reuse wild_species niche scoring (no parallel model).
+# ---------------------------------------------------------------------------
+
+DOMINANT_SUITABILITY_FLOOR = 0.25
+DEFAULT_PATCH_THRESHOLD = 0.50
+
+
+@dataclass
+class TileNicheResult:
+    """One tile × species evaluation via production niche code + hard site filters."""
+
+    suitability: Any  # PlantSuitability
+    display_combined: float
+    terrain_ok: bool
+    establishment_ok: bool
+    fail_reasons: tuple[str, ...]
+    env: dict[str, float]
+    spatial_combined: float = 0.0
+    activity: float = 1.0
+    current_combined: float = 0.0
+    # Fallen wood uses appearance seasonality rather than biological activity.
+    temporal_label: str = "Seasonal activity"
+
+
+def hard_site_failure_reason(world: "World", x: int, y: int, species) -> str | None:
+    """Explain World._species_can_occupy failure, or None if the site is allowed."""
+    from world import FeatureType, TerrainType
+
+    cell = world.get_cell(x, y)
+    if cell is None:
+        return "Terrain: invalid"
+    if isinstance(species.terrains, str):
+        allowed = {species.terrains}
+    else:
+        allowed = set(species.terrains)
+    if cell.terrain.name not in allowed:
+        return "Terrain: invalid"
+    near_name = getattr(species, "near_feature", None)
+    if near_name:
+        try:
+            required = FeatureType[near_name]
+        except KeyError:
+            return f"Near-feature: unknown {near_name}"
+        if not any(
+            (nx, ny) != (x, y) and world.cells[ny][nx].feature == required
+            for ny, nx in world.neighbourhood(x, y, radius=1)
+        ):
+            return f"Near-feature: need {near_name}"
+    edge_names = getattr(species, "edge_terrains", ()) or ()
+    if isinstance(edge_names, str):
+        edge_names = (edge_names,)
+    if edge_names:
+        edge = {TerrainType[n] for n in edge_names if n in TerrainType.__members__}
+        if edge and not any(
+            (nx, ny) != (x, y) and world.cells[ny][nx].terrain in edge
+            for ny, nx in world.neighbourhood(x, y, radius=1)
+        ):
+            return "Edge terrain: required neighbour missing"
+    if not world._species_can_occupy(x, y, species):
+        return "Terrain: invalid"
+    return None
+
+
+def establishment_failure_reasons(species, suitability) -> tuple[str, ...]:
+    """Hard establishment gates from wild_species (temp / moisture / texture)."""
+    from wild_species import MIN_NICHE_RESPONSE_FOR_ESTABLISHMENT
+
+    reasons: list[str] = []
+    pairs = (
+        ("Temperature", species.temperature_niche, suitability.temperature),
+        ("Moisture", species.moisture_niche, suitability.moisture),
+        ("Texture", species.texture_niche, suitability.soil_texture),
+    )
+    for label, niche, score in pairs:
+        if niche is not None and score < MIN_NICHE_RESPONSE_FOR_ESTABLISHMENT:
+            reasons.append(f"{label} establishment threshold failed")
+    return tuple(reasons)
+
+
+def evaluate_species_on_landscape(
+    world: "World",
+    state: LandscapeFieldsState,
+    x: int,
+    y: int,
+    species,
+    *,
+    day: float = 42.0,
+    suitability_mode: str = "spatial",
+) -> TileNicheResult:
+    """Score one tile using experimental plant-facing env + real niche evaluator.
+
+    ``suitability_mode``:
+      - ``spatial`` — habitat only (ignore season)
+      - ``current`` — spatial × activity_at_day
+    """
+    from wild_species import (
+        activity_at_day,
+        environment_allows_establishment,
+        species_environment_suitability,
+    )
+
+    env = state.plant_env(x, y)
+    suitability = species_environment_suitability(
+        species,
+        temperature=env["temperature"],
+        soil_moisture=env["soil_moisture"],
+        fertility=env["fertility"],
+        disturbance=env["disturbance"],
+        soil_texture=env["soil_texture"],
+    )
+    site_fail = hard_site_failure_reason(world, x, y, species)
+    terrain_ok = site_fail is None
+    estab_reasons = establishment_failure_reasons(species, suitability)
+    establishment_ok = environment_allows_establishment(species, suitability)
+    fails: list[str] = []
+    if site_fail:
+        fails.append(site_fail)
+    fails.extend(estab_reasons)
+    spatial = float(suitability.combined) if terrain_ok and establishment_ok else 0.0
+    activity = float(activity_at_day(species, day))
+    current = spatial * activity
+    display = current if suitability_mode == "current" else spatial
+    temporal_label = (
+        "Appearance seasonality"
+        if getattr(species, "key", "") == "wood_bush"
+        else "Seasonal activity"
+    )
+    return TileNicheResult(
+        suitability=suitability,
+        display_combined=display,
+        terrain_ok=terrain_ok,
+        establishment_ok=establishment_ok,
+        fail_reasons=tuple(fails),
+        env=env,
+        spatial_combined=spatial,
+        activity=activity,
+        current_combined=current,
+        temporal_label=temporal_label,
+    )
+
+
+def suitability_grid(
+    world: "World",
+    state: LandscapeFieldsState,
+    species,
+    *,
+    day: float = 42.0,
+    suitability_mode: str = "spatial",
+) -> list[list[float]]:
+    """Map-wide display suitability (0 where hard-invalid)."""
+    rows, cols = world.rows, world.cols
+    out = [[0.0] * cols for _ in range(rows)]
+    for y in range(rows):
+        for x in range(cols):
+            out[y][x] = evaluate_species_on_landscape(
+                world,
+                state,
+                x,
+                y,
+                species,
+                day=day,
+                suitability_mode=suitability_mode,
+            ).display_combined
+    return out
+
+
+def suitability_summary(grid: list[list[float]], water_mask: list[list[bool]]) -> dict[str, float | int]:
+    vals = [
+        grid[y][x]
+        for y, row in enumerate(grid)
+        for x, _ in enumerate(row)
+        if not water_mask[y][x]
+    ]
+    if not vals:
+        return {
+            "mean": 0.0, "max": 0.0,
+            "pct_gt_025": 0.0, "pct_gt_050": 0.0, "pct_gt_075": 0.0,
+            "n": 0,
+        }
+    n = len(vals)
+    return {
+        "mean": sum(vals) / n,
+        "max": max(vals),
+        "pct_gt_025": sum(1 for v in vals if v > 0.25) / n,
+        "pct_gt_050": sum(1 for v in vals if v > 0.50) / n,
+        "pct_gt_075": sum(1 for v in vals if v > 0.75) / n,
+        "n": n,
+    }
+
+
+def high_suitability_patches(
+    world: "World",
+    grid: list[list[float]],
+    *,
+    threshold: float = DEFAULT_PATCH_THRESHOLD,
+) -> dict[str, Any]:
+    """Connected components where suitability >= threshold."""
+    cells = {
+        (x, y)
+        for y, row in enumerate(grid)
+        for x, value in enumerate(row)
+        if value >= threshold
+    }
+    patches = world._connected_patches(cells) if cells else []
+    patches.sort(key=len, reverse=True)
+    centres = []
+    for patch in patches[:8]:
+        cx = sum(p[0] for p in patch) / len(patch)
+        cy = sum(p[1] for p in patch) / len(patch)
+        centres.append((round(cx, 1), round(cy, 1), len(patch)))
+    return {
+        "count": len(patches),
+        "largest": len(patches[0]) if patches else 0,
+        "centres": centres,
+    }
+
+
+def dominant_species_maps(
+    world: "World",
+    state: LandscapeFieldsState,
+    species_list: list,
+    *,
+    floor: float = DOMINANT_SUITABILITY_FLOOR,
+    day: float = 42.0,
+    suitability_mode: str = "spatial",
+) -> tuple[list[list[float]], list[list[str | None]], dict[str, tuple[int, int, int]]]:
+    """Per-cell winner among catalogue species; categorical colour table."""
+    rows, cols = world.rows, world.cols
+    score_grid = [[0.0] * cols for _ in range(rows)]
+    key_grid: list[list[str | None]] = [[None] * cols for _ in range(rows)]
+    colours: dict[str, tuple[int, int, int]] = {}
+    for species in species_list:
+        colours[species.key] = _stable_species_colour(species.key)
+    for y in range(rows):
+        for x in range(cols):
+            if state.water_mask[y][x]:
+                continue
+            best_key = None
+            best = floor
+            for species in species_list:
+                result = evaluate_species_on_landscape(
+                    world,
+                    state,
+                    x,
+                    y,
+                    species,
+                    day=day,
+                    suitability_mode=suitability_mode,
+                )
+                if result.display_combined > best:
+                    best = result.display_combined
+                    best_key = species.key
+            if best_key is not None:
+                key_grid[y][x] = best_key
+                # Encode hue index as 0..1 for overlay fallback; colour drawn categorically.
+                keys = list(colours.keys())
+                score_grid[y][x] = (keys.index(best_key) + 0.5) / max(1, len(keys))
+    return score_grid, key_grid, colours
+
+
+def _stable_species_colour(key: str) -> tuple[int, int, int]:
+    """Deterministic saturated colour from species key."""
+    h = 0
+    for ch in key:
+        h = (h * 131 + ord(ch)) & 0xFFFFFFFF
+    hue = (h % 360) / 360.0
+    sat, val = 0.72, 0.88
+    return _hsv_to_rgb(hue, sat, val)
+
+
+def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
+    i = int(h * 6.0) % 6
+    f = h * 6.0 - int(h * 6.0)
+    p = v * (1.0 - s)
+    q = v * (1.0 - f * s)
+    t = v * (1.0 - (1.0 - f) * s)
+    if i == 0:
+        r, g, b = v, t, p
+    elif i == 1:
+        r, g, b = q, v, p
+    elif i == 2:
+        r, g, b = p, v, t
+    elif i == 3:
+        r, g, b = p, q, v
+    elif i == 4:
+        r, g, b = t, p, v
+    else:
+        r, g, b = v, p, q
+    return int(r * 255), int(g * 255), int(b * 255)
+
+
+def niche_bearing_species():
+    """Wild flora that define at least one environmental niche axis."""
+    from wild_species import WILD_SPECIES
+
+    return [
+        s
+        for s in WILD_SPECIES
+        if any(
+            (
+                s.temperature_niche,
+                s.moisture_niche,
+                s.fertility_niche,
+                s.disturbance_niche,
+                s.texture_niche,
+            )
+        )
+    ]
+

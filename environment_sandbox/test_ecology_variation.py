@@ -80,6 +80,14 @@ class MoistureVariationTests(unittest.TestCase):
         band = [grid[1][x] for x in range(4, 11)]
         self.assertGreater(max(band) - min(band), 0.05)
 
+    def test_moisture_spread_defaults_are_modest(self):
+        from developer_tools.terrain_editor import terrain_band
+
+        _c, grass_spread = terrain_band(TerrainType.GRASS, "soil_moisture")
+        _c, soil_spread = terrain_band(TerrainType.SOIL, "soil_moisture")
+        self.assertLessEqual(grass_spread, 0.15)
+        self.assertLessEqual(soil_spread, 0.15)
+
     def test_rain_gain_is_stronger(self):
         self.assertGreaterEqual(RAIN_TO_MOISTURE_GAIN, 0.5)
         moisture = [[0.3] * self.world.cols for _ in range(self.world.rows)]

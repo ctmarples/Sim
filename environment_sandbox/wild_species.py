@@ -17,7 +17,7 @@ autumn 56–84, winter 84–112). Spawn envelope = rise×(1−fall) × ``spawn_p
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 Colour = tuple[int, int, int]
@@ -137,6 +137,9 @@ class WildSpeciesDef:
     disturbance_niche: NicheRange | None = None
     # Optional sand(0)→clay(1) preference; None = unconstrained (legacy behaviour).
     texture_niche: NicheRange | None = None
+    # Eight half-season activity weights (0..1). None = fully active all year.
+    # Temporal only — never mixed into spatial niche scoring / despawn of persistents.
+    activity_profile: tuple[float, ...] | None = None
     ecology_tags: tuple[str, ...] = ()
 
 
@@ -163,6 +166,20 @@ _WC_PEAK = 0.045
 _WC_PATCH = (1, 4)
 
 
+def normalize_activity_profile(
+    profile: tuple[float, ...] | list[float] | None,
+) -> tuple[float, ...] | None:
+    """Validate an 8-value activity profile; return None for full-year activity."""
+    if profile is None:
+        return None
+    values = tuple(float(v) for v in profile)
+    if len(values) != 8:
+        raise ValueError(f"activity_profile must have 8 values, got {len(values)}")
+    if any(v < 0.0 or v > 1.0 for v in values):
+        raise ValueError("activity_profile values must be in [0, 1]")
+    return values
+
+
 def _wild_crop(
     key: str,
     label: str,
@@ -170,6 +187,7 @@ def _wild_crop(
     niches: tuple[tuple[float, float, float, float], ...],
     *,
     texture_niche: NicheRange | None = None,
+    activity_profile: tuple[float, ...] | None = None,
 ) -> WildSpeciesDef:
     return WildSpeciesDef(
         key=key,
@@ -196,6 +214,7 @@ def _wild_crop(
         fertility_niche=NicheRange(*niches[2]),
         disturbance_niche=NicheRange(*niches[3]),
         texture_niche=texture_niche,
+        activity_profile=activity_profile,
         ecology_tags=("feral_crop", "grazer_forage"),
     )
 
@@ -398,10 +417,13 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
         seed_near_feature="TREE",
         seed_near_chance=0.03,
         spawn_peak=0.01,
+        # Envelope kept wide enough that ``activity_profile`` can peak in
+        # autumn-late / winter-early; activity shapes appearance within it.
         spawn_rise=(54.0, 62.0),
-        spawn_fall=(78.0, 84.0),
+        spawn_fall=(98.0, 108.0),
         near_feature="TREE",
-        clear_from_day=84.0,
+        # Lifetime handled by growth_ticks (one year); do not seasonally wipe.
+        clear_from_day=-1.0,
         counts_toward_cap=False,
     ),
     # --- Wild crops by terrain (art from crops.CropDef) --------------------
@@ -423,6 +445,46 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
     WildSpeciesDef(key="yarrow", label="Yarrow", feature="HERB", terrains=("GRASS","MEADOW","SOIL"), icon_base="flower_plant", icon_recolour=(("stem", (75, 130, 60)), ("flower", (240, 240, 225))), spawn_peak=.035, spawn_rise=_WC_RISE, spawn_fall=_WC_FALL, spawn_activity=.55, spread_chance=.01, temperature_niche=NicheRange(.25,.45,.80,.95), moisture_niche=NicheRange(.10,.20,.50,.70), fertility_niche=NicheRange(.05,.20,.55,.75), disturbance_niche=NicheRange(.10,.25,.55,.80), texture_niche=NicheRange(.00,.05,.35,.55), ecology_tags=("flowering","pollinator_food","grazer_forage")),
     WildSpeciesDef(key="meadowsweet", label="Meadowsweet", feature="HERB", terrains=("MEADOW","RIPARIAN"), icon_base="flower_plant", icon_recolour=(("stem", (115, 170, 90)), ("flower", (225, 240, 210))), spawn_peak=.035, spawn_rise=_WC_RISE, spawn_fall=_WC_FALL, spawn_activity=.55, spread_chance=.01, temperature_niche=NicheRange(.15,.30,.70,.85), moisture_niche=NicheRange(.45,.60,.90,1), fertility_niche=NicheRange(.25,.40,.80,.95), disturbance_niche=NicheRange(0,.10,.30,.55), texture_niche=NicheRange(.30,.50,.80,1), ecology_tags=("flowering","pollinator_food","wetland_cover")),
     WildSpeciesDef(key="nettle", label="Nettle", feature="HERB", terrains=("GRASS","MEADOW","SOIL","FOREST_FLOOR"), icon_base="flower_plant", icon_recolour=(("stem", (35, 90, 45)), ("flower", (35, 90, 45))), spawn_peak=.035, spawn_rise=_WC_RISE, spawn_fall=_WC_FALL, spawn_activity=.55, spread_chance=.01, temperature_niche=NicheRange(.20,.40,.75,.90), moisture_niche=NicheRange(.25,.40,.75,.90), fertility_niche=NicheRange(.55,.75,1,1), disturbance_niche=NicheRange(.15,.35,.65,.85), ecology_tags=("flowering","pollinator_food")),
+)
+
+# Half-season activity / appearance profiles (0=spring early … 7=winter late).
+# Temporal only — does not alter spatial niches or despawn persistent plants.
+_ACTIVITY_PROFILES: dict[str, tuple[float, ...]] = {
+    "blackberry": (.35, .70, 1.00, 1.00, .75, .35, .10, .15),
+    "sloe": (.30, .70, 1.00, .90, .65, .30, .10, .15),
+    "elderberry": (.30, .70, 1.00, 1.00, .70, .30, .10, .15),
+    "hazel": (.35, .75, 1.00, .90, .65, .30, .15, .20),
+    "reed": (.25, .65, 1.00, 1.00, .75, .35, .10, .15),
+    "sedge": (.40, .80, 1.00, .90, .60, .30, .15, .20),
+    "cattail": (.20, .60, .95, 1.00, .80, .40, .10, .15),
+    "mushroom": (.05, .10, .05, .15, 1.00, .90, .15, .05),
+    # Fallen wood: seasonal appearance / input rate, not biological activity.
+    "wood_bush": (.20, .10, .10, .15, .55, 1.00, .80, .40),
+    "flax": (.25, .80, 1.00, .75, .20, .05, .00, .05),
+    "hemp": (.15, .60, .95, 1.00, .50, .10, .00, .00),
+    "sage": (.30, .70, 1.00, .95, .55, .20, .10, .15),
+    "mint": (.25, .75, 1.00, .95, .55, .20, .05, .10),
+    "wheat": (.40, .80, 1.00, .85, .25, .10, .05, .15),
+    "rye": (.60, .90, 1.00, .70, .30, .40, .35, .50),
+    "barley": (.45, .90, 1.00, .70, .20, .05, .00, .10),
+    "peas": (.60, 1.00, .85, .45, .15, .05, .00, .10),
+    "beans": (.15, .55, .90, 1.00, .60, .15, .00, .00),
+    "onion": (.45, .80, 1.00, .85, .45, .15, .05, .15),
+    "cabbage": (.45, .70, .80, .90, 1.00, .85, .30, .35),
+    "carrot": (.30, .70, .95, 1.00, .85, .40, .10, .15),
+    "turnip": (.30, .60, .80, .90, 1.00, .75, .20, .20),
+    "garlic": (.60, .85, 1.00, .75, .30, .40, .35, .50),
+    "clover": (.50, .90, 1.00, .95, .70, .35, .10, .20),
+    "yarrow": (.30, .70, 1.00, .95, .60, .25, .10, .15),
+    "meadowsweet": (.20, .60, .95, 1.00, .65, .25, .05, .10),
+    "nettle": (.55, .95, 1.00, .90, .65, .30, .10, .20),
+}
+
+WILD_SPECIES = tuple(
+    replace(s, activity_profile=normalize_activity_profile(_ACTIVITY_PROFILES[s.key]))
+    if s.key in _ACTIVITY_PROFILES
+    else s
+    for s in WILD_SPECIES
 )
 
 WILD_BY_KEY: dict[str, WildSpeciesDef] = {s.key: s for s in WILD_SPECIES}
@@ -603,6 +665,29 @@ def _smoothstep(edge0: float, edge1: float, x: float) -> float:
     return t * t * (3.0 - 2.0 * t)
 
 
+def activity_at_day(species: WildSpeciesDef | None, day: float) -> float:
+    """Seasonal activity / appearance weight for ``day`` (112-day year).
+
+    Interpolates between adjacent half-season profile entries with wraparound
+    (winter late → spring early). ``None`` profile means fully active (1.0).
+    """
+    if species is None:
+        return 1.0
+    profile = getattr(species, "activity_profile", None)
+    if profile is None:
+        return 1.0
+    values = normalize_activity_profile(profile)
+    assert values is not None
+    from seasons import N_HALF_SEASONS, half_season_progress
+
+    period, fraction = half_season_progress(day)
+    a = values[period]
+    b = values[(period + 1) % N_HALF_SEASONS]
+    # Smoothstep within the half-season for less abrupt transitions.
+    t = fraction * fraction * (3.0 - 2.0 * fraction)
+    return a + (b - a) * t
+
+
 def niche_response(value: float, niche: NicheRange | None) -> float:
     """Smooth trapezoidal response; ``None`` is unconstrained/neutral."""
     if niche is None:
@@ -729,8 +814,15 @@ def format_environment_debug(species: WildSpeciesDef, suitability: PlantSuitabil
     lines.extend(f"{label:<16} {value:5.2f}   suitability {score:5.2f}"
                  for label, value, score in rows)
     envelope = _envelope(day, species.spawn_rise, species.spawn_fall)
-    effective = species_spawn_rate(species, day) * species.spawn_activity * suitability.combined
+    activity = activity_at_day(species, day)
+    effective = (
+        species_spawn_rate(species, day)
+        * species.spawn_activity
+        * activity
+        * suitability.combined
+    )
     lines += [f"Combined suitability: {suitability.combined:.2f}",
+              f"Seasonal activity: {activity:.2f}",
               f"Seasonal spawn envelope: {envelope:.2f}",
               f"Effective spawn probability: {effective:.5f}"]
     return "\n".join(lines)

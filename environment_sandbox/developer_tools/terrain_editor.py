@@ -137,7 +137,14 @@ def ecology_terrain_keys() -> tuple[str, ...]:
 def _clamp_band_part(field: str, part: str, value: float) -> float:
     value = float(value)
     if part == "spread":
-        return max(0.0, min(1.0 if field != "temperature_offset_c" else 5.0, value))
+        # Keep mottling modest — large spreads made moisture look broken.
+        if field in ("soil_moisture", "fertility"):
+            return max(0.0, min(0.25, value))
+        if field == "temperature_offset_c":
+            return max(0.0, min(5.0, value))
+        if field == "rainfall_multiplier":
+            return max(0.0, min(0.25, value))
+        return max(0.0, value)
     if field in ("soil_moisture", "fertility"):
         return max(0.0, min(1.0, value))
     if field == "rainfall_multiplier":

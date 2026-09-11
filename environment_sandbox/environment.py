@@ -156,9 +156,14 @@ def soil_moisture_grid(world: World, calendar_day: int) -> list[list[float]]:
             ) * WATER_MOISTURE_BOOST
             feature = retaining.get(cell.feature, 0.0)
             mottling = _moisture_cell_noise(seed, x, y) * float(spread)
+            # Clay holds a little more baseline water than sand (soil_texture 0→1).
+            texture = float(getattr(cell, "soil_texture", -1.0))
+            if texture < 0.0:
+                texture = 0.45
+            texture_term = (max(0.0, min(1.0, texture)) - 0.5) * 0.14
             out[y][x] = max(
                 0.0,
-                min(1.0, float(centre) + water + feature + climate + mottling),
+                min(1.0, float(centre) + water + feature + climate + mottling + texture_term),
             )
     return out
 
@@ -324,12 +329,9 @@ def is_env_sample_day(calendar_day: int) -> bool:
 
 def env_sample_period(calendar_day: int) -> int:
     """Half-season index 0..7 within the year."""
-    from seasons import YEAR_DAYS, season_for_day, SEASON_ORDER
+    from seasons import half_season_index
 
-    day = int(calendar_day) % YEAR_DAYS
-    half = DAYS_PER_SEASON // 2
-    si = SEASON_ORDER.index(season_for_day(day))
-    return si * 2 + (0 if day_in_season(day) < half else 1)
+    return half_season_index(calendar_day)
 
 
 def _bal_float(key: str, default: float) -> float:

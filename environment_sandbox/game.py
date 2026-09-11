@@ -548,7 +548,6 @@ class Game:
         self._height_warp_before_edit = HEIGHT_SAMPLE_ENABLED_DEFAULT
         self.map_edit_tool = MapEditTool.SELECT
         self.map_edit_terrain = TerrainType.GRASS
-        self.map_edit_ecology_terrain = TerrainType.GRASS
         self.map_edit_tree_species: str | None = None
         self.map_edit_crop_key: str = next(iter(CROP_BY_KEY), "sage")
         self.map_edit_building_kind = BuildingKind.HOME
@@ -3144,30 +3143,40 @@ class Game:
         self._sample_environment()
 
     def _recalculate_terrain_ecology_layers(self) -> None:
-        """Rebuild fertility + climate grids after T-menu ecology edits."""
+        """Rebuild fertility + climate layers from the current terrain layout.
+
+        Uses the production terrain→environment path (ecology bands, water
+        distance, features, soil texture). Does not keep stale save grids.
+        """
         from environment import (
             rainfall_modifier_grid,
             soil_moisture_grid,
             temperature_grid,
         )
+        from soil_texture import ensure_soil_texture
 
+        ensure_soil_texture(self.world)
         self.world.init_fertility()
         day = int(self.calendar_day)
+        # Replace saved/stale grids outright — do not feed them through rain update.
         self.env_maps.soil_moisture = soil_moisture_grid(self.world, day)
         self.env_maps.temperature = temperature_grid(self.world, day)
         self.env_maps.rainfall_modifiers = rainfall_modifier_grid(self.world)
-        # Re-apply today's weather so rainfall immediately feeds the new baseline.
-        self.env_maps.update_weather(
-            self.world,
-            self.weather.intensity,
-            day,
-            self.weather.localisation_grid(self.world.rows, self.world.cols),
-        )
+        # Seed today's rainfall layer without carrying old moisture state.
+        localisation = self.weather.localisation_grid(self.world.rows, self.world.cols)
+        strength = max(0.0, min(1.0, float(self.weather.intensity)))
+        self.env_maps.rainfall = [
+            [
+                max(0.0, min(1.0, strength * modifier * localisation[y][x]))
+                for x, modifier in enumerate(row)
+            ]
+            for y, row in enumerate(self.env_maps.rainfall_modifiers)
+        ]
         self._bake_erosion()
         self._smooth_overlay_cache = None
         self._refresh_indicators()
         self._field_fertility_generation = getattr(self, "_field_fertility_generation", 0) + 1
-        self._set_status("Terrain ecology layers repopulated from bands.")
+        self._set_status("Environment layers rebuilt from terrain.")
 
     def _editor_place_building(self, kind: BuildingKind, x: int, y: int) -> bool:
         """Place a completed, free building for authored map layouts."""
@@ -3273,14 +3282,13 @@ class Game:
         return changed
 
     def _editor_paint_berry_bushes(self,x:int,y:int,radius:int) -> int:
-        """Place permanent bushes, with fruit determined by the current season."""
-        from seasons import berry_fruiting
-        from wild_species import WILD_BY_KEY
+        """Place permanent bushes, with fruit determined by species fruit windows."""
+        from wild_species import WILD_BY_KEY, species_fruiting
 
         berry=WILD_BY_KEY["blackberry"]
         allowed={TerrainType[name] for name in berry.terrains if name in TerrainType.__members__}
-        fruiting=berry_fruiting(self.calendar_day)
         changed=0
+        fruiting_any=False
         from berry_bushes import BERRY_BUSH_KEYS
         for py in range(max(0,y-radius),min(self.world.rows,y+radius+1)):
             for px in range(max(0,x-radius),min(self.world.cols,x+radius+1)):
@@ -3288,13 +3296,15 @@ class Game:
                 if cell is None or cell.feature!=FeatureType.NONE or cell.terrain not in allowed:continue
                 kind=BERRY_BUSH_KEYS[(px+py)%len(BERRY_BUSH_KEYS)]
                 species=WILD_BY_KEY[kind]
+                fruiting=species_fruiting(species, float(self.calendar_day))
+                fruiting_any=fruiting_any or fruiting
                 cell.feature=FeatureType.BERRY_BUSH;cell.crop_kind=kind
                 cell.deposit=int(species.yield_amount) if fruiting else 0
                 cell.growth_ticks=0;cell.tree_species=None;cell.tree_age_years=1
                 changed+=1
         if changed:
             self._after_map_edit();self._refresh_indicators()
-            state="fruiting" if fruiting else "non-fruiting"
+            state="fruiting" if fruiting_any else "non-fruiting"
             self._set_status(f"Placed {changed} permanent berry bush{'es' if changed!=1 else ''} ({state} in {self.season.name.title()}).")
         else:self._set_status("Berry bushes require empty matching terrain (currently grass).")
         return changed
@@ -4023,51 +4033,6 @@ class Game:
                 self._set_overlay(OverlayMode[action.split(":", 1)[1]])
             except KeyError:
                 pass
-            return True
-        if action is not None and action.startswith("edit_ecology_terrain:"):
-            name = action.split(":", 1)[1]
-            try:
-                self.map_edit_ecology_terrain = TerrainType[name]
-            except KeyError:
-                return True
-            self.ui._panel_built = False
-            self._set_status(
-                f"Editing ecology bands for "
-                f"{TERRAIN_EDIT_LABELS.get(self.map_edit_ecology_terrain, name.title())}"
-            )
-            return True
-        if action is not None and action.startswith("edit_ecology:"):
-            parts = action.split(":")
-            if len(parts) == 4:
-                _prefix, field, part, direction = parts
-                steps = {
-                    ("soil_moisture", "centre"): 0.05,
-                    ("soil_moisture", "spread"): 0.02,
-                    ("fertility", "centre"): 0.05,
-                    ("fertility", "spread"): 0.02,
-                    ("temperature_offset_c", "centre"): 0.2,
-                    ("temperature_offset_c", "spread"): 0.1,
-                    ("rainfall_multiplier", "centre"): 0.05,
-                    ("rainfall_multiplier", "spread"): 0.02,
-                }
-                step = steps.get((field, part))
-                if step is not None:
-                    delta = step if direction == "+" else -step
-                    from developer_tools.terrain_editor import adjust_terrain_ecology_band_part
-
-                    value = adjust_terrain_ecology_band_part(
-                        self.map_edit_ecology_terrain.name,
-                        field,
-                        part,
-                        delta,
-                        persist=True,
-                    )
-                    self._set_status(
-                        f"{self.map_edit_ecology_terrain.name.title()} "
-                        f"{field.replace('_', ' ')} {part} → {value:.2f} "
-                        "(Repopulate layers to apply)"
-                    )
-                    self.ui._panel_built = False
             return True
         if action == "edit_ecology_repopulate":
             self._recalculate_terrain_ecology_layers()
@@ -21778,14 +21743,24 @@ class Game:
             OverlayMode.HYDROLOGICAL_POSITION,
             OverlayMode.MOISTURE_BASELINE,
             OverlayMode.LANDSCAPE_COMBINED,
+            OverlayMode.LF_PLANT_FERTILITY,
+            OverlayMode.LF_PLANT_TEMPERATURE,
+            OverlayMode.LF_PLANT_DISTURBANCE,
+            OverlayMode.SPECIES_SUITABILITY,
+            OverlayMode.DOMINANT_SPECIES,
         ):
             session = getattr(self, "_landscape_fields_session", None)
             if session is not None and session.state is not None:
                 key = {
                     OverlayMode.FERTILITY_POTENTIAL: "fertility_potential",
                     OverlayMode.HYDROLOGICAL_POSITION: "hydrological_position",
-                    OverlayMode.MOISTURE_BASELINE: "soil_moisture_baseline",
-                    OverlayMode.LANDSCAPE_COMBINED: "combined",
+                    OverlayMode.MOISTURE_BASELINE: "soil_moisture",
+                    OverlayMode.LANDSCAPE_COMBINED: "soil_texture",
+                    OverlayMode.LF_PLANT_FERTILITY: "fertility",
+                    OverlayMode.LF_PLANT_TEMPERATURE: "temperature",
+                    OverlayMode.LF_PLANT_DISTURBANCE: "disturbance",
+                    OverlayMode.SPECIES_SUITABILITY: "species_suitability",
+                    OverlayMode.DOMINANT_SPECIES: "dominant_species",
                 }[self.overlay_mode]
                 self.overlay_values = [row[:] for row in session.overlay_grid(key)]
                 return
@@ -22385,7 +22360,6 @@ class Game:
             map_edit_mode=self.height_edit_mode,
             map_edit_tool=self.map_edit_tool,
             map_edit_terrain=self.map_edit_terrain,
-            map_edit_ecology_terrain=self.map_edit_ecology_terrain,
             map_edit_tree_label=(
                 "Mixed" if self.map_edit_tree_species is None else
                 __import__("trees").resolve_tree(self.map_edit_tree_species).label
@@ -24634,6 +24608,10 @@ class Game:
             and getattr(self, "_landscape_fields_session", None) is not None
             and self._landscape_fields_session.state is not None
         )
+        dominant = (
+            self.overlay_mode == OverlayMode.DOMINANT_SPECIES
+            and getattr(self, "_landscape_fields_session", None) is not None
+        )
         lf_state = self._landscape_fields_session.state if combined else None
         for y in range(rows):
             row = values[y] if y < len(values) else []
@@ -24641,6 +24619,9 @@ class Game:
                 value = float(row[x]) if x < len(row) else 0.0
                 if field_only and value <= 0.0:
                     colour = (0, 0, 0, 0)
+                elif dominant:
+                    rgb = self._landscape_fields_session.dominant_colour_at(x, y) or (40, 40, 45)
+                    colour = (*rgb, OVERLAY_ALPHA)
                 elif combined and lf_state is not None:
                     r = int(40 + 200 * lf_state.soil_texture[y][x])
                     g = int(40 + 200 * lf_state.fertility_potential[y][x])
@@ -24657,7 +24638,9 @@ class Game:
         for y in range(rows + 2):
             samples.set_at((0, y), samples.get_at((1, y)))
             samples.set_at((cols + 1, y), samples.get_at((cols, y)))
-        smooth = pygame.transform.smoothscale(
+        # Categorical dominant map: nearest-neighbour keeps hard species boundaries.
+        scale = pygame.transform.scale if dominant else pygame.transform.smoothscale
+        smooth = scale(
             samples, ((cols + 2) * CELL_SIZE, (rows + 2) * CELL_SIZE)
         )
         surface = pygame.Surface((cols * CELL_SIZE, rows * CELL_SIZE), pygame.SRCALPHA)

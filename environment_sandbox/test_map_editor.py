@@ -106,6 +106,40 @@ class MapEditorGameTests(unittest.TestCase):
         self.game._on_keydown(pygame.K_TAB)
         self.assertEqual(settings.PANEL_COLLAPSED, before)
 
+    def test_recalculate_env_layers_resets_flat_fertility_and_moisture(self):
+        """T-menu recalc rebuilds from terrain (fixes stale save layers)."""
+        from developer_tools.terrain_editor import invalidate_ecology_cache
+
+        invalidate_ecology_cache()
+        world = self.game.world
+        for row in world.cells:
+            for cell in row:
+                if cell.terrain in (TerrainType.GRASS, TerrainType.MEADOW, TerrainType.SOIL):
+                    cell.fertility = 1.0
+        # Stale uniform moisture like an old save.
+        self.game.env_maps.soil_moisture = [
+            [0.5] * world.cols for _ in range(world.rows)
+        ]
+        self.game._recalculate_terrain_ecology_layers()
+        fert = [
+            cell.fertility
+            for row in world.cells
+            for cell in row
+            if cell.terrain == TerrainType.GRASS
+        ]
+        self.assertTrue(fert)
+        self.assertLess(max(fert), 0.95)
+        self.assertGreater(max(fert) - min(fert), 0.08)
+        moisture = self.game.env_maps.soil_moisture
+        land = [
+            moisture[y][x]
+            for y in range(world.rows)
+            for x in range(world.cols)
+            if world.cells[y][x].terrain == TerrainType.GRASS
+        ]
+        self.assertGreater(max(land) - min(land), 0.08)
+        self.assertIn("rebuilt from terrain", self.game.status_message.lower())
+
     def test_file_menu_launches_terrain_type_editor_in_new_process(self):
         self.assertIn(
             "file_terrain_types",

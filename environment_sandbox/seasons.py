@@ -8,6 +8,7 @@ from enum import Enum, auto
 
 from wild_species import (
     WILD_BY_KEY,
+    activity_at_day,
     species_despawn_rate,
     species_spawn_rate,
     spawn_group_leader,
@@ -54,6 +55,19 @@ SEASON_SYMBOLS_FANCY: dict[Season, str] = {
 
 DAYS_PER_SEASON: int = 28
 YEAR_DAYS: int = DAYS_PER_SEASON * 4  # 112
+# Eight half-seasons (flecks / env sampling / flora activity). 14 days each.
+HALF_SEASON_DAYS: int = DAYS_PER_SEASON // 2
+N_HALF_SEASONS: int = 8
+HALF_SEASON_NAMES: tuple[str, ...] = (
+    "spring early",
+    "spring late",
+    "summer early",
+    "summer late",
+    "autumn early",
+    "autumn late",
+    "winter early",
+    "winter late",
+)
 # Default day length is wall-clock seconds at ×1 (see settings.DAY_SECONDS_AT_X1).
 TICKS_PER_DAY: int = TICKS_PER_DAY_DEFAULT
 
@@ -92,6 +106,27 @@ def season_for_day(day: int) -> Season:
 
 def day_in_season(day: int) -> int:
     return int(day) % DAYS_PER_SEASON
+
+
+def half_season_index(day: float) -> int:
+    """Half-season index 0..7 (spring early … winter late).
+
+    Shared by flecks, environment sampling, and flora ``activity_profile``.
+    """
+    t = float(day) % YEAR_DAYS
+    return int(t // HALF_SEASON_DAYS) % N_HALF_SEASONS
+
+
+def half_season_progress(day: float) -> tuple[int, float]:
+    """Return ``(half_season_index, fraction_within_half)`` with fraction in [0, 1)."""
+    t = float(day) % YEAR_DAYS
+    period = int(t // HALF_SEASON_DAYS) % N_HALF_SEASONS
+    fraction = (t % HALF_SEASON_DAYS) / float(HALF_SEASON_DAYS)
+    return period, fraction
+
+
+def half_season_name(period: int) -> str:
+    return HALF_SEASON_NAMES[int(period) % N_HALF_SEASONS]
 
 
 def season_symbol(season: Season, *, fancy: bool = True) -> str:
@@ -282,7 +317,7 @@ def berry_spawn_rate(day: float, x: int, y: int) -> float:
 
 
 def berry_fruiting(day: float, x: int = 0, y: int = 0) -> bool:
-    """True throughout spring and summer; bush coordinates do not shift it."""
+    """Legacy coarse fruit window (spring+summer). Prefer ``species_fruiting``."""
     del x, y
     return season_for_day(int(day)) in (Season.SPRING, Season.SUMMER)
 
@@ -294,13 +329,17 @@ def berry_despawn_rate(day: float, x: int, y: int) -> float:
 
 
 def mushroom_spawn_rate(day: float, x: int, y: int) -> float:
-    """Autumn only — stop before winter (day 84)."""
-    return species_spawn_rate(WILD_BY_KEY["mushroom"], local_day(day, x, y))
+    """Autumn-weighted spawn; multiplied by species ``activity_profile``."""
+    local = local_day(day, x, y)
+    species = WILD_BY_KEY["mushroom"]
+    return species_spawn_rate(species, local) * activity_at_day(species, local)
 
 
 def wood_bush_spawn_rate(day: float, x: int, y: int) -> float:
-    """Fallen wood near trees — peaks through autumn, gone by winter."""
-    return species_spawn_rate(WILD_BY_KEY["wood_bush"], local_day(day, x, y))
+    """Fallen-wood appearance rate — peaks late autumn / early winter."""
+    local = local_day(day, x, y)
+    species = WILD_BY_KEY["wood_bush"]
+    return species_spawn_rate(species, local) * activity_at_day(species, local)
 
 
 def mushroom_despawn_rate(day: float, x: int, y: int) -> float:
