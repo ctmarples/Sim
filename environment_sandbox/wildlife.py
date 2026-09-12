@@ -4220,6 +4220,10 @@ class WildlifeManager:
                 best = (d, (other_bird.x, other_bird.y))
         return best[1] if best is not None else None
 
+    def _bird_can_fly(self, world: World, x: int, y: int) -> bool:
+        """Birds soar over land, water, and roofs — only the map edge stops them."""
+        return world.in_bounds(x, y)
+
     def _bird_step(self, world: World, bird: Animal, nx: int, ny: int) -> None:
         del world
         if nx != bird.x:
@@ -4253,7 +4257,7 @@ class WildlifeManager:
             return False
         nx, ny = bird.x + bird.roam_dx, bird.y + bird.roam_dy
         if (
-            not world.is_walkable(nx, ny)
+            not self._bird_can_fly(world, nx, ny)
             or (nx, ny) in occupied
             or (nx, ny) == (bird.x, bird.y)
         ):
@@ -4277,7 +4281,7 @@ class WildlifeManager:
             (nx, ny)
             for ny, nx in world.neighbourhood(bird.x, bird.y, radius=1)
             if (nx, ny) != (bird.x, bird.y)
-            and world.is_walkable(nx, ny)
+            and self._bird_can_fly(world, nx, ny)
             and (nx, ny) not in occupied
         ]
         if not opts:
@@ -4365,7 +4369,7 @@ class WildlifeManager:
                     (nx, ny)
                     for ny, nx in world.neighbourhood(bird.x, bird.y, radius=1)
                     if (nx, ny) != (bird.x, bird.y)
-                    and world.is_walkable(nx, ny)
+                    and self._bird_can_fly(world, nx, ny)
                     and (nx, ny) not in occupied
                 ]
                 if opts:

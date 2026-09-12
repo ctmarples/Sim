@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import pygame
 
 from icons import blit_icon
-from inventory_ui import GRID_CELL, GRID_GAP
+from inventory_ui import GRID_CELL, GRID_GAP, SLOT_BADGE_BG_RGBA, _slot_badge
 from resource_balance import food_def, format_buff_mult, scale_recipe_mult
 from resources import resource_icon
 from seasons import ambient_temperature_c, temperature_impact
@@ -515,7 +515,7 @@ def draw_compound_mod_icon(
     cy = rect.bottom - cause_size // 2 - pad
     plate = pygame.Rect(0, 0, cause_size + 4, cause_size + 4)
     plate.center = (cx, cy)
-    pygame.draw.rect(surface, (30, 32, 38), plate, border_radius=3)
+    _slot_badge(surface, plate, rgba=SLOT_BADGE_BG_RGBA)
     pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, plate, 1, border_radius=3)
     blit_icon(surface, mod.cause_icon, cx, cy, cause_size)
 

@@ -21,11 +21,25 @@ INV_PANEL_GAP = 10
 COLOUR_TEXT = (72, 48, 31)
 COLOUR_TEXT_DIM = (112, 84, 58)
 SLOT_BG_RGBA = (105, 46, 44, 50)
+SLOT_BADGE_BG_RGBA = (105, 46, 44, 170)
+SLOT_BADGE_TEXT = (252, 244, 232)
+SLOT_BADGE_TEXT_DIM = (232, 214, 196)
 
 
 def _slot_background(surface: pygame.Surface, rect: pygame.Rect) -> None:
     layer = pygame.Surface(rect.size, pygame.SRCALPHA)
     layer.fill(SLOT_BG_RGBA)
+    surface.blit(layer, rect.topleft)
+
+
+def _slot_badge(
+    surface: pygame.Surface,
+    rect: pygame.Rect,
+    *,
+    rgba: tuple[int, int, int, int] = SLOT_BADGE_BG_RGBA,
+) -> None:
+    layer = pygame.Surface(rect.size, pygame.SRCALPHA)
+    layer.fill(rgba)
     surface.blit(layer, rect.topleft)
 
 
@@ -74,7 +88,7 @@ def draw_resource_cell(
     if quality is not None and count is not None and count > 0:
         q = max(0.0, min(1.0, float(quality)))
         meter = pygame.Rect(cell.x + 3, cell.y + 3, cell.w - 6, 4)
-        pygame.draw.rect(surface, (28, 30, 36), meter, border_radius=1)
+        _slot_badge(surface, meter, rgba=(105, 46, 44, 120))
         fill_w = max(0, int(round(meter.w * q)))
         if fill_w > 0:
             fill = pygame.Rect(meter.x, meter.y, fill_w, meter.h)
@@ -130,20 +144,18 @@ def draw_resource_cell(
         str(count) if count is not None else None
     )
     if label is not None:
-        badge = font_tiny.render(label, True, COLOUR_TEXT)
+        badge = font_tiny.render(label, True, SLOT_BADGE_TEXT)
         bx = cell.right - badge.get_width() - 3
         by = cell.bottom - badge.get_height() - 2
-        pygame.draw.rect(
+        _slot_badge(
             surface,
-            (28, 30, 36),
             pygame.Rect(bx - 2, by - 1, badge.get_width() + 4, badge.get_height() + 2),
-            border_radius=2,
         )
         surface.blit(badge, (bx, by))
 
     if dimmed:
         overlay = pygame.Surface((cell.w, cell.h), pygame.SRCALPHA)
-        overlay.fill((28, 30, 36, 150))
+        overlay.fill((105, 46, 44, 90))
         surface.blit(overlay, cell.topleft)
 
 
@@ -260,7 +272,7 @@ def draw_inv_grid(
         if qualities is not None and key in qualities and count > 0:
             q = max(0.0, min(1.0, float(qualities[key])))
             meter = pygame.Rect(cell.x + 3, cell.y + 3, cell.w - 6, 4)
-            pygame.draw.rect(surface, (28, 30, 36), meter, border_radius=1)
+            _slot_badge(surface, meter, rgba=(105, 46, 44, 120))
             fill_w = max(0, int(round(meter.w * q)))
             if fill_w > 0:
                 fill = pygame.Rect(meter.x, meter.y, fill_w, meter.h)
@@ -316,7 +328,7 @@ def draw_inv_grid(
         reserve = item_mins.get(key) if item_mins else None
         if inline_stock_controls:
             cap_txt = font_tiny.render(
-                f"Cap:{cap if cap is not None else '∞'}", True, COLOUR_TEXT
+                f"Cap:{cap if cap is not None else '∞'}", True, SLOT_BADGE_TEXT
             )
             cap_bg = pygame.Rect(
                 cell.right - cap_txt.get_width() - 5,
@@ -324,7 +336,7 @@ def draw_inv_grid(
                 cap_txt.get_width() + 3,
                 cap_txt.get_height() + 2,
             )
-            pygame.draw.rect(surface, (28, 30, 36), cap_bg, border_radius=2)
+            _slot_badge(surface, cap_bg)
             surface.blit(cap_txt, (cap_bg.x + 1, cap_bg.y + 1))
             hits.append((cap_bg, "cap", key))
         count_txt = (
@@ -332,14 +344,12 @@ def draw_inv_grid(
             if inline_stock_controls
             else (f"{count}/{cap}" if cap is not None else str(count))
         )
-        badge = font_tiny.render(count_txt, True, COLOUR_TEXT)
+        badge = font_tiny.render(count_txt, True, SLOT_BADGE_TEXT)
         bx = cell.right - badge.get_width() - 3
         by = cell.bottom - badge.get_height() - 2
-        pygame.draw.rect(
+        _slot_badge(
             surface,
-            (28, 30, 36),
             pygame.Rect(bx - 2, by - 1, badge.get_width() + 4, badge.get_height() + 2),
-            border_radius=2,
         )
         surface.blit(badge, (bx, by))
         if inline_stock_controls:

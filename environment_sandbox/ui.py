@@ -1923,6 +1923,12 @@ def draw_feature(
         ICON_MARKET,
         ICON_MASON,
         ICON_MILL,
+        ICON_TENT,
+        ICON_BARN,
+        ICON_COMPOST_HEAP,
+        ICON_PANTRY,
+        ICON_CELLAR,
+        ICON_DRYING_RACK,
         ICON_MUSHROOM,
         ICON_REED,
         ICON_ROCK,
@@ -2188,6 +2194,16 @@ def draw_feature(
             recolour={"flame":(238,112,42),"flame_light":(255,205,76),
                       "wood":(92,58,35),"stone":(92,92,88)},
         )
+    elif feature == FeatureType.BARN:
+        blit_building(surface, ICON_BARN, cx, cy, size, variant=v)
+    elif feature == FeatureType.COMPOST_HEAP:
+        blit_building(surface, ICON_COMPOST_HEAP, cx, cy, size, variant=v)
+    elif feature == FeatureType.PANTRY:
+        blit_building(surface, ICON_PANTRY, cx, cy, size, variant=v)
+    elif feature == FeatureType.CELLAR:
+        blit_building(surface, ICON_CELLAR, cx, cy, size, variant=v)
+    elif feature == FeatureType.DRYING_RACK:
+        blit_building(surface, ICON_DRYING_RACK, cx, cy, size, variant=v)
     elif feature == FeatureType.CRAFT_BENCH:
         blit_building(
             surface,
@@ -2269,7 +2285,7 @@ def draw_feature(
             ),
         )
     elif feature == FeatureType.TENT:
-        blit_building(surface, "tent", cx, cy, size, variant=v)
+        blit_building(surface, ICON_TENT, cx, cy, size, variant=v)
     elif feature == FeatureType.HOUSE_SMALL:
         blit_building(surface, "house_small", cx, cy, size, variant=v)
     elif feature == FeatureType.HOUSE:

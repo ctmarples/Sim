@@ -46,6 +46,9 @@ DAY_SECONDS_OPTIONS: tuple[float, ...] = (
 # configurable day/night counts. Changes are activated at a season boundary.
 CALENDAR_MODE: int = 0
 DAY_NIGHT_ENABLED: int = 1
+# Night vision shroud: sight radius in world cells (narrowest at night midpoint).
+NIGHT_SIGHT_MAX_CELLS: float = 9.0
+NIGHT_SIGHT_MIN_CELLS: float = 2.25
 FLEXIBLE_DAY_SECONDS_AT_X1: float = 300.0
 WORK_START_HOUR_SPRING: float = 7.0
 WORK_END_HOUR_SPRING: float = 20.0

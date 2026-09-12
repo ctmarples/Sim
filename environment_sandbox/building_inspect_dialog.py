@@ -25,6 +25,9 @@ from inventory_ui import (
     GRID_CELL,
     GRID_GAP,
     INV_PANEL_GAP,
+    SLOT_BADGE_TEXT,
+    SLOT_BADGE_TEXT_DIM,
+    SLOT_BG_RGBA,
     draw_inv_grid,
     draw_item_tooltip,
     draw_resource_cell,
@@ -65,13 +68,20 @@ RECIPE_ROW_H = RECIPE_OUT_CELL + 14
 GATHER_PRIO_GAP = 18
 GATHER_CELL_STRIDE = RECIPE_OUT_CELL + GATHER_PRIO_GAP
 SECTION_GAP = 10
-SCROLL_IMPULSE = 760.0
-SCROLL_FRICTION = 8.5
+SCROLL_IMPULSE = 520.0
+SCROLL_FRICTION = 3.8
 # Visible size before a section starts scrolling.
 MAX_RECIPE_VIEW_H = 3 * RECIPE_ROW_H
 MAX_GATHER_VIEW_H = 2 * (RECIPE_OUT_CELL + GRID_GAP) - GRID_GAP
 MAX_CAP_VIEW_H = 2 * (GRID_CELL + GRID_GAP) - GRID_GAP
 MAX_WORKER_VIEW_H = 4 * (ROW_H + 2)
+RECIPE_PANEL_W = 460
+
+
+def _paper_slot(surface: pygame.Surface, rect: pygame.Rect) -> None:
+    layer = pygame.Surface(rect.size, pygame.SRCALPHA)
+    layer.fill(SLOT_BG_RGBA)
+    surface.blit(layer, rect.topleft)
 
 
 class BuildingInspectDialog:
@@ -255,13 +265,13 @@ class BuildingInspectDialog:
         if content_h <= view.h:
             return
         track = pygame.Rect(view.right - 5, view.y, 4, view.h)
-        pygame.draw.rect(surface, (40, 42, 48), track, border_radius=2)
+        pygame.draw.rect(surface, (126, 91, 52), track, border_radius=2)
         ratio = view.h / content_h
         thumb_h = max(12, int(view.h * ratio))
         thumb_y = view.y + int((view.h - thumb_h) * (scroll / max(1, content_h - view.h)))
         pygame.draw.rect(
             surface,
-            (120, 130, 140),
+            (218, 119, 55),
             pygame.Rect(track.x, thumb_y, track.w, thumb_h),
             border_radius=2,
         )
@@ -408,15 +418,12 @@ class BuildingInspectDialog:
             and cell.collidepoint(mouse_pos)
         )
         if enabled or hov:
-            bg = (40, 48, 40) if hov else (32, 38, 34)
             border = COLOUR_SELECTED_ENTITY
         elif hov:
-            bg = (48, 50, 42)
             border = COLOUR_SELECTED_ENTITY
         else:
-            bg = (36, 38, 42)
             border = COLOUR_TOOLBAR_BORDER
-        pygame.draw.rect(surface, bg, cell, border_radius=4)
+        _paper_slot(surface, cell)
         pygame.draw.rect(surface, border, cell, 1, border_radius=4)
 
         cap = building.item_cap(out_key) if enabled else None
@@ -424,7 +431,7 @@ class BuildingInspectDialog:
             stock_n = int(stock_amounts.get(out_key, 0))
         else:
             stock_n = int(getattr(building, out_key, 0))
-        text_col = COLOUR_TEXT if enabled else COLOUR_TEXT_DIM
+        text_col = SLOT_BADGE_TEXT if enabled else SLOT_BADGE_TEXT_DIM
         max_txt = self.font_tiny.render(
             f"Max: {'∞' if (not enabled or cap is None) else cap}", True, text_col
         )
@@ -464,7 +471,7 @@ class BuildingInspectDialog:
 
         if not enabled:
             overlay = pygame.Surface((cell.w, cell.h), pygame.SRCALPHA)
-            overlay.fill((28, 30, 36, 110))
+            overlay.fill((105, 46, 44, 90))
             surface.blit(overlay, cell.topleft)
 
         if view is None or cell.colliderect(view):
@@ -609,7 +616,7 @@ class BuildingInspectDialog:
             return y - top_y + SECTION_GAP, tip_key
         view = pygame.Rect(x, y, inner_w, view_h)
         scroll = self._register_scroll(scroll_name, view, content_h, view_h)
-        pygame.draw.rect(surface, (27, 30, 37), view, border_radius=4)
+        _paper_slot(surface, view)
         old_clip = surface.get_clip()
         surface.set_clip(view.clip(old_clip) if old_clip.width else view)
         for i, recipe in enumerate(visible):
@@ -794,7 +801,7 @@ class BuildingInspectDialog:
             bar_w = inner_w - 8
             pygame.draw.rect(
                 surface,
-                (40, 40, 40),
+                (151, 119, 76),
                 pygame.Rect(bar_x, bar_y, bar_w, 7),
                 border_radius=2,
             )
@@ -1054,6 +1061,8 @@ class BuildingInspectDialog:
             options_h = BTN_H + 28
         elif is_housing_kind(building.kind):
             options_h = BTN_H * 2 + 28
+            if self.allow_player_craft:
+                options_h += BTN_H + 8
         elif building.kind == BuildingKind.FORESTER:
             options_h = BTN_H + 28
         elif building.supported_work_modes():
@@ -1098,7 +1107,7 @@ class BuildingInspectDialog:
             craft_recipes = building.addon_craft_recipes()
         recipes_h = 0
         if gather_recipes:
-            cols = max(1, (380 - PAD * 2) // GATHER_CELL_STRIDE)
+            cols = max(1, (RECIPE_PANEL_W - PAD * 2) // GATHER_CELL_STRIDE)
             rows = max(1, (len(gather_recipes) + cols - 1) // cols)
             content = rows * (RECIPE_OUT_CELL + GRID_GAP) - GRID_GAP
             recipes_h += 18 + min(content, MAX_GATHER_VIEW_H) + SECTION_GAP
@@ -1123,7 +1132,7 @@ class BuildingInspectDialog:
         player_items = len(present_keys(player_amounts, None))
         supports_caps = self._supports_item_caps(building)
         cap_keys = building.depositable_keys() if supports_caps else ()
-        layout_w = 380 - PAD * 2
+        layout_w = RECIPE_PANEL_W - PAD * 2
         caps_h = 0
         mins_h = 0
         market_h = 0
@@ -1169,7 +1178,7 @@ class BuildingInspectDialog:
             self._panel_w = 520
         elif has_storage:
             grid_h = 18 + 16 + grid_height(storage_items) + 8
-            self._panel_w = 380 if (
+            self._panel_w = RECIPE_PANEL_W if (
                 building.has_recipes() or supports_caps or building.kind == BuildingKind.MARKET
             ) else 300
         else:
@@ -1216,13 +1225,13 @@ class BuildingInspectDialog:
             pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, panel, 2, border_radius=6)
 
         if body_h > client_h and not self.embedded:
-            pygame.draw.rect(surface, (43, 45, 53), client_rect)
+            _paper_slot(surface, client_rect)
 
         title_bar = pygame.Rect(panel.x, panel.y, panel.w, TITLE_BAR_H)
         if not self.embedded:
             pygame.draw.rect(
                 surface,
-                (48, 50, 58),
+                (210, 176, 128),
                 title_bar,
                 border_top_left_radius=6,
                 border_top_right_radius=6,
@@ -1353,7 +1362,18 @@ class BuildingInspectDialog:
             hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
             self._draw_button(surface, rect, "Relocate", hovered=hovered)
             self._buttons.append(("relocate_building", rect))
-            y += BTN_H + SECTION_GAP
+            y += BTN_H + 6
+            if self.allow_player_craft:
+                bx = x
+                sleep_label = "Sleep until morning"
+                sleep_w = max(140, 10 + self.font_small.size(sleep_label)[0])
+                rect = pygame.Rect(bx, y, sleep_w, BTN_H)
+                hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+                self._draw_button(surface, rect, sleep_label, hovered=hovered)
+                self._buttons.append(("player_sleep", rect))
+                y += BTN_H + SECTION_GAP
+            else:
+                y += SECTION_GAP
         else:
             for mode in building.supported_work_modes():
                 label = WORK_MODE_LABELS[mode]
@@ -1641,7 +1661,7 @@ class BuildingInspectDialog:
             view_h = min(content_h, MAX_WORKER_VIEW_H)
             view = pygame.Rect(x - 2, y - 1, inner_w + 4, view_h)
             scroll = self._register_scroll("workers", view, content_h, view_h)
-            pygame.draw.rect(surface, (32, 35, 42), view, border_radius=4)
+            _paper_slot(surface, view)
             old_clip = surface.get_clip()
             surface.set_clip(view.clip(old_clip) if old_clip.width else view)
             for i, villager in enumerate(workers):
@@ -1672,7 +1692,7 @@ class BuildingInspectDialog:
                 bar_y = row_y + (ROW_H - 7) // 2
                 bar_w = 36
                 pygame.draw.rect(
-                    surface, (40, 40, 40), pygame.Rect(bar_x, bar_y, bar_w, 7), border_radius=2
+                    surface, (151, 119, 76), pygame.Rect(bar_x, bar_y, bar_w, 7), border_radius=2
                 )
                 fill = max(0, min(1.0, villager.satiation))
                 fill_c = (
@@ -1836,15 +1856,12 @@ class BuildingInspectDialog:
                     enabled = building.market_supply_enabled(key)
                     selected = self.selected_market_supply_key == key
                     if enabled or selected:
-                        bg = (40, 48, 40) if hov else (32, 38, 34)
                         border = COLOUR_SELECTED_ENTITY
                     elif hov:
-                        bg = (48, 50, 42)
                         border = COLOUR_SELECTED_ENTITY
                     else:
-                        bg = (36, 38, 42)
                         border = COLOUR_TOOLBAR_BORDER
-                    pygame.draw.rect(surface, bg, cell, border_radius=4)
+                    _paper_slot(surface, cell)
                     pygame.draw.rect(surface, border, cell, 1, border_radius=4)
 
                     store_n = (
@@ -1855,7 +1872,7 @@ class BuildingInspectDialog:
                     local_n = int(getattr(building, key, 0))
                     stock_n = store_n + local_n
                     reserve_n = building.market_supply_min(key) if enabled else 0
-                    text_col = COLOUR_TEXT if enabled else COLOUR_TEXT_DIM
+                    text_col = SLOT_BADGE_TEXT if enabled else SLOT_BADGE_TEXT_DIM
                     sto = self.font_tiny.render(f"Sto: {stock_n}", True, text_col)
                     res = self.font_tiny.render(f"Res: {reserve_n}", True, text_col)
                     sto_rect = pygame.Rect(
@@ -1898,7 +1915,7 @@ class BuildingInspectDialog:
 
                     if not enabled:
                         overlay = pygame.Surface((cell.w, cell.h), pygame.SRCALPHA)
-                        overlay.fill((28, 30, 36, 110))
+                        overlay.fill((105, 46, 44, 90))
                         surface.blit(overlay, cell.topleft)
 
                     # Whole cell toggles; Res hit box wins via reverse scan.
@@ -1917,14 +1934,12 @@ class BuildingInspectDialog:
             # Paired inventories each own exactly half of the transfer area,
             # including empty space beneath a short/empty item list.
             section_h = max(grid_h, 18 + 16 + GRID_CELL + 22)
-            pygame.draw.rect(
-                surface, (29, 33, 40), pygame.Rect(x - 4, y - 4, col_w + 8, section_h), border_radius=5
+            _paper_slot(
+                surface, pygame.Rect(x - 4, y - 4, col_w + 8, section_h)
             )
-            pygame.draw.rect(
+            _paper_slot(
                 surface,
-                (39, 35, 43),
                 pygame.Rect(x + col_w + INV_PANEL_GAP - 4, y - 4, col_w + 8, section_h),
-                border_radius=5,
             )
             left_h, left_hits, left_tips, left_hov, left_ch, left_vh = draw_inv_grid(
                 surface,

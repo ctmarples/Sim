@@ -208,6 +208,8 @@ from settings import (
     MASON_COST_WOOD,
     MAX_VILLAGERS,
     MAP_DISCOVERY_RADIUS,
+    NIGHT_SIGHT_MAX_CELLS,
+    NIGHT_SIGHT_MIN_CELLS,
     MILL_COST_ROCK,
     MILL_COST_WOOD,
     MINIMAP_HEIGHT,
@@ -451,6 +453,16 @@ BUILDING_FEATURES = frozenset(FEATURE_FOR_BUILDING.values()) | {
     FeatureType.STRUCTURE_PAD,
 }
 
+_ONE_CELL_BUILDING_FEATURES = frozenset({
+    FeatureType.FIRE,
+    FeatureType.TENT,
+    FeatureType.BARN,
+    FeatureType.COMPOST_HEAP,
+    FeatureType.PANTRY,
+    FeatureType.CELLAR,
+    FeatureType.DRYING_RACK,
+})
+
 # Buildings that draw rectangular work areas via drag.
 AREA_DRAW_KINDS = {
     BuildingKind.FORESTER,
@@ -462,6 +474,40 @@ AREA_DRAW_KINDS = {
 
 # Editor authoring is deliberately independent of progression unlocks.
 EDITOR_BUILDING_KINDS = tuple(BuildingKind)
+
+_NIGHT_HOLE_SRC_PX = 256
+
+
+def make_night_sight_hole_source(size: int = _NIGHT_HOLE_SRC_PX) -> pygame.Surface:
+    """Soft circular punch mask: alpha 255 at centre, 0 at the rim.
+
+    Blitted with ``BLEND_RGBA_SUB`` onto an opaque black overlay so the
+    night shroud is fully black beyond eyesight and falls off smoothly.
+    Built once; callers nearest-neighbour/smooth-scale it to the live radius.
+    """
+    n = max(32, int(size))
+    surf = pygame.Surface((n, n), pygame.SRCALPHA)
+    cx = cy = (n - 1) * 0.5
+    radius = n * 0.5
+    inner = 0.38
+    pixels = pygame.surfarray.pixels_alpha(surf)
+    # pygame surfarray is (x, y).
+    for x in range(n):
+        dx = (x - cx) / radius
+        dx2 = dx * dx
+        for y in range(n):
+            dy = (y - cy) / radius
+            d = math.sqrt(dx2 + dy * dy)
+            if d <= inner:
+                pixels[x, y] = 255
+            elif d >= 1.0:
+                pixels[x, y] = 0
+            else:
+                t = (d - inner) / (1.0 - inner)
+                t = t * t * (3.0 - 2.0 * t)
+                pixels[x, y] = int(round(255.0 * (1.0 - t)))
+    del pixels
+    return surf
 
 
 class Game:
@@ -509,6 +555,11 @@ class Game:
         self._diary_hotkey_section: DetailCategory | None = None
         self.scenario = ScenarioDirector()
         self.scenario_dialog = ScenarioDialog()
+        self._sleep_started: float | None = None
+        self._sleep_finished = False
+        self._sleep_clock_applied = False
+        self._sleep_kind: str | None = None  # "tutorial" | "player"
+        # Legacy aliases used by tutorial helpers.
         self._tutorial_sleep_started: float | None = None
         self._tutorial_sleep_finished = False
         self._tutorial_unlock_popup: tuple[str, str, str] | None = None
@@ -1470,9 +1521,11 @@ class Game:
             # Sim first so cooldowns expire this frame; then arrows can step (matches time demo).
             # WASD pans after walk so edge-follow does not undo an active pan.
             if self._launch_menu is None:
-                self._step_sim()
-                self._update_player_move_input(dt)
-                self._update_camera_input(dt)
+                self._tick_sleep_transition()
+                if not self._sleep_blocking():
+                    self._step_sim()
+                    self._update_player_move_input(dt)
+                    self._update_camera_input(dt)
             self.camera.update(dt, self.world.cols, self.world.rows)
             self.sounds.set_menu_mode(self._launch_menu is not None)
             vis_w, vis_h = self.camera.visible_cells()
@@ -1513,6 +1566,7 @@ class Game:
             or self.institution_reveal.open
             or self.end_of_test_summary.open
             or self.wildlife_repopulate_dialog.open
+            or self._sleep_blocking()
         )
 
     def _update_scenario(self) -> None:
@@ -1538,11 +1592,11 @@ class Game:
             text,choices=request
             self.scenario_dialog.show(text,choices)
 
+    def _sleep_blocking(self) -> bool:
+        return self._sleep_started is not None and not self._sleep_finished
+
     def begin_tutorial_sleep(self) -> None:
-        if self._tutorial_sleep_started is not None:
-            return
-        self._tutorial_sleep_started = time.monotonic()
-        self._tutorial_sleep_finished = False
+        self._begin_sleep(kind="tutorial")
         for villager in self.villagers:
             house = self.buildings.get(villager.housing_id or -1)
             if house is None:
@@ -1551,6 +1605,25 @@ class Game:
             villager.target = house.center_cell()
             villager.haul_building_id = None
             villager.construction_id = None
+
+    def begin_player_sleep(self) -> None:
+        """Eyes-close veil, skip to next morning, then open eyes."""
+        if self._sleep_blocking():
+            return
+        if self.building_inspect.open:
+            self.building_inspect.close()
+        self._begin_sleep(kind="player")
+        self._set_status("Sleeping until morning…")
+
+    def _begin_sleep(self, *, kind: str) -> None:
+        if self._sleep_started is not None and not self._sleep_finished:
+            return
+        self._sleep_started = time.monotonic()
+        self._sleep_finished = False
+        self._sleep_clock_applied = False
+        self._sleep_kind = kind
+        self._tutorial_sleep_started = self._sleep_started
+        self._tutorial_sleep_finished = False
         if pygame.mixer.get_init() is not None:
             pygame.mixer.pause()
 
@@ -1568,19 +1641,56 @@ class Game:
             )
 
     def tutorial_sleep_complete(self) -> bool:
-        if self._tutorial_sleep_started is None:
+        self._tick_sleep_transition()
+        if self._sleep_kind != "tutorial":
             return False
-        if self.headless or time.monotonic() - self._tutorial_sleep_started >= 2.0:
-            if not self._tutorial_sleep_finished:
-                self._tutorial_sleep_finished = True
-                if pygame.mixer.get_init() is not None:
-                    pygame.mixer.unpause()
-            return True
-        return False
+        return bool(self._sleep_finished)
+
+    def _tick_sleep_transition(self) -> None:
+        if self._sleep_started is None or self._sleep_finished:
+            return
+        elapsed = (
+            2.0
+            if self.headless
+            else max(0.0, time.monotonic() - self._sleep_started)
+        )
+        if (
+            self._sleep_kind == "player"
+            and not self._sleep_clock_applied
+            and elapsed >= 0.5
+        ):
+            self._skip_to_next_morning()
+            self._sleep_clock_applied = True
+        if elapsed >= 2.0:
+            self._finish_sleep_transition()
+
+    def _finish_sleep_transition(self) -> None:
+        if self._sleep_finished:
+            return
+        self._sleep_finished = True
+        self._tutorial_sleep_finished = True
+        if pygame.mixer.get_init() is not None:
+            pygame.mixer.unpause()
+        if self._sleep_kind == "player":
+            self._set_status("Morning — rested.")
+
+    def _skip_to_next_morning(self) -> None:
+        """Jump the clock to the next seasonal dawn and fully rest the player."""
+        start_h, _end_h = self._work_hours()
+        hour = self._calendar_day_fraction() * 24.0
+        dawn_tick = max(1, round(self.ticks_per_day * (1.0 - start_h / 24.0)))
+        if hour >= start_h:
+            # Daytime or evening → wake on the following morning.
+            self._advance_day()
+        self.day_tick = dawn_tick
+        self.player.energy = 1.0
 
     def _draw_tutorial_sleep_transition(self) -> None:
-        started = self._tutorial_sleep_started
-        if started is None or self._tutorial_sleep_finished:
+        self._draw_sleep_transition()
+
+    def _draw_sleep_transition(self) -> None:
+        started = self._sleep_started
+        if started is None or self._sleep_finished:
             return
         elapsed = max(0.0, time.monotonic() - started)
         if elapsed < 0.5:
@@ -1592,7 +1702,9 @@ class Game:
         veil = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
         veil.fill((0, 0, 0, 255))
         if openness > 0:
-            hole = pygame.Rect(0, 0, int(WINDOW_WIDTH * 1.35 * openness), int(WINDOW_HEIGHT * openness))
+            hole = pygame.Rect(
+                0, 0, int(WINDOW_WIDTH * 1.35 * openness), int(WINDOW_HEIGHT * openness)
+            )
             hole.center = (WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2)
             pygame.draw.ellipse(veil, (0, 0, 0, 0), hole)
         self.screen.blit(veil, (0, 0))
@@ -5563,6 +5675,32 @@ class Game:
             f"{minutes // 60:02d}:{minutes % 60:02d}"
         )
 
+    def _night_progress(self) -> float | None:
+        """Night position in ``[0, 1]`` from dusk→dawn, or ``None`` in daylight.
+
+        Midpoint ``0.5`` is the darkest / narrowest sight hour.
+        """
+        if self.scenario.forces_night():
+            return 0.5
+        if not self._is_night():
+            return None
+        phase = self._calendar_day_fraction()
+        start_h, end_h = self._work_hours()
+        dawn, dusk = start_h / 24.0, end_h / 24.0
+        elapsed = phase - dusk if phase >= dusk else phase + (1.0 - dusk)
+        return elapsed / max(0.01, 1.0 - (dusk - dawn))
+
+    def _night_sight_radius_cells(self) -> float | None:
+        """Visible radius around the player at the current night hour."""
+        night_pos = self._night_progress()
+        if night_pos is None:
+            return None
+        # sin peaks at mid-night → narrowest sight there.
+        narrow = math.sin(math.pi * max(0.0, min(1.0, night_pos)))
+        return NIGHT_SIGHT_MAX_CELLS - (
+            NIGHT_SIGHT_MAX_CELLS - NIGHT_SIGHT_MIN_CELLS
+        ) * narrow
+
     def _draw_day_night(self) -> None:
         """Tint the playable viewport while leaving interface chrome readable."""
         if not self.balance.get_int("DAY_NIGHT_ENABLED"):
@@ -5574,8 +5712,7 @@ class Game:
             edge = min(phase - dawn, dusk - phase) / max(0.01, (dusk - dawn) * 0.08)
             darkness = max(0.0, 1.0 - min(1.0, edge)) * 0.35
         else:
-            elapsed = phase - dusk if phase >= dusk else phase + (1.0 - dusk)
-            night_pos = elapsed / max(0.01, 1.0 - (dusk - dawn))
+            night_pos = self._night_progress() or 0.5
             darkness = 0.72 + 0.28 * math.sin(math.pi * night_pos)
         alpha = 145 if self.scenario.forces_night() else int(round(12 + 133 * darkness))
         overlay = pygame.Surface(
@@ -5583,6 +5720,50 @@ class Game:
         )
         overlay.fill((9, 18, 46, alpha))
         self.screen.blit(overlay, (0, MAP_OFFSET_Y))
+
+    def _draw_night_visibility_shroud(self) -> None:
+        """Radial night sight: narrows to mid-night, opens again toward dawn."""
+        if not self.balance.get_int("DAY_NIGHT_ENABLED"):
+            return
+        if self._player_inside_building_id is not None:
+            return
+        if self._sleep_blocking():
+            return
+        radius_cells = self._night_sight_radius_cells()
+        if radius_cells is None:
+            return
+        mw = map_view_width()
+        mh = WINDOW_HEIGHT - MAP_OFFSET_Y
+        overlay = pygame.Surface((mw, mh), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 255))
+        px = float(self.player.world_x if self.player.world_x is not None else self.player.x)
+        py = float(self.player.world_y if self.player.world_y is not None else self.player.y)
+        # _cell_center adds +0.5; subtract so the hole tracks the player body.
+        sx, sy = self._cell_center(px - 0.5, py - 0.5)
+        lx, ly = sx, sy - MAP_OFFSET_Y
+        radius_px = max(12.0, radius_cells * self.camera.view_cell())
+        hole = self._night_sight_hole(radius_px)
+        overlay.blit(
+            hole,
+            (int(lx) - hole.get_width() // 2, int(ly) - hole.get_height() // 2),
+            special_flags=pygame.BLEND_RGBA_SUB,
+        )
+        self.screen.blit(overlay, (0, MAP_OFFSET_Y))
+
+    def _night_sight_hole(self, radius_px: float) -> pygame.Surface:
+        """Scale a cached smooth radial hole. Rebuilds only when size changes."""
+        src = getattr(self, "_night_hole_src", None)
+        if src is None:
+            src = make_night_sight_hole_source()
+            self._night_hole_src = src
+        hw = max(16, int(round(radius_px * 2.15 / 8.0) * 8))
+        hh = max(12, int(round(radius_px * 1.55 / 8.0) * 8))
+        key = (hw, hh)
+        cached = getattr(self, "_night_hole_scaled", None)
+        if cached is None or getattr(self, "_night_hole_scaled_key", None) != key:
+            self._night_hole_scaled = pygame.transform.smoothscale(src, (hw, hh))
+            self._night_hole_scaled_key = key
+        return self._night_hole_scaled
 
     def _queue_calendar_balance(self) -> None:
         policy = getattr(self, "calendar_policy", None)
@@ -7496,6 +7677,15 @@ class Game:
             if inspect_b is not None:
                 self.selected_building_id = inspect_b.id
             self._assign_unassigned_to_selected_building()
+            return
+        if action == "player_sleep":
+            building = self._inspect_building()
+            if building is None or not is_housing_kind(building.kind):
+                return
+            if self._player_inside_building_id != building.id:
+                self._set_status("Enter the house doorway to sleep here.")
+                return
+            self.begin_player_sleep()
             return
         if action == "unassign_villager":
             inspect_b = self._inspect_building()
@@ -9419,6 +9609,8 @@ class Game:
             FeatureType.MARKET,
             FeatureType.WORKSTATION,
             FeatureType.TENT,
+            FeatureType.HOUSE_SMALL,
+            FeatureType.HOUSE,
             FeatureType.STRUCTURE_PAD,
             FeatureType.BARN,
             FeatureType.COMPOST_HEAP,
@@ -22786,9 +22978,11 @@ class Game:
         self._draw_overlay_hud()
         self._draw_selection_highlights()
         self._draw_object_footprints()
+        self._draw_birds()
         if not self.height_edit_mode:
             self._draw_map_shroud()
         self._draw_day_night()
+        self._draw_night_visibility_shroud()
         self._draw_minimap()
         self._draw_autotile_diag_overlay()
         mouse = pygame.mouse.get_pos()
@@ -24557,27 +24751,23 @@ class Game:
                 cell.feature in BUILDING_FEATURES
                 and cell.feature != FeatureType.STRUCTURE_PAD
             ):
-                extension_features = (
-                    FeatureType.BARN,
-                    FeatureType.COMPOST_HEAP,
-                    FeatureType.PANTRY,
-                    FeatureType.CELLAR,
-                    FeatureType.DRYING_RACK,
-                )
-                draw_size = (
-                    vc
-                    if cell.feature in extension_features or cell.feature == FeatureType.FIRE
-                    else vc * max(1, BUILDING_FOOTPRINT)
-                )
                 structure = self._building_at(x, y)
                 if structure is None:
                     structure = self._construction_at(x, y)
-                if (
-                    structure is not None
-                    and max(1, structure.plot_w) == 3
-                    and max(1, structure.plot_h) == 2
+                pw = max(1, getattr(structure, "plot_w", 1) or 1) if structure is not None else 1
+                ph = max(1, getattr(structure, "plot_h", 1) or 1) if structure is not None else 1
+                # 40×40 packed annex/tent/fire art is unreadable at 1 cell
+                # beside 3×2 workplaces; keep a 2-cell visual with overhang.
+                if cell.feature in _ONE_CELL_BUILDING_FEATURES or (
+                    cell.feature == FeatureType.CONSTRUCTION_SITE and pw <= 1 and ph <= 1
                 ):
+                    draw_size = max(48, vc * 2)
+                    cy -= vc // 2
+                elif pw == 3 and ph == 2:
+                    draw_size = vc * max(1, BUILDING_FOOTPRINT)
                     cy -= vc
+                else:
+                    draw_size = vc
             draw_feature(
                 self.screen,
                 cell.feature,
@@ -25535,7 +25725,6 @@ class Game:
         from wildlife import AnimalKind, AnimalSex
         from wildlife_species import (
             animal_icon_for,
-            bird_icon_for,
             body_colour_for,
             member_icon_for,
             nest_icon_for,
@@ -25604,7 +25793,20 @@ class Game:
                 blit_icon(self.screen, name, cx, cy, size)
                 self._draw_hunt_hp_bar(member, cx, cy, size)
 
-        # Hawks / owls — directional icons.
+    def _draw_birds(self) -> None:
+        """Hawks / owls as the top world layer so they fly over roofs and water."""
+        from wildlife import AnimalKind
+        from wildlife_species import bird_icon_for
+        from icons import blit_icon
+
+        size = self.camera.view_cell_px()
+        x0, y0, x1, y1 = self.camera.visible_range(self.world.cols, self.world.rows)
+        pad = 1
+        vx0, vy0, vx1, vy1 = x0 - pad, y0 - pad, x1 + pad, y1 + pad
+        old_clip = self.screen.get_clip()
+        self.screen.set_clip(
+            pygame.Rect(0, MAP_OFFSET_Y, map_view_width(), map_view_height())
+        )
         for animal in self.wildlife.animals:
             if animal.kind not in (AnimalKind.OWL, AnimalKind.HAWK):
                 continue
@@ -25617,6 +25819,7 @@ class Game:
                 animal.kind.name, facing_right=animal.facing_right
             )
             blit_icon(self.screen, name, cx, cy, size)
+        self.screen.set_clip(old_clip)
 
     def _draw_fish(self) -> None:
         from icons import blit_icon
@@ -26360,6 +26563,14 @@ class Game:
             BuildingKind.MILL: COLOUR_MILL,
             BuildingKind.KITCHEN: COLOUR_KITCHEN,
             BuildingKind.FIRE: COLOUR_KITCHEN,
+            BuildingKind.TENT: (200, 150, 110),
+            BuildingKind.HOUSE_SMALL: COLOUR_HOME,
+            BuildingKind.HOUSE: COLOUR_HOME,
+            BuildingKind.BARN: COLOUR_FARM,
+            BuildingKind.COMPOST_HEAP: COLOUR_FIELD,
+            BuildingKind.PANTRY: COLOUR_KITCHEN,
+            BuildingKind.CELLAR: COLOUR_KITCHEN,
+            BuildingKind.DRYING_RACK: COLOUR_HUNTER,
             BuildingKind.CRAFT_BENCH: COLOUR_CRAFT_BENCH,
             BuildingKind.ALCHEMIST: COLOUR_ALCHEMIST,
             BuildingKind.TAILOR: COLOUR_TAILOR,
