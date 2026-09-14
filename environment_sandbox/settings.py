@@ -480,6 +480,12 @@ WILDLIFE_COLONY_GROW_CHANCE: float = 0.20
 WILDLIFE_COLONY_SPLIT_CHANCE: float = 0.12
 # >1 = disturbance suppresses wildlife harder; 0 = ignore disturbance for wildlife.
 WILDLIFE_DISTURBANCE_SENSITIVITY: float = 1.0
+# 0–1 condition: feeding raises, hunger lowers (colonies, packs, birds).
+WILDLIFE_CONDITION_FED_GAIN: float = 0.20
+WILDLIFE_CONDITION_HUNGER_LOSS: float = 0.10
+WILDLIFE_CONDITION_BREED_MIN: float = 0.35
+# Predators with condition below this hunt more urgently when hungry.
+WILDLIFE_CONDITION_HUNT_URGENCY: float = 0.45
 # Forage tiles required per colony level (level 1 → this many, level 4 → 4×).
 WILDLIFE_BEE_FORAGE_PER_LEVEL: int = 10
 WILDLIFE_RABBIT_FORAGE_PER_LEVEL: int = 10
@@ -498,6 +504,18 @@ WILDLIFE_RABBIT_GRAZE_CHANCE: float = 0.30
 WILDLIFE_SEED_HABITATS: int = 4
 WILDLIFE_SEED_ANIMALS: int = 2
 WILDLIFE_COLONY_SEED_HABITATS: int = 3
+# Starting colony levels (prey must outrank predators at seed time).
+WILDLIFE_SEED_RABBIT_LEVEL: int = 3
+WILDLIFE_SEED_VOLE_LEVEL: int = 2
+WILDLIFE_SEED_FROG_LEVEL: int = 2
+WILDLIFE_SEED_BEE_LEVEL: int = 2
+# Extra rabbit/vole sites relative to WILDLIFE_COLONY_SEED_HABITATS.
+WILDLIFE_SEED_RABBIT_SITE_BONUS: int = 2
+WILDLIFE_SEED_VOLE_SITE_BONUS: int = 1
+# Predators may only fill this fraction of prey-derived carrying capacity at seed.
+WILDLIFE_SEED_PREDATOR_CAPACITY_FRACTION: float = 0.25
+# Seeded packs start fed so they do not instantly strip starter prey.
+WILDLIFE_SEED_PREDATOR_FED_DAYS: float = 3.0
 WILDLIFE_DEER_FORAGE_PER_ANIMAL: int = 6
 WILDLIFE_BOAR_FORAGE_PER_ANIMAL: int = 5
 WILDLIFE_DEER_SAPLING_BROWSE_CHANCE: float = 0.35
@@ -505,6 +523,19 @@ WILDLIFE_DEER_MAX_AGE_YEARS: int = 12
 WILDLIFE_BOAR_MAX_AGE_YEARS: int = 10
 WILDLIFE_ANNUAL_MORTALITY: float = 0.06
 WILDLIFE_STARVATION_MORTALITY: float = 0.45
+# Spring immigration chances when a species is extinct but habitat remains.
+WILDLIFE_IMMIGRATION_RABBIT: float = 0.55
+WILDLIFE_IMMIGRATION_VOLE: float = 0.50
+WILDLIFE_IMMIGRATION_DEER: float = 0.25
+WILDLIFE_IMMIGRATION_BOAR: float = 0.22
+WILDLIFE_IMMIGRATION_FOX: float = 0.20
+WILDLIFE_IMMIGRATION_BEE: float = 0.22
+WILDLIFE_IMMIGRATION_WOLF: float = 0.06
+WILDLIFE_IMMIGRATION_FROG: float = 0.18
+WILDLIFE_IMMIGRATION_HAWK: float = 0.20
+WILDLIFE_IMMIGRATION_OWL: float = 0.18
+# Mid-year growth-tick immigration multiplier for fast recolonisers only.
+WILDLIFE_IMMIGRATION_MIDYEAR_SCALE: float = 0.15
 TREE_LIFESPAN_YEARS: int = 6
 TREE_OLD_AGE_DEATH_CHANCE: float = 0.20
 # Legacy save/balance key; predator capacity is now derived from available prey.
@@ -531,6 +562,9 @@ FOX_FEED_VOLE_DAYS: float = 2.0
 # Solo birds — nest on forest edge, roam the whole map.
 BIRD_SEED_COUNT: int = 2
 BIRD_ROAM_SPEED_MULT: float = 2.5
+BIRD_MAX_POPULATION: int = 4
+BIRD_RECRUIT_CHANCE: float = 0.40
+BIRD_LEAVE_CHANCE: float = 0.35
 # Calendar days for a food stack's quality to fall from fresh (1) to spoil (0).
 FOOD_SPOILAGE_DAYS: float = 10.0
 # Multiplier for food ageing while carried (1 = same as stored, 0 = paused).

@@ -1428,14 +1428,31 @@ class Game:
             self.fish.fish = self.fish.fish[:target]
 
     def _repopulate_wildlife(self, levels: dict[str, int]) -> None:
-        """Clear every wild population and reseed the current map by species."""
+        """Clear every wild population and reseed a role-balanced food web.
+
+        Prey (deer/boar/colonies/fish) are seeded then thinned by the dialog
+        percentages. Predators and birds are seeded afterward against the
+        remaining prey base so a low rabbit slider cannot leave a full wolf
+        load that instantly eats the last warren.
+        """
         self.wildlife.reset()
         self.wildlife.refresh_habitats(self.world)
-        self.wildlife.seed_breeding_grounds(self.world)
+        if not self.wildlife.habitats and not self.wildlife.open_habitats:
+            self.wildlife.refresh_habitats(self.world)
+
+        # Prey base only — predators/birds follow after thinning.
+        self.wildlife.animals.clear()
+        self.wildlife.colonies.clear()
+        self.wildlife.wolf_packs.clear()
+        self.wildlife.next_id = 1
+        self.wildlife.next_colony_id = 1
+        self.wildlife.next_wolf_pack_id = 1
+        self.wildlife._seed_forest_prey(self.world)
+        self.wildlife._seed_colonies(self.world)
 
         kind_keys = {
-            AnimalKind.DEER: "deer", AnimalKind.BOAR: "boar",
-            AnimalKind.OWL: "owl", AnimalKind.HAWK: "hawk",
+            AnimalKind.DEER: "deer",
+            AnimalKind.BOAR: "boar",
         }
         rng = random.Random(self.world.seed ^ int(self.calendar_day) ^ 0x5245504F)
 
@@ -1443,46 +1460,50 @@ class Game:
         for kind, key in kind_keys.items():
             group = [a for a in self.wildlife.animals if a.kind == kind]
             fraction = max(0, min(100, levels.get(key, 100))) / 100
-            if kind in (AnimalKind.DEER, AnimalKind.BOAR):
-                by_patch: dict[int | None, list] = {}
-                for animal in group:
-                    by_patch.setdefault(animal.patch_id, []).append(animal)
-                patches = list(by_patch)
-                rng.shuffle(patches)
-                for patch_id in patches[:round(len(patches) * fraction)]:
-                    kept_animals.extend(by_patch[patch_id])
-            else:
-                rng.shuffle(group)
-                kept_animals.extend(group[:round(len(group) * fraction)])
+            by_patch: dict[int | None, list] = {}
+            for animal in group:
+                by_patch.setdefault(animal.patch_id, []).append(animal)
+            patches = list(by_patch)
+            rng.shuffle(patches)
+            for patch_id in patches[:round(len(patches) * fraction)]:
+                kept_animals.extend(by_patch[patch_id])
         self.wildlife.animals = kept_animals
 
         colony_keys = {
-            AnimalKind.RABBIT: "rabbit", AnimalKind.BEE: "bee",
-            AnimalKind.FROG: "frog", AnimalKind.VOLE: "vole",
+            AnimalKind.RABBIT: "rabbit",
+            AnimalKind.BEE: "bee",
+            AnimalKind.FROG: "frog",
+            AnimalKind.VOLE: "vole",
         }
         kept_colonies = []
         for kind, key in colony_keys.items():
             group = [c for c in self.wildlife.colonies if c.kind == kind]
             rng.shuffle(group)
-            target = round(len(group) * max(0, min(100, levels.get(key, 100))) / 100)
+            target = round(
+                len(group) * max(0, min(100, levels.get(key, 100))) / 100
+            )
             kept_colonies.extend(group[:target])
         self.wildlife.colonies = kept_colonies
 
-        pack_keys = {AnimalKind.WOLF: "wolf", AnimalKind.FOX: "fox"}
-        kept_packs = []
-        for kind, key in pack_keys.items():
-            group = [p for p in self.wildlife.wolf_packs if p.kind == kind]
-            rng.shuffle(group)
-            target = round(len(group) * max(0, min(100, levels.get(key, 100))) / 100)
-            kept_packs.extend(group[:target])
-        self.wildlife.wolf_packs = kept_packs
+        wolf_scale = max(0, min(100, levels.get("wolf", 100))) / 100
+        fox_scale = max(0, min(100, levels.get("fox", 100))) / 100
+        self.wildlife._seed_predators_for_prey(
+            self.world, wolf_scale=wolf_scale, fox_scale=fox_scale
+        )
+        self.wildlife._seed_birds_for_prey(
+            self.world,
+            hawk_scale=max(0, min(100, levels.get("hawk", 100))) / 100,
+            owl_scale=max(0, min(100, levels.get("owl", 100))) / 100,
+        )
+        self.wildlife._seeded = True
         self.wildlife._index_animals()
         self.wildlife._form_mating_pairs()
 
         self.fish.reset()
         fish_target = round(
             self.fish.total_capacity(self.world)
-            * max(0, min(100, levels.get("fish", 100))) / 100
+            * max(0, min(100, levels.get("fish", 100)))
+            / 100
         )
         while len(self.fish.fish) < fish_target:
             before = len(self.fish.fish)
@@ -1495,8 +1516,12 @@ class Game:
         self.selected_habitat_id = None
         self.habitat_inspect.close()
         self._refresh_indicators()
-        total = len(self.wildlife.animals) + sum(c.level for c in self.wildlife.colonies)
-        total += sum(p.size() for p in self.wildlife.wolf_packs) + len(self.fish.fish)
+        total = len(self.wildlife.animals) + sum(
+            c.level for c in self.wildlife.colonies
+        )
+        total += sum(p.size() for p in self.wildlife.wolf_packs) + len(
+            self.fish.fish
+        )
         self._set_status(f"Wildlife repopulated: {total} animals.")
 
     def _generate_launch_preview(self, *, randomise: bool = False) -> None:

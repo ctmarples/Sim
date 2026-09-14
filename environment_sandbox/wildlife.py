@@ -1,4 +1,4 @@
-"""Wildlife: deer, boars, and bee/rabbit colonies.
+"""Wildlife: deer, boars, colonies, packs, and birds.
 
 Forest habitats = connected forest-floor tiles (litter under mature trees).
 Habitats are rebuilt on the same season start/mid sample window as biodiversity
@@ -7,17 +7,23 @@ Habitats are rebuilt on the same season start/mid sample window as biodiversity
 Deer / Boar
 -----------
 Individual animals with mating pairs, seasonal roaming, and migration.
-Deer breed on forest-floor edge tiles bordering grass/meadow; boars use the
-whole forest-floor patch (cold/warm roam still expands by the usual adjacency).
+Breed once each spring. Extinct populations may return via immigration chances.
 
-Bees / Rabbits
+Bees / Rabbits / Frogs / Voles
+-----------------------------
+Colonies (not individuals). Level growth is density-dependent and condition-
+gated. Bees may grow year-round; rabbit/vole/frog only in spring–summer.
+Farm crops count as forage only while growing or standing — not bare fields.
+
+Wolves / Foxes
 --------------
-Colonies (not individuals). Each has a nest tile and level 1–4 controlling how
-many visible members wander nearby. Colonies grow when forage food is available;
-a level-3 colony may found a new level-1 colony on an empty nest site. Bees and
-rabbits need forage tiles ≥ (balance N) × colony level (else level is clamped or
-the colony is removed). If a kind has zero colonies at spring (new year), one
-small colony is seeded.
+Packs breed once each spring when fed and in condition. Condition rises with
+meals and falls when hungry.
+
+Hawks / Owls
+------------
+Lightweight demographic feedback: condition tracks prey, spring recruitment
+depends on prey + nests, scarcity causes leave/decline.
 """
 
 from __future__ import annotations
@@ -274,6 +280,8 @@ class Animal:
     roam_dy: int = 0
     # Live status for inspect / wildlife list (birds).
     activity: str = ""
+    # 0–1 condition (birds): feeding/prey raises; scarcity lowers.
+    condition: float = 0.7
     # Crop raid state. The animal must remain on the crop for a full day.
     crop_target: tuple[int, int] | None = None
     crop_arrived_day: float | None = None
@@ -331,6 +339,8 @@ class Colony:
     harvest_cooldown: int = 0
     # When set, this nest belongs to a player apiary (not a wild habitat).
     apiary_building_id: int | None = None
+    # 0–1 food/condition state (feeding raises; scarcity lowers).
+    condition: float = 0.7
 
     @property
     def is_apiary(self) -> bool:
@@ -387,6 +397,8 @@ class WolfPack:
     kind: AnimalKind = AnimalKind.WOLF
     # Days of food left (counts down; capped at boar feed duration).
     fed_days_remaining: float = 0.0
+    # 0–1 condition: meals raise it; hunger lowers it after food runs out.
+    condition: float = 0.6
     move_cooldown: int = 0
     # Last successful kill (for inspect UI).
     last_prey: str = ""
@@ -503,6 +515,8 @@ class WildlifeManager:
         self._by_id: dict[int, Animal] = {}
         self._wolf_food_day: float | None = None
         self._last_breed_year: int = -1
+        self._last_predator_breed_year: int = -1
+        self._last_bird_recruit_year: int = -1
 
     def reset(self) -> None:
         self.animals.clear()
@@ -520,6 +534,8 @@ class WildlifeManager:
         self._prev_season = None
         self._wolf_food_day = None
         self._last_breed_year = -1
+        self._last_predator_breed_year = -1
+        self._last_bird_recruit_year = -1
         self.rng.seed(RANDOM_SEED + 7)
 
     def _index_animals(self) -> None:
@@ -1033,6 +1049,19 @@ class WildlifeManager:
         self._enforce_colony_forage_caps(world)
 
     @staticmethod
+    def _crop_provides_forage(cell) -> bool:
+        """Farm crops count as forage only while growing or standing (not bare/dormant)."""
+        if cell is None:
+            return False
+        if cell.feature == FeatureType.CROP_HERB:
+            # Dormant perennial after harvest (deposit < 0) and bare pads do not feed.
+            if int(getattr(cell, "deposit", 0) or 0) < 0:
+                return False
+            return True
+        # Bare FIELD structure pads are not forage.
+        return False
+
+    @staticmethod
     def _is_forage_tile(
         world: World,
         x: int,
@@ -1043,15 +1072,21 @@ class WildlifeManager:
         cell = world.get_cell(x, y)
         if cell is None:
             return False
+        # Bare field pads never feed wildlife (only standing/growing crops do).
+        if cell.feature == FeatureType.FIELD:
+            return False
         if terrains is None:
             terrains = (TerrainType.MEADOW, TerrainType.GRASS, TerrainType.SOIL)
-        forage_ok = cell.terrain in terrains or cell.feature in (
-            FeatureType.FIELD,
-            FeatureType.CROP_HERB,
-            FeatureType.WILD_CROP,
-            FeatureType.HERB,
-            FeatureType.BERRY_BUSH,
-        )
+        forage_ok = cell.terrain in terrains
+        if not forage_ok:
+            if cell.feature in (
+                FeatureType.WILD_CROP,
+                FeatureType.HERB,
+                FeatureType.BERRY_BUSH,
+            ):
+                forage_ok = True
+            elif WildlifeManager._crop_provides_forage(cell):
+                forage_ok = True
         if not forage_ok:
             return False
         if walkable is not None:
@@ -1387,7 +1422,7 @@ class WildlifeManager:
     # Initial seeding
     # ------------------------------------------------------------------
     def seed_breeding_grounds(self, world: World) -> None:
-        """Seed deer/boar pairs and bee/rabbit colonies on suitable grounds."""
+        """Seed a coherent food web: prey base first, then scaled predators/birds."""
         if self._seeded:
             return
         if not self.habitats and not self.open_habitats:
@@ -1398,8 +1433,16 @@ class WildlifeManager:
         self.next_id = 1
         self.next_colony_id = 1
         self.next_wolf_pack_id = 1
-        occupied: set[tuple[int, int]] = set()
 
+        self._seed_forest_prey(world)
+        self._seed_colonies(world)
+        self._seed_predators_for_prey(world)
+        self._seed_birds_for_prey(world)
+        self._seeded = True
+
+    def _seed_forest_prey(self, world: World) -> None:
+        del world
+        occupied: set[tuple[int, int]] = set()
         for kind in FOREST_KINDS:
             grounds = self.breeding_grounds(kind)
             grounds.sort(
@@ -1410,45 +1453,150 @@ class WildlifeManager:
             seed_animals = _bal_int("WILDLIFE_SEED_ANIMALS", WILDLIFE_SEED_COUNT)
             for hab in grounds[:seed_habitats]:
                 self._seed_patch(kind, hab, seed_animals, occupied)
-        self._seed_colonies(world)
-        self._seed_wolf_packs(world)
-        self._seed_fox_packs(world)
-        self._seed_birds(world)
-        self._seeded = True
 
     def ensure_missing_wildlife(self, world: World) -> None:
-        """Backfill species missing from older saves or after a partial seed.
+        """Backfill empty maps; otherwise use chance-based immigration.
 
-        Habitats must be rebuilt first so bird nests / colony sites exist.
+        Older saves called this after load. Fully empty wildlife still gets a
+        normal initial seed; partial gaps use immigration rolls instead of
+        guaranteed extinct reseeds.
         """
         self.refresh_habitats(world)
-        self._reseed_extinct_forest_species(world)
-        for kind in COLONY_KINDS:
-            if self.count_kind(kind) > 0:
+        has_any = bool(self.animals or self.colonies or self.wolf_packs)
+        if not has_any:
+            self.seed_breeding_grounds(world)
+            self._seeded = True
+            return
+        self._try_immigration(world)
+        self._seeded = True
+
+    def _colony_seed_plan(self) -> list[tuple[AnimalKind, int, int]]:
+        """(kind, site_count, starting_level) for a prey-heavy colony base."""
+        base = max(
+            0,
+            _bal_int("WILDLIFE_COLONY_SEED_HABITATS", COLONY_SEED_GROUNDS),
+        )
+        rabbit_bonus = max(0, _bal_int("WILDLIFE_SEED_RABBIT_SITE_BONUS", 2))
+        vole_bonus = max(0, _bal_int("WILDLIFE_SEED_VOLE_SITE_BONUS", 1))
+        return [
+            (
+                AnimalKind.RABBIT,
+                base + rabbit_bonus,
+                max(1, _bal_int("WILDLIFE_SEED_RABBIT_LEVEL", 3)),
+            ),
+            (
+                AnimalKind.VOLE,
+                base + vole_bonus,
+                max(1, _bal_int("WILDLIFE_SEED_VOLE_LEVEL", 2)),
+            ),
+            (
+                AnimalKind.FROG,
+                base,
+                max(1, _bal_int("WILDLIFE_SEED_FROG_LEVEL", 2)),
+            ),
+            (
+                AnimalKind.BEE,
+                base,
+                max(1, _bal_int("WILDLIFE_SEED_BEE_LEVEL", 2)),
+            ),
+        ]
+
+    def _seed_colonies(self, world: World) -> None:
+        """Seed colony prey/pollinators with role-appropriate levels and site counts."""
+        del world
+        for kind, site_n, level in self._colony_seed_plan():
+            if site_n <= 0:
                 continue
             sites = self._empty_colony_sites(kind)
             self.rng.shuffle(sites)
-            seed_habitats = _bal_int(
-                "WILDLIFE_COLONY_SEED_HABITATS", COLONY_SEED_GROUNDS
-            )
-            for hab in sites[:seed_habitats]:
-                self._spawn_colony(kind, hab, level=1)
-        if self.pack_count(AnimalKind.WOLF) <= 0:
-            self._seed_wolf_packs(world)
-        if self.pack_count(AnimalKind.FOX) <= 0:
-            self._seed_fox_packs(world)
-        for kind in BIRD_KINDS:
-            if self.count_kind(kind) <= 0:
-                self._seed_birds(world, kind=kind)
-        self._seeded = True
+            for hab in sites[:site_n]:
+                self._spawn_colony(kind, hab, level=level)
 
-    def _seed_colonies(self, world: World) -> None:
-        del world
-        for kind in COLONY_KINDS:
-            sites = self._empty_colony_sites(kind)
-            self.rng.shuffle(sites)
-            for hab in sites[:COLONY_SEED_GROUNDS]:
-                self._spawn_colony(kind, hab, level=1)
+    def _seed_predators_for_prey(
+        self,
+        world: World,
+        *,
+        wolf_scale: float = 1.0,
+        fox_scale: float = 1.0,
+    ) -> None:
+        """Add wolf/fox packs only up to a fraction of current prey capacity.
+
+        Extra trophic caps keep starter maps from seeding more hunters than the
+        small-game / ungulate base can absorb.
+        """
+        from balance_config import active_balance
+
+        bal = active_balance()
+        fraction = max(
+            0.0,
+            min(1.0, _bal_float("WILDLIFE_SEED_PREDATOR_CAPACITY_FRACTION", 0.25)),
+        )
+        fed = max(0.0, _bal_float("WILDLIFE_SEED_PREDATOR_FED_DAYS", 3.0))
+        plans = (
+            (AnimalKind.WOLF, max(0, bal.get_int("WOLF_SEED_PACKS")), wolf_scale),
+            (AnimalKind.FOX, max(0, bal.get_int("FOX_SEED_PACKS")), fox_scale),
+        )
+        for kind, pack_cap, scale in plans:
+            if pack_cap <= 0 or scale <= 0.0:
+                continue
+            room = self._pack_max_pop(kind)
+            target_members = int(room * fraction * max(0.0, min(1.0, scale)))
+            if kind == AnimalKind.WOLF:
+                # Seed wolves from ungulates; rabbits alone must not unlock a pack.
+                ungulates = self.count_kind(AnimalKind.DEER) + self.count_kind(
+                    AnimalKind.BOAR
+                )
+                target_members = min(target_members, max(0, (ungulates // 3) * 2))
+            elif kind == AnimalKind.FOX:
+                small_game = sum(
+                    c.level
+                    for c in self.colonies
+                    if c.kind
+                    in (AnimalKind.RABBIT, AnimalKind.VOLE, AnimalKind.FROG)
+                )
+                # Roughly two colony levels of prey per seeded fox.
+                target_members = min(target_members, max(0, small_game // 2))
+            max_packs = min(pack_cap, target_members // 2)
+            for _ in range(max_packs):
+                if self._pack_room(kind) < 2:
+                    break
+                cell = self._random_walkable_cell(world)
+                if cell is None:
+                    break
+                pack = self._spawn_wolf_pack(
+                    world,
+                    cell[0],
+                    cell[1],
+                    sexes=(AnimalSex.MALE, AnimalSex.FEMALE),
+                    kind=kind,
+                )
+                if pack is None:
+                    break
+                pack.fed_days_remaining = min(self._pack_feed_cap(pack), fed)
+                pack.condition = max(float(pack.condition), 0.75)
+                pack.activity = "Fed — seeking cover"
+
+    def _seed_birds_for_prey(
+        self, world: World, *, hawk_scale: float = 1.0, owl_scale: float = 1.0
+    ) -> None:
+        """Seed birds only when small-game prey can support them."""
+        from settings import BIRD_SEED_COUNT
+
+        base = _bal_int("BIRD_SEED_COUNT", BIRD_SEED_COUNT)
+        scales = {
+            AnimalKind.HAWK: hawk_scale,
+            AnimalKind.OWL: owl_scale,
+        }
+        for kind, scale in scales.items():
+            if scale <= 0.0 or base <= 0:
+                continue
+            prey = self._bird_prey_score(kind)
+            if prey < 0.25:
+                continue
+            # Prey score 1.0 → full seed count; thin maps get at most one.
+            want = max(1, int(round(base * prey * max(0.0, min(1.0, scale)))))
+            want = min(base, want)
+            self._seed_birds(world, kind=kind, count=want)
 
     def _seed_patch(
         self,
@@ -1532,34 +1680,110 @@ class WildlifeManager:
                 # Only reset settled animals; mid-dispersal pairs already used this year's move.
                 if animal.patch_id is not None and animal.migrate_home_id is None:
                     animal.migrated_this_year = False
-            self._reseed_extinct_species(world)
+            self._try_immigration(world)
+            self._update_bird_demographics(world, season=season, recruit=True)
         elif season == Season.AUTUMN:
             self._start_autumn_retreat(world)
+            self._update_bird_demographics(world, season=season, recruit=False)
         elif season == Season.WINTER:
             self._kill_failed_migrants()
+            self._update_bird_demographics(world, season=season, recruit=False)
+        elif season == Season.SUMMER:
+            self._update_bird_demographics(world, season=season, recruit=False)
         self._prev_season = season
 
-    def _reseed_extinct_species(self, world: World) -> None:
-        """Restore extinct wildlife where suitable habitat still exists."""
+    def _immigration_chance(self, kind: AnimalKind, *, midyear: bool = False) -> float:
+        key = {
+            AnimalKind.RABBIT: "WILDLIFE_IMMIGRATION_RABBIT",
+            AnimalKind.VOLE: "WILDLIFE_IMMIGRATION_VOLE",
+            AnimalKind.DEER: "WILDLIFE_IMMIGRATION_DEER",
+            AnimalKind.BOAR: "WILDLIFE_IMMIGRATION_BOAR",
+            AnimalKind.FOX: "WILDLIFE_IMMIGRATION_FOX",
+            AnimalKind.BEE: "WILDLIFE_IMMIGRATION_BEE",
+            AnimalKind.WOLF: "WILDLIFE_IMMIGRATION_WOLF",
+            AnimalKind.FROG: "WILDLIFE_IMMIGRATION_FROG",
+            AnimalKind.HAWK: "WILDLIFE_IMMIGRATION_HAWK",
+            AnimalKind.OWL: "WILDLIFE_IMMIGRATION_OWL",
+        }.get(kind)
+        if key is None:
+            return 0.0
+        chance = _bal_float(key, 0.0)
+        if midyear:
+            if kind not in (AnimalKind.RABBIT, AnimalKind.VOLE):
+                return 0.0
+            chance *= _bal_float("WILDLIFE_IMMIGRATION_MIDYEAR_SCALE", 0.15)
+        return max(0.0, min(1.0, chance))
+
+    def _try_immigration(self, world: World, *, midyear: bool = False) -> None:
+        """Chance-based recolonisation when habitat remains but counts are zero."""
         if not self.habitats and not self.open_habitats:
             self.refresh_habitats(world)
-        self._reseed_extinct_forest_species(world)
+        occupied = self._occupied()
+
+        for kind in FOREST_KINDS:
+            if self.count_kind(kind) > 0:
+                continue
+            grounds = self.breeding_grounds(kind)
+            if not grounds:
+                continue
+            if self.rng.random() >= self._immigration_chance(kind, midyear=midyear):
+                continue
+            self._seed_patch(kind, self.rng.choice(grounds), WILDLIFE_RESEED_PAIR, occupied)
+
         for kind in COLONY_KINDS:
             if self.count_kind(kind) > 0:
                 continue
             sites = self._empty_colony_sites(kind)
             if not sites:
                 continue
-            self._spawn_colony(kind, self.rng.choice(sites), level=1)
-        if self.pack_count(AnimalKind.FOX) <= 0:
-            self._seed_fox_packs(world)
-        for kind in BIRD_KINDS:
-            if self.count_kind(kind) > 0:
+            chance = self._immigration_chance(kind, midyear=midyear)
+            if kind == AnimalKind.FROG:
+                # Strongly gated by wet habitat area.
+                riparian = sum(
+                    1
+                    for hab in self.open_habitats
+                    if getattr(hab, "allow_frog", False)
+                    for _ in hab.nest_tiles
+                )
+                chance *= min(1.0, riparian / 12.0)
+            if self.rng.random() >= chance:
                 continue
-            self._seed_birds(world, kind=kind)
+            self._spawn_colony(kind, self.rng.choice(sites), level=1)
+
+        if self.pack_count(AnimalKind.FOX) <= 0:
+            if self.rng.random() < self._immigration_chance(
+                AnimalKind.FOX, midyear=midyear
+            ):
+                cell = self._random_walkable_cell(world)
+                if cell is not None and self._pack_room(AnimalKind.FOX) >= 2:
+                    self._spawn_wolf_pack(
+                        world,
+                        cell[0],
+                        cell[1],
+                        sexes=(AnimalSex.MALE, AnimalSex.FEMALE),
+                        kind=AnimalKind.FOX,
+                    )
+        if self.pack_count(AnimalKind.WOLF) <= 0 and not midyear:
+            if self.rng.random() < self._immigration_chance(AnimalKind.WOLF):
+                cell = self._random_walkable_cell(world)
+                if cell is not None and self._pack_room(AnimalKind.WOLF) >= 2:
+                    self._spawn_wolf_pack(
+                        world,
+                        cell[0],
+                        cell[1],
+                        sexes=(AnimalSex.MALE, AnimalSex.FEMALE),
+                        kind=AnimalKind.WOLF,
+                    )
+
+        for kind in BIRD_KINDS:
+            if self.count_kind(kind) > 0 or midyear:
+                continue
+            if self.rng.random() >= self._immigration_chance(kind):
+                continue
+            self._seed_birds(world, kind=kind, count=1)
 
     def _reseed_extinct_forest_species(self, world: World) -> None:
-        """Maintain one breeding pair of deer and boar after extinction."""
+        """Tutorial / scenario helper: place one breeding pair if extinct."""
         if not self.habitats:
             self.refresh_habitats(world)
         occupied = self._occupied()
@@ -1753,13 +1977,15 @@ class WildlifeManager:
             if season == Season.SPRING and year != self._last_breed_year:
                 self._breed(world)
                 self._last_breed_year = year
+            if season == Season.SPRING and year != self._last_predator_breed_year:
+                self._breed_wolves(world)
+                self._last_predator_breed_year = year
             self._cull_excess()
-            # Predation can erase a species between annual spring reseeds. Keep
-            # minimum viable prey wherever suitable habitat remains.
-            self._reseed_extinct_species(world)
+            # Fast recolonisers may trickle in mid-year; others wait for spring.
+            self._try_immigration(world, midyear=True)
             self._migrate()
-            self._tick_colonies(world)
-            self._breed_wolves(world)
+            self._tick_colonies(world, season=season)
+            self._update_bird_demographics(world, season=season, recruit=False)
 
     def _form_mating_pairs(self, *, reindex: bool = True) -> None:
         """Pair unpaired males and females that share a patch."""
@@ -3147,13 +3373,10 @@ class WildlifeManager:
         return None
 
     def _colony_has_food(self, world: World, colony: Colony) -> bool:
-        food_features = (
-            FeatureType.HERB,
-            FeatureType.WILD_CROP,
-            FeatureType.CROP_HERB,
-            FeatureType.BERRY_BUSH,
-            FeatureType.FIELD,
-        )
+        return self._colony_food_score(world, colony) > 0.0
+
+    def _colony_food_score(self, world: World, colony: Colony) -> float:
+        """0–1 forage quality: plant features weigh more than bare terrain."""
         if colony.is_apiary:
             tiles = self._forage_from_nests(
                 world,
@@ -3168,29 +3391,60 @@ class WildlifeManager:
         else:
             hab = self._colony_habitat(colony)
             if hab is None:
-                return False
+                return 0.0
             tiles = hab.forage_tiles
+        plant = 0
+        terrain = 0
         for x, y in tiles:
             cell = world.get_cell(x, y)
             if cell is None:
                 continue
-            if cell.feature in food_features:
-                return True
+            if cell.feature in (
+                FeatureType.HERB,
+                FeatureType.WILD_CROP,
+                FeatureType.BERRY_BUSH,
+            ) or self._crop_provides_forage(cell):
+                plant += 1
+                continue
             if colony.kind == AnimalKind.BEE and cell.terrain == TerrainType.MEADOW:
-                return True
-            if colony.kind == AnimalKind.RABBIT and cell.terrain in (
+                terrain += 1
+            elif colony.kind == AnimalKind.RABBIT and cell.terrain in (
                 TerrainType.MEADOW,
                 TerrainType.GRASS,
             ):
-                return True
-            if colony.kind == AnimalKind.VOLE and cell.terrain in (
+                terrain += 1
+            elif colony.kind == AnimalKind.VOLE and cell.terrain in (
                 TerrainType.MEADOW,
                 TerrainType.GRASS,
                 TerrainType.RIPARIAN,
             ):
-                return True
-            if colony.kind == AnimalKind.FROG and cell.terrain == TerrainType.RIPARIAN:
-                return True
+                terrain += 1
+            elif colony.kind == AnimalKind.FROG and cell.terrain == TerrainType.RIPARIAN:
+                terrain += 1
+        if plant <= 0 and terrain <= 0:
+            return 0.0
+        # A few plant tiles are enough to saturate; terrain alone caps lower.
+        plant_score = min(1.0, plant / 4.0)
+        terrain_score = min(0.55, terrain / 8.0)
+        return max(plant_score, terrain_score)
+
+    def _update_colony_condition(self, world: World, colony: Colony) -> None:
+        gain = _bal_float("WILDLIFE_CONDITION_FED_GAIN", 0.20)
+        loss = _bal_float("WILDLIFE_CONDITION_HUNGER_LOSS", 0.10)
+        score = self._colony_food_score(world, colony)
+        cur = max(0.0, min(1.0, float(getattr(colony, "condition", 0.7))))
+        if score > 0.0:
+            colony.condition = min(1.0, cur + gain * max(0.35, score))
+        else:
+            colony.condition = max(0.0, cur - loss)
+
+    @staticmethod
+    def _colony_breed_season_ok(kind: AnimalKind, season: Season) -> bool:
+        """Bees grow year-round; small mammals/frogs only in spring–summer."""
+        if kind == AnimalKind.BEE:
+            return True
+        if kind in (AnimalKind.RABBIT, AnimalKind.VOLE, AnimalKind.FROG):
+            return season in (Season.SPRING, Season.SUMMER)
         return False
 
     def _sync_colony_members(self, colony: Colony, hab: OpenHabitat | None) -> None:
@@ -3383,8 +3637,10 @@ class WildlifeManager:
             return
         colony.x, colony.y = int(x), int(y)
 
-    def _tick_colonies(self, world: World) -> None:
+    def _tick_colonies(self, world: World, *, season: Season | None = None) -> None:
         """Grow colony levels and found new small colonies from level-3 parents."""
+        if season is None:
+            season = Season.SPRING
         for colony in self.colonies:
             if colony.harvest_cooldown > 0:
                 colony.harvest_cooldown -= 1
@@ -3419,13 +3675,33 @@ class WildlifeManager:
             if crops:
                 self._eat_wild_crop(world, *self.rng.choice(crops))
 
-        # Level growth, then fission from level-3 wild colonies with food.
+        # Condition tracks food; poor condition can drop a level.
+        breed_min = _bal_float("WILDLIFE_CONDITION_BREED_MIN", 0.35)
+        for colony in list(self.colonies):
+            self._update_colony_condition(world, colony)
+            if colony.condition < 0.15 and colony.level > 1 and self.rng.random() < 0.35:
+                colony.level -= 1
+                colony.clamp_level()
+                self._sync_colony_members(colony, self._colony_habitat(colony))
+            elif (
+                colony.condition <= 0.0
+                and not colony.is_apiary
+                and colony.level <= 1
+                and self.rng.random() < 0.2
+            ):
+                self.colonies.remove(colony)
+
+        # Level growth: bees any season; rabbit/vole/frog spring–summer only.
         from balance_config import active_balance
 
         grow_chance = active_balance().get_float("WILDLIFE_COLONY_GROW_CHANCE")
         split_chance = active_balance().get_float("WILDLIFE_COLONY_SPLIT_CHANCE")
         for colony in list(self.colonies):
-            if not self._colony_has_food(world, colony):
+            if not self._colony_breed_season_ok(colony.kind, season):
+                continue
+            if float(getattr(colony, "condition", 0.0)) < breed_min:
+                continue
+            if self._colony_food_score(world, colony) <= 0.0:
                 continue
             nest = world.get_cell(colony.x, colony.y)
             ecology = (
@@ -3435,18 +3711,22 @@ class WildlifeManager:
                 if nest is not None
                 else 1.0
             )
-            if colony.kind in COLONY_KINDS:
-                max_lv = colony_max_level_for_forage(
-                    colony.kind,
-                    self._colony_forage_count(colony, world),
-                    apiary=colony.is_apiary,
-                )
-                if colony.level >= max_lv:
-                    continue
-            if (
-                colony.level < colony.level_cap()
-                and self.rng.random() < grow_chance * ecology
-            ):
+            max_lv = colony_max_level_for_forage(
+                colony.kind,
+                self._colony_forage_count(colony, world),
+                apiary=colony.is_apiary,
+            )
+            max_lv = min(max_lv, colony.level_cap())
+            if colony.level >= max_lv or max_lv <= 0:
+                continue
+            density = max(0.0, 1.0 - colony.level / max(1, max_lv))
+            roll = (
+                grow_chance
+                * ecology
+                * density
+                * max(0.2, float(colony.condition))
+            )
+            if self.rng.random() < roll:
                 colony.level += 1
                 colony.clamp_level()
                 self._sync_colony_members(colony, self._colony_habitat(colony))
@@ -3454,9 +3734,13 @@ class WildlifeManager:
         for colony in list(self.colonies):
             if colony.is_apiary:
                 continue
+            if not self._colony_breed_season_ok(colony.kind, season):
+                continue
             if colony.level != COLONY_SPLIT_LEVEL:
                 continue
-            if not self._colony_has_food(world, colony):
+            if float(getattr(colony, "condition", 0.0)) < breed_min:
+                continue
+            if self._colony_food_score(world, colony) <= 0.0:
                 continue
             nest = world.get_cell(colony.x, colony.y)
             ecology = (
@@ -3466,7 +3750,7 @@ class WildlifeManager:
                 if nest is not None
                 else 1.0
             )
-            if self.rng.random() >= split_chance * ecology:
+            if self.rng.random() >= split_chance * ecology * float(colony.condition):
                 continue
             sites = self._empty_colony_sites(colony.kind)
             if not sites:
@@ -3546,44 +3830,12 @@ class WildlifeManager:
         return self._pack_room(AnimalKind.WOLF)
 
     def _seed_wolf_packs(self, world: World) -> None:
-        from balance_config import active_balance
-
-        n_packs = max(0, active_balance().get_int("WOLF_SEED_PACKS"))
-        if n_packs <= 0:
-            return
-        for _ in range(n_packs):
-            if self._pack_room(AnimalKind.WOLF) < 2:
-                break
-            cell = self._random_walkable_cell(world)
-            if cell is None:
-                break
-            self._spawn_wolf_pack(
-                world,
-                cell[0],
-                cell[1],
-                sexes=(AnimalSex.MALE, AnimalSex.FEMALE),
-                kind=AnimalKind.WOLF,
-            )
+        """Legacy entry: seed wolves scaled to current prey (food-web aware)."""
+        self._seed_predators_for_prey(world, wolf_scale=1.0, fox_scale=0.0)
 
     def _seed_fox_packs(self, world: World) -> None:
-        from balance_config import active_balance
-
-        n_packs = max(0, active_balance().get_int("FOX_SEED_PACKS"))
-        if n_packs <= 0:
-            return
-        for _ in range(n_packs):
-            if self._pack_room(AnimalKind.FOX) < 2:
-                break
-            cell = self._random_walkable_cell(world)
-            if cell is None:
-                break
-            self._spawn_wolf_pack(
-                world,
-                cell[0],
-                cell[1],
-                sexes=(AnimalSex.MALE, AnimalSex.FEMALE),
-                kind=AnimalKind.FOX,
-            )
+        """Legacy entry: seed foxes scaled to current prey (food-web aware)."""
+        self._seed_predators_for_prey(world, wolf_scale=0.0, fox_scale=1.0)
 
     def _random_walkable_cell(self, world: World) -> tuple[int, int] | None:
         """Cheap random land sample — avoids full-map scans on seed."""
@@ -3875,10 +4127,14 @@ class WildlifeManager:
                     continue
 
             if pack.is_fed(day):
-                pack.activity = "Fed — seeking cover"
-                self._wolf_retreat_step(world, pack, biodiversity)
-                self._arm_wolf_pack(pack, roam_iv)
-                continue
+                urgency = _bal_float("WILDLIFE_CONDITION_HUNT_URGENCY", 0.45)
+                # Well-fed and high-condition packs rest; low condition still hunts.
+                if float(getattr(pack, "condition", 0.6)) >= urgency:
+                    pack.activity = "Fed — seeking cover"
+                    self._wolf_retreat_step(world, pack, biodiversity)
+                    self._arm_wolf_pack(pack, roam_iv)
+                    continue
+                pack.activity = "Hungry despite stores"
 
             hunted = self._wolf_try_hunt(world, pack, day)
             if hunted:
@@ -4003,9 +4259,11 @@ class WildlifeManager:
         pack.fed_days_remaining = min(cap, feed)
         pack.last_prey = prey
         pack.last_meal_day = float(day)
+        gain = _bal_float("WILDLIFE_CONDITION_FED_GAIN", 0.20)
+        pack.condition = min(1.0, max(0.0, float(pack.condition)) + gain + 0.15)
 
     def _decay_wolf_food(self, day: float) -> None:
-        """Count down fed_days_remaining across calendar wraps."""
+        """Count down fed_days_remaining across calendar wraps; update condition."""
         from seasons import YEAR_DAYS
 
         if self._wolf_food_day is None:
@@ -4021,13 +4279,21 @@ class WildlifeManager:
         self._wolf_food_day = cur
         if delta <= 0.0:
             return
+        gain = _bal_float("WILDLIFE_CONDITION_FED_GAIN", 0.20)
+        loss = _bal_float("WILDLIFE_CONDITION_HUNGER_LOSS", 0.10)
         for pack in self.wolf_packs:
-            if pack.fed_days_remaining <= 0.0:
-                continue
-            cap = self._pack_feed_cap(pack)
-            pack.fed_days_remaining = min(
-                cap, max(0.0, float(pack.fed_days_remaining) - delta)
-            )
+            if pack.fed_days_remaining > 0.0:
+                cap = self._pack_feed_cap(pack)
+                pack.fed_days_remaining = min(
+                    cap, max(0.0, float(pack.fed_days_remaining) - delta)
+                )
+                pack.condition = min(
+                    1.0, max(0.0, float(pack.condition)) + gain * 0.25 * delta
+                )
+            else:
+                pack.condition = max(
+                    0.0, float(pack.condition) - loss * max(1.0, delta)
+                )
 
     def _wolf_member_on_prey(self, pack: WolfPack, x: int, y: int) -> bool:
         return any(m.x == x and m.y == y for m in pack.members)
@@ -4213,9 +4479,11 @@ class WildlifeManager:
         self._wolf_move_pack(world, pack, nx, ny)
 
     def _breed_wolves(self, world: World) -> None:
+        """Spring breeding for wolf/fox packs (once per year from the growth tick)."""
         from balance_config import active_balance
 
         bal = active_balance()
+        breed_min = _bal_float("WILDLIFE_CONDITION_BREED_MIN", 0.35)
         for pack_kind in PACK_KINDS:
             chance_key = (
                 "WOLF_BREED_CHANCE"
@@ -4228,12 +4496,15 @@ class WildlifeManager:
                     continue
                 if self._pack_room(pack_kind) <= 0:
                     break
-                # A pair must have secured food before investing in offspring.
+                # Need recent food and healthy condition to invest in offspring.
                 if not pack.is_fed(0.0):
+                    continue
+                if float(getattr(pack, "condition", 0.0)) < breed_min:
                     continue
                 if not pack.has_pair():
                     continue
-                if self.rng.random() >= chance:
+                roll = chance * max(0.25, float(pack.condition))
+                if self.rng.random() >= roll:
                     continue
                 males = sum(1 for m in pack.members if m.sex == AnimalSex.MALE)
                 females = len(pack.members) - males
@@ -4243,7 +4514,7 @@ class WildlifeManager:
                 if (
                     pack.size() >= 4
                     and self._pack_room(pack_kind) >= 2
-                    and self.rng.random() < 0.35
+                    and self.rng.random() < 0.35 * float(pack.condition)
                 ):
                     land = self._wolf_neighbour_opts(world, pack) or [(pack.x, pack.y)]
                     sx, sy = self.rng.choice(land)
@@ -4268,10 +4539,14 @@ class WildlifeManager:
             excess = max(0, self.pack_count(kind) - self._pack_max_pop(kind))
             if excess <= 0:
                 continue
-            # Prefer starving packs, then largest fed packs.
+            # Prefer starving / low-condition packs, then largest fed packs.
             ordered = sorted(
                 (p for p in self.wolf_packs if p.kind == kind),
-                key=lambda p: (p.is_fed(0.0), -p.size()),
+                key=lambda p: (
+                    p.is_fed(0.0),
+                    float(getattr(p, "condition", 0.0)),
+                    -p.size(),
+                ),
             )
             for pack in ordered:
                 while pack.members and excess > 0:
@@ -4291,11 +4566,21 @@ class WildlifeManager:
             nests.extend(fh.deer_breeding)
         return nests
 
-    def _seed_birds(self, world: World, *, kind: AnimalKind | None = None) -> None:
+    def _seed_birds(
+        self,
+        world: World,
+        *,
+        kind: AnimalKind | None = None,
+        count: int | None = None,
+    ) -> None:
         from settings import BIRD_SEED_COUNT
 
         kinds = [kind] if kind is not None else list(BIRD_KINDS)
-        n_each = _bal_int("BIRD_SEED_COUNT", BIRD_SEED_COUNT)
+        n_each = (
+            max(0, int(count))
+            if count is not None
+            else _bal_int("BIRD_SEED_COUNT", BIRD_SEED_COUNT)
+        )
         if n_each <= 0:
             return
         nests = self._bird_nest_sites()
@@ -4320,12 +4605,67 @@ class WildlifeManager:
                         kind=bird_kind,
                         move_cooldown=animal_roam_interval(),
                         retreat_target=(nx, ny),
+                        condition=0.7,
                     )
                 )
                 self.next_id += 1
                 occupied.add((nx, ny))
                 placed += 1
         self._index_animals()
+
+    def _bird_prey_score(self, kind: AnimalKind) -> float:
+        """0–1 prey availability for hawk/owl from colony levels."""
+        levels = sum(
+            c.level
+            for c in self.colonies
+            if c.kind in self._bird_prey_kinds(kind) and c.can_harvest()
+        )
+        return max(0.0, min(1.0, levels / 8.0))
+
+    def _update_bird_demographics(
+        self,
+        world: World,
+        *,
+        season: Season,
+        recruit: bool,
+    ) -> None:
+        """Lightweight condition / leave / spring recruitment for hawks and owls."""
+        from settings import BIRD_LEAVE_CHANCE, BIRD_MAX_POPULATION, BIRD_RECRUIT_CHANCE
+
+        gain = _bal_float("WILDLIFE_CONDITION_FED_GAIN", 0.20)
+        loss = _bal_float("WILDLIFE_CONDITION_HUNGER_LOSS", 0.10)
+        leave = _bal_float("BIRD_LEAVE_CHANCE", BIRD_LEAVE_CHANCE)
+        recruit_chance = _bal_float("BIRD_RECRUIT_CHANCE", BIRD_RECRUIT_CHANCE)
+        hard_cap = max(1, _bal_int("BIRD_MAX_POPULATION", BIRD_MAX_POPULATION))
+        nests = self._bird_nest_sites()
+
+        for kind in BIRD_KINDS:
+            prey = self._bird_prey_score(kind)
+            birds = [a for a in list(self.animals) if a.kind == kind]
+            for bird in birds:
+                cur = max(0.0, min(1.0, float(getattr(bird, "condition", 0.7))))
+                if prey >= 0.35:
+                    bird.condition = min(1.0, cur + gain * prey)
+                else:
+                    bird.condition = max(0.0, cur - loss * (1.0 - prey))
+                    if bird.condition < 0.25 and self.rng.random() < leave * (
+                        1.0 - prey
+                    ):
+                        self.animals.remove(bird)
+            self._index_animals()
+            if not recruit or season != Season.SPRING or not nests:
+                continue
+            birds = [a for a in self.animals if a.kind == kind]
+            cap = max(1, int(round(hard_cap * max(0.25, prey))))
+            if len(birds) >= cap or prey < 0.35:
+                continue
+            if self.rng.random() >= recruit_chance * prey:
+                continue
+            self._seed_birds(world, kind=kind, count=1)
+        if recruit and season == Season.SPRING:
+            self._last_bird_recruit_year = max(
+                0, int(getattr(self, "_last_bird_recruit_year", -1))
+            ) + 1
 
     def _bird_prey_kinds(self, kind: AnimalKind) -> tuple[AnimalKind, ...]:
         if kind == AnimalKind.HAWK:
@@ -4348,6 +4688,10 @@ class WildlifeManager:
                     continue
                 if self.harvest_colony(colony.id, kind=prey_kind) is None:
                     continue
+                gain = _bal_float("WILDLIFE_CONDITION_FED_GAIN", 0.20)
+                bird.condition = min(
+                    1.0, max(0.0, float(getattr(bird, "condition", 0.7))) + gain
+                )
                 return True
         return False
 

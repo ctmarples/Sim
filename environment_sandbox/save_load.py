@@ -807,6 +807,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "crop_target": list(a.crop_target) if a.crop_target else None,
             "crop_arrived_day": a.crop_arrived_day,
             "age_days": round(float(getattr(a, "age_days", 0.0)), 2),
+            "condition": round(float(getattr(a, "condition", 0.7)), 3),
             "hp": int(getattr(a, "hp", 0) or 0),
             "max_hp": int(getattr(a, "max_hp", 0) or 0),
         }
@@ -823,6 +824,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "habitat_id": c.habitat_id,
             "harvest_cooldown": c.harvest_cooldown,
             "apiary_building_id": c.apiary_building_id,
+            "condition": round(float(getattr(c, "condition", 0.7)), 3),
         }
         for c in game.wildlife.colonies
     ]
@@ -847,6 +849,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "world_x": round(float(p.world_x if p.world_x is not None else p.x), 4),
             "world_y": round(float(p.world_y if p.world_y is not None else p.y), 4),
             "fed_days_remaining": p.fed_days_remaining,
+            "condition": round(float(getattr(p, "condition", 0.6)), 3),
             "move_cooldown": p.move_cooldown,
             "last_prey": p.last_prey,
             "last_meal_day": p.last_meal_day,
@@ -935,6 +938,9 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "next_wolf_pack_id": game.wildlife.next_wolf_pack_id,
             "growth_timer": game.wildlife.growth_timer,
             "last_breed_year": int(getattr(game.wildlife, "_last_breed_year", -1)),
+            "last_predator_breed_year": int(
+                getattr(game.wildlife, "_last_predator_breed_year", -1)
+            ),
         },
         "fish": {
             "fish": fish,
@@ -1962,6 +1968,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                     if a.get("crop_arrived_day") is not None else None
                 ),
                 age_days=float(a.get("age_days", 224.0)),
+                condition=float(a.get("condition", 0.7)),
                 world_x=float(a.get("world_x", a["x"])),
                 world_y=float(a.get("world_y", a["y"])),
                 hp=int(a.get("hp", 0) or 0),
@@ -1971,6 +1978,9 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     game.wildlife.next_id = int(wild.get("next_id", 1))
     game.wildlife.growth_timer = int(wild.get("growth_timer", game.wildlife.growth_timer))
     game.wildlife._last_breed_year = int(wild.get("last_breed_year", -1))
+    game.wildlife._last_predator_breed_year = int(
+        wild.get("last_predator_breed_year", -1)
+    )
     game.wildlife._seeded = True
     game.wildlife._index_animals()
     game.wildlife._form_mating_pairs()
@@ -2002,6 +2012,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                 if c.get("apiary_building_id") is not None
                 else None
             ),
+            condition=float(c.get("condition", 0.7)),
         )
         colony.clamp_level()
         game.wildlife.colonies.append(colony)
@@ -2079,6 +2090,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                 members=members,
                 kind=pack_kind,
                 fed_days_remaining=remaining,
+                condition=float(p.get("condition", 0.6)),
                 move_cooldown=int(p.get("move_cooldown", 0)),
                 last_prey=str(p.get("last_prey", "") or ""),
                 last_meal_day=float(p.get("last_meal_day", -1)),

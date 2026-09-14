@@ -1377,7 +1377,7 @@ class ManagementWindow:
                 y += 18
                 surface.blit(
                     self.font_small.render(
-                        f"Breeding chance: {view.breed_chance_pct:.0f}% / tick",
+                        f"Breeding chance: {view.breed_chance_pct:.0f}% / spring",
                         True,
                         COLOUR_TEXT,
                     ),
@@ -1434,7 +1434,7 @@ class ManagementWindow:
         y += 18
         surface.blit(
             self.font_small.render(
-                f"Breeding chance: {view.breed_chance_pct:.0f}% / tick",
+                f"Breeding chance: {view.breed_chance_pct:.0f}% / spring",
                 True,
                 COLOUR_TEXT,
             ),

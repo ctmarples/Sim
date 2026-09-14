@@ -99,7 +99,9 @@ class WildlifeRepopulateDialog:
         pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, self._panel, 2)
         surface.blit(self.title_font.render("Repopulate wildlife", True, COLOUR_TEXT),
                      (self._panel.x + 12, self._panel.y + 9))
-        surface.blit(self.font.render("Population relative to normal map seeding", True, COLOUR_TEXT_DIM),
+        surface.blit(self.font.render(
+            "Prey first, then predators scaled to remaining food — % of normal seed",
+            True, COLOUR_TEXT_DIM),
                      (self._panel.x + 12, self._panel.y + 39))
         for key, label in SPECIES:
             rect = self._sliders[key]

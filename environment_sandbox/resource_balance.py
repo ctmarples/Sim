@@ -522,7 +522,7 @@ ANIMAL_BREED_CHANCE: float = 0.55
 # Initial seed: how many deer / boar breeding grounds to populate, and animals each.
 WILDLIFE_SEED_GROUNDS: int = 4
 WILDLIFE_SEED_COUNT: int = 2
-# Pair seeded onto a random breeding ground when a species is extinct at new year.
+# Pair size used when immigration / tutorial seeding places forest prey.
 WILDLIFE_RESEED_PAIR: int = 2
 FISH_WATER_PER_CAP: int = 4
 
@@ -549,10 +549,19 @@ MINERAL_POWDER_PEST_BOOST: float = 0.04
 FIELD_PEST_BOOST_MAX: float = 0.30
 # Initial colonies seeded per kind on new maps.
 COLONY_SEED_GROUNDS: int = 3
+# Starting levels / extras for a coherent food-web seed (see settings WILDLIFE_SEED_*).
+WILDLIFE_SEED_RABBIT_LEVEL: int = 3
+WILDLIFE_SEED_VOLE_LEVEL: int = 2
+WILDLIFE_SEED_FROG_LEVEL: int = 2
+WILDLIFE_SEED_BEE_LEVEL: int = 2
+WILDLIFE_SEED_RABBIT_SITE_BONUS: int = 2
+WILDLIFE_SEED_VOLE_SITE_BONUS: int = 1
+WILDLIFE_SEED_PREDATOR_CAPACITY_FRACTION: float = 0.25
+WILDLIFE_SEED_PREDATOR_FED_DAYS: float = 3.0
 # Legacy defaults; live values come from balance WILDLIFE_*_FORAGE_PER_LEVEL.
 BEE_FORAGE_TILES_PER_LEVEL: int = 10
 RABBIT_FORAGE_TILES_PER_LEVEL: int = 10
-# Per growth tick: level-up when food is available (levels 1–3 → next).
+# Base level-up chance when fed; scaled by condition and (1 − level/cap).
 COLONY_GROW_CHANCE: float = 0.20
 # Per growth tick: a level-3 colony with food may found a new level-1 colony.
 COLONY_SPLIT_LEVEL: int = 3
@@ -572,6 +581,26 @@ HONEY_PER_APIARY_LEVEL_5: int = 10
 HONEY_PER_APIARY_LEVEL_6: int = 15
 # Rabbit members: pause this many ticks after each one-tile hop.
 RABBIT_MOVE_PAUSE: int = 120
+
+# Immigration (spring; mid-year uses WILDLIFE_IMMIGRATION_MIDYEAR_SCALE for rabbits/voles).
+WILDLIFE_IMMIGRATION_RABBIT: float = 0.55
+WILDLIFE_IMMIGRATION_VOLE: float = 0.50
+WILDLIFE_IMMIGRATION_DEER: float = 0.25
+WILDLIFE_IMMIGRATION_BOAR: float = 0.22
+WILDLIFE_IMMIGRATION_FOX: float = 0.20
+WILDLIFE_IMMIGRATION_BEE: float = 0.22
+WILDLIFE_IMMIGRATION_WOLF: float = 0.06
+WILDLIFE_IMMIGRATION_FROG: float = 0.18
+WILDLIFE_IMMIGRATION_HAWK: float = 0.20
+WILDLIFE_IMMIGRATION_OWL: float = 0.18
+WILDLIFE_IMMIGRATION_MIDYEAR_SCALE: float = 0.15
+WILDLIFE_CONDITION_FED_GAIN: float = 0.20
+WILDLIFE_CONDITION_HUNGER_LOSS: float = 0.10
+WILDLIFE_CONDITION_BREED_MIN: float = 0.35
+WILDLIFE_CONDITION_HUNT_URGENCY: float = 0.45
+BIRD_MAX_POPULATION: int = 4
+BIRD_RECRUIT_CHANCE: float = 0.40
+BIRD_LEAVE_CHANCE: float = 0.35
 
 
 def honey_yield_for_level(level: int, *, apiary: bool = False) -> int:

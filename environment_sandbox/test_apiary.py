@@ -59,6 +59,8 @@ class ApiaryTests(unittest.TestCase):
                 cell.terrain = TerrainType.SOIL
                 cell.feature = FeatureType.CROP_HERB
                 cell.crop_kind = "sage"
+                cell.growth_ticks = 100
+                cell.deposit = 1
         colony = self.wildlife.colonise_apiary(building_id=1, x=ax, y=ay, level=1)
         assert colony is not None
         before_features = [

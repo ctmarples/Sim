@@ -65,6 +65,25 @@ class PredatorFoodCapacityTests(unittest.TestCase):
         seeded_kinds = {call.args[0] for call in wildlife._seed_patch.call_args_list}
         self.assertEqual(seeded_kinds, {AnimalKind.DEER, AnimalKind.BOAR})
 
+    def test_immigration_is_chance_based_not_guaranteed(self) -> None:
+        wildlife = WildlifeManager(seed=1)
+        wildlife.rng = __import__("random").Random(0)
+        habitat = Mock()
+        habitat.nest_tiles = [(1, 1)]
+        habitat.allow_frog = False
+        wildlife.habitats = [habitat]
+        wildlife.open_habitats = []
+        wildlife.count_kind = Mock(return_value=0)
+        wildlife.pack_count = Mock(return_value=1)
+        wildlife.breeding_grounds = Mock(return_value=[habitat])
+        wildlife._empty_colony_sites = Mock(return_value=[])
+        wildlife._seed_patch = Mock()
+        wildlife._immigration_chance = Mock(return_value=0.0)
+
+        wildlife._try_immigration(Mock())
+
+        wildlife._seed_patch.assert_not_called()
+
     def test_capacity_scales_with_available_prey(self) -> None:
         wildlife = WildlifeManager(seed=1)
         wildlife.colonies = [
@@ -73,11 +92,11 @@ class PredatorFoodCapacityTests(unittest.TestCase):
         ]
         wildlife.wolf_packs = [WolfPack(1, 0, 0, [member()], kind=AnimalKind.FOX)]
 
-        self.assertEqual(wildlife._pack_max_pop(AnimalKind.WOLF), 8)
+        self.assertEqual(wildlife._pack_max_pop(AnimalKind.WOLF), 5)
         self.assertEqual(wildlife._pack_max_pop(AnimalKind.FOX), 12)
 
         wildlife.colonies[0].level = 1
-        self.assertEqual(wildlife._pack_max_pop(AnimalKind.WOLF), 5)
+        self.assertEqual(wildlife._pack_max_pop(AnimalKind.WOLF), 3)
 
     def test_hungry_excess_predators_starve_to_food_capacity(self) -> None:
         wildlife = WildlifeManager(seed=1)
@@ -97,10 +116,14 @@ class PredatorFoodCapacityTests(unittest.TestCase):
 
         wildlife._cull_excess_predators()
 
-        self.assertEqual(wildlife.wolf_count(), 6)
+        # Rabbit L2 → 2 * 3d * 0.5 = 3 wolf places.
+        self.assertEqual(wildlife.wolf_count(), 3)
 
     def test_fed_pack_is_not_selected_for_starvation(self) -> None:
         wildlife = WildlifeManager(seed=1)
+        wildlife.colonies = [
+            Colony(1, AnimalKind.RABBIT, 0, 0, level=2, habitat_id=1),
+        ]
         fed = WolfPack(1, 0, 0, [member(), member()], fed_days_remaining=1.0)
         hungry = WolfPack(2, 0, 0, [member(), member()])
         wildlife.wolf_packs = [fed, hungry]
@@ -108,7 +131,7 @@ class PredatorFoodCapacityTests(unittest.TestCase):
         wildlife._cull_excess_predators()
 
         self.assertEqual(fed.size(), 2)
-        self.assertEqual(hungry.size(), 0)
+        self.assertEqual(hungry.size(), 1)
 
 
 if __name__ == "__main__":
