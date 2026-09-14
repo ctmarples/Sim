@@ -7,7 +7,7 @@ HANDBOOK_STEPS = (('1. Beyond the fence',
   'Inspect what surrounds this field. Walk around the assessment area and count the distinct '
   'plant and animal species found nearby. Then find any nearby beehives and estimate how far '
   'they are from the field. When complete, unlock the Species diversity and Pollination overlays '
-  'and add the Surroundings section to Field Status.'),
+  'and add the Landscape section to Field Status.'),
  ('2. Watch the crop',
   'Pest control is protection. If that protection is weak, the crop slowly loses health. And '
   'watch out for those weeds! They’re always competing with the crop for their share.',

@@ -606,7 +606,13 @@ def serialize_game(game: Game) -> dict[str, Any]:
             bdata["crop_kind"] = b.crop_kind
         if b.kind.name in ("FIELD", "ORCHARD", "TREE_NURSERY"):
             bdata["crop_health"] = float(getattr(b, "crop_health", 1.0))
+            bdata["previous_crop_health"] = float(
+                getattr(b, "previous_crop_health", getattr(b, "crop_health", 1.0))
+            )
             bdata["pest_boost"] = float(getattr(b, "pest_boost", 0.0))
+            hist = getattr(b, "metric_history", None) or []
+            if hist:
+                bdata["metric_history"] = [dict(row) for row in hist[-24:]]
             bdata["fence_edges"] = [list(edge) for edge in sorted(b.fence_edges)]
             bdata["fence_gates"] = [list(cell) for cell in sorted(b.fence_gates)]
         buildings.append(bdata)
@@ -1474,12 +1480,30 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                 CROP_HEALTH_MIN,
                 min(1.0, float(bdata.get("crop_health", 1.0))),
             )
+            building.previous_crop_health = max(
+                CROP_HEALTH_MIN,
+                min(
+                    1.0,
+                    float(
+                        bdata.get(
+                            "previous_crop_health",
+                            bdata.get("crop_health", 1.0),
+                        )
+                    ),
+                ),
+            )
             from resource_balance import FIELD_PEST_BOOST_MAX
 
             building.pest_boost = max(
                 0.0,
                 min(FIELD_PEST_BOOST_MAX, float(bdata.get("pest_boost", 0.0))),
             )
+            hist = bdata.get("metric_history") or []
+            building.metric_history = [
+                dict(row)
+                for row in hist
+                if isinstance(row, dict)
+            ][-24:]
             building.fence_edges = {
                 (int(edge[0]), int(edge[1]), str(edge[2]))
                 for edge in bdata.get("fence_edges", [])

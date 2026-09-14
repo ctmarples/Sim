@@ -1668,10 +1668,15 @@ class Building:
     plans: list[CropPlan] = field(default_factory=list)
     # Field rotation length in years (1–3). Plans are tagged with ``CropPlan.year``.
     rotation_years: int = 1
-    # Field only: cumulative crop health 0–1; ratchets down on env sample ticks.
+    # Field only: health of the *current* planting (0–1); ratchets toward pest cap.
     crop_health: float = 1.0
+    # Ending health of the previous planting (for Status / carry-over display).
+    previous_crop_health: float = 1.0
     # Field only: additive pest-control boost from alchemist treatments.
     pest_boost: float = 0.0
+    # Field only: env-sample metric history for Status sparkline / Performance tab.
+    # Each entry: {year, day, ...metric floats 0–1}. Kept to ~3 years (24 samples).
+    metric_history: list[dict] = field(default_factory=list)
     # Field perimeter fencing.  Each entry is (cell_x, cell_y, N|E|S|W).
     fence_edges: set[tuple[int, int, str]] = field(default_factory=set)
     # Perimeter cells left open as gates (all outward edges on that square).

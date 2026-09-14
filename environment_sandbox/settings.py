@@ -90,7 +90,7 @@ POLLINATION_YIELD_LOW: float = 0.9
 POLLINATION_YIELD_HIGH: float = 1.2
 CROP_HEALTH_MIN: float = 0.7
 CROP_HEALTH_MAX_DROP: float = 0.05
-FARM_PRODUCE_YIELD: int = 9
+FARM_PRODUCE_YIELD: int = 12
 INSECT_REPELLANT_PEST_BOOST: float = 0.12
 # Soil fertility 0–1 by terrain (File → Balance → Farm & fields).
 FERTILITY_FOREST: float = 1.0

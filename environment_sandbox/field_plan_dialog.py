@@ -20,7 +20,7 @@ from crops import (
     phase_allows_plough_plant,
     phase_for_crop,
 )
-from crop_status_ui import draw_crop_overview, draw_env_hover
+from crop_status_ui import draw_crop_overview, draw_env_hover, _wrap_tip
 from entities import Building, BuildingKind, is_field_plot_kind
 from trees import TREES
 from field_yield import (
@@ -137,7 +137,7 @@ class FieldPlanDialog:
         self._handbook_completion = False
         self.rotation_unlocked = False
         self._example_seen_seasons = set()
-        self.tab: str = "status"  # status | rotation
+        self.tab: str = "status"  # status | rotation | performance | handbook
         self.expanded_factor: str | None = None
         self._scroll = 0
         self._content_h = 0
@@ -148,6 +148,20 @@ class FieldPlanDialog:
         self.season: Season = Season.SPRING
         self.edit_year: int = 1
         self.crop_kind: str = "sage"
+        self._perf_years: int = 1
+        self._perf_series: dict[str, bool] = {
+            "health": True,
+            "health_cap": True,
+            "pollination": False,
+            "pest": False,
+            "disturbance": True,
+            "weeds": True,
+            "fertility": True,
+            "moisture": False,
+            "soil_texture": False,
+            "erosion": False,
+            "yield_frac": True,
+        }
         self._drag_start: tuple[int, int] | None = None
         self._drag_current: tuple[int, int] | None = None
         self._buttons: list[tuple[str, pygame.Rect]] = []
@@ -427,6 +441,22 @@ class FieldPlanDialog:
             self._scroll = 0
             self._drag_start = None
             self._drag_current = None
+        elif action == "tab_performance":
+            self.tab = "performance"
+            self.expanded_factor = None
+            self._scroll = 0
+            self._drag_start = None
+            self._drag_current = None
+        elif action.startswith("perf_years_"):
+            try:
+                self._perf_years = max(1, min(3, int(action[len("perf_years_") :])))
+            except ValueError:
+                pass
+            self._scroll = 0
+        elif action.startswith("perf_toggle_"):
+            key = action[len("perf_toggle_") :]
+            if key in self._perf_series:
+                self._perf_series[key] = not self._perf_series[key]
         elif action == "tab_rotation" and (self.handbook_stage is None or self.handbook_stage >= 5 or self.rotation_unlocked):
             self.tab = "rotation"
             self.expanded_factor = None
@@ -608,6 +638,8 @@ class FieldPlanDialog:
             tabs.append(("Crop", "crop"))
         elif self.handbook_stage is None or self.handbook_stage >= 5 or self.rotation_unlocked:
             tabs.append(("Rotation", "rotation"))
+        if not building.is_tree_nursery:
+            tabs.append(("Performance", "performance"))
         if self.handbook_stage is not None and not building.is_orchard and not building.is_tree_nursery:
             tabs.append(("Old Field Handbook", "handbook"))
         for label, key in tabs:
@@ -635,6 +667,16 @@ class FieldPlanDialog:
                 mouse_pos=mouse_pos,
                 current_season=current_season or self.season,
                 yield_map_active=yield_map_active,
+            )
+        elif self.tab == "performance":
+            hover_tip = self._draw_performance(
+                surface,
+                building,
+                x=inner_left,
+                y=y,
+                inner_w=inner_w,
+                bottom=panel.bottom - PAD,
+                mouse_pos=mouse_pos,
             )
         else:
             view = pygame.Rect(
@@ -705,21 +747,27 @@ class FieldPlanDialog:
         hover_tip = ""
         summary = self._yield_summary
         sections = (
-            ("SURROUNDINGS", "landscape"),
-            ("CROP / FIELD CONDITION" if self.handbook_stage is None or self.handbook_stage >= 3 else "CROP CONDITION", "condition"),
+            ("LANDSCAPE", "landscape"),
+            ("FIELD", "condition"),
             ("SOIL", "soil"),
         )
 
         def _expanded_h(fac: FieldFactorDisplay) -> int:
             if self.expanded_factor != fac.key:
                 return 0
-            h = len(fac.detail_lines) * self.font_tiny.get_linesize()
+            # Wrap estimate: ~48 chars per tiny line at panel width.
+            h = 0
+            for line in fac.detail_lines:
+                h += max(1, (len(line) + 47) // 48) * self.font_tiny.get_linesize()
+            if fac.key == "health":
+                h += 28  # sparkline
             if fac.overlay_key:
                 h += BTN_H + 2
             return h + 2
 
         cy = 0
         cy += 20 if self._headline else 18
+        cy += SECTION_GAP  # hairline spacer before Expected Harvest
         cy += 16
         if summary is None or summary.tile_count <= 0:
             cy += 18
@@ -753,11 +801,37 @@ class FieldPlanDialog:
             surface.blit(font.render(text, True, colour), (view.x + ox, oy))
 
         if self._headline:
-            _blit(self.font_title, self._headline, COLOUR_TEXT, 0, sy)
+            crop = self._headline_crop()
+            title_x = 0
+            if crop is not None:
+                glyph_cx = view.x + 10
+                glyph_cy = sy + self.font_title.get_height() // 2
+                _draw_crop_glyph(
+                    surface,
+                    glyph_cx,
+                    glyph_cy,
+                    crop.stem_colour,
+                    crop.flower_colour,
+                    scale=0.85,
+                    icon_base=crop.plant_icon(),
+                )
+                title_x = 22
+            _blit(self.font_title, self._headline, COLOUR_TEXT, title_x, sy)
             sy += self.font_title.get_linesize() + 4
         else:
             _blit(self.font_small, "No active crop on this field", COLOUR_TEXT_DIM, 0, sy)
             sy += self.font_small.get_linesize() + 4
+
+        # Section hairline between headline and Expected Harvest
+        if sy > view.y - self._scroll:
+            pygame.draw.line(
+                surface,
+                (151, 119, 76),
+                (view.x, sy),
+                (view.right - 8, sy + 1),
+                1,
+            )
+            sy += 8
 
         _blit(self.font, "EXPECTED HARVEST", COLOUR_TEXT, 0, sy)
         sy += self.font.get_linesize() + 6
@@ -879,6 +953,8 @@ class FieldPlanDialog:
                     right = f"▲ {fac.effect_text}"
                 elif fac.effect_text and fac.effect_text.startswith("-"):
                     right = f"▼ {fac.effect_text}"
+                elif fac.right_badge:
+                    right = fac.right_badge
                 elif fac.key in ("pest", "fertility") and not fac.effect_text:
                     right = "—"
                 else:
@@ -899,24 +975,24 @@ class FieldPlanDialog:
                         bits.append(fac.management)
                     if fac.effect_text:
                         bits.append(f"yield {fac.effect_text}")
+                    elif fac.right_badge:
+                        bits.append(fac.right_badge)
                     hover_tip = " · ".join(bits)
                 sy += ROW_H + 2
-                note = None
-                if fac.key == "pest":
-                    note = f"  health cap {float((self._env_status or {}).get('health_cap', 1)) * 100:.0f}%"
-                elif fac.key == "fertility":
-                    note = f"  {fac.value_text} potential"
-                if note:
-                    surface.blit(self.font_tiny.render(note, True, COLOUR_TEXT_DIM), (view.x + 26, sy))
-                    sy += self.font_tiny.get_linesize()
                 if expanded:
                     inset_x = view.x + 10
+                    wrap_w = max(40, inner_w - 20)
                     for line in fac.detail_lines:
-                        surface.blit(
-                            self.font_tiny.render(line, True, COLOUR_TEXT_DIM),
-                            (inset_x, sy),
+                        for wrapped in _wrap_tip(self.font_tiny, line, wrap_w):
+                            surface.blit(
+                                self.font_tiny.render(wrapped, True, COLOUR_TEXT_DIM),
+                                (inset_x, sy),
+                            )
+                            sy += self.font_tiny.get_linesize()
+                    if fac.key == "health":
+                        sy = self._draw_health_sparkline(
+                            surface, inset_x, sy, min(180, wrap_w)
                         )
-                        sy += self.font_tiny.get_linesize()
                     if fac.overlay_key:
                         btn = pygame.Rect(
                             inset_x, sy, min(140, inner_w - 16), BTN_H - 2
@@ -971,6 +1047,215 @@ class FieldPlanDialog:
 
         surface.set_clip(old)
 
+        if max_scroll > 0:
+            track = pygame.Rect(view.right + 4, view.y, 5, view.h)
+            pygame.draw.rect(surface, (126, 91, 52), track, border_radius=2)
+            thumb_h = max(16, int(view.h * view.h / max(1, self._content_h)))
+            thumb_y = view.y + int((view.h - thumb_h) * (self._scroll / max_scroll))
+            pygame.draw.rect(
+                surface,
+                (218, 119, 55),
+                pygame.Rect(track.x, thumb_y, 5, thumb_h),
+                border_radius=2,
+            )
+        return hover_tip
+
+    def _headline_crop(self):
+        """Dominant crop for the Status headline glyph, if any."""
+        rows = list(self._crop_overview or [])
+        if rows:
+            best = max(
+                rows,
+                key=lambda r: int(r.get("planted_tiles") or r.get("tiles") or 0),
+            )
+            key = best.get("key")
+            if key:
+                return CROP_BY_KEY.get(str(key))
+        return CROP_BY_KEY.get(self.crop_kind) if self.crop_kind else None
+
+    def _metric_history_rows(self, *, years: int | None = None) -> list[dict]:
+        hist = list((self._env_status or {}).get("metric_history") or [])
+        if not hist:
+            return []
+        span = max(1, int(years if years is not None else self._perf_years))
+        keep = span * 8  # 8 env samples per year
+        return hist[-keep:]
+
+    def _draw_health_sparkline(
+        self, surface: pygame.Surface, x: int, y: int, width: int
+    ) -> int:
+        """Tiny health (+cap) trend under the expanded Crop health copy."""
+        rows = self._metric_history_rows(years=1)
+        health = [float(r.get("health") or 0) for r in rows]
+        caps = [float(r.get("health_cap") or 0) for r in rows]
+        if len(health) < 2:
+            surface.blit(
+                self.font_tiny.render("Trend: not enough samples yet", True, COLOUR_TEXT_DIM),
+                (x, y),
+            )
+            return y + self.font_tiny.get_linesize() + 4
+        h = 22
+        plot = pygame.Rect(x, y + 2, max(40, width), h)
+        pygame.draw.rect(surface, (232, 214, 176), plot, border_radius=2)
+        pygame.draw.rect(surface, (151, 119, 76), plot, 1, border_radius=2)
+
+        def pts(values: list[float]) -> list[tuple[int, int]]:
+            n = len(values)
+            out = []
+            for i, v in enumerate(values):
+                px = plot.x + int(i * (plot.w - 1) / max(1, n - 1))
+                py = plot.bottom - 1 - int(max(0.0, min(1.0, v)) * (plot.h - 1))
+                out.append((px, py))
+            return out
+
+        cap_pts = pts(caps)
+        health_pts = pts(health)
+        if len(cap_pts) >= 2:
+            pygame.draw.lines(surface, (160, 130, 90), False, cap_pts, 1)
+        if len(health_pts) >= 2:
+            pygame.draw.lines(surface, (70, 120, 70), False, health_pts, 2)
+        label = self.font_tiny.render("Health trend (1 yr) · green=health, brown=cap", True, COLOUR_TEXT_DIM)
+        surface.blit(label, (x, plot.bottom + 2))
+        return plot.bottom + 2 + self.font_tiny.get_linesize() + 4
+
+    PERF_SERIES = (
+        ("health", "Crop health", (70, 120, 70)),
+        ("health_cap", "Health cap", (160, 130, 90)),
+        ("pollination", "Pollination", (210, 170, 50)),
+        ("pest", "Pest control", (90, 140, 100)),
+        ("disturbance", "Disturbance", (200, 110, 60)),
+        ("weeds", "Weeds", (100, 150, 70)),
+        ("fertility", "Fertility", (140, 100, 60)),
+        ("moisture", "Moisture", (70, 120, 180)),
+        ("soil_texture", "Soil texture fit", (150, 120, 90)),
+        ("erosion", "Erosion risk", (180, 80, 70)),
+        ("yield_frac", "Yield vs base", (90, 90, 140)),
+    )
+
+    def _draw_performance(
+        self,
+        surface: pygame.Surface,
+        building: Building,
+        *,
+        x: int,
+        y: int,
+        inner_w: int,
+        bottom: int,
+        mouse_pos: tuple[int, int] | None,
+    ) -> str:
+        view = pygame.Rect(x, y, max(40, inner_w - 12), max(40, bottom - y))
+        self._view_rect = view
+        hover_tip = ""
+        old = surface.get_clip()
+        surface.set_clip(view.clip(old) if old.width else view)
+        sy = view.y - self._scroll
+
+        surface.blit(
+            self.font.render("FIELD PERFORMANCE", True, COLOUR_TEXT),
+            (view.x, sy),
+        )
+        sy += self.font.get_height() + 6
+        surface.blit(
+            self.font_tiny.render("Period", True, COLOUR_TEXT_DIM),
+            (view.x, sy + 4),
+        )
+        sx = view.x + 50
+        for years, label in ((1, "1 yr"), (2, "2 yr"), (3, "3 yr")):
+            rect = pygame.Rect(sx, sy, max(40, 8 + self.font_small.size(label)[0]), BTN_H - 2)
+            hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+            self._draw_btn(surface, rect, label, years == self._perf_years, hovered=hovered)
+            if view.colliderect(rect):
+                self._buttons.append((f"perf_years_{years}", rect))
+            sx += rect.w + 6
+        sy += BTN_H + 8
+
+        chart_h = min(160, max(100, view.h // 3))
+        chart = pygame.Rect(view.x, sy, view.w, chart_h)
+        pygame.draw.rect(surface, (232, 214, 176), chart, border_radius=3)
+        pygame.draw.rect(surface, (151, 119, 76), chart, 1, border_radius=3)
+        rows = self._metric_history_rows()
+        plot = chart.inflate(-16, -20).move(4, 4)
+        for g in range(5):
+            gy = plot.y + int(g * (plot.h - 1) / 4)
+            pygame.draw.line(surface, (200, 180, 140), (plot.x, gy), (plot.right, gy), 1)
+            val = f"{(4 - g) * 25}%"
+            t = self.font_tiny.render(val, True, COLOUR_TEXT_DIM)
+            surface.blit(t, (plot.x - 2 - t.get_width(), gy - t.get_height() // 2))
+        pygame.draw.line(surface, (126, 91, 52), (plot.x, plot.bottom), (plot.right, plot.bottom), 1)
+        pygame.draw.line(surface, (126, 91, 52), (plot.x, plot.y), (plot.x, plot.bottom), 1)
+
+        if len(rows) < 2:
+            msg = self.font_small.render(
+                "Not enough samples yet — data builds each half-season.",
+                True,
+                COLOUR_TEXT_DIM,
+            )
+            surface.blit(msg, (plot.x + 8, plot.centery - msg.get_height() // 2))
+        else:
+            n = len(rows)
+
+            def pt(i: int, value: float) -> tuple[int, int]:
+                px = plot.x + int(i * (plot.w - 1) / max(1, n - 1))
+                py = plot.bottom - 1 - int(max(0.0, min(1.0, value)) * (plot.h - 1))
+                return px, py
+
+            for key, _label, colour in self.PERF_SERIES:
+                if not self._perf_series.get(key, False):
+                    continue
+                values = [float(r.get(key) or 0.0) for r in rows]
+                pts = [pt(i, values[i]) for i in range(n)]
+                if len(pts) >= 2:
+                    pygame.draw.lines(surface, colour, False, pts, 2)
+                    for p in pts[:: max(1, n // 8)]:
+                        pygame.draw.circle(surface, colour, p, 2)
+        sy = chart.bottom + 10
+
+        surface.blit(
+            self.font_tiny.render("Toggle series", True, COLOUR_TEXT_DIM),
+            (view.x, sy),
+        )
+        sy += self.font_tiny.get_linesize() + 4
+        cx, cy = view.x, sy
+        row_h = BTN_H - 2
+        for key, label, colour in self.PERF_SERIES:
+            tw = max(72, 14 + self.font_tiny.size(label)[0])
+            if cx + tw > view.right:
+                cx = view.x
+                cy += row_h + 4
+            rect = pygame.Rect(cx, cy, tw, row_h)
+            on = bool(self._perf_series.get(key, False))
+            hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+            fill = colour if on else (180, 160, 130)
+            pygame.draw.rect(surface, fill if on else (220, 200, 165), rect, border_radius=3)
+            pygame.draw.rect(surface, colour, rect, 1 if on else 1, border_radius=3)
+            if hovered:
+                pygame.draw.rect(surface, (218, 119, 55), rect, 2, border_radius=3)
+            txt = self.font_tiny.render(label, True, (255, 255, 255) if on else COLOUR_TEXT)
+            surface.blit(
+                txt,
+                (
+                    rect.centerx - txt.get_width() // 2,
+                    rect.centery - txt.get_height() // 2,
+                ),
+            )
+            if view.colliderect(rect):
+                self._buttons.append((f"perf_toggle_{key}", rect))
+            if mouse_pos is not None and rect.collidepoint(mouse_pos):
+                hover_tip = f"{label} · {'shown' if on else 'hidden'}"
+            cx += tw + 6
+        cy += row_h + 10
+        note = (
+            f"{len(rows)} samples in view · recorded 8× per year on env ticks"
+            if rows
+            else "History starts after the next environmental sample."
+        )
+        surface.blit(self.font_tiny.render(note, True, COLOUR_TEXT_DIM), (view.x, cy))
+        cy += self.font_tiny.get_linesize() + 8
+
+        self._content_h = cy - (view.y - self._scroll)
+        max_scroll = max(0, self._content_h - view.h)
+        self._scroll = min(self._scroll, max_scroll)
+        surface.set_clip(old)
         if max_scroll > 0:
             track = pygame.Rect(view.right + 4, view.y, 5, view.h)
             pygame.draw.rect(surface, (126, 91, 52), track, border_radius=2)
@@ -1058,7 +1343,7 @@ class FieldPlanDialog:
         stages = [
             ("Base potential", None, base),
             ("Landscape", stage_effect_pct(base, after_land), after_land),
-            ("Crop condition", stage_effect_pct(after_land, after_crop), after_crop),
+            ("Field", stage_effect_pct(after_land, after_crop), after_crop),
             ("Soil", stage_effect_pct(after_crop, mean), mean),
         ]
         for label, delta, val in stages:

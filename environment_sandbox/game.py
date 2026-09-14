@@ -125,6 +125,7 @@ from environment import (
     crop_health_cap_from_pest_control,
     crop_health_max_drop,
     crop_health_min,
+    crop_health_carryover,
     is_env_sample_day,
     pollination_yield_multiplier,
     soil_moisture_grid,
@@ -6722,6 +6723,7 @@ class Game:
         self._biodiversity_samples = self.env_maps.biodiversity_samples
         self._biodiversity_average = self.env_maps.biodiversity
         self._update_field_crop_health()
+        self._record_field_metric_history()
         if self.overlay_mode in (
             OverlayMode.BIODIVERSITY,
             OverlayMode.FLORAL_RESOURCES,
@@ -6744,11 +6746,11 @@ class Game:
             self._set_status(f"Autosave failed: {exc}")
 
     def _update_field_crop_health(self) -> None:
-        """Ratchet each Field's crop_health down toward the pest-control target.
+        """Ratchet each Field's current-crop health down toward the pest-control cap.
 
-        Health only decreases (sticky), at most CROP_HEALTH_MAX_DROP per sample,
-        and never below CROP_HEALTH_MIN. Values crushed by the old harsh curve
-        are lifted to the new floor.
+        Health belongs to the active planting. It only decreases (toward the
+        cap), at most CROP_HEALTH_MAX_DROP per sample, and never below
+        CROP_HEALTH_MIN. A new planting starts via ``_begin_field_crop_health``.
         """
         hmin = crop_health_min()
         drop = crop_health_max_drop()
@@ -6758,15 +6760,85 @@ class Game:
             cells = building.plot_cells()
             if not cells:
                 continue
+            # No active crop → leave stored health as the carry-over seed.
+            if not any(
+                (c := self.world.get_cell(x, y)) is not None
+                and c.feature == FeatureType.CROP_HERB
+                for x, y in cells
+            ):
+                continue
             pc = self.env_maps.farm_pest_control(cells)
             boost = max(0.0, float(getattr(building, "pest_boost", 0.0)))
-            # Treatments raise the health cap (pest no longer multiplies harvest).
             target = crop_health_cap_from_pest_control(pc + boost)
             current = float(getattr(building, "crop_health", 1.0))
             current = max(current, hmin)
             if current > target:
                 current = max(target, current - drop)
             building.crop_health = max(hmin, min(1.0, current))
+
+    def _begin_field_crop_health(self, field: Building) -> None:
+        """Start a new planting: midpoint between previous ending health and full."""
+        prev = float(getattr(field, "crop_health", 1.0))
+        field.previous_crop_health = max(
+            crop_health_min(), min(1.0, prev)
+        )
+        field.crop_health = crop_health_carryover(prev)
+
+    def _notify_field_crop_sown(self, x: int, y: int) -> None:
+        """On first sown tile of a stand, apply midpoint carry-over health."""
+        field = self._field_building_at(x, y)
+        if field is None or not field.is_field_plot:
+            return
+        planted = 0
+        for cx, cy in field.plot_cells():
+            cell = self.world.get_cell(cx, cy)
+            if cell is not None and cell.feature == FeatureType.CROP_HERB:
+                planted += 1
+        if planted == 1:
+            self._begin_field_crop_health(field)
+
+    def _record_field_metric_history(self) -> None:
+        """Snapshot field Status metrics each env sample (8×/year) for Performance."""
+        from field_yield import fertility_yield_multiplier
+
+        year = int(getattr(self, "elapsed_years", 0) or 0)
+        day = int(getattr(self, "calendar_day", 0) or 0)
+        for building in self.buildings.values():
+            if not building.is_field_plot:
+                continue
+            st = self._field_env_status(building)
+            fert = float(st.get("fertility") or 0.0)
+            pot = float(st.get("fertility_potential") or fert or 1.0)
+            row = {
+                "year": year,
+                "day": day,
+                "health": float(st.get("health") or 1.0),
+                "health_cap": float(st.get("health_cap") or 1.0),
+                "pollination": float(st.get("poll_coverage") or 0.0),
+                "pest": min(1.0, max(0.0, (float(st.get("pest_mult") or 1.0) - 0.75) / 0.40)),
+                "disturbance": float(st.get("disturbance") or 0.0),
+                "weeds": float(st.get("weeds") or 0.0),
+                "fertility": float(fertility_yield_multiplier(fert, pot)),
+                "moisture": float(st.get("moisture") or 0.0),
+                "soil_texture": float(st.get("soil_texture_mult") or 1.0),
+                "erosion": float(st.get("erosion") or 0.0),
+                "yield_frac": (
+                    float(st.get("harvest_yield") or 0)
+                    / max(1.0, float(st.get("base_yield") or 1))
+                ),
+            }
+            hist = list(getattr(building, "metric_history", None) or [])
+            hist.append(row)
+            building.metric_history = hist[-24:]
+
+    def _nearest_bee_colony_tiles(self, field: Building) -> int | None:
+        """Chebyshev distance from field centre to the nearest active bee nest."""
+        nests = self._bee_nest_sites()
+        if not nests:
+            return None
+        cx, cy = field.visual_center_cell()
+        best = min(max(abs(nx - cx), abs(ny - cy)) for nx, ny, _lv in nests)
+        return int(best)
 
     def _field_crop_health(self, field: Building) -> float:
         hmin = crop_health_min()
@@ -7259,9 +7331,14 @@ class Game:
         from field_yield import (
             calculate_tile_yield_breakdown,
             crop_moisture_texture_multipliers,
+            fertility_yield_multiplier,
         )
         from world import disturbance_activity_multiplier, effective_disturbance_at
-        from soil import overlay_fertility, weed_yield_multiplier
+        from soil import (
+            field_fertility_target,
+            overlay_fertility,
+            weed_yield_multiplier,
+        )
         from soil_texture import effective_soil_texture
 
         pest = self._farm_pest_control_at(x, y)
@@ -7274,7 +7351,9 @@ class Game:
             if cell is not None
             else 1.0
         )
-        fert = overlay_fertility(cell) if cell is not None else 1.0
+        fert_abs = overlay_fertility(cell) if cell is not None else 1.0
+        fert_pot = field_fertility_target(cell) if cell is not None else 1.0
+        fert = fertility_yield_multiplier(fert_abs, fert_pot)
         weeds = float(getattr(cell, "weeds", 0.0)) if cell is not None else 0.0
         weed_mult = weed_yield_multiplier(weeds)
         moisture_val = 0.5
@@ -7288,8 +7367,7 @@ class Game:
             soil_moisture=moisture_val,
             soil_texture=texture_val,
         )
-        from crops import CROP_HARVEST_MAX
-        crop_base=CROP_HARVEST_MAX.get(getattr(cell,"crop_kind",None),farm_produce_yield()) if cell is not None else farm_produce_yield()
+        crop_base = farm_produce_yield()
         return calculate_tile_yield_breakdown(
             base=crop_base,
             pest_control=pest,
@@ -14451,6 +14529,7 @@ class Game:
         if self.world.sow_crop(x, y, crop.key, self._field_sow_growth_ticks(crop)):
             inv.consume_item(seed_key, 1)
             self.record_consumed(seed_key, 1)
+            self._notify_field_crop_sown(x, y)
             self.world.apply_disturbance(x, y)
             self.sounds.emit("work.plant", actor="player", plant_type="crop", x=x, y=y)
             self._refresh_indicators()
@@ -20642,6 +20721,7 @@ class Game:
         from field_yield import (
             calculate_tile_yield_breakdown,
             crop_moisture_texture_multipliers,
+            fertility_yield_multiplier,
         )
 
         fert_vals = []
@@ -20672,6 +20752,7 @@ class Game:
             texture_mults.append(tm)
         fertility = (sum(fert_vals) / len(fert_vals)) if fert_vals else 0.0
         fertility_potential = (sum(pot_vals) / len(pot_vals)) if pot_vals else 1.0
+        fert_mult = fertility_yield_multiplier(fertility, fertility_potential)
         weeds = (sum(weed_vals) / len(weed_vals)) if weed_vals else 0.0
         weed_mult = weed_yield_multiplier(weeds)
         moisture_mult = (sum(moist_mults) / len(moist_mults)) if moist_mults else 1.0
@@ -20693,7 +20774,7 @@ class Game:
             crop_health=health,
             pollination=poll_mult,
             ecology=ecology,
-            fertility=fertility,
+            fertility=fert_mult,
             weed_penalty=weed_mult,
             weeds=weeds,
             moisture=moisture_mult,
@@ -20711,6 +20792,9 @@ class Game:
             "pest_hi": self.balance.get_float("PEST_CONTROL_MULT_HIGH"),
             "health": health,
             "health_cap": cap,
+            "previous_crop_health": float(
+                getattr(field, "previous_crop_health", health)
+            ),
             "moisture": moisture_raw,
             "moisture_mult": moisture_mult,
             "soil_texture": soil_texture_avg,
@@ -20733,6 +20817,8 @@ class Game:
             "erosion": erosion,
             "base_yield": base,
             "harvest_yield": got,
+            "nearest_colony_tiles": self._nearest_bee_colony_tiles(field),
+            "metric_history": list(getattr(field, "metric_history", None) or []),
         }
 
     def _field_yield_cells(self, field: Building) -> set[tuple[int, int]]:
@@ -20752,15 +20838,16 @@ class Game:
         """Per-tile expected yields for the Status panel (same maths as harvest)."""
         from field_yield import summarize_tile_yields
 
-        base = float(farm_produce_yield())
         tile_yields: dict[tuple[int, int], int] = {}
         unrounded: list[float] = []
         after_land: list[float] = []
         after_crop: list[float] = []
+        bases: list[float] = []
         any_locked = False
         for x, y in self._field_yield_cells(field):
             cell = self.world.get_cell(x, y)
             bd = self._farm_produce_breakdown_at(x, y)
+            bases.append(bd.base)
             unrounded.append(bd.final_unrounded)
             after_land.append(bd.after_landscape)
             after_crop.append(bd.after_crop_condition)
@@ -20779,6 +20866,7 @@ class Game:
         mean_u = (sum(unrounded) / n) if n else 0.0
         mean_land = (sum(after_land) / n) if n else 0.0
         mean_crop = (sum(after_crop) / n) if n else 0.0
+        base = (sum(bases) / n) if n else float(farm_produce_yield())
         summary = summarize_tile_yields(
             tile_yields,
             base_per_tile=base,
@@ -21019,6 +21107,7 @@ class Game:
             ):
                 setattr(inv, seed_key, getattr(inv, seed_key) - 1)
                 self.record_consumed(seed_key, 1)
+                self._notify_field_crop_sown(x, y)
                 self.sounds.emit("work.plant",actor="villager",plant_type="crop",x=x,y=y)
                 self.world.apply_disturbance(x, y)
                 self._refresh_indicators()

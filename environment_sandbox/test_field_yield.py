@@ -96,11 +96,27 @@ class YieldBreakdownTests(unittest.TestCase):
             fertility=1.0,
             weed_penalty=0.9,
         )
-        self.assertAlmostEqual(bd.after_landscape, 9 * 1.1 * 0.5)
+        self.assertAlmostEqual(bd.after_landscape, 9 * 1.1)
         self.assertAlmostEqual(
-            bd.after_crop_condition, bd.after_landscape * 0.85 * 0.9
+            bd.after_crop_condition, bd.after_landscape * 0.5 * 0.85 * 0.9
         )
         self.assertAlmostEqual(bd.final_unrounded, bd.after_crop_condition * 1.0)
+
+    def test_relative_fertility_boost_above_potential(self) -> None:
+        from field_yield import fertility_yield_multiplier
+
+        self.assertAlmostEqual(fertility_yield_multiplier(0.8, 0.8), 1.0)
+        self.assertAlmostEqual(fertility_yield_multiplier(0.88, 0.8), 1.1)
+        boosted = calculate_tile_yield_breakdown(
+            base=10,
+            pest_control=1.0,
+            crop_health=1.0,
+            pollination=1.0,
+            ecology=1.0,
+            fertility=fertility_yield_multiplier(0.88, 0.8),
+            weed_penalty=1.0,
+        )
+        self.assertAlmostEqual(boosted.final_unrounded, 11.0)
 
     def test_stage_effect_pct(self) -> None:
         self.assertEqual(stage_effect_pct(9.0, 9.0), "±0%")
@@ -156,6 +172,84 @@ class FertilityLabelTests(unittest.TestCase):
         self.assertEqual(fert.state_text, "Optimal")
         self.assertIsNone(fert.effect_text)
         self.assertEqual(fert.effect_mult, 1.0)
+
+    def test_compost_above_potential_shows_boost(self) -> None:
+        self.assertEqual(label_fertility_relative(1.1), "Boosted")
+        fac = build_field_factors(
+            {
+                "fertility": 0.88,
+                "fertility_potential": 0.8,
+                "pest_mult": 1.0,
+                "pest_from_bio": 1.0,
+                "health": 1.0,
+                "health_cap": 1.0,
+                "poll_coverage": 0.5,
+                "poll_mult": 1.0,
+                "ecology": 1.0,
+                "disturbance": 0.1,
+                "weeds": 0.0,
+                "weed_mult": 1.0,
+                "erosion": 0.1,
+            }
+        )
+        fert = next(f for f in fac if f.key == "fertility")
+        self.assertEqual(fert.state_text, "Boosted")
+        self.assertEqual(fert.effect_text, "+10%")
+        self.assertAlmostEqual(fert.effect_mult, 1.1)
+
+
+class FactorCopyTests(unittest.TestCase):
+    def test_expanded_copy_is_plain_language(self) -> None:
+        fac = build_field_factors(
+            {
+                "fertility": 0.65,
+                "fertility_potential": 0.70,
+                "pest_mult": 1.0,
+                "pest_from_bio": 1.0,
+                "health": 0.88,
+                "health_cap": 1.0,
+                "previous_crop_health": 0.60,
+                "poll_coverage": 0.3,
+                "poll_mult": 0.9,
+                "ecology": 0.95,
+                "disturbance": 0.15,
+                "weeds": 0.3,
+                "weed_mult": 0.85,
+                "erosion": 0.35,
+                "foot_traffic": 0.1,
+                "settlement_disturbance": 0.1,
+                "nearest_colony_tiles": 7,
+                "moisture": 0.5,
+                "moisture_mult": 0.95,
+                "soil_texture": 0.3,
+                "soil_texture_mult": 0.75,
+            }
+        )
+        by_key = {f.key: f for f in fac}
+        self.assertIn("bee colonies cover this field", by_key["pollination"].detail_lines[0])
+        self.assertEqual(by_key["pollination"].detail_lines[1], "Nearest colony: 7 tiles away")
+        self.assertTrue(by_key["pest"].detail_lines[0].startswith("Nearby plant"))
+        self.assertEqual(by_key["pest"].right_badge, "cap 100%")
+        self.assertIn("current planting", by_key["health"].detail_lines[0])
+        self.assertIn("halfway", by_key["health"].detail_lines[0])
+        self.assertEqual(
+            by_key["health"].detail_lines[1],
+            "Current: 88% · Pest-control cap: 100%",
+        )
+        self.assertIn("Previous crop ended at 60%", by_key["health"].detail_lines[2])
+        self.assertIn("started at 80%", by_key["health"].detail_lines[2])
+        self.assertEqual(by_key["erosion"].right_badge, "35% risk")
+        for key in by_key:
+            blob = " ".join(by_key[key].detail_lines)
+            self.assertNotIn("×", blob)
+            self.assertNotRegex(blob, r"yield [+-]?\d")
+
+    def test_carryover_midpoint(self) -> None:
+        from environment import crop_health_carryover
+
+        self.assertAlmostEqual(crop_health_carryover(0.60), 0.80)
+        self.assertAlmostEqual(crop_health_carryover(1.0), 1.0)
+        self.assertAlmostEqual(crop_health_carryover(0.80), 0.90)
 
 
 class MainLimitationTests(unittest.TestCase):

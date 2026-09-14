@@ -435,14 +435,15 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
             ),
             BalanceParam(
                 "CROP_HEALTH_MAX_DROP",
-                "How fast fields get sicker",
+                "How fast the current crop gets sicker",
                 "float",
                 CROP_HEALTH_MAX_DROP,
                 0.0,
                 0.25,
                 0.01,
                 "Max health lost each env sample (8× per year) when pest control is poor. "
-                "Health does not climb back up — only stops falling when habitat improves.",
+                "Applies to the current planting only; a new crop starts halfway back "
+                "toward full health from the previous crop's ending value.",
             ),
             BalanceParam(
                 "POLLINATION_YIELD_LOW",

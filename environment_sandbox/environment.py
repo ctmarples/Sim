@@ -360,6 +360,13 @@ def crop_health_max_drop() -> float:
     return _bal_float("CROP_HEALTH_MAX_DROP", CROP_HEALTH_MAX_DROP)
 
 
+def crop_health_carryover(previous: float) -> float:
+    """New planting starts halfway between previous ending health and full."""
+    hmin = crop_health_min()
+    prev = max(0.0, min(1.0, float(previous)))
+    return max(hmin, min(1.0, (prev + 1.0) * 0.5))
+
+
 def pest_control_multiplier(richness: float) -> float:
     """Map neighbourhood species richness to a farm yield multiplier."""
     v = max(0.0, float(richness))
