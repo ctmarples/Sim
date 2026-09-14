@@ -1788,7 +1788,12 @@ class Game:
     def _move_player_continuous(
         self, dx: float, dy: float, dt: float, *, follow_camera: bool
     ) -> None:
-        """Move freely in world space while using grid cells for collision/resources."""
+        """Move freely in world space while using grid cells for collision/resources.
+
+        Distance is paced by the same sim-tick budget as villagers
+        (``_frame_sim_ticks / move_interval``), not wall-clock ``dt``, so a
+        ×1.0 walk factor matches villager tiles/sec at any FPS.
+        """
         if self._player_inside_building_id is not None:
             building = self.buildings.get(self._player_inside_building_id)
             self._player_inside_building_id = None
@@ -1806,21 +1811,16 @@ class Game:
             # First input is the emerge-at-doorway action. A following frame
             # begins normal outward movement through the halo.
             return
-        if self.sim_speed <= 0 or dt <= 0.0:
+        ticks = int(getattr(self, "_frame_sim_ticks", 0) or 0)
+        if ticks <= 0 or self.sim_speed <= 0:
             return
         length = math.hypot(dx, dy)
         if length <= 1e-6:
             return
         self._sync_building_collision()
-        distance = (
-            min(0.1, float(dt))
-            * max(1, self.sim_speed)
-            / max(0.05, self._walk_seconds())
-            * (
-                self._walk_interval_ticks()
-                / max(1, self._player_move_interval())
-            )
-        )
+        # One tile per ``_player_move_interval`` ticks — identical to discrete
+        # villager stepping at the same walk factor.
+        distance = float(ticks) / max(1, self._player_move_interval())
         ux, uy = dx / length, dy / length
         steps = max(1, int(math.ceil(distance / 0.2)))
         step_distance = distance / steps
@@ -6187,6 +6187,7 @@ class Game:
     def _step_sim(self) -> int:
         """Advance exactly speed × playback ticks this displayed frame."""
         n = 0 if self.sim_speed <= 0 else self.sim_speed * self._playback_ticks()
+        self._frame_sim_ticks = n
         if n:
             frozen_clock = self.scenario.freezes_calendar()
             frozen_day, frozen_tick = self.calendar_day, self.day_tick
@@ -7759,7 +7760,11 @@ class Game:
     def _smooth_recipe_progress(
         self, building: Building, workers: list[Villager]
     ) -> dict[str, float]:
-        """Interpolate recipe steps across the current work cooldown for the UI."""
+        """Interpolate recipe steps across active work cooldowns for the UI.
+
+        Multiple workers (and the player) on the same recipe combine: their
+        mid-swing phases sum so the bar advances at the combined work rate.
+        """
         recipes = {
             recipe.name: recipe
             for recipe in (
@@ -7772,21 +7777,14 @@ class Game:
         result = {
             name: building.recipe_progress_fraction(name) for name in recipes
         }
-        active: dict[str, float] = {}
+        phase_sum: dict[str, float] = {}
 
         def add_cycle(name: str | None, cooldown: int, interval: int) -> None:
             recipe = recipes.get(name or "")
             if recipe is None or cooldown <= 0:
                 return
-            steps = max(1, recipe.work_steps())
-            completed = int(building.recipe_progress.get(recipe.name, 0))
             phase = 1.0 - min(1.0, max(0.0, cooldown / max(1, interval)))
-            # ``recipe_progress`` advances when a work swing completes. While the
-            # worker is mid-swing, animate from the saved checkpoint through the
-            # current step: (completed + phase) / steps.
-            smooth = (completed + phase) / steps
-            smooth = max(result.get(recipe.name, 0.0), min(1.0, smooth))
-            active[recipe.name] = max(active.get(recipe.name, 0.0), smooth)
+            phase_sum[recipe.name] = phase_sum.get(recipe.name, 0.0) + phase
 
         for worker in workers:
             # ``craft_recipe_name`` deliberately survives short interruptions so
@@ -7806,12 +7804,20 @@ class Game:
                 self._villager_work_interval(worker),
             )
         if self.player_craft_building_id == building.id:
+            skill, _ = skill_for_building(building.kind.name)
             add_cycle(
                 self.player_craft_recipe,
                 int(self.player.work_cooldown),
-                self._player_work_interval(),
+                self._player_work_interval(skill, building=building),
             )
-        result.update(active)
+        for name, phases in phase_sum.items():
+            recipe = recipes.get(name)
+            if recipe is None:
+                continue
+            steps = max(1, recipe.work_steps())
+            completed = int(building.recipe_progress.get(name, 0))
+            smooth = (completed + phases) / steps
+            result[name] = max(result.get(name, 0.0), min(1.0, smooth))
         return result
 
     def _open_field_plan(
@@ -13853,6 +13859,22 @@ class Game:
 
         return satiation_walk_mult(satiation)
 
+    def _walk_speed_factor(
+        self,
+        *,
+        satiation: float,
+        food_walk_mult: float,
+        happiness: float,
+        energy: float,
+    ) -> float:
+        """Shared walk multiplier for player and villagers (tiles scale with this)."""
+        return (
+            self._satiation_walk_mult(satiation)
+            * max(0.1, float(food_walk_mult))
+            * (0.7 + 0.3 * max(0.0, min(1.0, float(happiness))))
+            * self._energy_speed_factor(energy)
+        )
+
     def _move_interval_for(
         self,
         *,
@@ -13862,11 +13884,11 @@ class Game:
         energy: float,
     ) -> int:
         """Ticks between steps — fixed vs ticks/day; ×N playback runs N ticks/frame."""
-        factor = (
-            self._satiation_walk_mult(satiation)
-            * max(0.1, float(food_walk_mult))
-            * (0.7 + 0.3 * max(0.0, min(1.0, happiness)))
-            * self._energy_speed_factor(energy)
+        factor = self._walk_speed_factor(
+            satiation=satiation,
+            food_walk_mult=food_walk_mult,
+            happiness=happiness,
+            energy=energy,
         )
         base = self._walk_interval_ticks()
         return max(4, int(round(base / max(0.15, factor))))
@@ -14076,11 +14098,29 @@ class Game:
             )
         self._gain_job_skill(villager, "HOME", action="haul")
 
-    def _player_work_interval(self, skill: SkillType | None = None) -> int:
+    def _player_work_interval(
+        self,
+        skill: SkillType | None = None,
+        *,
+        building: Building | None = None,
+    ) -> int:
+        """Ticks between player work actions.
+
+        When ``building`` is set (craft / workplace help), equipped tools apply the
+        same effectiveness multipliers villagers get so helping a cook speeds the
+        shared recipe bar the same way.
+        """
         p = self.player
         skill_mult = 1.0
         if skill is not None:
             skill_mult = skill_efficiency(p, skill)
+        if building is not None:
+            from resources import tool_effectiveness
+
+            for tool_key in getattr(p.inventory, "equipped_tools", ()):
+                skill_mult *= tool_effectiveness(
+                    tool_key, building.kind.name.lower()
+                )
         return self._work_interval_for(
             satiation=p.satiation,
             food_work_mult=p.food_work_mult,
@@ -15096,7 +15136,7 @@ class Game:
             self.player.energy
             - ENERGY_WORK_DRAIN * self._temp_energy_mult(self.player.inventory),
         )
-        self.player.work_cooldown = self._player_work_interval(skill)
+        self.player.work_cooldown = self._player_work_interval(skill, building=building)
         label = recipe_label(recipe)
         if done:
             fuel = 1 if building.is_cooking_building() else 0
@@ -18928,6 +18968,11 @@ class Game:
                 continue
             if (other.x, other.y) == (bx, by) or other.target == (bx, by):
                 names.add(name)
+        if (
+            self.player_craft_building_id == building.id
+            and self.player_craft_recipe
+        ):
+            names.add(self.player_craft_recipe)
         return frozenset(names)
 
     # ------------------------------------------------------------------
@@ -19375,6 +19420,13 @@ class Game:
             name = other.craft_recipe_name
             if name:
                 claimed.add(name)
+        # Player help counts as a claim so co-workers prefer other ready recipes,
+        # but when nothing else is free they still join and stack progress.
+        if (
+            self.player_craft_building_id == building.id
+            and self.player_craft_recipe
+        ):
+            claimed.add(self.player_craft_recipe)
 
         recipe = self._craftable_recipe(
             building,
@@ -24318,12 +24370,15 @@ class Game:
         target_x, target_y = world_target or (float(step[0]), float(step[1]))
         start_x = float(getattr(villager, "_vis_to_x", villager.x))
         start_y = float(getattr(villager, "_vis_to_y", villager.y))
+        # Open-map steps use grid distance so pace matches the player. Building
+        # approach paths may be longer than one cell and keep visual length.
+        if footprint is None:
+            step_len = math.hypot(step[0] - villager.x, step[1] - villager.y)
+        else:
+            step_len = math.hypot(target_x - start_x, target_y - start_y)
         interval = max(
             1,
-            round(
-                self._villager_move_interval(villager)
-                * math.hypot(target_x - start_x, target_y - start_y)
-            ),
+            round(self._villager_move_interval(villager) * max(0.01, step_len)),
         )
         note_cell_step(villager, step[0], step[1], world_target=world_target)
         if footprint is not None:
@@ -24719,13 +24774,14 @@ class Game:
                 villager.world_x = previous_x
                 villager.world_y = previous_y
                 target_x, target_y = world_target or (float(step[0]), float(step[1]))
+                if footprint is None:
+                    step_len = math.hypot(step[0] - villager.x, step[1] - villager.y)
+                else:
+                    step_len = math.hypot(target_x - previous_x, target_y - previous_y)
                 interval = max(
                     1,
                     round(
-                        self._villager_move_interval(villager)
-                        * math.hypot(
-                            target_x - previous_x, target_y - previous_y
-                        )
+                        self._villager_move_interval(villager) * max(0.01, step_len)
                     ),
                 )
                 note_cell_step(
@@ -28210,6 +28266,7 @@ class Game:
             calendar_day=self.calendar_day,
             satiation=float(p.satiation),
             happiness=float(p.happiness),
+            energy=float(p.energy),
         )
         _, total_tips = draw_effect_total_columns(
             self.screen,

@@ -60,6 +60,7 @@ from status_effects_ui import (
     effect_totals,
     resolve_hover_state,
 )
+from traits import trait_walk_mult, trait_work_mult
 
 COLOUR_TEXT = (72, 48, 31)
 COLOUR_TEXT_DIM = (112, 84, 58)
@@ -876,14 +877,15 @@ class VillagerInspectDialog:
             y += 8
             heading("EFFECTS")
             walk, work, hunger = effect_totals(
-                food_walk=villager.food_walk_mult,
-                food_work=villager.food_work_mult,
+                food_walk=villager.food_walk_mult * trait_walk_mult(villager),
+                food_work=villager.food_work_mult * trait_work_mult(villager),
                 food_hunger=villager.food_hunger_mult,
                 inventory=villager.inventory,
                 calendar_day=calendar_day,
                 work_extra_mult=political_work_mult,
                 satiation=float(villager.satiation),
                 happiness=float(villager.happiness),
+                energy=float(villager.energy),
             )
             _w, tips = draw_effect_total_columns(
                 surface, x, y, walk=walk, work=work, hunger=hunger,
@@ -1191,14 +1193,15 @@ class VillagerInspectDialog:
             )
             self._icon_tips.extend(skill_tips)
             walk_t, work_t, hunger_t = effect_totals(
-                food_walk=villager.food_walk_mult,
-                food_work=villager.food_work_mult,
+                food_walk=villager.food_walk_mult * trait_walk_mult(villager),
+                food_work=villager.food_work_mult * trait_work_mult(villager),
                 food_hunger=villager.food_hunger_mult,
                 inventory=villager.inventory,
                 calendar_day=calendar_day,
                 work_extra_mult=political_work_mult,
                 satiation=float(villager.satiation),
                 happiness=float(villager.happiness),
+                energy=float(villager.energy),
             )
             _, total_tips = draw_effect_total_columns(
                 surface,

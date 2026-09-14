@@ -602,6 +602,7 @@ class BuildingInspectDialog:
         from recipes import (
             KITCHEN_FUEL_KEY,
             category_label,
+            recipe_input_amount,
             recipe_output_fits,
             recipe_ready,
             recipe_ready_with_extra,
@@ -724,6 +725,17 @@ class BuildingInspectDialog:
                         (ix, row_y + (RECIPE_OUT_CELL - arrow.get_height()) // 2),
                     )
                     ix += arrow.get_width() + GRID_GAP
+                player_inv = (
+                    getattr(self, "_draw_player_inventory", None)
+                    if player_craft
+                    else None
+                )
+                storage_amounts = getattr(self, "_draw_storage_amounts", None)
+                farm_addon = (
+                    building.kind == BuildingKind.FARM
+                    and recipe in building.addon_craft_recipes()
+                    and storage_amounts is not None
+                )
                 for in_key, in_n in recipe.inputs.items():
                     if ix + GRID_CELL > x + inner_w:
                         break
@@ -738,6 +750,11 @@ class BuildingInspectDialog:
                         and mouse_pos is not None
                         and in_cell.collidepoint(mouse_pos)
                     )
+                    if farm_addon:
+                        have = int(storage_amounts.get(in_key, 0))
+                    else:
+                        have = recipe_input_amount(building, in_key, player_inv)
+                    missing = have < int(in_n)
                     draw_resource_cell(
                         surface,
                         cell=in_cell,
@@ -745,7 +762,7 @@ class BuildingInspectDialog:
                         count=in_n,
                         fonts=fonts,
                         hovered=in_hov,
-                        dimmed=not enabled,
+                        dimmed=(not enabled) or missing,
                     )
                     if in_cell.colliderect(view):
                         self._inv_tip_hits.append((in_cell, "recipe", in_key))

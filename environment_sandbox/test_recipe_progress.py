@@ -34,6 +34,69 @@ class RecipeProgressDisplayTests(unittest.TestCase):
             shown["wheat_flour"], mill.recipe_progress_fraction("wheat_flour")
         )
 
+    def test_multiple_workers_combine_mid_swing_progress(self) -> None:
+        """Two cooks mid-swing on the same recipe advance the bar together."""
+        game = Game.__new__(Game)
+        game.player_craft_building_id = None
+        game._villager_work_interval = lambda worker: 50
+
+        kitchen = Building(id=8, kind=BuildingKind.KITCHEN, x=0, y=0)
+        apply_building_storage(kitchen)
+        kitchen.ensure_recipe_state()
+        kitchen.recipe_progress["mushroom_stew"] = 0
+        game.buildings = {kitchen.id: kitchen}
+
+        workers = []
+        for vid in (1, 2):
+            worker = Villager(id=vid, x=0, y=0)
+            worker.building_id = kitchen.id
+            worker.state = VillagerState.WORKING
+            worker.craft_recipe_name = "mushroom_stew"
+            worker.work_cooldown = 25  # half-way through swing
+            worker.work_in_progress = True
+            worker.work_anchor = (0, 0)
+            workers.append(worker)
+
+        shown = game._smooth_recipe_progress(kitchen, workers)
+        # Two half-swings ≈ one full step on a 3-step stew.
+        steps = 3
+        for recipe in kitchen.known_recipes():
+            if recipe.name == "mushroom_stew":
+                steps = max(1, recipe.work_steps())
+                break
+        self.assertAlmostEqual(shown["mushroom_stew"], min(1.0, 1.0 / steps), places=5)
+
+    def test_player_help_combines_with_villager_craft_progress(self) -> None:
+        game = Game.__new__(Game)
+        game._villager_work_interval = lambda worker: 40
+        game._player_work_interval = lambda *a, **k: 40
+
+        kitchen = Building(id=8, kind=BuildingKind.KITCHEN, x=0, y=0)
+        apply_building_storage(kitchen)
+        kitchen.ensure_recipe_state()
+        kitchen.recipe_progress["mushroom_stew"] = 1
+        game.buildings = {kitchen.id: kitchen}
+        game.player_craft_building_id = kitchen.id
+        game.player_craft_recipe = "mushroom_stew"
+        game.player = type("P", (), {"work_cooldown": 20})()
+
+        worker = Villager(id=3, x=0, y=0)
+        worker.building_id = kitchen.id
+        worker.state = VillagerState.WORKING
+        worker.craft_recipe_name = "mushroom_stew"
+        worker.work_cooldown = 20
+        worker.work_in_progress = True
+        worker.work_anchor = (0, 0)
+
+        shown = game._smooth_recipe_progress(kitchen, [worker])
+        steps = 3
+        for recipe in kitchen.known_recipes():
+            if recipe.name == "mushroom_stew":
+                steps = max(1, recipe.work_steps())
+                break
+        # completed 1 + two half-phases = 2 steps of work.
+        self.assertAlmostEqual(shown["mushroom_stew"], min(1.0, 2.0 / steps), places=5)
+
     def test_hauling_cooldown_does_not_rewind_partial_recipe(self) -> None:
         game = Game.__new__(Game)
         game.player_craft_building_id = None
@@ -123,7 +186,7 @@ class RecipeProgressDisplayTests(unittest.TestCase):
         kitchen.ensure_recipe_state()
         kitchen.fuel_wood = 20
         kitchen.fish = 20
-        kitchen.turnip = 20
+        kitchen.onion = 20
         kitchen.garlic = 20
         kitchen.blackberries = 20
         kitchen.honey = 20

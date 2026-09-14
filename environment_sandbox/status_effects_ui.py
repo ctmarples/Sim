@@ -400,7 +400,13 @@ def effect_totals(
     work_extra_mult: float = 1.0,
     satiation: float | None = None,
     happiness: float | None = None,
+    energy: float | None = None,
 ) -> tuple[float, float, float]:
+    """Combined walk / work / hunger factors shown in inspect HUD.
+
+    Walk matches ``Game._walk_speed_factor`` (food × gear × temp × satiation ×
+    happiness curve × energy), so the ×N label matches real tiles/sec.
+    """
     impact = temperature_impact(
         ambient_temperature_c(calendar_day),
         float(getattr(inventory, "gear_heat_protection", 0.0) or 0.0),
@@ -414,12 +420,32 @@ def effect_totals(
 
         sat_walk = satiation_walk_mult(satiation)
         sat_work = satiation_work_mult(satiation)
+    mood_walk = 1.0
     mood_work = 1.0
     if happiness is not None:
         from society import happiness_work_mult
 
         mood_work = happiness_work_mult(happiness)
-    walk = max(0.05, float(food_walk) * gear * float(impact.walk_mult) * sat_walk)
+        # Same soft curve as ``Game._walk_speed_factor`` / ``_move_interval_for``.
+        mood_walk = 0.7 + 0.3 * max(0.0, min(1.0, float(happiness)))
+    energy_walk = 1.0
+    if energy is not None:
+        value = max(0.0, min(1.0, float(energy)))
+        if value >= 0.25:
+            energy_walk = 1.0 if value > 0.5 else 0.9
+        elif value >= 0.10:
+            energy_walk = 0.8
+        else:
+            energy_walk = 0.7
+    walk = max(
+        0.05,
+        float(food_walk)
+        * gear
+        * float(impact.walk_mult)
+        * sat_walk
+        * mood_walk
+        * energy_walk,
+    )
     work = max(
         0.05,
         float(food_work) * max(0.05, float(work_extra_mult)) * sat_work * mood_work,
