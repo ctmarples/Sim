@@ -24,6 +24,9 @@ SLOT_BG_RGBA = (105, 46, 44, 50)
 SLOT_BADGE_BG_RGBA = (105, 46, 44, 170)
 SLOT_BADGE_TEXT = (252, 244, 232)
 SLOT_BADGE_TEXT_DIM = (232, 214, 196)
+# Solid parchment plate for hover inspect tips (never translucent / clipped).
+TOOLTIP_BG = (252, 244, 232)
+TOOLTIP_BORDER = (160, 130, 100)
 
 
 def _slot_background(surface: pygame.Surface, rect: pygame.Rect) -> None:
@@ -360,6 +363,91 @@ def draw_inv_grid(
     return (y + view_h) - y0, hits, tip_hits, hovered, content_h, view_h
 
 
+def _food_tooltip_rows(key: str) -> list[tuple[str | None, str]] | None:
+    """Icon+label rows for edible food (satiation + non-neutral meal buffs)."""
+    from resource_balance import (
+        FOOD_BY_KEY,
+        food_def,
+        format_buff_mult,
+        scale_recipe_mult,
+    )
+
+    if key not in FOOD_BY_KEY:
+        return None
+
+    # Lazy import: status_effects_ui imports inventory_ui at module level.
+    from status_effects_ui import EFFECT_LABELS, effect_icon
+
+    fx = food_def(key)
+    rows: list[tuple[str | None, str]] = [
+        ("bread", f"Satiation +{format_buff_mult(float(fx.satiation))}"),
+    ]
+    for effect, kind, raw in (
+        ("walk", "speed", fx.walk_speed),
+        ("work", "work", fx.work_efficiency),
+        ("hunger", "hunger", fx.hunger_rate),
+    ):
+        mult = scale_recipe_mult(float(raw), kind)
+        if abs(mult - 1.0) <= 0.01:
+            continue
+        rows.append(
+            (
+                effect_icon(effect),
+                f"{EFFECT_LABELS[effect]} ×{format_buff_mult(mult)}",
+            )
+        )
+    return rows
+
+
+def _fmt_protection(value: float) -> str:
+    if abs(value - round(value)) < 1e-6:
+        return f"+{int(round(value))}"
+    return f"+{float(value):.1f}"
+
+
+def _clothing_tooltip_rows(key: str) -> list[tuple[str | None, str]] | None:
+    """Icon+label rows for clothing / bags (walk, capacity, heat/cold)."""
+    from entities import CLOTHING_ITEM_SLOT
+    from recipes import (
+        clothing_capacity_bonus,
+        clothing_cold_protection,
+        clothing_heat_protection,
+        clothing_walk_mult,
+    )
+    from resource_balance import format_buff_mult
+
+    if key not in CLOTHING_ITEM_SLOT:
+        return None
+
+    from status_effects_ui import EFFECT_LABELS, effect_icon
+
+    rows: list[tuple[str | None, str]] = []
+    walk = float(clothing_walk_mult(key))
+    if abs(walk - 1.0) > 0.01:
+        rows.append(
+            (
+                effect_icon("walk"),
+                f"{EFFECT_LABELS['walk']} ×{format_buff_mult(walk)}",
+            )
+        )
+    capacity = int(clothing_capacity_bonus(key))
+    if capacity > 0:
+        rows.append(("book_inventory", f"Capacity +{capacity}"))
+    heat = float(clothing_heat_protection(key))
+    if heat > 0.01:
+        rows.append(("hot", f"Heat protection {_fmt_protection(heat)}"))
+    cold = float(clothing_cold_protection(key))
+    if cold > 0.01:
+        rows.append(("cold", f"Cold protection {_fmt_protection(cold)}"))
+    return rows or None
+
+
+def _required_tool_tooltip_row(tool_key: str) -> tuple[str | None, str]:
+    from resources import resource_icon, resource_label
+
+    return (resource_icon(tool_key), f"{resource_label(tool_key)} required")
+
+
 def draw_item_tooltip(
     surface: pygame.Surface,
     *,
@@ -367,12 +455,31 @@ def draw_item_tooltip(
     key: str,
     font: pygame.font.Font,
     extra: str | None = None,
+    required_tool: str | None = None,
 ) -> None:
-    """Draw a small name label near the cursor for a hovered inventory item."""
+    """Draw a name label near the cursor; foods/gear also show stats.
+
+    Optional ``required_tool`` is shown first (recipe hover: axe / knife / …).
+    """
     label = resource_label(key)
     if extra:
         label = f"{label} — {extra}"
-    draw_hover_tooltip(surface, mouse_pos=mouse_pos, text=label, font=font)
+    rows: list[tuple[str | None, str]] = []
+    if required_tool:
+        rows.append(_required_tool_tooltip_row(required_tool))
+    food_rows = _food_tooltip_rows(key)
+    if food_rows:
+        rows.extend(food_rows)
+    clothing_rows = _clothing_tooltip_rows(key)
+    if clothing_rows:
+        rows.extend(clothing_rows)
+    draw_hover_tooltip(
+        surface,
+        mouse_pos=mouse_pos,
+        text=label,
+        font=font,
+        rows=rows or None,
+    )
 
 
 def draw_hover_tooltip(
@@ -383,53 +490,102 @@ def draw_hover_tooltip(
     font: pygame.font.Font,
     subtext: str | None = None,
     progress: float | None = None,
+    rows: list[tuple[str | None, str]] | None = None,
 ) -> None:
     """Draw a free-text tooltip near the cursor.
 
     Optional ``subtext`` and ``progress`` (0–1) add a skill-style XP line and bar.
+    Optional ``rows`` are ``(icon_name|None, label)`` lines drawn under the title.
     """
     if not text:
         return
+    from icons import blit_icon
+
     rendered = font.render(text, True, (0, 0, 0))
     sub_rendered = (
         font.render(subtext, True, (40, 40, 40)) if subtext else None
     )
+    row_icon = 14
+    row_gap = 2
+    row_rendered: list[tuple[str | None, pygame.Surface]] = []
+    for icon_name, row_text in rows or ():
+        row_rendered.append(
+            (icon_name, font.render(row_text, True, (40, 40, 40)))
+        )
     pad = 4
     bar_h = 6 if progress is not None else 0
     bar_gap = 4 if progress is not None else 0
     sub_h = (sub_rendered.get_height() + 2) if sub_rendered is not None else 0
+    rows_h = 0
+    if row_rendered:
+        rows_h = 2
+        for _icon_name, surf in row_rendered:
+            rows_h += max(row_icon, surf.get_height()) + row_gap
+        rows_h -= row_gap
     inner_w = rendered.get_width()
     if sub_rendered is not None:
         inner_w = max(inner_w, sub_rendered.get_width())
     if progress is not None:
         inner_w = max(inner_w, 88)
+    for icon_name, surf in row_rendered:
+        row_w = surf.get_width()
+        if icon_name:
+            row_w += row_icon + 4
+        inner_w = max(inner_w, row_w)
     tip = pygame.Rect(
         mouse_pos[0] + 14,
         mouse_pos[1] + 12,
         inner_w + pad * 2,
-        rendered.get_height() + sub_h + bar_h + bar_gap + pad * 2,
+        rendered.get_height() + sub_h + bar_h + bar_gap + rows_h + pad * 2,
     )
     if tip.right > surface.get_width() - 4:
         tip.x = mouse_pos[0] - tip.w - 8
     if tip.bottom > surface.get_height() - 4:
         tip.y = mouse_pos[1] - tip.h - 8
-    _slot_background(surface, tip)
-    y = tip.y + pad
-    surface.blit(rendered, (tip.x + pad, y))
-    y += rendered.get_height()
-    if progress is not None:
-        y += bar_gap
-        bar = pygame.Rect(tip.x + pad, y, tip.w - pad * 2, bar_h)
-        pygame.draw.rect(surface, (55, 55, 60), bar, border_radius=2)
-        fill_w = max(0, int(round(bar.w * max(0.0, min(1.0, float(progress))))))
-        if fill_w > 0:
-            fill = pygame.Rect(bar.x, bar.y, fill_w, bar.h)
-            pygame.draw.rect(surface, (70, 175, 85), fill, border_radius=2)
-        pygame.draw.rect(surface, (90, 90, 98), bar, 1, border_radius=2)
-        y += bar_h
-    if sub_rendered is not None:
-        y += 2
-        surface.blit(sub_rendered, (tip.x + pad, y))
+    # Draw above any scroll / panel clip so tips are never truncated.
+    old_clip = surface.get_clip()
+    surface.set_clip(None)
+    try:
+        pygame.draw.rect(surface, TOOLTIP_BG, tip, border_radius=4)
+        pygame.draw.rect(surface, TOOLTIP_BORDER, tip, 1, border_radius=4)
+        y = tip.y + pad
+        surface.blit(rendered, (tip.x + pad, y))
+        y += rendered.get_height()
+        if progress is not None:
+            y += bar_gap
+            bar = pygame.Rect(tip.x + pad, y, tip.w - pad * 2, bar_h)
+            pygame.draw.rect(surface, (220, 210, 190), bar, border_radius=2)
+            fill_w = max(0, int(round(bar.w * max(0.0, min(1.0, float(progress))))))
+            if fill_w > 0:
+                fill = pygame.Rect(bar.x, bar.y, fill_w, bar.h)
+                pygame.draw.rect(surface, (70, 175, 85), fill, border_radius=2)
+            pygame.draw.rect(surface, TOOLTIP_BORDER, bar, 1, border_radius=2)
+            y += bar_h
+        if sub_rendered is not None:
+            y += 2
+            surface.blit(sub_rendered, (tip.x + pad, y))
+            y += sub_rendered.get_height()
+        if row_rendered:
+            y += 2
+            for icon_name, surf in row_rendered:
+                row_h = max(row_icon, surf.get_height())
+                x = tip.x + pad
+                if icon_name:
+                    try:
+                        blit_icon(
+                            surface,
+                            icon_name,
+                            x + row_icon // 2,
+                            y + row_h // 2,
+                            row_icon,
+                        )
+                    except (FileNotFoundError, OSError, ValueError, TypeError):
+                        pass
+                    x += row_icon + 4
+                surface.blit(surf, (x, y + (row_h - surf.get_height()) // 2))
+                y += row_h + row_gap
+    finally:
+        surface.set_clip(old_clip)
 
 
 def draw_tool_slot(

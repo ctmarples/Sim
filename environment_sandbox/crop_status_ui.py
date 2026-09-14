@@ -195,14 +195,20 @@ def draw_env_hover(
         tip_rect.x = mouse_pos[0] - tip_rect.w - 8
     if tip_rect.bottom > surface.get_height() - 4:
         tip_rect.y = mouse_pos[1] - tip_rect.h - 8
-    tip_bg = pygame.Surface(tip_rect.size, pygame.SRCALPHA)
-    tip_bg.fill((105, 46, 44, 50))
-    surface.blit(tip_bg, tip_rect.topleft)
-    for i, line in enumerate(lines):
-        surface.blit(
-            font.render(line, True, (0, 0, 0)),
-            (tip_rect.x + pad, tip_rect.y + pad + i * line_h),
-        )
+    from inventory_ui import TOOLTIP_BG, TOOLTIP_BORDER
+
+    old_clip = surface.get_clip()
+    surface.set_clip(None)
+    try:
+        pygame.draw.rect(surface, TOOLTIP_BG, tip_rect, border_radius=4)
+        pygame.draw.rect(surface, TOOLTIP_BORDER, tip_rect, 1, border_radius=4)
+        for i, line in enumerate(lines):
+            surface.blit(
+                font.render(line, True, (0, 0, 0)),
+                (tip_rect.x + pad, tip_rect.y + pad + i * line_h),
+            )
+    finally:
+        surface.set_clip(old_clip)
 
 
 def _wrap_tip(font: pygame.font.Font, text: str, max_w: int) -> list[str]:

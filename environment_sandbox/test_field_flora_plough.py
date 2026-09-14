@@ -213,23 +213,70 @@ class FieldFloraPloughTests(unittest.TestCase):
         self.assertEqual(job.kind, FarmJobKind.PLOUGH)
         self.assertEqual(job.cell, (5, 5))
 
-    def test_gather_action_omits_scenic_flora(self) -> None:
+    def test_farm_assigns_harvest_before_weed(self) -> None:
+        """Ripe harvest must not lose to weedy tiles (even weedy ripe ones)."""
+        world = World(12, 12)
+        ripe = world.get_cell(5, 5)
+        weedy_ripe = world.get_cell(10, 10)
+        growing_weedy = world.get_cell(4, 4)
+        assert ripe is not None and weedy_ripe is not None and growing_weedy is not None
+        for cell, kind, ticks, weeds in (
+            (ripe, "peas", 0, 0.05),
+            (weedy_ripe, "peas", 0, 0.5),
+            (growing_weedy, "peas", 20, 0.4),
+        ):
+            cell.terrain = TerrainType.SOIL
+            cell.feature = FeatureType.CROP_HERB
+            cell.crop_kind = kind
+            cell.growth_ticks = ticks
+            cell.deposit = 0
+            cell.weeds = weeds
+            cell.ploughed = True
+
+        farm = Building(1, BuildingKind.FARM, 1, 1)
+        apply_building_storage(farm)
+        field_near = Building(2, BuildingKind.FIELD, 4, 4)
+        field_near.plot_w = field_near.plot_h = 2
+        field_near.plans = [CropPlan(1, 4, 4, 5, 5, "peas", field_near.id)]
+        field_far = Building(3, BuildingKind.FIELD, 10, 10)
+        field_far.plot_w = field_far.plot_h = 1
+        field_far.plans = [CropPlan(1, 10, 10, 10, 10, "peas", field_far.id)]
+        worker = Villager(1, 5, 5)
+        worker.inventory.equip_tool_from_transfer("hoe")
+        worker.building_id = farm.id
+
         game = Game.__new__(Game)
-        cell = type(
-            "C",
-            (),
-            {
-                "feature": FeatureType.HERB,
-                "crop_kind": "clover",
-                "deposit": 0,
-                "tree_age_years": 0,
-                "icon_variant": 1,
-                "tree_species": None,
-            },
-        )()
-        game.world = type("W", (), {"get_cell": lambda self, x, y: cell})()
-        action = game._natural_feature_action(0, 0, FeatureType.HERB, None, 0)
-        self.assertIsNone(action)
+        game.world = world
+        game.calendar_day = 28  # summer — peas harvest season
+        game.buildings = {farm.id: farm, field_near.id: field_near, field_far.id: field_far}
+        game.villagers = [worker]
+        game.home_storage = HomeStorage()
+        game.balance = type("B", (), {"get_float": lambda self, key: 0.2})()
+        game._claimed_work_cells = lambda *_a, **_k: set()
+        game._ensure_work_tool = lambda *_a, **_k: True
+        game._fields_near_farm = lambda _b: [field_near, field_far]
+        game._field_rotation_year = lambda _f: 1
+        game._find_farm_sapling_clear_work = lambda *_a, **_k: None
+        game._find_farm_sow_work = lambda *_a, **_k: None
+        game._find_farm_repellant_work = lambda *_a, **_k: None
+        game._find_farm_plough_work = lambda *_a, **_k: None
+        game._farm_barn_craft_available = lambda *_a, **_k: False
+        game._farm_barn_needs_sheaf_delivery = lambda *_a, **_k: False
+        game._farm_has_unsown_soil = lambda *_a, **_k: False
+        game._farm_or_processor_needs_clear = lambda *_a, **_k: False
+        game._general_hauler_serving = lambda *_a, **_k: False
+        game._tick_farm_harvest = None
+        game._tick_farm_weed = None
+        game._closest_of = Game._closest_of.__get__(game, Game)
+
+        job = game._assign_farm_job(worker, farm)
+        self.assertIsNotNone(job)
+        assert job is not None
+        self.assertEqual(job.kind, FarmJobKind.HARVEST)
+        self.assertEqual(job.cell, (5, 5))
+
+        weed = game._find_farm_weed_work(worker, farm)
+        self.assertEqual(weed, (4, 4), "ripe tiles must not be claimed as WEED")
 
 
 if __name__ == "__main__":

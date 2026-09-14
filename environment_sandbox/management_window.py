@@ -1176,10 +1176,16 @@ class ManagementWindow:
             tip_r.midbottom = (tx, ty - 4)
             tip_r.x = max(4, min(tip_r.x, WINDOW_WIDTH - tip_r.w - 4))
             bg = tip_r.inflate(8, 4)
-            tip_bg = pygame.Surface(bg.size, pygame.SRCALPHA)
-            tip_bg.fill((105, 46, 44, 50))
-            surface.blit(tip_bg, bg.topleft)
-            surface.blit(text, tip_r)
+            from inventory_ui import TOOLTIP_BG, TOOLTIP_BORDER
+
+            old_clip = surface.get_clip()
+            surface.set_clip(None)
+            try:
+                pygame.draw.rect(surface, TOOLTIP_BG, bg, border_radius=4)
+                pygame.draw.rect(surface, TOOLTIP_BORDER, bg, 1, border_radius=4)
+                surface.blit(text, tip_r)
+            finally:
+                surface.set_clip(old_clip)
 
     def focus_objective(self, objective_id: str) -> None:
         self.objectives_filter = "current"

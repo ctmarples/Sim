@@ -14,6 +14,7 @@ from entities import (
     BUILDING_LABELS,
     TASK_LABELS,
     WORK_MODE_LABELS,
+    WORKPLACE_TOOL,
     Building,
     BuildingKind,
     Inventory,
@@ -563,6 +564,18 @@ class BuildingInspectDialog:
         self._buttons.append((action, rect))
         return BTN_H + 4
 
+    def _recipe_required_tool(self, building: Building, recipe) -> str | None:
+        """Tool shown on recipe hover (matches player craft gating)."""
+        tool = WORKPLACE_TOOL.get(building.kind)
+        if recipe in building.addon_craft_recipes():
+            if building.kind == BuildingKind.HUNTER:
+                return "knife"
+            if building.kind == BuildingKind.FARM:
+                return None
+        if building.kind == BuildingKind.FISHER and getattr(recipe, "name", "") == "bait":
+            return "knife"
+        return tool
+
     def _draw_craft_recipes(
         self,
         surface: pygame.Surface,
@@ -580,8 +593,11 @@ class BuildingInspectDialog:
         player_craft: bool = False,
         stock_amounts: dict[str, int] | None = None,
         progress_fractions: dict[str, float] | None = None,
-    ) -> tuple[int, str | None]:
-        """Kitchen-style recipe rows with inputs. Returns (height, hovered tip key)."""
+    ) -> tuple[int, str | None, str | None]:
+        """Kitchen-style recipe rows with inputs.
+
+        Returns ``(height, hovered tip key, required tool key)``.
+        """
         from inventory_ui import draw_resource_cell
         from recipes import (
             KITCHEN_FUEL_KEY,
@@ -593,7 +609,7 @@ class BuildingInspectDialog:
         )
 
         if not recipes:
-            return 0, None
+            return 0, None, None
         building.ensure_recipe_state()
         top_y = y
         surface.blit(self.font.render(title, True, COLOUR_TEXT), (x, y))
@@ -630,8 +646,9 @@ class BuildingInspectDialog:
         max_view = MAX_RECIPE_VIEW_H + (BTN_H + 4 if player_craft else 0)
         view_h = min(content_h, max_view) if content_h else 0
         tip_key: str | None = None
+        tip_tool: str | None = None
         if view_h <= 0:
-            return y - top_y + SECTION_GAP, tip_key
+            return y - top_y + SECTION_GAP, tip_key, tip_tool
         view = pygame.Rect(x, y, inner_w, view_h)
         scroll = self._register_scroll(scroll_name, view, content_h, view_h)
         _paper_slot(surface, view)
@@ -643,6 +660,7 @@ class BuildingInspectDialog:
                 continue
             enabled = building.is_recipe_enabled(recipe.name)
             priority = building.get_recipe_priority(recipe.name)
+            recipe_tool = self._recipe_required_tool(building, recipe)
             out_cell = pygame.Rect(x, row_y, RECIPE_OUT_CELL, RECIPE_OUT_CELL)
             out_key, out_hov = self._draw_recipe_stock_cell(
                 surface,
@@ -655,6 +673,7 @@ class BuildingInspectDialog:
             )
             if out_hov and out_key:
                 tip_key = out_key
+                tip_tool = recipe_tool
             prio_cell = pygame.Rect(out_cell.right + 2, row_y + 2, 16, 16)
             if prio_cell.colliderect(view):
                 self._draw_priority_badge(
@@ -695,6 +714,7 @@ class BuildingInspectDialog:
                     self._inv_tip_hits.append((out_cell_extra, "recipe", out_key_extra))
                 if out_hov_extra:
                     tip_key = out_key_extra
+                    tip_tool = recipe_tool
                 ix += GRID_CELL + GRID_GAP
             if recipe.inputs:
                 arrow = self.font_small.render("→", True, COLOUR_TEXT_DIM)
@@ -731,6 +751,7 @@ class BuildingInspectDialog:
                         self._inv_tip_hits.append((in_cell, "recipe", in_key))
                     if in_hov:
                         tip_key = in_key
+                        tip_tool = recipe_tool
                     ix += GRID_CELL + GRID_GAP
             if show_fuel:
                 if ix + GRID_CELL > x + inner_w:
@@ -760,6 +781,7 @@ class BuildingInspectDialog:
                     self._inv_tip_hits.append((fuel_cell, "recipe", KITCHEN_FUEL_KEY))
                 if fuel_hov:
                     tip_key = KITCHEN_FUEL_KEY
+                    tip_tool = recipe_tool
             fill = (
                 float(progress_fractions.get(recipe.name, 0.0))
                 if enabled and progress_fractions is not None
@@ -833,7 +855,7 @@ class BuildingInspectDialog:
                 )
         surface.set_clip(old_clip)
         self._draw_scrollbar(surface, view, content_h, scroll)
-        return (y - top_y) + view_h + SECTION_GAP, tip_key
+        return (y - top_y) + view_h + SECTION_GAP, tip_key, tip_tool
 
     def _draw_priority_badge(
         self,
@@ -1593,6 +1615,7 @@ class BuildingInspectDialog:
         # --- Recipes / collect toggles ---
         fonts = self._fonts()
         tip_key: str | None = None
+        tip_tool: str | None = None
         if gather_recipes:
             building.ensure_recipe_state()
             surface.blit(self.font.render("Collect", True, COLOUR_TEXT), (x, y))
@@ -1636,11 +1659,12 @@ class BuildingInspectDialog:
                 self._buttons.append((f"cycle_recipe_priority:{recipe.name}", prio_cell))
                 if hov and not prio_hov and out_key:
                     tip_key = recipe.display_icon_key() or out_key
+                    tip_tool = self._recipe_required_tool(building, recipe)
             surface.set_clip(old_clip)
             self._draw_scrollbar(surface, view, content_h, scroll)
             y += view_h + SECTION_GAP
         if split_recipes:
-            block_h, split_tip = self._draw_craft_recipes(
+            block_h, split_tip, split_tool = self._draw_craft_recipes(
                 surface,
                 building=building,
                 recipes=split_recipes,
@@ -1658,8 +1682,9 @@ class BuildingInspectDialog:
             y += block_h
             if split_tip:
                 tip_key = split_tip
+                tip_tool = split_tool
         if plant_recipes:
-            block_h, plant_tip = self._draw_craft_recipes(
+            block_h, plant_tip, plant_tool = self._draw_craft_recipes(
                 surface,
                 building=building,
                 recipes=plant_recipes,
@@ -1677,10 +1702,11 @@ class BuildingInspectDialog:
             y += block_h
             if plant_tip:
                 tip_key = plant_tip
+                tip_tool = plant_tool
         if craft_recipes:
             farm_exts = building.kind == BuildingKind.FARM
             craft_title = "Farm extensions" if farm_exts else "Recipes"
-            block_h, craft_tip = self._draw_craft_recipes(
+            block_h, craft_tip, craft_tool = self._draw_craft_recipes(
                 surface,
                 building=building,
                 recipes=craft_recipes,
@@ -1699,6 +1725,7 @@ class BuildingInspectDialog:
             y += block_h
             if craft_tip:
                 tip_key = craft_tip
+                tip_tool = craft_tool
 
         # --- Workers / haulers / hire pool ---
         workers_title = (
@@ -1873,6 +1900,7 @@ class BuildingInspectDialog:
                         self._inv_tip_hits.append((cell, "market", key))
                         if hov:
                             tip_key = key
+                            tip_tool = None
                     surface.set_clip(old_clip)
                     self._draw_scrollbar(surface, view, content_h, scroll)
                     y += view_h + SECTION_GAP
@@ -2005,6 +2033,7 @@ class BuildingInspectDialog:
                     self._inv_tip_hits.append((cell, "market_supply", key))
                     if hov:
                         tip_key = key
+                        tip_tool = None
                 surface.set_clip(old_clip)
                 self._draw_scrollbar(surface, view, content_h, scroll)
                 y += view_h + SECTION_GAP
@@ -2117,6 +2146,7 @@ class BuildingInspectDialog:
                     self._inv_tip_hits.append((cell, "compost_food", key))
                     if hov:
                         tip_key = key
+                        tip_tool = None
                 surface.set_clip(old_clip)
                 self._draw_scrollbar(surface, view, content_h, scroll)
                 y += view_h + SECTION_GAP
@@ -2204,8 +2234,10 @@ class BuildingInspectDialog:
             y += max(left_h, right_h)
             if left_hov:
                 tip_key = left_hov[1]
+                tip_tool = None
             elif right_hov:
                 tip_key = right_hov[1]
+                tip_tool = None
             surface.blit(
                 self.font_small.render(
                     "Click an item to move one to the other inventory.",
@@ -2247,6 +2279,7 @@ class BuildingInspectDialog:
             self._inv_tip_hits.extend(tips)
             if hov:
                 tip_key = hov[1]
+                tip_tool = None
             y += h
         else:
             surface.blit(self.font.render("Storage", True, COLOUR_TEXT), (x, y))
@@ -2311,6 +2344,7 @@ class BuildingInspectDialog:
                     self._inv_tip_hits.append((cell, "cap", key))
                     if hov:
                         tip_key = key
+                        tip_tool = None
                 surface.set_clip(old_clip)
                 self._draw_scrollbar(surface, view, content_h, scroll)
                 y += view_h + 6
@@ -2404,6 +2438,7 @@ class BuildingInspectDialog:
                     self._inv_tip_hits.append((cell, "min", key))
                     if hov:
                         tip_key = key
+                        tip_tool = None
                 surface.set_clip(old_clip)
                 self._draw_scrollbar(surface, view, content_h, scroll)
                 y += view_h + 6
@@ -2504,4 +2539,5 @@ class BuildingInspectDialog:
                 key=self._tooltip_key,
                 font=self.font_small,
                 extra=extra,
+                required_tool=tip_tool if tip_key is not None else None,
             )

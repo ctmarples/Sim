@@ -19067,13 +19067,13 @@ class Game:
             # standing sow backlog otherwise starves weeding / harvest.
             # Saplings must clear before weed: weeds on another tile would
             # otherwise starve plough forever (Field 31 / SP_new_1).
+            # In-season harvest before weed: otherwise farmers clear one ripe
+            # tile then chase the globally weediest field and abandon half-done
+            # harvests (SP_new_1 peas).
             if preview or self._ensure_work_tool(villager, "hoe"):
                 sapling = self._find_farm_sapling_clear_work(villager, building)
                 if sapling is not None:
                     return FarmJob(FarmJobKind.PLOUGH, bid, cell=sapling)
-                weed = self._find_farm_weed_work(villager, building)
-                if weed is not None:
-                    return FarmJob(FarmJobKind.WEED, bid, cell=weed)
 
             harvest = self._find_farm_harvest(
                 villager, building, in_season_only=True
@@ -19083,6 +19083,11 @@ class Game:
                     harvest = None
                 if harvest is not None:
                     return FarmJob(FarmJobKind.HARVEST, bid, cell=harvest)
+
+            if preview or self._ensure_work_tool(villager, "hoe"):
+                weed = self._find_farm_weed_work(villager, building)
+                if weed is not None:
+                    return FarmJob(FarmJobKind.WEED, bid, cell=weed)
 
             sow = self._find_farm_sow_work(villager, building)
             if sow is not None:
@@ -19995,7 +20000,11 @@ class Game:
     def _find_farm_weed_work(
         self, villager: Villager, building: Building
     ) -> tuple[int, int] | None:
-        """Closest crop tile whose weeds need the hoe (not a harvest)."""
+        """Closest growing crop tile whose weeds need the hoe (not a harvest).
+
+        Ripe tiles are harvest jobs — claiming them as WEED made farmers abandon
+        half-cleared fields to chase the weediest ripe tile across the farm.
+        """
         threshold = self._farm_weed_hoe_threshold()
         claimed = self._claimed_work_cells(villager.id)
         cache = getattr(self, "_tick_farm_weed", None)
@@ -20009,6 +20018,8 @@ class Game:
                         continue
                     cell = self.world.get_cell(x, y)
                     if cell is None or cell.feature != FeatureType.CROP_HERB:
+                        continue
+                    if self.world.crop_herb_ready(x, y):
                         continue
                     if float(getattr(cell, "weeds", 0.0)) >= threshold:
                         tiles.append((x, y))

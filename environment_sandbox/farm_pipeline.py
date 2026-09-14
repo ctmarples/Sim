@@ -28,8 +28,8 @@ class FarmJobKind(Enum):
 # Lower index = higher priority when claiming.
 FARM_JOB_PRIORITY: tuple[FarmJobKind, ...] = (
     FarmJobKind.DELIVER,  # unload full harvest pack to barn / farm
+    FarmJobKind.HARVEST,  # ripe standing crops before weeding / sowing
     FarmJobKind.WEED,
-    FarmJobKind.HARVEST,  # ripe standing crops before new sowing
     FarmJobKind.SOW,
     FarmJobKind.TREAT,
     FarmJobKind.PLOUGH,
