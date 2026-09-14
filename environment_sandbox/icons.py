@@ -59,6 +59,7 @@ _STIPPLE_TMP_DIR = _ICONS_DIR / "_stipple_tmp"
 # Logical icon aliases for legacy/resource names used by gameplay code.
 _ICON_BASE_ALIASES: dict[str, str] = {
     "meat": "meat_marker",
+    "field_plough": "field_ploughed",
 }
 
 # One map cell in SVG / export units (home-cell edge).
@@ -1735,6 +1736,7 @@ ICON_ALCHEMIST = "alchemist"
 ICON_TAILOR = "tailor"
 ICON_COBBLER = "cobbler"
 ICON_MARKET = "market"
+ICON_APIARY = "apiary"
 ICON_TENT = "tent"
 ICON_HOUSE_SMALL = "house_small"
 ICON_HOUSE = "house"
@@ -1764,6 +1766,7 @@ BUILDING_ICON_NAMES: tuple[str, ...] = (
     ICON_TAILOR,
     ICON_COBBLER,
     ICON_MARKET,
+    ICON_APIARY,
     ICON_TENT,
     ICON_HOUSE_SMALL,
     ICON_HOUSE,
@@ -1872,6 +1875,7 @@ ALL_ICON_NAMES: tuple[str, ...] = (
     ICON_TAILOR,
     ICON_COBBLER,
     ICON_MARKET,
+    ICON_APIARY,
     ICON_TENT,
     ICON_HOUSE_SMALL,
     ICON_HOUSE,
@@ -2010,6 +2014,7 @@ def icon_base_for_feature(
         FeatureType.TAILOR: ICON_TAILOR,
         FeatureType.COBBLER: ICON_COBBLER,
         FeatureType.MARKET: ICON_MARKET,
+        FeatureType.APIARY: ICON_APIARY,
         FeatureType.TENT: ICON_TENT,
         FeatureType.HOUSE_SMALL: ICON_HOUSE_SMALL,
         FeatureType.HOUSE: ICON_HOUSE,

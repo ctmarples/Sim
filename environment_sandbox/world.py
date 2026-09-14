@@ -201,6 +201,7 @@ class FeatureType(Enum):
     TAILOR = auto()
     COBBLER = auto()
     MARKET = auto()
+    APIARY = auto()
     TENT = auto()
     HOUSE_SMALL = auto()
     HOUSE = auto()
@@ -242,6 +243,7 @@ STRUCTURE_FEATURES: frozenset[FeatureType] = frozenset(
         FeatureType.TAILOR,
         FeatureType.COBBLER,
         FeatureType.MARKET,
+        FeatureType.APIARY,
         FeatureType.TENT,
         FeatureType.HOUSE_SMALL,
         FeatureType.HOUSE,
@@ -338,10 +340,14 @@ class Cell:
     mineral_cycle_applied: bool = False
     weed_suppression: float = 0.0
     repellant_season: str | None = None
+    # Season name when compost was last applied (once per season before plough).
+    compost_season: str | None = None
     # Worn trail overlay — does not replace underlying terrain.
     path_worn: bool = False
     # Bare ploughed soil (after plough, before sow) — furrow overlay.
     ploughed: bool = False
+    # Runtime: litter from nearby trees/orchard shrubs (set on 8×/year sample).
+    canopy_fertility: bool = False
 
     def habitat_category(self) -> str:
         if self.feature == FeatureType.TREE:
@@ -994,6 +1000,11 @@ class World:
         try:
             self._seed_initial_reeds(rng)
             self._seed_initial_berries(rng)
+            # Establish wild crops / scenic herbs so meadow forage exists on day 0.
+            spring_day = 12.0
+            for _ in range(24):
+                self._tick_herbs_seasonal(spring_day)
+                self._tick_mushrooms_seasonal(spring_day)
         finally:
             self.env_maps = prev_maps
         self._clear_settlement_yard()
@@ -1090,6 +1101,7 @@ class World:
                 ):
                     cell.feature = FeatureType.WOOD_BUSH
                     cell.crop_kind = wood.key
+                    cell.tree_species = self.cells[ty][tx].tree_species
                     cell.deposit = WOOD_BUSH_YIELD
                     cell.growth_ticks = self._fallen_wood_lifetime_ticks()
 
@@ -2658,16 +2670,26 @@ class World:
             cell = self.cells[y][x]
             feat = cell.feature
             if feat == FeatureType.SAPLING:
-                if grow_step > 0:
-                    cell.growth_ticks -= grow_step * ticks
+                nursery = int(getattr(cell, "deposit", 0) or 0) < 0
+                # Nursery seedlings ripen over calendar time, not only warm-season
+                # tree growth (which halts in winter).
+                step = max(1, grow_step) if nursery else grow_step
+                if step > 0:
+                    cell.growth_ticks -= step * ticks
                     if cell.growth_ticks <= 0:
-                        tree = resolve_tree(cell.tree_species)
-                        cell.feature = FeatureType.TREE
-                        cell.tree_species = tree.key
-                        cell.tree_age_years = 0
-                        cell.growth_ticks = 0
-                        cell.deposit = tree.yield_amount
-                        hard_collision_changed = True
+                        # Nursery seedlings (deposit < 0) mature into collectable
+                        # sapling stock — never into map trees.
+                        if nursery:
+                            cell.growth_ticks = 0
+                            still_growing.append((x, y))
+                        else:
+                            tree = resolve_tree(cell.tree_species)
+                            cell.feature = FeatureType.TREE
+                            cell.tree_species = tree.key
+                            cell.tree_age_years = 0
+                            cell.growth_ticks = 0
+                            cell.deposit = tree.yield_amount
+                            hard_collision_changed = True
                     else:
                         still_growing.append((x, y))
                 else:
@@ -2720,21 +2742,28 @@ class World:
                     cell.feature = FeatureType.NONE
                     cell.deposit = 0
                     cell.crop_kind = None
+                    cell.tree_species = None
                 else:
                     still_growing.append((x, y))
             keep_cell = False
             for obj in list(cell.extra_objects):
                 if obj.feature == FeatureType.SAPLING:
-                    if grow_step > 0:
-                        obj.growth_ticks -= grow_step * ticks
+                    nursery = int(getattr(obj, "deposit", 0) or 0) < 0
+                    step = max(1, grow_step) if nursery else grow_step
+                    if step > 0:
+                        obj.growth_ticks -= step * ticks
                         if obj.growth_ticks <= 0:
-                            tree = resolve_tree(obj.tree_species)
-                            obj.feature = FeatureType.TREE
-                            obj.tree_species = tree.key
-                            obj.tree_age_years = 0
-                            obj.growth_ticks = 0
-                            obj.deposit = tree.yield_amount
-                            hard_collision_changed = True
+                            if nursery:
+                                obj.growth_ticks = 0
+                                keep_cell = True
+                            else:
+                                tree = resolve_tree(obj.tree_species)
+                                obj.feature = FeatureType.TREE
+                                obj.tree_species = tree.key
+                                obj.tree_age_years = 0
+                                obj.growth_ticks = 0
+                                obj.deposit = tree.yield_amount
+                                hard_collision_changed = True
                         else:
                             keep_cell = True
                     else:
@@ -2899,7 +2928,13 @@ class World:
                     elif species is not None:
                         self._try_wild_species_spread(x, y, species, wild_n, total_n, day)
                 elif cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP):
-                    if self._forage_rng.random() < herb_despawn_rate(day, x, y):
+                    species = resolve_species(cell.feature.name, cell.crop_kind)
+                    rate = (
+                        species_despawn_rate(species, local_day(day, x, y))
+                        if species is not None
+                        else herb_despawn_rate(day, x, y, kind=cell.crop_kind)
+                    )
+                    if self._forage_rng.random() < rate:
                         terrain = cell.terrain
                         cell.feature = FeatureType.NONE
                         cell.deposit = 0
@@ -2907,10 +2942,39 @@ class World:
                         cell.crop_kind = None
                         if terrain in wild_n:
                             wild_n[terrain] = max(0, wild_n[terrain] - 1)
-                    elif cell.feature == FeatureType.HERB:
-                        species = resolve_species("HERB", cell.crop_kind)
+                    else:
+                        # Wild crops and scenic herbs both may spread; crops used
+                        # to skip this and lost meadow space to clover/nettle.
                         if species is not None:
-                            self._try_wild_species_spread(x, y, species, wild_n, total_n, day)
+                            self._try_wild_species_spread(
+                                x, y, species, wild_n, total_n, day
+                            )
+                elif (
+                    cell.feature == FeatureType.NONE
+                    and cell.terrain in WILD_CROPS_BY_TERRAIN
+                    and room(cell.terrain)
+                    and crop_peak > 0
+                    and self._forage_rng.random()
+                    < crop_peak * terrain_spawn_weight(cell.terrain)
+                ):
+                    # Prefer forage crops over scenic herbs on empty tiles so
+                    # meadow caps are not filled by clover/nettle alone.
+                    base_chance = herb_spawn_rate(day, x, y) * herb_activity
+                    if self._forage_rng.random() < base_chance / crop_peak:
+                        crop_key = pick_crop_for_terrain(
+                            cell.terrain, local_day(day, x, y)
+                        )
+                        species = WILD_BY_KEY[crop_key]
+                        score = self.species_suitability_at(x, y, species)
+                        sample = local_day(day, x, y)
+                        if (environment_allows_establishment(species, score)
+                                and self._forage_rng.random()
+                                < spawn_probability(score.combined)
+                                * activity_at_day(species, sample)):
+                            self._plant_wild_crop_patch(
+                                x, y, crop_key, wild_n=wild_n, total_n=total_n,
+                                environment_checked=True,
+                            )
                 elif (
                     cell.feature == FeatureType.NONE
                     and cell.terrain in non_crop_species
@@ -2967,7 +3031,13 @@ class World:
                 for obj in list(cell.extra_objects):
                     if obj.feature not in (FeatureType.HERB, FeatureType.WILD_CROP):
                         continue
-                    if self._forage_rng.random() < herb_despawn_rate(day, x, y):
+                    species = resolve_species(obj.feature.name, obj.crop_kind)
+                    rate = (
+                        species_despawn_rate(species, local_day(day, x, y))
+                        if species is not None
+                        else herb_despawn_rate(day, x, y, kind=obj.crop_kind)
+                    )
+                    if self._forage_rng.random() < rate:
                         cell.extra_objects.remove(obj)
                 wild_here = int(cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP)) + sum(
                     obj.feature in (FeatureType.HERB, FeatureType.WILD_CROP)
@@ -2997,30 +3067,6 @@ class World:
                             FeatureType.WILD_CROP,
                             crop_kind=crop_key,
                         )
-                if (
-                    cell.feature == FeatureType.NONE
-                    and cell.terrain in WILD_CROPS_BY_TERRAIN
-                    and room(cell.terrain)
-                    and crop_peak > 0
-                    and self._forage_rng.random()
-                    < crop_peak * terrain_spawn_weight(cell.terrain)
-                ):
-                    base_chance = herb_spawn_rate(day, x, y) * herb_activity
-                    if self._forage_rng.random() < base_chance / crop_peak:
-                        crop_key = pick_crop_for_terrain(
-                            cell.terrain, local_day(day, x, y)
-                        )
-                        species = WILD_BY_KEY[crop_key]
-                        score = self.species_suitability_at(x, y, species)
-                        sample = local_day(day, x, y)
-                        if (environment_allows_establishment(species, score)
-                                and self._forage_rng.random()
-                                < spawn_probability(score.combined)
-                                * activity_at_day(species, sample)):
-                            self._plant_wild_crop_patch(
-                                x, y, crop_key, wild_n=wild_n, total_n=total_n,
-                                environment_checked=True,
-                            )
         self._wild_tick_disturbance = None
 
     def _try_wild_species_spread(self, x, y, species, wild_n, total_n, day: float = 0.0) -> bool:
@@ -3143,8 +3189,20 @@ class World:
                 and cell.terrain in wood_terrains
                 and self._forage_rng.random() < wood_bush_spawn_rate(day, nx, ny)
             ):
+                species = None
+                for ty, tx in self.neighbourhood(nx, ny, radius=1):
+                    if (tx, ty) == (nx, ny):
+                        continue
+                    tree_cell = self.cells[ty][tx]
+                    if (
+                        tree_cell.feature == FeatureType.TREE
+                        and tree_cell.tree_species
+                    ):
+                        species = tree_cell.tree_species
+                        break
                 cell.feature = FeatureType.WOOD_BUSH
                 cell.crop_kind = wood.key
+                cell.tree_species = species
                 cell.deposit = WOOD_BUSH_YIELD
                 cell.growth_ticks = self._fallen_wood_lifetime_ticks()
 
@@ -3402,7 +3460,7 @@ class World:
                 if self._sprout_rng.random() >= risk:
                     continue
                 cell.feature = FeatureType.WOOD_BUSH
-                cell.tree_species = None
+                # Keep species so collecting the pile can drop matching tree seeds.
                 cell.tree_age_years = 0
                 cell.deposit = 1
                 cell.growth_ticks = self._fallen_wood_lifetime_ticks()
@@ -3457,6 +3515,51 @@ class World:
         cell.deposit = 0
         self.note_growth_cell(x, y)
         return True
+
+    def sow_tree_seed(self, x: int, y: int, species: str | None = None) -> bool:
+        """Sow a tree seed on ploughed nursery soil. Matures to a collectable sapling in one season."""
+        from seasons import SEASON_LENGTH_TICKS
+
+        cell = self.get_cell(x, y)
+        if cell is None:
+            return False
+        if cell.terrain not in SOIL_LIKE or cell.feature != FeatureType.NONE:
+            return False
+        if not bool(getattr(cell, "ploughed", False)):
+            return False
+        tree = resolve_tree(species)
+        cell.feature = FeatureType.SAPLING
+        cell.tree_species = tree.key
+        cell.tree_age_years = 0
+        cell.growth_ticks = max(1, int(SEASON_LENGTH_TICKS))
+        # Negative deposit marks a nursery seedling (never matures into a TREE).
+        cell.deposit = -1
+        cell.ploughed = False
+        self.note_growth_cell(x, y)
+        return True
+
+    def nursery_sapling_ready(self, x: int, y: int) -> bool:
+        cell = self.get_cell(x, y)
+        return (
+            cell is not None
+            and cell.feature == FeatureType.SAPLING
+            and int(getattr(cell, "deposit", 0) or 0) < 0
+            and int(getattr(cell, "growth_ticks", 0) or 0) <= 0
+        )
+
+    def harvest_nursery_sapling(self, x: int, y: int) -> str | None:
+        """Clear a ready nursery seedling and return its tree species key."""
+        if not self.nursery_sapling_ready(x, y):
+            return None
+        cell = self.get_cell(x, y)
+        assert cell is not None
+        species = resolve_tree(cell.tree_species).key
+        cell.feature = FeatureType.NONE
+        cell.tree_species = None
+        cell.tree_age_years = 0
+        cell.growth_ticks = 0
+        cell.deposit = 0
+        return species
 
     def plant_berry_bush(self, x: int, y: int, species_key: str = "blackberry",
                          *, mature_ticks: int | None = None) -> bool:
@@ -3551,10 +3654,13 @@ class World:
             FeatureType.FORAGER,
             FeatureType.FISHER,
             FeatureType.FARM,
+            FeatureType.APIARY,
             FeatureType.CONSTRUCTION_SITE,
             FeatureType.STRUCTURE_PAD,
         ):
             return False
+        # Callers that care about sapling stock should take_saplings_at first.
+        self.take_saplings_at(x, y)
         # Legacy Field marker / already-soil tile: mark as ploughed furrows.
         if cell.terrain in SOIL_LIKE and cell.feature in (
             FeatureType.NONE,
@@ -3565,7 +3671,10 @@ class World:
                 cell.deposit = 0
                 cell.growth_ticks = 0
                 cell.crop_kind = None
+            self.clear_flora_at(x, y)
             cell.ploughed = True
+            # Bump terrain revision so the world-layer cache redraws furrows.
+            self.mark_terrain_dirty(x, y)
             return True
         cell.terrain = TerrainType.SOIL
         cell.feature = FeatureType.NONE
@@ -3574,6 +3683,7 @@ class World:
         cell.crop_kind = None
         cell.tree_species = None
         cell.ploughed = True
+        self.clear_flora_at(x, y)
         from soil import cap_fertility_for_soil
 
         cap_fertility_for_soil(cell)
@@ -3625,8 +3735,8 @@ class World:
         crop = CROP_BY_KEY.get(kind)
         from soil import drop_fertility_on_harvest
 
-        drop_fertility_on_harvest(cell)
-        cell.compost_cycle_applied = False
+        drop_fertility_on_harvest(cell, crop_key=kind)
+        # Compost is seasonal (compost_season); mineral is once per crop cycle.
         cell.mineral_cycle_applied = False
         cell.weed_suppression = 0.0
         if crop is not None and crop.perennial:
@@ -3667,6 +3777,7 @@ class World:
         if cell.deposit <= 0:
             cell.feature = FeatureType.NONE
             cell.crop_kind = None
+            cell.tree_species = None
         return taken
 
     def harvest_berries(self, x: int, y: int, amount: int = 1) -> int:
@@ -3700,6 +3811,56 @@ class World:
         cell.feature = FeatureType.NONE
         cell.crop_kind = None
         return kind
+
+    def take_saplings_at(self, x: int, y: int) -> list[str]:
+        """Remove saplings from a tile (primary + extras). Returns species keys."""
+        cell = self.get_cell(x, y)
+        if cell is None:
+            return []
+        taken: list[str] = []
+        if cell.feature == FeatureType.SAPLING:
+            taken.append(cell.tree_species or "oak")
+            cell.feature = FeatureType.NONE
+            cell.tree_species = None
+            cell.tree_age_years = 0
+            cell.growth_ticks = 0
+            cell.deposit = 0
+            cell.icon_variant = None
+        kept = []
+        for obj in cell.extra_objects:
+            if obj.feature == FeatureType.SAPLING:
+                taken.append(obj.tree_species or "oak")
+            else:
+                kept.append(obj)
+        if len(kept) != len(cell.extra_objects):
+            cell.extra_objects = kept
+        if taken:
+            self.invalidate_movement_cache()
+        return taken
+
+    def clear_flora_at(self, x: int, y: int) -> bool:
+        """Remove scenic or wild flora from a tile (primary + extras). Returns True if any removed."""
+        cell = self.get_cell(x, y)
+        if cell is None:
+            return False
+        flora = {
+            FeatureType.WILD_CROP,
+            FeatureType.HERB,
+            FeatureType.REED,
+            FeatureType.MUSHROOM,
+        }
+        removed = False
+        if cell.feature in flora:
+            cell.feature = FeatureType.NONE
+            cell.crop_kind = None
+            cell.deposit = 0
+            cell.growth_ticks = 0
+            removed = True
+        kept = [obj for obj in cell.extra_objects if obj.feature not in flora]
+        if len(kept) != len(cell.extra_objects):
+            cell.extra_objects = kept
+            removed = True
+        return removed
 
     def harvest_reed(self, x: int, y: int) -> bool:
         cell = self.get_cell(x, y)

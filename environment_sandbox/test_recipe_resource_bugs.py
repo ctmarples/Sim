@@ -13,7 +13,6 @@ from recipes import (
     SOFT_BERRY_INPUT_KEYS,
     apply_recipe,
     missing_inputs,
-    recipe_input_amount,
     recipe_ready,
 )
 from resource_balance import food_def
@@ -54,42 +53,60 @@ class BerryJamInputTests(unittest.TestCase):
         self.assertIn("sloe_berries", SOFT_BERRY_INPUT_KEYS)
         self.assertIn("elderberries", SOFT_BERRY_INPUT_KEYS)
         self.assertNotIn("hazelnuts", SOFT_BERRY_INPUT_KEYS)
+        self.assertNotIn("berries", SOFT_BERRY_INPUT_KEYS)
 
     def test_jam_ready_with_blackberries(self):
-        recipe = _kitchen_recipe("berry_jam")
-        storage = SimpleNamespace(blackberries=2, berries=0)
+        recipe = _kitchen_recipe("blackberry_jam")
+        storage = SimpleNamespace(blackberries=3, honey=1)
         self.assertTrue(recipe_ready(storage, recipe))
-        self.assertEqual(recipe_input_amount(storage, "berries"), 2)
 
     def test_jam_consumes_typed_berries(self):
-        recipe = _kitchen_recipe("berry_jam")
+        recipe = _kitchen_recipe("blackberry_jam")
         storage = SimpleNamespace(
-            blackberries=2, sloe_berries=0, elderberries=0, berries=0, berry_jam=0
+            blackberries=3, honey=1, berry_jam=0
         )
         apply_recipe(storage, recipe)
         self.assertEqual(storage.blackberries, 0)
-        self.assertEqual(storage.berry_jam, 1)
+        self.assertEqual(storage.honey, 0)
+        self.assertEqual(storage.berry_jam, 2)
 
-    def test_tart_mixes_berry_species(self):
+    def test_tart_uses_jam(self):
         recipe = _kitchen_recipe("berry_tart")
         storage = SimpleNamespace(
-            blackberries=1,
-            sloe_berries=1,
-            elderberries=0,
-            berries=0,
-            honey=3,
+            berry_jam=1,
+            honey=1,
             wheat_flour=1,
             berry_tart=0,
         )
         self.assertTrue(recipe_ready(storage, recipe))
         apply_recipe(storage, recipe)
-        self.assertEqual(storage.blackberries + storage.sloe_berries, 0)
+        self.assertEqual(storage.berry_jam, 0)
         self.assertEqual(storage.berry_tart, 1)
 
     def test_missing_berries_requests_blackberries(self):
-        recipe = _kitchen_recipe("berry_jam")
-        storage = SimpleNamespace(blackberries=0, berries=0)
-        self.assertEqual(missing_inputs(storage, recipe), {"blackberries": 2})
+        recipe = _kitchen_recipe("blackberry_jam")
+        storage = SimpleNamespace(blackberries=0, honey=1)
+        self.assertEqual(missing_inputs(storage, recipe), {"blackberries": 3})
+
+
+class KitchenFireAndStepsTests(unittest.TestCase):
+    def test_kitchen_includes_fire_recipes(self):
+        from entities import Building, BuildingKind
+        from recipes import FIRE_RECIPES
+
+        kitchen = Building(id=1, kind=BuildingKind.KITCHEN, x=0, y=0)
+        names = {r.name for r in kitchen.known_recipes()}
+        for recipe in FIRE_RECIPES:
+            self.assertIn(recipe.name, names)
+        self.assertIn("honey_porridge", names)
+        self.assertIn("mushroom_stew", names)
+
+    def test_default_steps_match_processor_default(self):
+        from settings import PROCESSOR_RECIPE_STEPS
+
+        recipe = _kitchen_recipe("mushroom_stew")
+        self.assertEqual(recipe.steps, 0)
+        self.assertEqual(recipe.work_steps(), PROCESSOR_RECIPE_STEPS)
 
 
 if __name__ == "__main__":

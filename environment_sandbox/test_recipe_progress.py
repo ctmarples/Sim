@@ -60,28 +60,28 @@ class RecipeProgressDisplayTests(unittest.TestCase):
         apply_building_storage(kitchen)
         kitchen.ensure_recipe_state()
         kitchen.fuel_wood = 5
-        kitchen.meat = 2
-        kitchen.onion = 2
+        kitchen.meat = 1
+        kitchen.onion = 1
         kitchen.cabbage = 1
         kitchen.carrot = 1
-        kitchen.recipe_progress["grilled_meat"] = 1
+        kitchen.recipe_progress["stew"] = 1
 
         picked = kitchen.craftable_recipe()
 
         self.assertIsNotNone(picked)
         assert picked is not None
-        self.assertEqual(picked.name, "grilled_meat")
+        self.assertEqual(picked.name, "stew")
 
     def test_kitchen_partial_waiting_for_supply_does_not_block_ready_food(self) -> None:
         kitchen = Building(id=7, kind=BuildingKind.KITCHEN, x=0, y=0)
         apply_building_storage(kitchen)
         kitchen.ensure_recipe_state()
         kitchen.fuel_wood = 5
-        kitchen.onion = 2
-        kitchen.garlic = 1
-        kitchen.cabbage = 2
-        kitchen.carrot = 2
-        kitchen.recipe_progress["grilled_meat"] = 1
+        kitchen.cabbage = 1
+        kitchen.turnip = 1
+        kitchen.carrot = 1
+        kitchen.onion = 1
+        kitchen.recipe_progress["stew"] = 1
 
         picked = kitchen.craftable_recipe()
 
@@ -117,27 +117,23 @@ class RecipeProgressDisplayTests(unittest.TestCase):
         assert picked is not None
         self.assertEqual(picked.name, "twine")
 
-    def test_lower_priority_recipes_are_weighted_without_starving(self) -> None:
+    def test_higher_priority_recipes_always_beat_lower_when_ready(self) -> None:
         kitchen = Building(id=7, kind=BuildingKind.KITCHEN, x=0, y=0)
         apply_building_storage(kitchen)
         kitchen.ensure_recipe_state()
         kitchen.fuel_wood = 20
-        kitchen.mushrooms = 20
-        kitchen.sage = 20
-        kitchen.wheat_flour = 20
-        kitchen.meat = 20
-        kitchen.set_recipe_priority("mushroom_stew", 1)
-        kitchen.set_recipe_priority("bread_wheat", 2)
-        kitchen.set_recipe_priority("grilled_meat", 3)
+        kitchen.fish = 20
+        kitchen.turnip = 20
+        kitchen.garlic = 20
+        kitchen.blackberries = 20
+        kitchen.honey = 20
+        kitchen.set_recipe_priority("fish_stew", 1)
+        kitchen.set_recipe_priority("blackberry_jam", 2)
         for name in kitchen.recipe_enabled:
-            kitchen.recipe_enabled[name] = name in {
-                "mushroom_stew",
-                "bread_wheat",
-                "grilled_meat",
-            }
+            kitchen.recipe_enabled[name] = name in {"fish_stew", "blackberry_jam"}
 
         picks: list[str] = []
-        for _ in range(3):
+        for _ in range(4):
             recipe = kitchen.craftable_recipe()
             self.assertIsNotNone(recipe)
             assert recipe is not None
@@ -145,7 +141,24 @@ class RecipeProgressDisplayTests(unittest.TestCase):
             for _step in range(recipe.work_steps()):
                 kitchen.advance_recipe_progress(recipe)
 
-        self.assertEqual(picks, ["mushroom_stew", "bread_wheat", "grilled_meat"])
+        self.assertEqual(picks, ["fish_stew", "fish_stew", "fish_stew", "fish_stew"])
+
+    def test_lower_priority_runs_when_higher_cannot(self) -> None:
+        kitchen = Building(id=7, kind=BuildingKind.KITCHEN, x=0, y=0)
+        apply_building_storage(kitchen)
+        kitchen.ensure_recipe_state()
+        kitchen.fuel_wood = 5
+        kitchen.blackberries = 6
+        kitchen.honey = 2
+        kitchen.set_recipe_priority("fish_stew", 1)
+        kitchen.set_recipe_priority("blackberry_jam", 2)
+        for name in kitchen.recipe_enabled:
+            kitchen.recipe_enabled[name] = name in {"fish_stew", "blackberry_jam"}
+
+        recipe = kitchen.craftable_recipe()
+        self.assertIsNotNone(recipe)
+        assert recipe is not None
+        self.assertEqual(recipe.name, "blackberry_jam")
 
 
 if __name__ == "__main__":

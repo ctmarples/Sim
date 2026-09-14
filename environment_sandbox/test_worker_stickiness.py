@@ -138,6 +138,26 @@ class WorkerStickinessTests(unittest.TestCase):
         fisher.fish_post_pos = (9, 5)
         self.assertTrue(Game._villager_has_active_action(fisher))
 
+    def test_claimed_farm_job_counts_as_active_action(self) -> None:
+        farmer = Villager(id=3, x=4, y=4)
+        farmer.farm_job_kind = "PLOUGH"
+        farmer.target = (5, 5)
+        farmer.state = VillagerState.WORKING
+        self.assertTrue(Game._villager_has_active_action(farmer))
+
+    def test_fisher_bait_without_knife_does_not_claim_tick(self) -> None:
+        game = Game.__new__(Game)
+        game._village_stock_amounts = lambda: {}
+        hut = Building(id=11, kind=BuildingKind.FISHER, x=5, y=5)
+        apply_building_storage(hut)
+        hut.meat = 2
+        hut.bait = 0
+        hut.ensure_recipe_state()
+        fisher = Villager(id=2, x=5, y=5)
+        game._tool_fetchable = lambda villager, tool: False
+        game._ensure_work_tool = lambda villager, tool: False
+        self.assertFalse(game._try_fisher_bait_craft(fisher, hut))
+
     def test_fisher_does_not_deliver_while_small_fish_still_fit(self) -> None:
         game = Game.__new__(Game)
         hut = Building(id=11, kind=BuildingKind.FISHER, x=5, y=5)

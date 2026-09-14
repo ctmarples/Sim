@@ -40,6 +40,7 @@ from entities import arm_cell_step_visual, note_cell_step, snap_entity_visual
 from resource_balance import (
     ANIMAL_MIGRATION_CHANCE,
     ANIMAL_TREES_PER_CAP,
+    APIARY_COLONY_LEVEL_MAX,
     BOAR_CELLS_PER_CAP,
     BOAR_CROP_EAT_CHANCE,
     COLONY_HARVEST_COOLDOWN,
@@ -62,6 +63,7 @@ from resource_balance import (
     WILDLIFE_RESEED_PAIR,
     WILDLIFE_SEED_COUNT,
     WILDLIFE_SEED_GROUNDS,
+    honey_yield_for_level,
 )
 from settings import (
     ANIMAL_GROWTH_INTERVAL,
@@ -218,14 +220,18 @@ def colony_forage_per_level(kind: AnimalKind) -> int:
         return max(1, int(defaults.get(key, 10)))
 
 
-def colony_max_level_for_forage(kind: AnimalKind, forage_count: int) -> int:
+def colony_max_level_for_forage(
+    kind: AnimalKind, forage_count: int, *, apiary: bool = False
+) -> int:
     """Highest colony level supported by ``forage_count`` tiles (0 = none)."""
     if kind not in COLONY_KINDS:
         return COLONY_LEVEL_MAX
     per = colony_forage_per_level(kind)
+    cap = APIARY_COLONY_LEVEL_MAX if apiary else COLONY_LEVEL_MAX
     if int(forage_count) < per:
-        return 0
-    return min(COLONY_LEVEL_MAX, int(forage_count) // per)
+        # Colonised apiaries persist at level 1 even with sparse forage.
+        return 1 if apiary else 0
+    return min(cap, int(forage_count) // per)
 
 
 # Back-compat alias used by older call sites / scripts.
@@ -323,13 +329,23 @@ class Colony:
     members: list[ColonyMember] = field(default_factory=list)
     # Growth ticks until hunt / honey collect is allowed again.
     harvest_cooldown: int = 0
+    # When set, this nest belongs to a player apiary (not a wild habitat).
+    apiary_building_id: int | None = None
+
+    @property
+    def is_apiary(self) -> bool:
+        return self.apiary_building_id is not None
+
+    def level_cap(self) -> int:
+        return APIARY_COLONY_LEVEL_MAX if self.is_apiary else COLONY_LEVEL_MAX
 
     def clamp_level(self) -> None:
-        self.level = max(1, min(COLONY_LEVEL_MAX, int(self.level)))
+        self.level = max(1, min(self.level_cap(), int(self.level)))
 
     def target_members(self) -> int:
         self.clamp_level()
-        return COLONY_MEMBERS_BY_LEVEL[self.level - 1]
+        idx = min(len(COLONY_MEMBERS_BY_LEVEL), max(1, self.level)) - 1
+        return COLONY_MEMBERS_BY_LEVEL[idx]
 
     def can_harvest(self) -> bool:
         return self.harvest_cooldown <= 0 and self.level >= 1
@@ -768,30 +784,49 @@ class WildlifeManager:
             return hab.allow_vole
         return False
 
-    def _colony_forage_count(self, colony: Colony) -> int:
+    def _colony_forage_count(self, colony: Colony, world: World | None = None) -> int:
+        if colony.is_apiary:
+            if world is None:
+                return 0
+            return len(
+                self._forage_from_nests(
+                    world,
+                    [(colony.x, colony.y)],
+                    terrains=(
+                        TerrainType.MEADOW,
+                        TerrainType.GRASS,
+                        TerrainType.SOIL,
+                        TerrainType.RIPARIAN,
+                    ),
+                )
+            )
         hab = self._colony_habitat(colony)
         if hab is None:
             return 0
         return len(hab.forage_tiles)
 
-    def _enforce_colony_forage_caps(self) -> None:
-        """Clamp bee/rabbit levels to forage÷N; remove colonies below N forage tiles."""
+    def _enforce_colony_forage_caps(self, world: World | None = None) -> None:
+        """Clamp bee/rabbit levels to forage÷N; remove wild colonies below N forage tiles."""
         kept: list[Colony] = []
         for colony in self.colonies:
             if colony.kind not in COLONY_KINDS:
                 kept.append(colony)
                 continue
-            hab = self._colony_habitat(colony)
+            forage_n = self._colony_forage_count(colony, world)
             max_lv = colony_max_level_for_forage(
-                colony.kind,
-                len(hab.forage_tiles) if hab is not None else 0,
+                colony.kind, forage_n, apiary=colony.is_apiary
             )
             if max_lv < 1:
+                if colony.is_apiary:
+                    # Empty forage: keep a colonised apiary at level 1.
+                    colony.level = 1
+                    colony.clamp_level()
+                    kept.append(colony)
                 continue
             if colony.level > max_lv:
                 colony.level = max_lv
                 colony.clamp_level()
-                self._sync_colony_members(colony, hab)
+                self._sync_colony_members(colony, self._colony_habitat(colony))
             kept.append(colony)
         self.colonies = kept
 
@@ -861,15 +896,26 @@ class WildlifeManager:
         ]
         forest_animals = [a for a in self.animals if a.kind in FOREST_KINDS]
 
+        # One walkability grid for the whole refresh: forage/roam otherwise
+        # re-check the same tiles tens of thousands of times (sim hitch).
+        walkable = [
+            [world.is_walkable(x, y) for x in range(world.cols)]
+            for y in range(world.rows)
+        ]
+
         patches = world.forest_floor_patches()
         habitats: list[ForestHabitat] = []
         for i, forest in enumerate(patches):
             deer_breeding = self._deer_breeding_tiles(world, forest)
-            deer_cold = self._expand_walkable(world, deer_breeding, radius=1)
-            deer_warm = self._warm_roam(world, forest, deer_cold)
+            deer_cold = self._expand_walkable(
+                world, deer_breeding, radius=1, walkable=walkable
+            )
+            deer_warm = self._warm_roam(world, forest, deer_cold, walkable=walkable)
             boar_breeding = list(forest)
-            boar_cold = self._expand_walkable(world, boar_breeding, radius=1)
-            boar_warm = self._warm_roam(world, forest, boar_cold)
+            boar_cold = self._expand_walkable(
+                world, boar_breeding, radius=1, walkable=walkable
+            )
+            boar_warm = self._warm_roam(world, forest, boar_cold, walkable=walkable)
             habitats.append(
                 ForestHabitat(
                     id=i,
@@ -886,7 +932,7 @@ class WildlifeManager:
         self._remap_animals_after_refresh(
             forest_animals, old_forests, old_forest_ids, forest=True
         )
-        self._refresh_open_habitats(world)
+        self._refresh_open_habitats(world, walkable=walkable)
         if getattr(self, "_colonies_need_seed", False):
             self._colonies_need_seed = False
             # Seed any colony kinds that are still absent (not only when none exist).
@@ -900,7 +946,9 @@ class WildlifeManager:
         for colony in self.colonies:
             self._sync_colony_members(colony, self._colony_habitat(colony))
 
-    def _refresh_open_habitats(self, world: World) -> None:
+    def _refresh_open_habitats(
+        self, world: World, *, walkable: list[list[bool]] | None = None
+    ) -> None:
         old_nests = [set(h.nest_tiles) for h in self.open_habitats]
         old_colony_ids = [c.habitat_id for c in self.colonies]
 
@@ -911,7 +959,9 @@ class WildlifeManager:
         hid = 0
         for patch in world.meadow_patches():
             nest = list(patch)
-            forage = self._forage_from_nests(world, nest, meadow_terrain)
+            forage = self._forage_from_nests(
+                world, nest, meadow_terrain, walkable=walkable
+            )
             if not nest or not forage:
                 continue
             habitats.append(
@@ -927,7 +977,9 @@ class WildlifeManager:
             hid += 1
         for patch in world.grass_patches():
             nest = list(patch)
-            forage = self._forage_from_nests(world, nest, (TerrainType.GRASS,))
+            forage = self._forage_from_nests(
+                world, nest, (TerrainType.GRASS,), walkable=walkable
+            )
             if not nest or not forage:
                 continue
             habitats.append(
@@ -942,7 +994,9 @@ class WildlifeManager:
         for patch in world.riparian_patches():
             nest = list(patch)
             # Shore forage: riparian plus adjacent grass/meadow within radius.
-            forage = self._forage_from_nests(world, nest, vole_terrain)
+            forage = self._forage_from_nests(
+                world, nest, vole_terrain, walkable=walkable
+            )
             if not nest or not forage:
                 continue
             habitats.append(
@@ -959,7 +1013,9 @@ class WildlifeManager:
             if not fh.deer_breeding:
                 continue
             nest = list(fh.deer_breeding)
-            forage = self._forage_from_nests(world, nest, meadow_terrain)
+            forage = self._forage_from_nests(
+                world, nest, meadow_terrain, walkable=walkable
+            )
             if not forage:
                 continue
             habitats.append(
@@ -974,7 +1030,7 @@ class WildlifeManager:
             hid += 1
         self.open_habitats = habitats
         self._remap_colonies_after_refresh(old_nests, old_colony_ids)
-        self._enforce_colony_forage_caps()
+        self._enforce_colony_forage_caps(world)
 
     @staticmethod
     def _is_forage_tile(
@@ -982,28 +1038,40 @@ class WildlifeManager:
         x: int,
         y: int,
         terrains: tuple[TerrainType, ...] | None = None,
+        walkable: list[list[bool]] | None = None,
     ) -> bool:
         cell = world.get_cell(x, y)
-        if cell is None or not world.is_walkable(x, y):
+        if cell is None:
             return False
         if terrains is None:
-            terrains = (TerrainType.MEADOW, TerrainType.GRASS)
-        if cell.terrain in terrains:
-            return True
-        return cell.feature == FeatureType.FIELD
+            terrains = (TerrainType.MEADOW, TerrainType.GRASS, TerrainType.SOIL)
+        forage_ok = cell.terrain in terrains or cell.feature in (
+            FeatureType.FIELD,
+            FeatureType.CROP_HERB,
+            FeatureType.WILD_CROP,
+            FeatureType.HERB,
+            FeatureType.BERRY_BUSH,
+        )
+        if not forage_ok:
+            return False
+        if walkable is not None:
+            return bool(walkable[y][x])
+        return world.is_walkable(x, y)
 
     def _forage_from_nests(
         self,
         world: World,
         nests: list[tuple[int, int]],
         terrains: tuple[TerrainType, ...] | None = None,
+        *,
+        walkable: list[list[bool]] | None = None,
     ) -> set[tuple[int, int]]:
         """Contiguous forage tiles within ``SMALL_GAME_FORAGE_RADIUS`` of nests."""
         radius = SMALL_GAME_FORAGE_RADIUS
         candidates: set[tuple[int, int]] = set()
         for nx, ny in nests:
             for cy, cx in world.neighbourhood(nx, ny, radius=radius):
-                if self._is_forage_tile(world, cx, cy, terrains):
+                if self._is_forage_tile(world, cx, cy, terrains, walkable=walkable):
                     candidates.add((cx, cy))
         starts: set[tuple[int, int]] = set()
         for nx, ny in nests:
@@ -1058,12 +1126,21 @@ class WildlifeManager:
 
     @staticmethod
     def _expand_walkable(
-        world: World, centres: list[tuple[int, int]], *, radius: int
+        world: World,
+        centres: list[tuple[int, int]],
+        *,
+        radius: int,
+        walkable: list[list[bool]] | None = None,
     ) -> set[tuple[int, int]]:
         out: set[tuple[int, int]] = set()
         for cx, cy in centres:
             for ny, nx in world.neighbourhood(cx, cy, radius=radius):
-                if world.is_walkable(nx, ny):
+                ok = (
+                    bool(walkable[ny][nx])
+                    if walkable is not None
+                    else world.is_walkable(nx, ny)
+                )
+                if ok:
                     out.add((nx, ny))
         return out
 
@@ -1072,14 +1149,22 @@ class WildlifeManager:
         world: World,
         forest: list[tuple[int, int]],
         cold: set[tuple[int, int]],
+        *,
+        walkable: list[list[bool]] | None = None,
     ) -> set[tuple[int, int]]:
         """Cold roam plus grass/meadow near the forest patch (spring/summer range)."""
         warm = set(cold)
         open_land = (TerrainType.GRASS, TerrainType.MEADOW)
         forest_set = set(forest)
+
+        def _ok(nx: int, ny: int) -> bool:
+            if walkable is not None:
+                return bool(walkable[ny][nx])
+            return world.is_walkable(nx, ny)
+
         for cx, cy in forest:
             for ny, nx in world.neighbourhood(cx, cy, radius=2):
-                if not world.is_walkable(nx, ny):
+                if not _ok(nx, ny):
                     continue
                 if world.cells[ny][nx].terrain in open_land:
                     warm.add((nx, ny))
@@ -1087,7 +1172,7 @@ class WildlifeManager:
             if (cx, cy) in forest_set:
                 continue
             for ny, nx in world.neighbourhood(cx, cy, radius=1):
-                if not world.is_walkable(nx, ny):
+                if not _ok(nx, ny):
                     continue
                 if world.cells[ny][nx].terrain in open_land:
                     warm.add((nx, ny))
@@ -3062,9 +3147,6 @@ class WildlifeManager:
         return None
 
     def _colony_has_food(self, world: World, colony: Colony) -> bool:
-        hab = self._colony_habitat(colony)
-        if hab is None:
-            return False
         food_features = (
             FeatureType.HERB,
             FeatureType.WILD_CROP,
@@ -3072,7 +3154,23 @@ class WildlifeManager:
             FeatureType.BERRY_BUSH,
             FeatureType.FIELD,
         )
-        for x, y in hab.forage_tiles:
+        if colony.is_apiary:
+            tiles = self._forage_from_nests(
+                world,
+                [(colony.x, colony.y)],
+                terrains=(
+                    TerrainType.MEADOW,
+                    TerrainType.GRASS,
+                    TerrainType.SOIL,
+                    TerrainType.RIPARIAN,
+                ),
+            )
+        else:
+            hab = self._colony_habitat(colony)
+            if hab is None:
+                return False
+            tiles = hab.forage_tiles
+        for x, y in tiles:
             cell = world.get_cell(x, y)
             if cell is None:
                 continue
@@ -3236,7 +3334,7 @@ class WildlifeManager:
         ):
             amount = 1  # actual loot comes from hunter recipe outputs in game.py
         elif colony.kind == AnimalKind.BEE:
-            amount = HONEY_PER_BEE_LEVEL
+            amount = honey_yield_for_level(colony.level, apiary=colony.is_apiary)
         else:
             return None
         harvested_kind = colony.kind
@@ -3249,14 +3347,53 @@ class WildlifeManager:
             self._sync_colony_members(colony, self._colony_habitat(colony))
         return harvested_kind, amount
 
+    def colony_for_apiary(self, building_id: int) -> Colony | None:
+        for colony in self.colonies:
+            if colony.apiary_building_id == building_id:
+                return colony
+        return None
+
+    def colonise_apiary(
+        self, building_id: int, x: int, y: int, *, level: int = 1
+    ) -> Colony | None:
+        """Start or replace an apiary nest at ``(x, y)``."""
+        existing = self.colony_for_apiary(building_id)
+        if existing is not None:
+            return existing
+        if self.colony_at(x, y) is not None:
+            return None
+        colony = Colony(
+            id=self.next_colony_id,
+            kind=AnimalKind.BEE,
+            x=x,
+            y=y,
+            level=max(1, min(APIARY_COLONY_LEVEL_MAX, int(level))),
+            habitat_id=None,
+            apiary_building_id=building_id,
+        )
+        self.next_colony_id += 1
+        colony.clamp_level()
+        self.colonies.append(colony)
+        self._sync_colony_members(colony, None)
+        return colony
+
+    def sync_apiary_colony_position(self, building_id: int, x: int, y: int) -> None:
+        colony = self.colony_for_apiary(building_id)
+        if colony is None:
+            return
+        colony.x, colony.y = int(x), int(y)
+
     def _tick_colonies(self, world: World) -> None:
         """Grow colony levels and found new small colonies from level-3 parents."""
         for colony in self.colonies:
             if colony.harvest_cooldown > 0:
                 colony.harvest_cooldown -= 1
 
-        # Snap orphans onto a free site or drop them.
+        # Snap orphans onto a free site or drop them (apiaries stay put).
         for colony in list(self.colonies):
+            if colony.is_apiary:
+                self._sync_colony_members(colony, None)
+                continue
             hab = self._colony_habitat(colony)
             if hab is None or not self._allows_colony(colony.kind, hab):
                 sites = self._empty_colony_sites(colony.kind)
@@ -3268,7 +3405,7 @@ class WildlifeManager:
                 colony.x, colony.y = self.rng.choice(hab.nest_tiles)
             self._sync_colony_members(colony, hab)
 
-        self._enforce_colony_forage_caps()
+        self._enforce_colony_forage_caps(world)
 
         # Rabbit colonies may nibble nearby wild crops.
         for colony in self.colonies:
@@ -3282,7 +3419,7 @@ class WildlifeManager:
             if crops:
                 self._eat_wild_crop(world, *self.rng.choice(crops))
 
-        # Level growth, then fission from level-3 colonies with food.
+        # Level growth, then fission from level-3 wild colonies with food.
         from balance_config import active_balance
 
         grow_chance = active_balance().get_float("WILDLIFE_COLONY_GROW_CHANCE")
@@ -3300,16 +3437,23 @@ class WildlifeManager:
             )
             if colony.kind in COLONY_KINDS:
                 max_lv = colony_max_level_for_forage(
-                    colony.kind, self._colony_forage_count(colony)
+                    colony.kind,
+                    self._colony_forage_count(colony, world),
+                    apiary=colony.is_apiary,
                 )
                 if colony.level >= max_lv:
                     continue
-            if colony.level < COLONY_LEVEL_MAX and self.rng.random() < grow_chance * ecology:
+            if (
+                colony.level < colony.level_cap()
+                and self.rng.random() < grow_chance * ecology
+            ):
                 colony.level += 1
                 colony.clamp_level()
                 self._sync_colony_members(colony, self._colony_habitat(colony))
 
         for colony in list(self.colonies):
+            if colony.is_apiary:
+                continue
             if colony.level != COLONY_SPLIT_LEVEL:
                 continue
             if not self._colony_has_food(world, colony):

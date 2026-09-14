@@ -12,7 +12,7 @@ HANDBOOK_EXPLANATIONS = (
     "Inspect four distinct species near the field and uncover every square within 10 squares of its edge to check which beehives reach it.",
     "Find a growing crop square to inspect crop health, then inspect a different square with the highest weed cover. Each observation is recorded separately.",
     "Check for footprints in the field. Let’s see how far the field is from the village buildings. The Farmhouse must be close by to store all the produce.",
-    "Let’s check the soil. Darker colour means more fertile soil. Compare the darkest and lightest squares, then inspect moisture on another square. Inspect the field’s slope — seems flat to me — and compare it with a nearby hill.",
+    "Let’s check the soil. Green means fertile soil, yellow mid, red low. Compare the greenest and reddest squares, then inspect moisture on another square. Inspect the field’s slope — seems flat to me — and compare it with a nearby hill.",
     "In Old Field Handbook, look below the table at the example crop progression through Spring, Summer, Autumn and Winter. Ah ok, so I’ll add the crop into the Rotation planner. Open Rotation and add Wheat, the current crop.",
 )
 
@@ -170,7 +170,7 @@ OBJECTIVE_TIPS = {
     'traffic': 'Tip: check four different field squares for footprints.',
     'disturbance_layer': 'Tip: open Layers and choose Disturbance.',
     'settlement': 'Tip: click a nearby village building.',
-    'fertility_high': 'Tip: darker soil is more fertile — inspect the darkest square.',
+    'fertility_high': 'Tip: greener soil is more fertile — inspect the greenest square.',
     'fertility_low': 'Tip: inspect the lightest square.',
     'fertility_layer': 'Tip: open Layers and choose Soil fertility.',
     'moisture': 'Tip: inspect moisture on another square.',

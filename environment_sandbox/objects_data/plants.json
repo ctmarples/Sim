@@ -230,7 +230,7 @@
     "can_grow_wild": true,
     "cultivated": {
       "dense_icon": "vine_plant_dense",
-      "fertility_effect": 0.0,
+      "fertility_effect": 0.05,
       "flower_colour": [
         225,
         150,
@@ -565,11 +565,11 @@
     },
     "growth_form": "shrub",
     "harvest_outputs": {
-      "berries": 3
+      "blackberries": 3
     },
     "label": "Berry bush",
     "perennial": true,
-    "produce_resource": "berries",
+    "produce_resource": "blackberries",
     "seed_resource": "",
     "short": "berr",
     "tree": {
@@ -2464,9 +2464,9 @@
       "dense_icon": "flower_plant_dense",
       "fertility_effect": null,
       "flower_colour": [
-        170,
+        235,
         220,
-        110
+        95
       ],
       "footprint": [
         0,
@@ -2489,9 +2489,9 @@
       "plant_season": "SPRING",
       "recolour": {
         "flower": [
-          170,
+          235,
           220,
-          110
+          95
         ],
         "stem": [
           60,
@@ -2593,9 +2593,9 @@
       ],
       "recolour": {
         "flower": [
-          170,
+          235,
           220,
-          110
+          95
         ],
         "stem": [
           60,
@@ -2613,12 +2613,12 @@
         30.0
       ],
       "spawn_group": "wild_crop",
-      "spawn_peak": 0.045,
+      "spawn_peak": 0.055,
       "spawn_rise": [
         0.0,
         8.0
       ],
-      "spread_chance": 0.0,
+      "spread_chance": 0.008,
       "temperature_niche": [
         0.3,
         0.5,
@@ -2626,7 +2626,8 @@
         0.95
       ],
       "terrains": [
-        "MEADOW"
+        "MEADOW",
+        "GRASS"
       ],
       "texture_niche": [
         0.15,
@@ -3749,7 +3750,7 @@
     "can_grow_wild": true,
     "cultivated": {
       "dense_icon": "vine_plant_dense",
-      "fertility_effect": null,
+      "fertility_effect": 0.05,
       "flower_colour": [
         235,
         235,

@@ -27,7 +27,7 @@ def _kitchen(*enabled: str) -> Building:
 
 class KitchenTrayTests(unittest.TestCase):
     def test_kitchen_without_pantry_uses_local_input_storage(self) -> None:
-        kitchen = _kitchen("fish_stew", "grilled_fish")
+        kitchen = _kitchen("fish_stew", "mushroom_stew")
         cargo = Inventory(fish=1, mushrooms=3)
 
         moved = kitchen.deposit_supply_from(cargo)
@@ -41,6 +41,7 @@ class KitchenTrayTests(unittest.TestCase):
     def test_kitchen_without_pantry_can_make_mushroom_stew(self) -> None:
         kitchen = _kitchen("mushroom_stew")
         kitchen.mushrooms = 2
+        kitchen.turnip = 1
         kitchen.sage = 1
 
         recipe = kitchen.craftable_recipe()
@@ -54,7 +55,7 @@ class KitchenTrayTests(unittest.TestCase):
         self.assertEqual(kitchen.mushroom_stew, 1)
 
     def test_full_meat_leaves_no_room_and_is_haulable(self) -> None:
-        kitchen = _kitchen("stew", "grilled_meat")
+        kitchen = _kitchen("stew", "mushroom_stew")
         kitchen.meat = kitchen.input_capacity
         self.assertEqual(kitchen.input_space_left(), 0)
         self.assertEqual(kitchen.space_for_key("onion"), 0)
@@ -63,7 +64,7 @@ class KitchenTrayTests(unittest.TestCase):
         self.assertIsNone(kitchen.craftable_recipe())
 
     def test_meat_stockpile_reserves_room_for_stew_veg(self) -> None:
-        kitchen = _kitchen("stew", "grilled_meat")
+        kitchen = _kitchen("stew", "mushroom_stew")
         kitchen.meat = 30
         self.assertEqual(kitchen.space_for_key("meat"), 0)
         self.assertGreater(kitchen.space_for_key("onion"), 0)
@@ -71,7 +72,7 @@ class KitchenTrayTests(unittest.TestCase):
         self.assertGreater(kitchen.space_for_key("carrot"), 0)
 
     def test_fair_share_stops_one_item_filling_the_tray(self) -> None:
-        kitchen = _kitchen("stew", "grilled_meat")
+        kitchen = _kitchen("stew", "mushroom_stew")
         hold = kitchen.input_hold_amount("meat")
         kitchen.meat = hold
         self.assertEqual(kitchen.space_for_key("meat"), 0)
@@ -79,9 +80,9 @@ class KitchenTrayTests(unittest.TestCase):
         self.assertGreater(kitchen.space_for_key("onion"), 0)
 
     def test_ready_stew_still_cooks(self) -> None:
-        kitchen = _kitchen("stew", "grilled_meat")
-        kitchen.meat = 2
-        kitchen.onion = 2
+        kitchen = _kitchen("stew", "mushroom_stew")
+        kitchen.meat = 1
+        kitchen.onion = 1
         kitchen.cabbage = 1
         kitchen.carrot = 1
         recipe = kitchen.craftable_recipe()

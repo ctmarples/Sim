@@ -50,7 +50,6 @@ _BASE_STORAGE_KEYS = (
     "mushrooms",
     "honey",
     "book",
-    "berries",
     "blackberries",
     "sloe_berries",
     "elderberries",
@@ -87,6 +86,8 @@ def _storage_keys() -> tuple[str, ...]:
 _LEGACY_RECIPE_KEYS: dict[str, str] = {
     "wood": "logs",
     "hardwood": "hardwood_logs",
+    "jam": "blackberry_jam",
+    "berry_jam": "blackberry_jam",
 }
 
 
@@ -327,6 +328,8 @@ def _cell_to_dict(cell: Cell) -> dict[str, Any]:
         data["weed_suppression"] = suppression
     if getattr(cell, "repellant_season", None) is not None:
         data["repellant_season"] = str(cell.repellant_season)
+    if getattr(cell, "compost_season", None) is not None:
+        data["compost_season"] = str(cell.compost_season)
     if getattr(cell, "path_worn", False):
         data["path_worn"] = True
     if getattr(cell, "ploughed", False):
@@ -431,6 +434,8 @@ def _cell_from_save(c: dict[str, Any], *, migrate_legacy_fertility: bool = False
     cell.weed_suppression = clamp01(float(c.get("weed_suppression", 0.0) or 0.0))
     raw_repellant_season = c.get("repellant_season")
     cell.repellant_season = str(raw_repellant_season) if raw_repellant_season else None
+    raw_compost_season = c.get("compost_season")
+    cell.compost_season = str(raw_compost_season) if raw_compost_season else None
     raw_anchor = c.get("object_anchor_slot")
     if raw_anchor is not None:
         cell.object_anchor_slot = max(0, min(8, int(raw_anchor)))
@@ -534,6 +539,9 @@ def serialize_game(game: Game) -> dict[str, Any]:
                 k: int(v) for k, v in b.market_supply_stocks.items()
             },
             "market_demand_season": b.market_demand_season,
+            "compost_food_mins": {k: int(v) for k, v in b.compost_food_mins.items()},
+            "compost_food_caps": {k: int(v) for k, v in b.compost_food_caps.items()},
+            "apiary_min_harvest_level": int(getattr(b, "apiary_min_harvest_level", 2)),
             "recipe_enabled": dict(b.recipe_enabled),
             "recipe_progress": dict(b.recipe_progress),
             "recipe_priority": {k: int(v) for k, v in b.recipe_priority.items()},
@@ -567,6 +575,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
                             "y1": p.y1,
                             "crop_kind": p.crop_kind,
                             "field_id": p.field_id,
+                            "year": int(getattr(p, "year", 1) or 1),
                         }
                         for p in f.plans
                     ],
@@ -582,6 +591,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
                     "y1": p.y1,
                     "crop_kind": p.crop_kind,
                     "field_id": p.field_id,
+                    "year": int(getattr(p, "year", 1) or 1),
                 }
                 for p in getattr(b, "plans", [])
             ],
@@ -589,11 +599,12 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "plot_h": getattr(b, "plot_h", 1),
             "next_field_id": getattr(b, "next_field_id", 1),
             "next_plan_id": getattr(b, "next_plan_id", 1),
+            "rotation_years": int(getattr(b, "rotation_years", 1) or 1),
             "parent_building_id": getattr(b, "parent_building_id", None),
         }
         if hasattr(b, "crop_kind"):
             bdata["crop_kind"] = b.crop_kind
-        if b.kind.name in ("FIELD", "ORCHARD"):
+        if b.kind.name in ("FIELD", "ORCHARD", "TREE_NURSERY"):
             bdata["crop_health"] = float(getattr(b, "crop_health", 1.0))
             bdata["pest_boost"] = float(getattr(b, "pest_boost", 0.0))
             bdata["fence_edges"] = [list(edge) for edge in sorted(b.fence_edges)]
@@ -811,6 +822,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "level": c.level,
             "habitat_id": c.habitat_id,
             "harvest_cooldown": c.harvest_cooldown,
+            "apiary_building_id": c.apiary_building_id,
         }
         for c in game.wildlife.colonies
     ]
@@ -869,6 +881,7 @@ def serialize_game(game: Game) -> dict[str, Any]:
         "season": game.season.name,
         "calendar_day": game.calendar_day,
         "day_tick": game.day_tick,
+        "elapsed_years": int(getattr(game, "elapsed_years", 0) or 0),
         "calendar_policy": getattr(game, "calendar_policy", None).to_dict()
         if getattr(game, "calendar_policy", None) is not None
         else None,
@@ -1050,6 +1063,7 @@ def _migrate_building_footprints(game: Game) -> None:
         BuildingKind.TAILOR: FeatureType.TAILOR,
         BuildingKind.COBBLER: FeatureType.COBBLER,
         BuildingKind.MARKET: FeatureType.MARKET,
+        BuildingKind.APIARY: FeatureType.APIARY,
         BuildingKind.TENT: FeatureType.TENT,
         BuildingKind.HOUSE_SMALL: FeatureType.HOUSE_SMALL,
         BuildingKind.HOUSE: FeatureType.HOUSE,
@@ -1393,6 +1407,27 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         for key in list(building.market_supply_stocks):
             if key not in building.market_supply_mins:
                 building.market_supply_stocks.pop(key, None)
+        raw_compost_mins = bdata.get("compost_food_mins") or {}
+        raw_compost_caps = bdata.get("compost_food_caps") or {}
+        if isinstance(raw_compost_mins, dict) and raw_compost_mins:
+            building.compost_food_mins = {
+                str(k): max(0, int(v)) for k, v in raw_compost_mins.items()
+            }
+        if isinstance(raw_compost_caps, dict) and raw_compost_caps:
+            building.compost_food_caps = {
+                str(k): max(0, int(v)) for k, v in raw_compost_caps.items()
+            }
+        for key in list(building.compost_food_mins):
+            building.compost_food_caps.setdefault(key, 0)
+        for key in list(building.compost_food_caps):
+            if key not in building.compost_food_mins:
+                building.compost_food_caps.pop(key, None)
+        try:
+            building.apiary_min_harvest_level = max(
+                1, min(6, int(bdata.get("apiary_min_harvest_level", 2)))
+            )
+        except (TypeError, ValueError):
+            building.apiary_min_harvest_level = 2
         season_name = bdata.get("market_demand_season")
         building.market_demand_season = (
             str(season_name) if season_name else None
@@ -1488,6 +1523,7 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                         y1=int(pdata["y1"]),
                         crop_kind=str(pdata.get("crop_kind", "sage")),
                         field_id=field_obj.id,
+                        year=max(1, int(pdata.get("year", 1) or 1)),
                     )
                 )
             building.fields.append(field_obj)
@@ -1502,8 +1538,12 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
                     y1=int(pdata["y1"]),
                     crop_kind=str(pdata.get("crop_kind", "sage")),
                     field_id=int(pdata.get("field_id", building.id)),
+                    year=max(1, int(pdata.get("year", 1) or 1)),
                 )
             )
+        building.rotation_years = max(
+            1, min(3, int(bdata.get("rotation_years", 1) or 1))
+        )
         building.next_field_id = int(
             bdata.get(
                 "next_field_id",
@@ -1957,6 +1997,11 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             level=int(c.get("level", 1)),
             habitat_id=int(c["habitat_id"]) if c.get("habitat_id") is not None else None,
             harvest_cooldown=int(c.get("harvest_cooldown", 0)),
+            apiary_building_id=(
+                int(c["apiary_building_id"])
+                if c.get("apiary_building_id") is not None
+                else None
+            ),
         )
         colony.clamp_level()
         game.wildlife.colonies.append(colony)
@@ -2152,6 +2197,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     else:
         game.calendar_day = 0
         game.day_tick = game.ticks_per_day
+
+    game.elapsed_years = max(0, int(data.get("elapsed_years", 0) or 0))
 
     # Sanity: season property should match day.
     _ = season_for_day(game.calendar_day)

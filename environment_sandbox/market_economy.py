@@ -11,7 +11,10 @@ if TYPE_CHECKING:
 
 # Goods the market accepts for sale → coin value per unit.
 MARKET_PRICES: dict[str, int] = {
-    "berries": 1,
+    "blackberries": 1,
+    "sloe_berries": 1,
+    "elderberries": 1,
+    "hazelnuts": 1,
     "mushrooms": 1,
     "reeds": 1,
     "straw": 1,
@@ -97,7 +100,7 @@ _SEASON_BIAS: dict[str, tuple[str, ...]] = {
         "twine",
     ),
     "SUMMER": (
-        "berries",
+        "blackberries",
         "honey",
         "fish",
         "meat",

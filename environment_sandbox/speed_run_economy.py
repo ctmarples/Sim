@@ -56,7 +56,7 @@ def sample_row(game: Game, elapsed_day: int) -> dict[str, float | int]:
         "crop_produce": crop_produce,
         "meat": amounts["meat"],
         "fish": amounts["fish"],
-        "berries": amounts["berries"],
+        "blackberries": amounts["blackberries"],
         "mushrooms": amounts["mushrooms"],
     }
 
@@ -97,7 +97,7 @@ def average_runs(runs: list[list[dict[str, float | int]]]) -> list[dict[str, flo
         "crop_produce",
         "meat",
         "fish",
-        "berries",
+        "blackberries",
         "mushrooms",
     ]
     out: list[dict[str, float | int]] = []

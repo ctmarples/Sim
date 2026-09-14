@@ -139,6 +139,7 @@ CROPS: tuple[CropDef, ...] = (
         year_phases=_phases(SeasonPhase.PLOUGH_PLANT, SeasonPhase.HARVEST,
                             SeasonPhase.FALLOW, SeasonPhase.FALLOW),
         icon_base="crop_vine", dense_icon_base="vine_plant_dense",
+        fertility_effect=0.05,
     ),
     CropDef(
         key="beans", label="Beans", produce_key="beans", seed_key="bean_seeds",
@@ -148,6 +149,7 @@ CROPS: tuple[CropDef, ...] = (
         year_phases=_phases(SeasonPhase.PLOUGH_PLANT, SeasonPhase.GROW,
                             SeasonPhase.HARVEST, SeasonPhase.FALLOW),
         icon_base="crop_vine", dense_icon_base="vine_plant_dense",
+        fertility_effect=0.05,
     ),
     CropDef(
         key="flax",
@@ -222,7 +224,7 @@ CROPS: tuple[CropDef, ...] = (
         seed_key="hemp_seeds",
         short="hmp",
         stem_colour=(60, 140, 55),
-        flower_colour=(170, 220, 110),  # light green blooms
+        flower_colour=(235, 220, 95),  # cream-yellow blooms (visible on meadow)
         plant_season=Season.SPRING,
         harvest_seasons=(Season.SUMMER,),
         growth_days=32,

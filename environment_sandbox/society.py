@@ -90,6 +90,8 @@ WORK_EFFORT_BY_ACTION: dict[str, float] = {
     "split": 1.00,
     "build": 1.00,
     "market": 0.60,
+    # Logistics load/unload (Transport skill scales the base work interval).
+    "haul": 0.50,
     "default": 1.00,
 }
 
@@ -126,6 +128,7 @@ JOB_SKILL_REQUIREMENTS: dict[str, tuple[SkillType, int]] = {
     "TAILOR": (SkillType.CRAFTING, 1),
     "COBBLER": (SkillType.CRAFTING, 1),
     "MARKET": (SkillType.TRANSPORT, 1),
+    "APIARY": (SkillType.EXTRACTION, 1),
     "HOME": (SkillType.TRANSPORT, 1),
     "BUILD": (SkillType.LABOUR, 1),
 }
@@ -881,7 +884,7 @@ def _pick_foods(rng: random.Random) -> tuple[list[str], list[str], bool]:
         favourites = [rng.choice(("meat", "grilled_meat", "stew", "vegetable_soup"))]
         junk = rng.random() < 0.55
     elif rng.random() < 0.35:
-        favourites = [rng.choice(("bread", "berries", "honey", "fish", "grilled_fish"))]
+        favourites = [rng.choice(("bread", "blackberries", "honey", "fish", "grilled_fish"))]
     return required, favourites, junk
 
 

@@ -32,11 +32,136 @@ def _bal(key: str, default: float) -> float:
         return float(default)
 
 
+COMPOST_FERTILITY_FRACTION: float = 0.70  # workers compost when fert < this × tile target
+COMPOST_FERTILITY_BOOST: float = 0.10  # +10% absolute fertility per compost application
+FIELD_FERTILITY_HARD_CAP: float = 1.0  # compost may raise fertility up to 100%
+# Fraction of remaining gap closed each env sample (8×/year) under canopy litter.
+CANOPY_FERTILITY_APPROACH: float = 0.125
+
+
 def fertility_base_for(terrain: TerrainType) -> float:
     """Starting fertility centre 0–1 for a terrain type."""
     from developer_tools.terrain_editor import terrain_value
 
     return float(terrain_value(terrain, "fertility"))
+
+
+def forest_floor_fertility_target() -> float:
+    """Environmental fertility target under trees / permanent shrubs."""
+    from world import TerrainType
+
+    return float(fertility_base_for(TerrainType.FOREST_FLOOR))
+
+
+def field_fertility_target(cell: Cell | None = None) -> float:
+    """Landscape environmental target (unchanged by compost overshoot).
+
+    Orchard shrubs, tree tiles, and neighbours marked by the 8-cycle canopy
+    tick use forest-floor fertility as their target.
+    """
+    from world import TerrainType
+
+    if cell is not None and getattr(cell, "canopy_fertility", False):
+        return forest_floor_fertility_target()
+    return float(fertility_base_for(TerrainType.SOIL))
+
+
+def field_fertility_max(cell: Cell | None = None) -> float:
+    """Hard ceiling for compost / fertility edits (100%).
+
+    Prefer ``field_fertility_target`` when comparing against landscape capacity.
+    """
+    del cell
+    return float(FIELD_FERTILITY_HARD_CAP)
+
+
+def cell_fertility_below_compost_threshold(cell: Cell) -> bool:
+    """True when fertility is under 70% of the landscape target."""
+    target = max(1e-6, field_fertility_target(cell))
+    return float(getattr(cell, "fertility", 0.0)) < COMPOST_FERTILITY_FRACTION * target
+
+
+def cell_is_canopy_litter_source(cell: Cell) -> bool:
+    """Mature trees and permanent orchard / berry shrubs shed litter."""
+    from crops import ORCHARD_CROP_KEYS
+    from world import FeatureType
+
+    if cell.feature == FeatureType.TREE:
+        return True
+    if cell.feature == FeatureType.BERRY_BUSH:
+        return True
+    if cell.feature == FeatureType.CROP_HERB:
+        kind = str(getattr(cell, "crop_kind", None) or "")
+        return kind in ORCHARD_CROP_KEYS
+    return False
+
+
+def _canopy_fertility_eligible(cell: Cell) -> bool:
+    """Soft land that can accumulate litter fertility (includes field soil)."""
+    from world import TerrainType, is_water_terrain
+
+    if is_water_terrain(cell.terrain):
+        return False
+    if cell.terrain in (TerrainType.ROCK, TerrainType.URBAN):
+        return False
+    return True
+
+
+def tick_canopy_fertility(world: World, *, approach: float | None = None) -> int:
+    """Mark canopy-influenced tiles and ease fertility toward forest floor.
+
+    Runs on the 8×/year env sample. Sources are mature trees and permanent
+    shrubs; influence covers the source tile and Chebyshev neighbours (fields
+    included). Fertility only rises toward the forest-floor target — compost
+    overshoot above the target is left alone.
+    """
+    rate = float(CANOPY_FERTILITY_APPROACH if approach is None else approach)
+    rate = max(0.0, min(1.0, rate))
+    target = forest_floor_fertility_target()
+    hard = float(FIELD_FERTILITY_HARD_CAP)
+
+    sources: list[tuple[int, int]] = []
+    for y in range(world.rows):
+        for x in range(world.cols):
+            cell = world.cells[y][x]
+            cell.canopy_fertility = False
+            if cell_is_canopy_litter_source(cell):
+                sources.append((x, y))
+
+    influenced: set[tuple[int, int]] = set()
+    for sx, sy in sources:
+        for ny, nx in world.neighbourhood(sx, sy, radius=1):
+            influenced.add((nx, ny))
+
+    moved = 0
+    for x, y in influenced:
+        cell = world.cells[y][x]
+        if not _canopy_fertility_eligible(cell):
+            continue
+        cell.canopy_fertility = True
+        fert = float(getattr(cell, "fertility", 0.0))
+        if fert >= target - 1e-9:
+            continue
+        nxt = fert + (target - fert) * rate
+        cell.fertility = clamp01(min(hard, nxt))
+        moved += 1
+    return moved
+
+
+def compost_applied_this_season(cell: Cell, season_name: str) -> bool:
+    return getattr(cell, "compost_season", None) == season_name
+
+
+def apply_compost_to_cell(
+    cell: Cell, season_name: str, *, amount: float = COMPOST_FERTILITY_BOOST
+) -> None:
+    """Raise fertility (may exceed landscape target up to 100%) for this season."""
+    hard = field_fertility_max(cell)
+    cell.fertility = min(
+        hard, float(getattr(cell, "fertility", 0.0)) + float(amount)
+    )
+    cell.compost_season = season_name
+    cell.compost_cycle_applied = True
 
 
 def fertility_unit_noise_grid(world: World) -> list[list[float]]:
@@ -128,17 +253,23 @@ def apply_terrain_fertility(cell: Cell, *, reset: bool = True, noise: float = 0.
 
 
 def cap_fertility_for_soil(cell: Cell) -> None:
-    """Ploughing converts to soil: keep depletion, never above soil base."""
-    from world import TerrainType
-
-    cap = fertility_base_for(TerrainType.SOIL)
-    cell.fertility = clamp01(min(float(getattr(cell, "fertility", cap)), cap))
+    """Ploughing converts to soil: keep depletion and compost overshoot (≤100%)."""
+    cell.fertility = clamp01(float(getattr(cell, "fertility", 0.0)))
     cell.weeds = 0.0
 
 
-def drop_fertility_on_harvest(cell: Cell) -> None:
+def drop_fertility_on_harvest(cell: Cell, *, crop_key: str | None = None) -> None:
+    """Apply harvest fertility drop, then optional crop fertility_effect (e.g. legumes)."""
     drop = _bal("FERTILITY_HARVEST_DROP", FERTILITY_HARVEST_DROP)
-    cell.fertility = clamp01(float(getattr(cell, "fertility", 0.0)) - drop)
+    fert = float(getattr(cell, "fertility", 0.0)) - drop
+    if crop_key:
+        from crops import CROP_BY_KEY
+
+        crop = CROP_BY_KEY.get(crop_key)
+        effect = getattr(crop, "fertility_effect", None) if crop is not None else None
+        if effect is not None:
+            fert += float(effect)
+    cell.fertility = clamp01(min(FIELD_FERTILITY_HARD_CAP, fert))
     cell.weeds = 0.0
 
 

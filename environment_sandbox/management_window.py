@@ -14,7 +14,14 @@ from typing import Any, Callable
 
 import pygame
 
-from entities import BUILDING_LABELS, Building, BuildingKind, ConstructionSite, Villager
+from entities import (
+    BUILDING_LABELS,
+    Building,
+    BuildingKind,
+    ConstructionSite,
+    Villager,
+    is_field_plot_kind,
+)
 from extensions import is_extension_kind, linked_extensions
 from habitat_inspect_dialog import HabitatInspectView
 from icons import blit_icon
@@ -291,6 +298,7 @@ _BUILD_ICON: dict[BuildingKind, str] = {
     BuildingKind.FARM: "farm",
     BuildingKind.FIELD: "field",
     BuildingKind.ORCHARD: "field",
+    BuildingKind.TREE_NURSERY: "field",
     BuildingKind.KITCHEN: "kitchen",
     BuildingKind.MILL: "mill",
     BuildingKind.ALCHEMIST: "alchemist",
@@ -363,16 +371,48 @@ def _nearest_farm(
     return best if best_d <= FARM_FIELD_RADIUS else None
 
 
+def _nearest_forester(
+    buildings: dict[int, Building], left: int, top: int, right: int, bottom: int
+) -> Building | None:
+    from settings import FORESTER_NURSERY_RADIUS
+
+    best: Building | None = None
+    best_d = FORESTER_NURSERY_RADIUS + 1
+    for lodge in buildings.values():
+        if lodge.kind != BuildingKind.FORESTER:
+            continue
+        d = _chebyshev_to_plot(lodge, left, top, right, bottom)
+        if d < best_d:
+            best = lodge
+            best_d = d
+    return best if best_d <= FORESTER_NURSERY_RADIUS else None
+
+
 def _fields_for_farm(
     farm: Building, buildings: dict[int, Building]
 ) -> list[Building]:
     out: list[Building] = []
     for b in buildings.values():
-        if not b.is_field_plot:
+        if not b.is_field_plot or b.is_tree_nursery:
             continue
         left, top, right, bottom = b.plot_bounds()
         home = _nearest_farm(buildings, left, top, right, bottom)
         if home is not None and home.id == farm.id:
+            out.append(b)
+    out.sort(key=lambda b: b.id)
+    return out
+
+
+def _nurseries_for_forester(
+    lodge: Building, buildings: dict[int, Building]
+) -> list[Building]:
+    out: list[Building] = []
+    for b in buildings.values():
+        if not b.is_tree_nursery:
+            continue
+        left, top, right, bottom = b.plot_bounds()
+        home = _nearest_forester(buildings, left, top, right, bottom)
+        if home is not None and home.id == lodge.id:
             out.append(b)
     out.sort(key=lambda b: b.id)
     return out
@@ -394,6 +434,10 @@ def _iter_building_list_rows(
         if is_extension_kind(b.kind):
             if b.parent_building_id is not None and b.parent_building_id in buildings:
                 nested_building_ids.add(b.id)
+        elif b.is_tree_nursery:
+            left, top, right, bottom = b.plot_bounds()
+            if _nearest_forester(buildings, left, top, right, bottom) is not None:
+                nested_building_ids.add(b.id)
         elif b.is_field_plot:
             left, top, right, bottom = b.plot_bounds()
             if _nearest_farm(buildings, left, top, right, bottom) is not None:
@@ -402,6 +446,10 @@ def _iter_building_list_rows(
         parent_id = getattr(site, "parent_building_id", None)
         if parent_id is not None and parent_id in buildings:
             nested_site_ids.add(site.id)
+        elif site.kind == BuildingKind.TREE_NURSERY:
+            left, top, right, bottom = site.plot_bounds()
+            if _nearest_forester(buildings, left, top, right, bottom) is not None:
+                nested_site_ids.add(site.id)
         elif is_field_plot_kind(site.kind):
             left, top, right, bottom = site.plot_bounds()
             if _nearest_farm(buildings, left, top, right, bottom) is not None:
@@ -424,10 +472,24 @@ def _iter_building_list_rows(
             for field in _fields_for_farm(b, buildings):
                 rows.append(("building", field, 1))
             for site in sites.values():
-                if not is_field_plot_kind(site.kind) or site.id not in nested_site_ids:
+                if (
+                    not is_field_plot_kind(site.kind)
+                    or site.kind == BuildingKind.TREE_NURSERY
+                    or site.id not in nested_site_ids
+                ):
                     continue
                 left, top, right, bottom = site.plot_bounds()
                 home = _nearest_farm(buildings, left, top, right, bottom)
+                if home is not None and home.id == b.id:
+                    rows.append(("construction", site, 1))
+        if b.kind == BuildingKind.FORESTER:
+            for nursery in _nurseries_for_forester(b, buildings):
+                rows.append(("building", nursery, 1))
+            for site in sites.values():
+                if site.kind != BuildingKind.TREE_NURSERY or site.id not in nested_site_ids:
+                    continue
+                left, top, right, bottom = site.plot_bounds()
+                home = _nearest_forester(buildings, left, top, right, bottom)
                 if home is not None and home.id == b.id:
                     rows.append(("construction", site, 1))
         for ext in linked_extensions(b, buildings):

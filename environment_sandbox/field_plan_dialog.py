@@ -22,6 +22,7 @@ from crops import (
 )
 from crop_status_ui import draw_crop_overview, draw_env_hover
 from entities import Building, BuildingKind, is_field_plot_kind
+from trees import TREES
 from field_yield import (
     SEVERITY_COLOUR,
     FieldFactorDisplay,
@@ -145,6 +146,7 @@ class FieldPlanDialog:
         self._pending_yield_map = False
         self._debug = False
         self.season: Season = Season.SPRING
+        self.edit_year: int = 1
         self.crop_kind: str = "sage"
         self._drag_start: tuple[int, int] | None = None
         self._drag_current: tuple[int, int] | None = None
@@ -152,7 +154,7 @@ class FieldPlanDialog:
         self._grid_origin = (0, 0)
         self._cell_px = 24
         self._result: str | None = None
-        self._pending_plan: tuple[int, int, int, int, str] | None = None
+        self._pending_plan: tuple[int, int, int, int, str, int] | None = None
         self._panel_x = 80
         self._panel_y = MAP_OFFSET_Y + 40
         self._panel_w = 420
@@ -171,7 +173,14 @@ class FieldPlanDialog:
         return self.tab in ("rotation", "crop")
 
     def _plan_options(self, building: Building | None = None):
-        if building is not None and building.is_orchard:
+        is_nursery = bool(getattr(self, "_is_nursery", False))
+        is_orchard = bool(getattr(self, "_is_orchard", False))
+        if building is not None:
+            is_nursery = building.is_tree_nursery
+            is_orchard = building.is_orchard
+        if is_nursery:
+            return TREES
+        if is_orchard:
             return orchard_crops()
         if self.tab == "crop":
             return orchard_crops()
@@ -184,21 +193,39 @@ class FieldPlanDialog:
         self._panel_w = max(120, rect.w)
         self._panel_h = max(120, rect.h)
 
-    def open_for(self, building: Building, *, season: Season | None = None) -> None:
+    def open_for(
+        self,
+        building: Building,
+        *,
+        season: Season | None = None,
+        rotation_year: int | None = None,
+    ) -> None:
         if not is_field_plot_kind(building.kind):
             return
         self._example_seen_seasons = set()
         self.building_id = building.id
-        self.season = Season.SPRING if building.is_orchard else (season or Season.SPRING)
+        self._is_nursery = building.is_tree_nursery
+        self._is_orchard = building.is_orchard
+        if building.is_tree_nursery or building.is_orchard:
+            self.season = Season.SPRING
+            self.edit_year = 1
+        else:
+            self.season = season or Season.SPRING
+            span = building.clamped_rotation_years()
+            self.edit_year = max(1, min(span, int(rotation_year or 1)))
         self.tab = "status"
         self.expanded_factor = None
         self._scroll = 0
-        options = orchard_crops() if building.is_orchard else crop_for_season(self.season)
+        options = self._plan_options(building)
         if options:
             if self.crop_kind not in {c.key for c in options}:
                 self.crop_kind = options[0].key
         else:
-            self.crop_kind = "blackberry" if building.is_orchard else "sage"
+            self.crop_kind = (
+                "oak"
+                if building.is_tree_nursery
+                else ("blackberry" if building.is_orchard else "sage")
+            )
         self._drag_start = None
         self._drag_current = None
         self._result = None
@@ -238,7 +265,7 @@ class FieldPlanDialog:
         self._result = None
         return result
 
-    def take_pending_plan(self) -> tuple[int, int, int, int, str] | None:
+    def take_pending_plan(self) -> tuple[int, int, int, int, str, int] | None:
         plan = self._pending_plan
         self._pending_plan = None
         return plan
@@ -281,7 +308,11 @@ class FieldPlanDialog:
             + TAB_H
             + 8
             + PAD
-            + BTN_H
+            + BTN_H  # rotation years
+            + 4
+            + BTN_H  # year selector (or unused slack when 1yr)
+            + 6
+            + BTN_H  # season tabs
             + 6
             + crop_rows * (BTN_H + 4)
             + 8
@@ -292,7 +323,8 @@ class FieldPlanDialog:
         self._panel_h = chrome + grid_h + 120
 
     def _crop_row_count(self, inner_w: int) -> int:
-        options = orchard_crops() if self.tab == "crop" else crop_for_season(self.season)
+        # Prefer current building options when a nursery/orchard is open.
+        options = list(self._plan_options())
         if not options:
             return 1
         x = 0
@@ -368,6 +400,7 @@ class FieldPlanDialog:
                     building.x + x1,
                     building.y + y1,
                     self.crop_kind,
+                    self.edit_year,
                 )
             self._drag_start = None
             self._drag_current = None
@@ -383,7 +416,7 @@ class FieldPlanDialog:
 
     def _on_action(self, action: str, building: Building) -> None:
         if action == "add_current_wheat" and self.rotation_unlocked and self.tab == "rotation":
-            self._pending_plan = (*building.plot_bounds(), 'wheat')
+            self._pending_plan = (*building.plot_bounds(), "wheat", self.edit_year)
         elif action == "record_observations":
             return
         elif action == "tab_handbook":
@@ -421,6 +454,26 @@ class FieldPlanDialog:
         elif action.startswith("factor_"):
             key = action[len("factor_") :]
             self.expanded_factor = None if self.expanded_factor == key else key
+        elif action.startswith("rotation_years_"):
+            try:
+                years = int(action[len("rotation_years_") :])
+            except ValueError:
+                return
+            building.set_rotation_years(years)
+            self.edit_year = max(1, min(building.clamped_rotation_years(), self.edit_year))
+            self._layout_for(building)
+            if not self.embedded:
+                self._clamp_panel()
+        elif action.startswith("edit_year_"):
+            try:
+                year = int(action[len("edit_year_") :])
+            except ValueError:
+                return
+            span = building.clamped_rotation_years()
+            self.edit_year = max(1, min(span, year))
+            self._layout_for(building)
+            if not self.embedded:
+                self._clamp_panel()
         elif action.startswith("season_"):
             name = action[len("season_") :]
             try:
@@ -510,7 +563,11 @@ class FieldPlanDialog:
                 border_top_right_radius=6,
             )
         self._title_rect = pygame.Rect(panel.x, panel.y, panel.w - 32, TITLE_BAR_H)
-        kind_label = "Orchard" if building.is_orchard else "Field"
+        kind_label = (
+            "Tree nursery"
+            if building.is_tree_nursery
+            else ("Orchard" if building.is_orchard else "Field")
+        )
         title = f"{kind_label} #{building.id} · {building.plot_size_label()}"
         surface.blit(
             self.font.render(title, True, COLOUR_TEXT),
@@ -542,14 +599,16 @@ class FieldPlanDialog:
         inner_right = panel.right - PAD
         inner_w = max(40, inner_right - inner_left)
 
-        # Tabs
+        # Tabs — nurseries sow any available seed on any tile (no rotation plan).
         tab_x = inner_left
         tabs = [("Status", "status")]
-        if building.is_orchard:
+        if building.is_tree_nursery:
+            pass
+        elif building.is_orchard:
             tabs.append(("Crop", "crop"))
         elif self.handbook_stage is None or self.handbook_stage >= 5 or self.rotation_unlocked:
             tabs.append(("Rotation", "rotation"))
-        if self.handbook_stage is not None and not building.is_orchard:
+        if self.handbook_stage is not None and not building.is_orchard and not building.is_tree_nursery:
             tabs.append(("Old Field Handbook", "handbook"))
         for label, key in tabs:
             w = max(64, 12 + self.font_small.size(label)[0])
@@ -1064,7 +1123,11 @@ class FieldPlanDialog:
             current_season,
             fonts=fonts,
             empty_label="No crop plans on this field",
-            title="ORCHARD PLAN" if building.is_orchard else "ROTATION PLAN",
+            title=(
+                "TREE NURSERY"
+                if building.is_tree_nursery
+                else ("ORCHARD PLAN" if building.is_orchard else "ROTATION PLAN")
+            ),
         )
         fertility_top = y
         fertility_block_h = 3 * self.font_small.get_linesize() + 18
@@ -1081,7 +1144,7 @@ class FieldPlanDialog:
             pot = float(self._env_status.get("fertility_potential") or fert or 1.0)
             surface.blit(
                 self.font_small.render(
-                    f"Current fertility  {fert:.2f} / {pot:.2f}",
+                    f"Current fertility  {fert:.2f} / target {pot:.2f}",
                     True,
                     COLOUR_TEXT_DIM,
                 ),
@@ -1124,6 +1187,56 @@ class FieldPlanDialog:
         # Every crop option gets the same fertility area, so selecting a crop
         # cannot shift or resize the season controls and field grid below it.
         y = fertility_top + fertility_block_h
+
+        show_rotation_years = (
+            not building.is_orchard and not building.is_tree_nursery
+        )
+        if show_rotation_years:
+            span = building.clamped_rotation_years()
+            self.edit_year = max(1, min(span, int(getattr(self, "edit_year", 1) or 1)))
+            surface.blit(
+                self.font_tiny.render("Rotation years", True, COLOUR_TEXT_DIM),
+                (x, y + 2),
+            )
+            sx = x + self.font_tiny.size("Rotation years")[0] + 8
+            for years in (1, 2, 3):
+                label = str(years)
+                w = max(28, 8 + self.font_small.size(label)[0])
+                rect = pygame.Rect(sx, y, w, BTN_H)
+                hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+                self._draw_btn(
+                    surface,
+                    rect,
+                    label,
+                    years == span,
+                    hovered=hovered,
+                )
+                self._buttons.append((f"rotation_years_{years}", rect))
+                sx += w + 4
+            y += BTN_H + 4
+            if span > 1:
+                surface.blit(
+                    self.font_tiny.render("Year", True, COLOUR_TEXT_DIM),
+                    (x, y + 2),
+                )
+                sx = x + self.font_tiny.size("Year")[0] + 8
+                for year in range(1, span + 1):
+                    label = str(year)
+                    w = max(28, 8 + self.font_small.size(label)[0])
+                    rect = pygame.Rect(sx, y, w, BTN_H)
+                    hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+                    self._draw_btn(
+                        surface,
+                        rect,
+                        label,
+                        year == self.edit_year,
+                        hovered=hovered,
+                    )
+                    self._buttons.append((f"edit_year_{year}", rect))
+                    sx += w + 4
+                y += BTN_H + 6
+            else:
+                self.edit_year = 1
 
         # Season row (rotation only — orchard bushes plant in spring)
         sx = x
@@ -1202,6 +1315,11 @@ class FieldPlanDialog:
             cx0, cy0 = self._drag_current
             sel = (min(sx0, cx0), min(sy0, cy0), max(sx0, cx0), max(sy0, cy0))
 
+        plan_year = (
+            1
+            if building.is_orchard or building.is_tree_nursery
+            else max(1, int(getattr(self, "edit_year", 1) or 1))
+        )
         for ly in range(ph):
             for lx in range(pw):
                 wx, wy = building.x + lx, building.y + ly
@@ -1209,27 +1327,44 @@ class FieldPlanDialog:
                 harvest_crop = None
                 plant_crop = None
                 grow_crop = None
-                for plan in building.plans_covering(wx, wy):
-                    crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
-                    phase = phase_for_crop(crop, self.season)
-                    if phase_allows_harvest(phase):
-                        harvest_crop = crop
-                    if phase_allows_plough_plant(phase):
-                        plant_crop = crop
-                    if phase == SeasonPhase.GROW:
-                        grow_crop = crop
-                if harvest_crop is not None and plant_crop is not None:
-                    self._paint_split_cell(surface, rect, harvest_crop, plant_crop)
-                elif harvest_crop is not None:
-                    self._paint_cell(surface, rect, harvest_crop, SeasonPhase.HARVEST)
-                elif plant_crop is not None:
-                    self._paint_cell(
-                        surface, rect, plant_crop, SeasonPhase.PLOUGH_PLANT
-                    )
-                elif grow_crop is not None:
-                    self._paint_cell(surface, rect, grow_crop, SeasonPhase.GROW)
+                if building.is_tree_nursery:
+                    from trees import TREE_BY_KEY
+
+                    for plan in building.plans_covering(wx, wy):
+                        tree = TREE_BY_KEY.get(plan.crop_kind)
+                        if tree is not None:
+                            plant_crop = tree
+                            break
+                    if plant_crop is not None:
+                        pygame.draw.rect(surface, (70, 110, 60), rect)
+                        surface.blit(
+                            self.font_tiny.render(plant_crop.short[:4], True, COLOUR_TEXT),
+                            (rect.x + 2, rect.y + 2),
+                        )
+                    else:
+                        pygame.draw.rect(surface, (55, 58, 64), rect)
                 else:
-                    pygame.draw.rect(surface, (55, 58, 64), rect)
+                    for plan in building.plans_covering(wx, wy, year=plan_year):
+                        crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
+                        phase = phase_for_crop(crop, self.season)
+                        if phase_allows_harvest(phase):
+                            harvest_crop = crop
+                        if phase_allows_plough_plant(phase):
+                            plant_crop = crop
+                        if phase == SeasonPhase.GROW:
+                            grow_crop = crop
+                    if harvest_crop is not None and plant_crop is not None:
+                        self._paint_split_cell(surface, rect, harvest_crop, plant_crop)
+                    elif harvest_crop is not None:
+                        self._paint_cell(surface, rect, harvest_crop, SeasonPhase.HARVEST)
+                    elif plant_crop is not None:
+                        self._paint_cell(
+                            surface, rect, plant_crop, SeasonPhase.PLOUGH_PLANT
+                        )
+                    elif grow_crop is not None:
+                        self._paint_cell(surface, rect, grow_crop, SeasonPhase.GROW)
+                    else:
+                        pygame.draw.rect(surface, (55, 58, 64), rect)
                 if sel is not None and sel[0] <= lx <= sel[2] and sel[1] <= ly <= sel[3]:
                     preview = pygame.Surface((cell, cell), pygame.SRCALPHA)
                     preview.fill((*PLAN_COLOUR_PLANT, 160))
@@ -1246,12 +1381,23 @@ class FieldPlanDialog:
                     )
                 pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, rect, 1)
 
-        tip_crop = CROP_BY_KEY.get(self.crop_kind, CROP_BY_KEY['sage']).label
-        if building.is_orchard:
+        tip_crop = (
+            next((t.label for t in TREES if t.key == self.crop_kind), self.crop_kind)
+            if building.is_tree_nursery
+            else CROP_BY_KEY.get(self.crop_kind, CROP_BY_KEY['sage']).label
+        )
+        if building.is_tree_nursery:
+            tip = f"Tree seeds — drag to plan {tip_crop}" if options else "select a tree species"
+        elif building.is_orchard:
             tip = f"Permanent crop — drag to plan {tip_crop}" if options else "select a bush crop"
         else:
+            year_bit = (
+                f"Y{self.edit_year} · "
+                if building.clamped_rotation_years() > 1
+                else ""
+            )
             tip = (
-                f"{SEASON_LABELS[self.season]} — "
+                f"{year_bit}{SEASON_LABELS[self.season]} — "
                 + (
                     f"drag to plant {tip_crop}"
                     if options

@@ -1,6 +1,63 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg viewBox="0 0 40 40" width="40" height="40" xmlns="http://www.w3.org/2000/svg">
-  <title>barn</title>
-  <rect x="8" y="14" width="24" height="18" rx="2" fill="#c4a574" stroke="#5a4632" stroke-width="1.2"/>
-  <path d="M6 16 L20 6 L34 16 Z" fill="#8b6914" stroke="#5a4632" stroke-width="1.2"/>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 40 40"
+   width="40"
+   height="40"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="barn.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1" />
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="6.794602"
+     inkscape:cx="-4.4888575"
+     inkscape:cy="42.313001"
+     inkscape:window-width="1470"
+     inkscape:window-height="834"
+     inkscape:window-x="0"
+     inkscape:window-y="33"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg1" />
+  <title
+     id="title1">barn</title>
+  <path
+     d="M 32.533051,2.7144044 39.018615,10.073259 33.8243,29.613231 6.4182062,32.605359 Z"
+     fill="#1e1602"
+     fill-opacity="0.5"
+     id="path1"
+     sodipodi:nodetypes="ccccc"
+     style="stroke-width:10" />
+  <path
+     id="rect1-3-7"
+     style="fill:#a77a17;fill-opacity:1;stroke-width:3.26108"
+     d="M 9.7216188,8.0464056 23.669363,2.0607076 21.687679,10.915585 3.2371411,18.894596 Z"
+     sodipodi:nodetypes="ccccc" />
+  <path
+     id="rect1"
+     style="fill:#745410;fill-opacity:1;stroke-width:3.26108"
+     d="M 15.716703,19.390124 31.744374,13.156521 33.8243,29.613231 16.206097,35.597489 Z"
+     sodipodi:nodetypes="ccccc" />
+  <path
+     id="rect1-7"
+     style="fill:#e9e5ab;fill-opacity:1;stroke-width:3.26108"
+     d="m 4.7053257,17.644714 5.7288483,-8.450638 5.282529,10.196048 0.489394,16.207365 -9.7878908,-2.99213 z"
+     sodipodi:nodetypes="cccccc" />
+  <path
+     id="rect1-3"
+     style="fill:#a77a17;fill-opacity:1;stroke-width:3.26108"
+     d="M 9.7216188,8.0464056 23.669363,2.0607076 34.313694,16.399433 16.695491,22.383691 Z"
+     sodipodi:nodetypes="ccccc" />
 </svg>

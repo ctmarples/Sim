@@ -28,7 +28,7 @@ from settings import (
 # ---------------------------------------------------------------------------
 # Starting stock (home storehouse)
 # ---------------------------------------------------------------------------
-STARTING_FOOD: int = 12  # berries so early hires can eat
+STARTING_FOOD: int = 12  # blackberries so early hires can eat
 
 # ---------------------------------------------------------------------------
 # Hunger / meals
@@ -57,7 +57,6 @@ VILLAGER_SATIATION_DECAY_PER_TICK: float = satiation_decay_per_tick()
 # Prefer these HomeStorage / inventory food keys when eating.
 # Kitchen craft outputs are appended via ``register_food`` when recipes.csv loads.
 VILLAGER_FOOD_KEYS: list[str] = [
-    "berries",
     "blackberries",
     "sloe_berries",
     "elderberries",
@@ -110,9 +109,9 @@ class FoodDef:
     hunger_rate: float = 1.0
 
 
-# Raw / foraged foods only. Kitchen craft foods: ``recipes_data/kitchen/recipes.csv``.
+# Raw / foraged foods only (T0). Authoritative table:
+# ``resources_data/T0_food_data.csv``. Kitchen craft foods: recipes CSV (T1+).
 FOODS: list[FoodDef] = [
-    FoodDef("berries", satiation=1.0),
     FoodDef("blackberries", satiation=1.0),
     FoodDef("sloe_berries", satiation=1.0),
     FoodDef("elderberries", satiation=1.0),
@@ -312,6 +311,19 @@ FOOD_REQUIREMENT_TAGS: dict[str, frozenset[str]] = {
     "carrot": frozenset({"vegetables"}),
     "garlic": frozenset({"vegetables"}),
     "vegetable_soup": frozenset({"vegetables"}),
+    "root_soup": frozenset({"vegetables"}),
+    "roasted_turnips": frozenset({"vegetables"}),
+    "pea_soup": frozenset({"vegetables"}),
+    "bean_stew": frozenset({"vegetables"}),
+    "mushroom_stew": frozenset({"vegetables"}),
+    "barley_gruel": frozenset({"bread"}),
+    "wheat_porridge": frozenset({"bread"}),
+    "rye_porridge": frozenset({"bread"}),
+    "vegetable_pottage": frozenset({"vegetables", "bread"}),
+    "pease_pottage": frozenset({"vegetables", "bread"}),
+    "mushroom_pottage": frozenset({"vegetables", "bread"}),
+    "berry_porridge": frozenset({"bread"}),
+    "honey_porridge": frozenset({"bread"}),
 }
 
 # Legacy staple tags kept for callers that only know meat / fish / bread.
@@ -324,6 +336,10 @@ FOOD_STAPLE_TAGS: dict[str, frozenset[str]] = {
     "grilled_fish": frozenset({"fish"}),
     "fish_stew": frozenset({"fish"}),
     "bread": frozenset({"bread"}),
+    "barley_gruel": frozenset({"bread"}),
+    "wheat_porridge": frozenset({"bread"}),
+    "rye_porridge": frozenset({"bread"}),
+    "honey_porridge": frozenset({"bread"}),
 }
 
 
@@ -455,6 +471,8 @@ def combine_meal_buffs(food_keys: list[str]) -> tuple[float, float, float]:
 # Trees: per-species amounts live on TreeDef.yield_amount in trees.py.
 TREE_WOOD_DEPOSIT: int = 2  # legacy default; species yields override
 SAPLING_DROP_CHANCE: float = 0.25
+# Chance to find a tree seed when collecting fallen / loose wood.
+WOOD_BUSH_TREE_SEED_CHANCE: float = 0.20
 SAPLING_GROWTH_TICKS: int = 3840  # legacy; growth_ticks_for(tree) is preferred
 
 ROCK_DEPOSIT: int = 10  # legacy default
@@ -512,8 +530,10 @@ FISH_WATER_PER_CAP: int = 4
 # Bee / rabbit colonies (not individual animals)
 # ---------------------------------------------------------------------------
 COLONY_LEVEL_MAX: int = 4
-# Visible individuals around the nest for levels 1..4.
-COLONY_MEMBERS_BY_LEVEL: tuple[int, ...] = (1, 2, 4, 7)
+# Managed apiaries can grow past wild nest caps when forage allows.
+APIARY_COLONY_LEVEL_MAX: int = 6
+# Visible individuals around the nest for levels 1..6 (wild uses first 4).
+COLONY_MEMBERS_BY_LEVEL: tuple[int, ...] = (1, 2, 4, 7, 10, 14)
 # How far members may wander from the nest (Chebyshev).
 COLONY_MEMBER_RADIUS: int = 2
 # Pollination overlay: hive reach grows with colony level.
@@ -547,8 +567,21 @@ COLONY_HARVEST_COOLDOWN: int = 8
 GRAIN_STRAW_YIELD: int = 2  # legacy; straw now comes from barn recipes
 # Forager: one level drop yields this much honey (one collect = one level).
 HONEY_PER_BEE_LEVEL: int = 5
+# Apiary late-stage harvests yield more than wild nests.
+HONEY_PER_APIARY_LEVEL_5: int = 10
+HONEY_PER_APIARY_LEVEL_6: int = 15
 # Rabbit members: pause this many ticks after each one-tile hop.
 RABBIT_MOVE_PAUSE: int = 120
+
+
+def honey_yield_for_level(level: int, *, apiary: bool = False) -> int:
+    """Honey granted when dropping one colony level from ``level``."""
+    lv = max(1, int(level))
+    if apiary and lv >= 6:
+        return HONEY_PER_APIARY_LEVEL_6
+    if apiary and lv >= 5:
+        return HONEY_PER_APIARY_LEVEL_5
+    return HONEY_PER_BEE_LEVEL
 
 
 # Berry regen / seed drop are player-facing knobs (not wild-spawn envelopes).

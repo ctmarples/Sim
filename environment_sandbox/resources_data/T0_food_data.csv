@@ -1,0 +1,16 @@
+key,label,satiation,walk_speed,work_efficiency,hunger_rate
+blackberries,Blackberries,1.0,1.0,1.0,1.0
+sloe_berries,Sloe berries,1.0,1.0,1.0,1.0
+elderberries,Elderberries,1.0,1.0,1.0,1.0
+hazelnuts,Hazelnuts,1.2,1.0,1.0,1.0
+mushrooms,Mushrooms,1.0,1.0,1.0,1.0
+honey,Honey,1.5,1.5,1.0,0.8
+onion,Onion,1.0,1.0,1.0,1.0
+peas,Peas,1.0,1.0,1.0,1.0
+beans,Beans,1.0,1.0,1.0,1.0
+turnip,Turnip,1.0,1.0,1.0,1.0
+cabbage,Cabbage,1.0,1.0,1.0,1.0
+carrot,Carrot,1.0,1.0,1.0,1.0
+garlic,Garlic,1.0,1.0,1.0,1.0
+meat,Meat,1.6666666667,0.8,0.8,1.0
+fish,Fish,1.6666666667,0.8,0.8,1.0

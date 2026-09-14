@@ -17,7 +17,24 @@ class FireBuildingTests(unittest.TestCase):
     def test_fire_has_only_grilled_recipes_and_uses_wood_fuel(self):
         fire=Building(id=1,kind=BuildingKind.FIRE,x=0,y=0)
         apply_building_storage(fire)
-        self.assertEqual({r.name for r in fire.known_recipes()},{"grilled_meat","grilled_fish","grilled_mushrooms"})
+        self.assertEqual(
+            {r.name for r in fire.known_recipes()},
+            {
+                "grilled_meat",
+                "grilled_fish",
+                "grilled_mushrooms",
+                "roasted_turnips",
+                "root_soup",
+                "pea_s",
+                "barley_gruel",
+                "wheat_porridge",
+                "rye_porridge",
+                "vegetable_pottage",
+                "pease_pottage",
+                "mushroom_pottage",
+                "berry_porridge",
+            },
+        )
         self.assertTrue(fire.is_processor())
         inv=Inventory(wood=1,meat=1)
         self.assertTrue(fire.deposit_one_from(inv,"wood"))

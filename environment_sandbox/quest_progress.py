@@ -475,7 +475,7 @@ def inspect_field(game, x, y):
                     announce_layer_unlock(game, key)
                 used.append([x,y]); break
     slope = local_slope(game.world,x,y)
-    return ('Soil square', ["Let’s check the soil. Darker colour means more fertile soil.",
+    return ('Soil square', ["Let’s check the soil. Green means fertile soil, yellow mid, red low.",
         f'Fertility here: {fertility:.2f} (field {min(values):.2f}–{max(values):.2f})',
         f'Moisture here: {game.env_maps.soil_moisture[y][x]:.0%}',
         f'Local slope: {slope:.2f}', 'Seems flat to me.' if slope < .01 else 'This square has a slope.',

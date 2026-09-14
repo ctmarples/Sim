@@ -46,7 +46,7 @@ def villager_snapshot(game: Game, day: int) -> list[dict]:
                 "pine_saplings",
                 "cedar_saplings",
                 "mushrooms",
-                "berries",
+                "blackberries",
                 "wheat",
                 "rye",
                 "wheat_grain",

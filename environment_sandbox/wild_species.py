@@ -164,6 +164,13 @@ _WC_LEFTOVER_FROM = 70.0
 _WC_LEFTOVER_CHANCE = 0.15
 _WC_PEAK = 0.045
 _WC_PATCH = (1, 4)
+# Scenic HERB flowers: wide envelope so activity_profile shapes the year
+# (including autumn). Light winter wither only — not the wild-crop dieback.
+_HERB_RISE = (0.0, 8.0)
+_HERB_FALL = (78.0, 100.0)
+_HERB_DESPAWN_FADE = (88.0, 96.0)
+_HERB_DESPAWN_FADE_END = (104.0, 112.0)
+_HERB_DESPAWN_FADE_CHANCE = 0.06
 
 
 def normalize_activity_profile(
@@ -202,6 +209,7 @@ def _wild_crop(
         spawn_rise=_WC_RISE,
         spawn_fall=_WC_FALL,
         spawn_activity=0.55,
+        spread_chance=0.008,
         patch_extras=_WC_PATCH,
         despawn_fade=_WC_DESPAWN_FADE,
         despawn_fade_end=_WC_DESPAWN_FADE_END,
@@ -428,7 +436,7 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
     ),
     # --- Wild crops by terrain (art from crops.CropDef) --------------------
     _wild_crop("flax", "Flax", ("MEADOW",), ((.20,.35,.65,.80),(.30,.45,.70,.80),(.30,.45,.75,.90),(.10,.30,.55,.75)), texture_niche=NicheRange(.15,.28,.55,.72)),
-    _wild_crop("hemp", "Hemp", ("MEADOW",), ((.30,.50,.80,.95),(.30,.45,.75,.90),(.45,.65,1,1),(.10,.30,.60,.80)), texture_niche=NicheRange(.15,.35,.65,.82)),
+    _wild_crop("hemp", "Hemp", ("MEADOW", "GRASS"), ((.30,.50,.80,.95),(.30,.45,.75,.90),(.45,.65,1,1),(.10,.30,.60,.80)), texture_niche=NicheRange(.15,.35,.65,.82)),
     _wild_crop("sage", "Sage", ("MEADOW",), ((.35,.55,.85,1),(.10,.20,.45,.65),(.10,.25,.60,.80),(.05,.20,.45,.70)), texture_niche=NicheRange(.00,.08,.40,.58)),
     _wild_crop("mint", "Mint", ("MEADOW",), ((.15,.30,.70,.90),(.45,.60,.90,1),(.25,.45,.85,1),(.05,.15,.40,.65)), texture_niche=NicheRange(.20,.40,.75,.95)),
     _wild_crop("wheat", "Wheat", ("GRASS",), ((.20,.40,.70,.85),(.20,.35,.60,.75),(.45,.65,1,1),(.15,.35,.65,.85)), texture_niche=NicheRange(.15,.35,.70,.90)),
@@ -441,10 +449,10 @@ WILD_SPECIES: tuple[WildSpeciesDef, ...] = (
     _wild_crop("carrot", "Carrot", ("SOIL", "FOREST_FLOOR"), ((.15,.30,.70,.85),(.20,.35,.65,.80),(.30,.45,.80,.95),(.15,.35,.70,.90)), texture_niche=NicheRange(.00,.10,.35,.55)),
     _wild_crop("turnip", "Turnip", ("SOIL", "FOREST_FLOOR"), ((.05,.20,.60,.78),(.30,.45,.80,.95),(.45,.65,1,1),(.10,.30,.60,.80)), texture_niche=NicheRange(.10,.30,.60,.80)),
     _wild_crop("garlic", "Garlic", ("SOIL", "FOREST_FLOOR"), ((.10,.25,.65,.80),(.20,.35,.60,.75),(.30,.45,.80,.95),(.10,.30,.60,.80)), texture_niche=NicheRange(.00,.15,.45,.65)),
-    WildSpeciesDef(key="clover", label="Clover", feature="HERB", terrains=("GRASS","MEADOW"), icon_base="flower_plant", icon_recolour=(("stem", (65, 145, 65)), ("flower", (65, 145, 65))), spawn_peak=.035, spawn_rise=_WC_RISE, spawn_fall=_WC_FALL, spawn_activity=.55, spread_chance=.01, temperature_niche=NicheRange(.20,.35,.70,.85), moisture_niche=NicheRange(.25,.40,.70,.85), fertility_niche=NicheRange(.20,.35,.70,.90), disturbance_niche=NicheRange(.05,.20,.45,.70), texture_niche=NicheRange(.10,.30,.70,.90), ecology_tags=("flowering","pollinator_food","grazer_forage")),
-    WildSpeciesDef(key="yarrow", label="Yarrow", feature="HERB", terrains=("GRASS","MEADOW","SOIL"), icon_base="flower_plant", icon_recolour=(("stem", (75, 130, 60)), ("flower", (240, 240, 225))), spawn_peak=.035, spawn_rise=_WC_RISE, spawn_fall=_WC_FALL, spawn_activity=.55, spread_chance=.01, temperature_niche=NicheRange(.25,.45,.80,.95), moisture_niche=NicheRange(.10,.20,.50,.70), fertility_niche=NicheRange(.05,.20,.55,.75), disturbance_niche=NicheRange(.10,.25,.55,.80), texture_niche=NicheRange(.00,.05,.35,.55), ecology_tags=("flowering","pollinator_food","grazer_forage")),
-    WildSpeciesDef(key="meadowsweet", label="Meadowsweet", feature="HERB", terrains=("MEADOW","RIPARIAN"), icon_base="flower_plant", icon_recolour=(("stem", (115, 170, 90)), ("flower", (225, 240, 210))), spawn_peak=.035, spawn_rise=_WC_RISE, spawn_fall=_WC_FALL, spawn_activity=.55, spread_chance=.01, temperature_niche=NicheRange(.15,.30,.70,.85), moisture_niche=NicheRange(.45,.60,.90,1), fertility_niche=NicheRange(.25,.40,.80,.95), disturbance_niche=NicheRange(0,.10,.30,.55), texture_niche=NicheRange(.30,.50,.80,1), ecology_tags=("flowering","pollinator_food","wetland_cover")),
-    WildSpeciesDef(key="nettle", label="Nettle", feature="HERB", terrains=("GRASS","MEADOW","SOIL","FOREST_FLOOR"), icon_base="flower_plant", icon_recolour=(("stem", (35, 90, 45)), ("flower", (35, 90, 45))), spawn_peak=.035, spawn_rise=_WC_RISE, spawn_fall=_WC_FALL, spawn_activity=.55, spread_chance=.01, temperature_niche=NicheRange(.20,.40,.75,.90), moisture_niche=NicheRange(.25,.40,.75,.90), fertility_niche=NicheRange(.55,.75,1,1), disturbance_niche=NicheRange(.15,.35,.65,.85), ecology_tags=("flowering","pollinator_food")),
+    WildSpeciesDef(key="clover", label="Clover", feature="HERB", terrains=("GRASS","MEADOW"), icon_base="flower_plant", icon_recolour=(("stem", (65, 145, 65)), ("flower", (65, 145, 65))), spawn_peak=.035, spawn_rise=_HERB_RISE, spawn_fall=_HERB_FALL, spawn_activity=.55, spread_chance=.01, despawn_fade=_HERB_DESPAWN_FADE, despawn_fade_end=_HERB_DESPAWN_FADE_END, despawn_fade_chance=_HERB_DESPAWN_FADE_CHANCE, temperature_niche=NicheRange(.20,.35,.70,.85), moisture_niche=NicheRange(.25,.40,.70,.85), fertility_niche=NicheRange(.20,.35,.70,.90), disturbance_niche=NicheRange(.05,.20,.45,.70), texture_niche=NicheRange(.10,.30,.70,.90), ecology_tags=("flowering","pollinator_food","grazer_forage")),
+    WildSpeciesDef(key="yarrow", label="Yarrow", feature="HERB", terrains=("GRASS","MEADOW","SOIL"), icon_base="flower_plant", icon_recolour=(("stem", (75, 130, 60)), ("flower", (240, 240, 225))), spawn_peak=.035, spawn_rise=_HERB_RISE, spawn_fall=_HERB_FALL, spawn_activity=.55, spread_chance=.01, despawn_fade=_HERB_DESPAWN_FADE, despawn_fade_end=_HERB_DESPAWN_FADE_END, despawn_fade_chance=_HERB_DESPAWN_FADE_CHANCE, temperature_niche=NicheRange(.25,.45,.80,.95), moisture_niche=NicheRange(.10,.20,.50,.70), fertility_niche=NicheRange(.05,.20,.55,.75), disturbance_niche=NicheRange(.10,.25,.55,.80), texture_niche=NicheRange(.00,.05,.35,.55), ecology_tags=("flowering","pollinator_food","grazer_forage")),
+    WildSpeciesDef(key="meadowsweet", label="Meadowsweet", feature="HERB", terrains=("MEADOW","RIPARIAN"), icon_base="flower_plant", icon_recolour=(("stem", (115, 170, 90)), ("flower", (225, 240, 210))), spawn_peak=.035, spawn_rise=_HERB_RISE, spawn_fall=_HERB_FALL, spawn_activity=.55, spread_chance=.01, despawn_fade=_HERB_DESPAWN_FADE, despawn_fade_end=_HERB_DESPAWN_FADE_END, despawn_fade_chance=_HERB_DESPAWN_FADE_CHANCE, temperature_niche=NicheRange(.15,.30,.70,.85), moisture_niche=NicheRange(.45,.60,.90,1), fertility_niche=NicheRange(.25,.40,.80,.95), disturbance_niche=NicheRange(0,.10,.30,.55), texture_niche=NicheRange(.30,.50,.80,1), ecology_tags=("flowering","pollinator_food","wetland_cover")),
+    WildSpeciesDef(key="nettle", label="Nettle", feature="HERB", terrains=("GRASS","MEADOW","SOIL","FOREST_FLOOR"), icon_base="flower_plant", icon_recolour=(("stem", (35, 90, 45)), ("flower", (35, 90, 45))), spawn_peak=.035, spawn_rise=_HERB_RISE, spawn_fall=_HERB_FALL, spawn_activity=.55, spread_chance=.01, despawn_fade=_HERB_DESPAWN_FADE, despawn_fade_end=_HERB_DESPAWN_FADE_END, despawn_fade_chance=_HERB_DESPAWN_FADE_CHANCE, temperature_niche=NicheRange(.20,.40,.75,.90), moisture_niche=NicheRange(.25,.40,.75,.90), fertility_niche=NicheRange(.55,.75,1,1), disturbance_niche=NicheRange(.15,.35,.65,.85), ecology_tags=("flowering","pollinator_food")),
 )
 
 # Half-season activity / appearance profiles (0=spring early … 7=winter late).

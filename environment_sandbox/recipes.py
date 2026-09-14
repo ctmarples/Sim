@@ -142,6 +142,7 @@ CATEGORY_LABELS: dict[str, str] = {
     "grill": "Grill",
     "bakery": "Bakery",
     "sweet": "Sweet",
+    "porridge": "Porridge",
 }
 
 KITCHEN_FUEL_KEY: str = "wood"
@@ -173,13 +174,11 @@ def clothing_cold_protection(key: str) -> float:
     return float(CLOTHING_COLD_PROTECTION.get(key, 0.0))
 
 
-# Recipe input ``berries`` means any soft berry fruit (legacy or typed forage).
-# Hazelnuts are bush produce but are not jam/tart berries.
+# Soft berry fruits used by jam recipes (not hazelnuts).
 SOFT_BERRY_INPUT_KEYS: tuple[str, ...] = (
     "blackberries",
     "sloe_berries",
     "elderberries",
-    "berries",  # legacy starting / old-save stock
 )
 
 
@@ -508,13 +507,6 @@ def input_keys_for_recipes(recipes: tuple[Recipe, ...] | list[Recipe]) -> tuple[
             if key not in seen:
                 seen.add(key)
                 keys.append(key)
-            # Jam/tart ``berries`` also accepts typed forage fruit — expose those
-            # keys so kitchens can store/haul them as inputs.
-            if key == "berries":
-                for berry in SOFT_BERRY_INPUT_KEYS:
-                    if berry not in seen:
-                        seen.add(berry)
-                        keys.append(berry)
     return tuple(keys)
 
 
@@ -530,10 +522,24 @@ TAILOR_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(TAILOR_RECIPES)
 TAILOR_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(TAILOR_RECIPES)
 COBBLER_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(COBBLER_RECIPES)
 COBBLER_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(COBBLER_RECIPES)
-KITCHEN_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(KITCHEN_RECIPES)
-KITCHEN_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(KITCHEN_RECIPES)
 FIRE_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(FIRE_RECIPES)
 FIRE_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(FIRE_RECIPES)
+
+
+def kitchen_station_recipes() -> tuple[Recipe, ...]:
+    """Kitchen cooks fire recipes too (fire remains fire-only)."""
+    by_name = {recipe.name: recipe for recipe in FIRE_RECIPES}
+    by_name.update({recipe.name: recipe for recipe in KITCHEN_RECIPES})
+    ordered: list[str] = []
+    for recipe in (*FIRE_RECIPES, *KITCHEN_RECIPES):
+        if recipe.name not in ordered:
+            ordered.append(recipe.name)
+    return tuple(by_name[name] for name in ordered)
+
+
+# Kitchen storage/haul keys cover every recipe the kitchen can cook.
+KITCHEN_INPUT_KEYS: tuple[str, ...] = input_keys_for_recipes(kitchen_station_recipes())
+KITCHEN_OUTPUT_KEYS: tuple[str, ...] = output_keys_for_recipes(kitchen_station_recipes())
 
 # All crafted / milled goods stored as cargo.
 PROCESSED_KEYS: tuple[str, ...] = tuple(
@@ -570,8 +576,8 @@ def rebuild_recipe_derived_keys() -> None:
     TAILOR_OUTPUT_KEYS = output_keys_for_recipes(TAILOR_RECIPES)
     COBBLER_INPUT_KEYS = input_keys_for_recipes(COBBLER_RECIPES)
     COBBLER_OUTPUT_KEYS = output_keys_for_recipes(COBBLER_RECIPES)
-    KITCHEN_INPUT_KEYS = input_keys_for_recipes(KITCHEN_RECIPES)
-    KITCHEN_OUTPUT_KEYS = output_keys_for_recipes(KITCHEN_RECIPES)
+    KITCHEN_INPUT_KEYS = input_keys_for_recipes(kitchen_station_recipes())
+    KITCHEN_OUTPUT_KEYS = output_keys_for_recipes(kitchen_station_recipes())
     FIRE_INPUT_KEYS = input_keys_for_recipes(FIRE_RECIPES)
     FIRE_OUTPUT_KEYS = output_keys_for_recipes(FIRE_RECIPES)
     PROCESSED_KEYS = tuple(dict.fromkeys((*MILL_OUTPUT_KEYS, *KITCHEN_OUTPUT_KEYS, *FIRE_OUTPUT_KEYS,
@@ -595,10 +601,7 @@ def recipe_inputs_text(recipe: Recipe) -> str:
 
     parts: list[str] = []
     for k, n in recipe.inputs.items():
-        if k == "berries":
-            parts.append(f"{n} Berries (any soft)")
-        else:
-            parts.append(f"{n} {resource_label(k)}")
+        parts.append(f"{n} {resource_label(k)}")
     return ", ".join(parts)
 
 
@@ -613,16 +616,12 @@ def _raw_storage_amount(storage: object, key: str, extra: object | None = None) 
 def recipe_input_amount(
     storage: object, key: str, extra: object | None = None
 ) -> int:
-    """How many units of a recipe input are available (berry alias aware)."""
-    if key == "berries":
-        return sum(
-            _raw_storage_amount(storage, berry, extra) for berry in SOFT_BERRY_INPUT_KEYS
-        )
+    """How many units of a recipe input are available."""
     return _raw_storage_amount(storage, key, extra)
 
 
 def _consume_recipe_input(storage: object, key: str, amount: int) -> None:
-    """Withdraw ``amount`` of a recipe input, resolving berry aliases."""
+    """Withdraw ``amount`` of a recipe input."""
     from food_spoilage import on_food_removed
 
     left = max(0, int(amount))
@@ -646,12 +645,6 @@ def _consume_recipe_input(storage: object, key: str, amount: int) -> None:
             on_food_removed(storage, str(item_key))
         return take
 
-    if key == "berries":
-        for berry in SOFT_BERRY_INPUT_KEYS:
-            left -= _take(berry, left)
-            if left <= 0:
-                return
-        return
     _take(key, left)
 
 
@@ -840,8 +833,5 @@ def missing_inputs(storage: object, recipe: Recipe) -> dict[str, int]:
         if have >= n:
             continue
         short = int(n) - have
-        # Ask haulers for blackberries (canonical forage) when soft berries
-        # are short — typed fruit is what the world actually produces.
-        demand_key = "blackberries" if key == "berries" else key
-        need[demand_key] = need.get(demand_key, 0) + short
+        need[key] = need.get(key, 0) + short
     return need

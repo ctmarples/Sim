@@ -13,6 +13,7 @@ BUILD_MENU_ORDER: tuple[BuildingKind, ...] = (
     BuildingKind.TENT,
     BuildingKind.CRAFT_BENCH,
     BuildingKind.HUNTER,
+    BuildingKind.APIARY,
     BuildingKind.FORESTER,
     BuildingKind.MASON,
     BuildingKind.WORKSTATION,
@@ -22,6 +23,7 @@ BUILD_MENU_ORDER: tuple[BuildingKind, ...] = (
     BuildingKind.FARM,
     BuildingKind.FIELD,
     BuildingKind.ORCHARD,
+    BuildingKind.TREE_NURSERY,
     BuildingKind.KITCHEN,
     BuildingKind.MILL,
     BuildingKind.ALCHEMIST,
@@ -30,8 +32,6 @@ BUILD_MENU_ORDER: tuple[BuildingKind, ...] = (
     BuildingKind.MARKET,
 )
 
-# Sequential unlock groups: next group opens when any building in the
-# previous group has been completed (tier 0 is always available).
 UNLOCK_TIERS: tuple[frozenset[BuildingKind], ...] = (
     frozenset({BuildingKind.FIRE, BuildingKind.FORAGER, BuildingKind.TENT}),
     frozenset(
@@ -40,6 +40,7 @@ UNLOCK_TIERS: tuple[frozenset[BuildingKind], ...] = (
             BuildingKind.HUNTER,
             BuildingKind.FORESTER,
             BuildingKind.MASON,
+            BuildingKind.APIARY,
         }
     ),
     frozenset({BuildingKind.WORKSTATION, BuildingKind.HOUSE_SMALL}),
@@ -49,6 +50,7 @@ UNLOCK_TIERS: tuple[frozenset[BuildingKind], ...] = (
             BuildingKind.FARM,
             BuildingKind.FIELD,
             BuildingKind.ORCHARD,
+            BuildingKind.TREE_NURSERY,
             BuildingKind.KITCHEN,
             BuildingKind.MILL,
             BuildingKind.HOUSE,
@@ -115,6 +117,7 @@ BUILD_COSTS: dict[BuildingKind, BuildCost] = {
     BuildingKind.FORAGER: BuildCost(wood=2, rock=2, task=TaskType.FULL_FORAGE),
     BuildingKind.CRAFT_BENCH: BuildCost(wood=2, rock=2, task=TaskType.FULL_FORAGE),
     BuildingKind.HUNTER: BuildCost(wood=2, rock=2, task=TaskType.HUNT),
+    BuildingKind.APIARY: BuildCost(wood=2, rock=2, task=TaskType.FULL_FORAGE),
     BuildingKind.FORESTER: BuildCost(wood=2, rock=2, task=TaskType.FULL_MANAGE),
     BuildingKind.MASON: BuildCost(wood=2, rock=2, task=TaskType.COLLECT_ROCKS),
     BuildingKind.WORKSTATION: BuildCost(logs=2, rock=4, task=TaskType.FULL_FORAGE),
@@ -122,6 +125,7 @@ BUILD_COSTS: dict[BuildingKind, BuildCost] = {
     BuildingKind.FARM: BuildCost(logs=2, rock=4, task=TaskType.FARM_FIELD),
     BuildingKind.FIELD: BuildCost(wood=0, rock=0, task=TaskType.FARM_FIELD),
     BuildingKind.ORCHARD: BuildCost(wood=0, rock=0, task=TaskType.FARM_FIELD),
+    BuildingKind.TREE_NURSERY: BuildCost(wood=0, rock=0, task=TaskType.PLANT_SAPLINGS),
     BuildingKind.KITCHEN: BuildCost(logs=2, rock=4, task=TaskType.FULL_FORAGE),
     BuildingKind.MILL: BuildCost(logs=2, rock=4, task=TaskType.FULL_FORAGE),
     BuildingKind.ALCHEMIST: BuildCost(hardwood=4, rock=4, task=TaskType.FULL_FORAGE),

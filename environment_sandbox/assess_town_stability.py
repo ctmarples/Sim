@@ -34,7 +34,7 @@ from seasons import DAYS_PER_SEASON, YEAR_DAYS, format_date, season_for_day  # n
 FOCUS_KEYS = (
     "meat",
     "fish",
-    "berries",
+    "blackberries",
     "mushrooms",
     "wheat",
     "rye",

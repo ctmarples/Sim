@@ -28,6 +28,20 @@ HINT_H = 58
 # Space under title for subtitle + reset + a wrapping two-row tab strip.
 HEADER_BODY_H = 78
 
+# Changing these re-applies the live calendar / day-tick clock.
+_TIME_APPLY_KEYS = frozenset(
+    {
+        "CALENDAR_MODE",
+        "FLEXIBLE_DAY_SECONDS_AT_X1",
+        "DAY_SECONDS_AT_X1",
+        "SPRING_DAYS",
+        "SUMMER_DAYS",
+        "AUTUMN_DAYS",
+        "WINTER_DAYS",
+        "PLAYBACK_TICKS_AT_X1",
+    }
+)
+
 
 def _wrap_hint(text: str, font: pygame.font.Font, max_w: int) -> list[str]:
     words = text.split()
@@ -69,6 +83,9 @@ class BalanceDialog:
         self._hit_regions: list[tuple[pygame.Rect, str, str | None]] = []
         self.pending_status: str | None = None
         self.pending_action: str | None = None
+        # Keys changed on the last mouseup (empty when the click was a no-op).
+        self.changed_keys: list[str] = []
+        self.pending_time_apply: bool = False
 
     @property
     def open(self) -> bool:
@@ -162,12 +179,15 @@ class BalanceDialog:
     def handle_mouseup(self, pos: tuple[int, int], balance: BalanceState) -> bool:
         if not self.open:
             return False
+        self.changed_keys = []
+        self.pending_time_apply = False
         if self._moving:
             self._moving = False
             return True
         if self._reset_all_rect.collidepoint(pos):
             balance.reset()
             self.pending_status = "Balance reset to defaults"
+            self.pending_time_apply = True
             return True
         if self._tab_id == "flora" and self._respawn_flora_rect.collidepoint(pos):
             self.pending_action = "respawn_flora"
@@ -176,15 +196,27 @@ class BalanceDialog:
             if not rect.collidepoint(pos):
                 continue
             if action == "dec" and key:
+                before = balance.get(key)
                 balance.adjust(key, -1)
+                if balance.get(key) != before:
+                    self.changed_keys.append(key)
             elif action == "inc" and key:
+                before = balance.get(key)
                 balance.adjust(key, 1)
+                if balance.get(key) != before:
+                    self.changed_keys.append(key)
             elif action == "tab" and key:
                 self._tab_id = key
                 self._scroll = 0
                 self._clamp_scroll()
             elif action == "reset_cat" and key:
                 balance.reset_category(key)
+                if key == "time":
+                    self.pending_time_apply = True
+            if self.changed_keys:
+                self.pending_time_apply = any(
+                    k in _TIME_APPLY_KEYS for k in self.changed_keys
+                )
             return True
         return self.panel_rect().collidepoint(pos)
 
@@ -375,13 +407,20 @@ class BalanceDialog:
                     self._draw_button(
                         surface, plus_r, "+", hovered=plus_r.collidepoint(mp)
                     )
-                self._hit_regions.append((minus_r, "dec", param.key))
-                self._hit_regions.append((plus_r, "inc", param.key))
+                    # Only hittable while drawn — scrolled-off rows used to leave
+                    # ghost +/- hitboxes over the header and flip calendar mode.
+                    self._hit_regions.append((minus_r, "dec", param.key))
+                    self._hit_regions.append((plus_r, "inc", param.key))
                 y += ROW_H
 
             if cat.id == "time":
                 pb = max(1, balance.get_int("PLAYBACK_TICKS_AT_X1"))
-                day_t = seconds_to_ticks(balance.get_float("DAY_SECONDS_AT_X1"), pb)
+                day_key = (
+                    "FLEXIBLE_DAY_SECONDS_AT_X1"
+                    if balance.get_int("CALENDAR_MODE")
+                    else "DAY_SECONDS_AT_X1"
+                )
+                day_t = seconds_to_ticks(balance.get_float(day_key), pb)
                 walk_t = max(4, seconds_to_ticks(balance.get_float("WALK_SECONDS_AT_X1"), pb))
                 work_t = max(6, seconds_to_ticks(balance.get_float("WORK_SECONDS_AT_X1"), pb))
                 summary = (

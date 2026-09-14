@@ -114,11 +114,13 @@ class BuildingInspectDialog:
         self.selected_cap_key: str | None = None
         self.selected_min_key: str | None = None
         self.selected_market_supply_key: str | None = None
+        self.selected_compost_food_key: str | None = None
         self.caps_expanded: bool = False
         self.mins_expanded: bool = False
         self.market_demand_expanded: bool = True
         self.market_supply_expanded: bool = True
         self.market_supply_group: str = "food"
+        self.compost_food_expanded: bool = True
         # Active category tab for craft recipes (kitchen stews/grill/…); None = auto.
         self.recipe_category_tab: str | None = None
         self._scroll: dict[str, float] = {}
@@ -161,6 +163,7 @@ class BuildingInspectDialog:
         self.selected_cap_key = None
         self.selected_min_key = None
         self.selected_market_supply_key = None
+        self.selected_compost_food_key = None
         self._scroll = {}
         self._scroll_velocity = {}
         self._scroll_tick = pygame.time.get_ticks()
@@ -193,6 +196,7 @@ class BuildingInspectDialog:
         self.selected_cap_key = None
         self.selected_min_key = None
         self.selected_market_supply_key = None
+        self.selected_compost_food_key = None
         self._scroll = {}
         self._scroll_velocity = {}
         self._scroll_areas = {}
@@ -508,6 +512,20 @@ class BuildingInspectDialog:
         view_h = min(content, max(MAX_CAP_VIEW_H, cell * 2 + GRID_GAP))
         return BTN_H + 4 + BTN_H + 6 + view_h + SECTION_GAP
 
+    def _compost_food_block_height(
+        self, *, expanded: bool, key_count: int, inner_w: int
+    ) -> int:
+        if key_count <= 0:
+            return 0
+        if not expanded:
+            return BTN_H + SECTION_GAP
+        cell = max(GRID_CELL, 56)
+        cols = max(1, inner_w // (cell + GRID_GAP))
+        rows = max(1, (key_count + cols - 1) // cols)
+        content = rows * (cell + GRID_GAP) - GRID_GAP
+        view_h = min(content, max(MAX_CAP_VIEW_H, cell * 2 + GRID_GAP))
+        return BTN_H + 4 + view_h + SECTION_GAP
+
     def _stock_limit_block_height(
         self, *, expanded: bool, key_count: int, inner_w: int
     ) -> int:
@@ -786,7 +804,7 @@ class BuildingInspectDialog:
                         surface,
                         craft_rect,
                         "Craft",
-                        active=can_craft and fill > 0,
+                        active=can_craft,
                         hovered=hov and can_craft,
                     )
                     if not can_craft:
@@ -981,12 +999,14 @@ class BuildingInspectDialog:
         env_status: dict | None = None,
         current_season: Season | None = None,
         forage_allowed_keys: frozenset[str] | None = None,
+        apiary_colony_level: int | None = None,
     ) -> None:
         if not self.open or building is None or building.is_field_plot:
             return
         if building.id != self.building_id:
             return
         self._forage_allowed_keys = forage_allowed_keys
+        self._apiary_colony_level = apiary_colony_level
         self._advance_scroll()
 
         self._draw_player_inventory = player_inventory
@@ -1063,6 +1083,8 @@ class BuildingInspectDialog:
             options_h = BTN_H * 2 + 28
             if self.allow_player_craft:
                 options_h += BTN_H + 8
+        elif building.kind == BuildingKind.APIARY:
+            options_h = BTN_H * 2 + 28
         elif building.kind == BuildingKind.FORESTER:
             options_h = BTN_H + 28
         elif building.supported_work_modes():
@@ -1136,6 +1158,7 @@ class BuildingInspectDialog:
         caps_h = 0
         mins_h = 0
         market_h = 0
+        compost_food_h = 0
         if building.kind == BuildingKind.MARKET:
             from market_economy import demand_keys, market_supply_resource_keys
 
@@ -1151,6 +1174,14 @@ class BuildingInspectDialog:
             market_h += self._market_supply_block_height(
                 expanded=self.market_supply_expanded,
                 key_count=max(1, supply_n),
+                inner_w=layout_w,
+            )
+        elif building.kind == BuildingKind.COMPOST_HEAP:
+            from food_spoilage import spoilable_food_keys
+
+            compost_food_h = self._compost_food_block_height(
+                expanded=self.compost_food_expanded,
+                key_count=max(1, len(spoilable_food_keys())),
                 inner_w=layout_w,
             )
         # Caps and reserves are edited directly on storage cells.
@@ -1179,7 +1210,9 @@ class BuildingInspectDialog:
         elif has_storage:
             grid_h = 18 + 16 + grid_height(storage_items) + 8
             self._panel_w = RECIPE_PANEL_W if (
-                building.has_recipes() or supports_caps or building.kind == BuildingKind.MARKET
+                building.has_recipes()
+                or supports_caps
+                or building.kind in (BuildingKind.MARKET, BuildingKind.COMPOST_HEAP)
             ) else 300
         else:
             grid_h = 40
@@ -1196,6 +1229,7 @@ class BuildingInspectDialog:
             + SECTION_GAP
             + grid_h
             + market_h
+            + compost_food_h
             + caps_h
             + mins_h
             + PAD
@@ -1291,7 +1325,7 @@ class BuildingInspectDialog:
         y += 18
         bx = x
         if building.kind == BuildingKind.WORKSTATION:
-            label = f"Hire first fit ({hired_count}/{MAX_VILLAGERS})"
+            label = f"Hire first fit ({hired_count})"
             w = max(140, 12 + self.font_small.size(label)[0])
             rect = pygame.Rect(bx, y, w, BTN_H)
             hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
@@ -1374,6 +1408,52 @@ class BuildingInspectDialog:
                 y += BTN_H + SECTION_GAP
             else:
                 y += SECTION_GAP
+        elif building.kind == BuildingKind.APIARY:
+            colony_lv = getattr(self, "_apiary_colony_level", None)
+            if colony_lv is None:
+                colony_txt = "Colony empty — harvest a wild hive for bees"
+            else:
+                colony_txt = f"Colony level {colony_lv}/6"
+            surface.blit(
+                self.font_tiny.render(colony_txt, True, COLOUR_TEXT_DIM),
+                (x, y),
+            )
+            y += 16
+            min_lv = max(
+                1, min(6, int(getattr(building, "apiary_min_harvest_level", 2)))
+            )
+            surface.blit(
+                self.font_small.render(
+                    f"Collect level: {min_lv}", True, COLOUR_TEXT
+                ),
+                (x, y + 4),
+            )
+            bx = x + max(150, 12 + self.font_small.size(f"Collect level: {min_lv}")[0])
+            for label, action in (("−", "apiary_min_dec"), ("+", "apiary_min_inc")):
+                rect = pygame.Rect(bx, y, BTN_H, BTN_H)
+                hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+                self._draw_button(surface, rect, label, hovered=hovered)
+                self._buttons.append((action, rect))
+                bx += BTN_H + 4
+            y += BTN_H + 6
+            bx = x
+            relocate_w = max(72, 10 + self.font_small.size("Relocate")[0])
+            rect = pygame.Rect(bx, y, relocate_w, BTN_H)
+            hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+            self._draw_button(surface, rect, "Relocate", hovered=hovered)
+            self._buttons.append(("relocate_building", rect))
+            bx += relocate_w + 4
+            for label, action in (
+                ("Assign +", "assign_villager"),
+                ("Unassign −", "unassign_villager"),
+            ):
+                w = max(72, 10 + self.font_small.size(label)[0])
+                rect = pygame.Rect(bx, y, w, BTN_H)
+                hovered = mouse_pos is not None and rect.collidepoint(mouse_pos)
+                self._draw_button(surface, rect, label, hovered=hovered)
+                self._buttons.append((action, rect))
+                bx += w + 4
+            y += BTN_H + SECTION_GAP
         else:
             for mode in building.supported_work_modes():
                 label = WORK_MODE_LABELS[mode]
@@ -1929,6 +2009,118 @@ class BuildingInspectDialog:
                 self._draw_scrollbar(surface, view, content_h, scroll)
                 y += view_h + SECTION_GAP
 
+        if building.kind == BuildingKind.COMPOST_HEAP:
+            from food_spoilage import spoilable_food_keys
+            from icons import blit_icon
+            from resources import resource_icon_style
+
+            y += self._draw_section_toggle(
+                surface,
+                x=x,
+                y=y,
+                inner_w=inner_w,
+                label="Food for compost",
+                expanded=self.compost_food_expanded,
+                action="toggle_compost_food",
+                mouse_pos=mouse_pos,
+            )
+            if self.compost_food_expanded:
+                food_keys = sorted(spoilable_food_keys())
+                cell_size = max(GRID_CELL, 56)
+                cols = max(1, inner_w // (cell_size + GRID_GAP))
+                rows = max(1, (len(food_keys) + cols - 1) // cols)
+                content_h = rows * (cell_size + GRID_GAP) - GRID_GAP
+                view_h = min(content_h, max(MAX_CAP_VIEW_H, cell_size * 2 + GRID_GAP))
+                view = pygame.Rect(x, y, inner_w, view_h)
+                scroll = self._register_scroll("compost_food", view, content_h, view_h)
+                old_clip = surface.get_clip()
+                surface.set_clip(view.clip(old_clip) if old_clip.width else view)
+                for i, key in enumerate(food_keys):
+                    col = i % cols
+                    row = i // cols
+                    cell = pygame.Rect(
+                        x + col * (cell_size + GRID_GAP),
+                        y + row * (cell_size + GRID_GAP) - scroll,
+                        cell_size,
+                        cell_size,
+                    )
+                    if not cell.colliderect(view):
+                        continue
+                    hov = (
+                        view.collidepoint(mouse_pos or (-1, -1))
+                        and mouse_pos is not None
+                        and cell.collidepoint(mouse_pos)
+                    )
+                    enabled = building.compost_food_enabled(key)
+                    selected = self.selected_compost_food_key == key
+                    if enabled or selected:
+                        border = COLOUR_SELECTED_ENTITY
+                    elif hov:
+                        border = COLOUR_SELECTED_ENTITY
+                    else:
+                        border = COLOUR_TOOLBAR_BORDER
+                    _paper_slot(surface, cell)
+                    pygame.draw.rect(surface, border, cell, 1, border_radius=4)
+
+                    cap_n = building.compost_food_cap(key) if enabled else 0
+                    reserve_n = building.compost_food_reserve(key) if enabled else 0
+                    text_col = SLOT_BADGE_TEXT if enabled else SLOT_BADGE_TEXT_DIM
+                    cap_label = "∞" if enabled and cap_n <= 0 else str(cap_n)
+                    cap = self.font_tiny.render(f"Cap: {cap_label}", True, text_col)
+                    res = self.font_tiny.render(f"Res: {reserve_n}", True, text_col)
+                    cap_rect = pygame.Rect(
+                        cell.x + 2,
+                        cell.y + 2,
+                        cell.w - 4,
+                        cap.get_height() + 2,
+                    )
+                    res_rect = pygame.Rect(
+                        cell.x + 2,
+                        cell.bottom - res.get_height() - 4,
+                        cell.w - 4,
+                        res.get_height() + 2,
+                    )
+                    surface.blit(
+                        cap,
+                        (cell.centerx - cap.get_width() // 2, cap_rect.y + 1),
+                    )
+                    surface.blit(
+                        res,
+                        (cell.centerx - res.get_width() // 2, res_rect.y + 1),
+                    )
+
+                    icon_size = max(18, cell.w - 28)
+                    icon_cy = cell.centery + 1
+                    try:
+                        style = resource_icon_style(key)
+                        blit_icon(
+                            surface,
+                            style.name,
+                            cell.centerx,
+                            icon_cy,
+                            icon_size,
+                            recolour=style.recolour,
+                            class_scales=style.class_scales,
+                            omit_classes=style.omit_classes or None,
+                        )
+                    except (FileNotFoundError, OSError, ValueError, TypeError):
+                        pass
+
+                    if not enabled:
+                        overlay = pygame.Surface((cell.w, cell.h), pygame.SRCALPHA)
+                        overlay.fill((105, 46, 44, 90))
+                        surface.blit(overlay, cell.topleft)
+
+                    self._buttons.append((f"toggle_compost_food_key:{key}", cell))
+                    self._buttons.append((f"edit_compost_cap:{key}", cap_rect))
+                    self._buttons.append((f"edit_compost_reserve:{key}", res_rect))
+                    self._inv_tip_hits.append((cell, "compost_food", key))
+                    if hov:
+                        tip_key = key
+                surface.set_clip(old_clip)
+                self._draw_scrollbar(surface, view, content_h, scroll)
+                y += view_h + SECTION_GAP
+
         if dual:
             col_w = (inner_w - INV_PANEL_GAP) // 2
             # Paired inventories each own exactly half of the transfer area,
@@ -2290,6 +2482,22 @@ class BuildingInspectDialog:
                     bits.append(f"{int(price)} coin{'s' if int(price) != 1 else ''}")
                 if bits:
                     extra = " · ".join(bits)
+            elif building.kind == BuildingKind.COMPOST_HEAP:
+                enabled = building.compost_food_enabled(self._tooltip_key)
+                bits = [
+                    f"on heap {int(getattr(building, self._tooltip_key, 0) or 0)}",
+                ]
+                if home_storage is not None:
+                    bits.append(
+                        f"store {int(getattr(home_storage, self._tooltip_key, 0) or 0)}"
+                    )
+                if enabled:
+                    cap = building.compost_food_cap(self._tooltip_key)
+                    bits.append(f"cap {'∞' if cap <= 0 else cap}")
+                    bits.append(f"reserve {building.compost_food_reserve(self._tooltip_key)}")
+                else:
+                    bits.append("compost off")
+                extra = " · ".join(bits)
             draw_item_tooltip(
                 surface,
                 mouse_pos=mouse_pos,

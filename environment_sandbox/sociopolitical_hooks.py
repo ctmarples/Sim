@@ -325,7 +325,7 @@ def bootstrap_sociopolitical_test(game: Game) -> SettlementPoliticalState:
             "wood": 30,
             "rock": 30,
             "twine": 20,
-            "berries": 40,
+            "blackberries": 40,
             "meat": 30,
             "fish": 24,
             "bread": 36,
@@ -998,7 +998,7 @@ def create_empty_housing(game: Game) -> None:
 
 
 def add_test_food(game: Game) -> None:
-    game.home_storage.deposit_dict({"bread": 20, "meat": 15, "berries": 20, "stew": 8})
+    game.home_storage.deposit_dict({"bread": 20, "meat": 15, "blackberries": 20, "stew": 8})
     game._set_status("Added food reserves to the storehouse.")
 
 

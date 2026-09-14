@@ -1014,7 +1014,7 @@ class UI:
                 # Special handling for WORKSTATION
                 elif b.kind == BuildingKind.WORKSTATION:
                     hired_count = len(villagers)
-                    label = f"{BUILDING_LABELS[b.kind]} #{b.id}  {hired_count}/{MAX_VILLAGERS} hired"
+                    label = f"{BUILDING_LABELS[b.kind]} #{b.id}  {hired_count} hired"
                     if selected:
                         trailing = [
                             (
@@ -1113,7 +1113,7 @@ class UI:
         y = _blit_text(
             content,
             self.font_small,
-            f"Hired {len(villagers)}/{MAX_VILLAGERS}  ·  Housing {housed}/{len(villagers)}",
+            f"Hired {len(villagers)}  ·  Housing {housed}/{len(villagers)}",
             (x, y),
             COLOUR_TEXT_DIM,
         )
@@ -1921,6 +1921,7 @@ def draw_feature(
         ICON_TAILOR,
         ICON_COBBLER,
         ICON_MARKET,
+        ICON_APIARY,
         ICON_MASON,
         ICON_MILL,
         ICON_TENT,
@@ -2284,6 +2285,8 @@ def draw_feature(
                 baked=True,
             ),
         )
+    elif feature == FeatureType.APIARY:
+        blit_building(surface, ICON_APIARY, cx, cy, size, variant=v)
     elif feature == FeatureType.TENT:
         blit_building(surface, ICON_TENT, cx, cy, size, variant=v)
     elif feature == FeatureType.HOUSE_SMALL:

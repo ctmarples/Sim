@@ -88,10 +88,19 @@ DEFAULT_TREE_KEY: str = "oak"
 
 # Inventory / storage keys — one sapling stack per species.
 SAPLING_ITEM_KEYS: tuple[str, ...] = tuple(f"{k}_saplings" for k in TREE_KEYS)
+# True tree seeds (raised in a nursery → saplings). Distinct from sapling stock.
+TREE_SEED_KEYS: tuple[str, ...] = tuple(f"{k}_seeds" for k in TREE_KEYS)
+
+# Forester recipe that enables nursery seed→sapling work.
+SAPLINGS_FROM_SEED_RECIPE: str = "saplings_from_seed"
 
 
 def sapling_item_key(species: str | None) -> str:
     return f"{resolve_tree(species).key}_saplings"
+
+
+def seed_item_key(species: str | None) -> str:
+    return f"{resolve_tree(species).key}_seeds"
 
 
 def sapling_keys_for_plant_recipe(recipe_name: str) -> tuple[str, ...]:
@@ -109,6 +118,21 @@ def species_from_sapling_key(key: str) -> str:
         if species in TREE_BY_KEY:
             return species
     return DEFAULT_TREE_KEY
+
+
+def species_from_seed_key(key: str) -> str:
+    if key.endswith("_seeds"):
+        species = key[: -len("_seeds")]
+        if species in TREE_BY_KEY:
+            return species
+    return DEFAULT_TREE_KEY
+
+
+def tree_seed_allows_plant(season) -> bool:
+    """Tree nursery seeds may be sown in spring, summer, or autumn."""
+    from seasons import Season
+
+    return season in (Season.SPRING, Season.SUMMER, Season.AUTUMN)
 
 # Weighted mix when placing trees in wooded soil.
 TREE_SPAWN_WEIGHTS: dict[str, float] = {

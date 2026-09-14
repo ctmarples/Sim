@@ -293,8 +293,18 @@ def herb_spawn_rate(day: float, x: int, y: int) -> float:
     return species_spawn_rate(leader, local_day(day, x, y))
 
 
-def herb_despawn_rate(day: float, x: int, y: int) -> float:
-    """Chance per herb-tick for an existing herb to wither."""
+def herb_despawn_rate(day: float, x: int, y: int, *, kind: str | None = None) -> float:
+    """Chance per herb-tick for an existing herb/wild crop to wither.
+
+    Uses the cell's species when ``kind`` is known so scenic HERBs are not
+    wiped by the wild-crop autumn dieback schedule.
+    """
+    if kind:
+        from wild_species import WILD_BY_KEY
+
+        species = WILD_BY_KEY.get(kind)
+        if species is not None:
+            return species_despawn_rate(species, local_day(day, x, y))
     leader = spawn_group_leader("wild_crop")
     if leader is None:
         return 0.0

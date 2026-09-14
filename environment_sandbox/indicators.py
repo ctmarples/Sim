@@ -24,6 +24,7 @@ from settings import (
     COLOUR_EROSION_LOW,
     COLOUR_FERTILITY_HIGH,
     COLOUR_FERTILITY_LOW,
+    COLOUR_FERTILITY_MID,
     COLOUR_SOIL_TEXTURE_CLAY,
     COLOUR_SOIL_TEXTURE_LOAM,
     COLOUR_SOIL_TEXTURE_SANDY,
@@ -502,6 +503,14 @@ def pollination_colour(value: float) -> Colour:
     return lerp_colour((25, 25, 20), (255, 210, 60), t)
 
 
+def fertility_colour(value: float) -> Colour:
+    """Soil fertility ramp: red (low) → yellow (50%) → green (100%)."""
+    t = max(0.0, min(1.0, float(value)))
+    if t < 0.5:
+        return lerp_colour(COLOUR_FERTILITY_LOW, COLOUR_FERTILITY_MID, t * 2.0)
+    return lerp_colour(COLOUR_FERTILITY_MID, COLOUR_FERTILITY_HIGH, (t - 0.5) * 2.0)
+
+
 def indicator_value(world: World, mode: OverlayMode, x: int, y: int) -> float:
     if mode == OverlayMode.HABITAT_DIVERSITY:
         return habitat_diversity(world, x, y)
@@ -549,7 +558,7 @@ def overlay_colour(mode: OverlayMode, value: float) -> Colour:
     if mode == OverlayMode.RAINFALL:
         return lerp_colour((215, 220, 210), (35, 105, 225), value)
     if mode == OverlayMode.FERTILITY:
-        return lerp_colour(COLOUR_FERTILITY_LOW, COLOUR_FERTILITY_HIGH, value)
+        return fertility_colour(value)
     if mode == OverlayMode.SOIL_TEXTURE:
         # Sandy yellow → white midpoint → orange-red clay (matches temperature-style ramp).
         t = max(0.0, min(1.0, float(value)))
@@ -557,7 +566,7 @@ def overlay_colour(mode: OverlayMode, value: float) -> Colour:
             return lerp_colour(COLOUR_SOIL_TEXTURE_SANDY, COLOUR_SOIL_TEXTURE_LOAM, t * 2.0)
         return lerp_colour(COLOUR_SOIL_TEXTURE_LOAM, COLOUR_SOIL_TEXTURE_CLAY, (t - 0.5) * 2.0)
     if mode == OverlayMode.FERTILITY_POTENTIAL:
-        return lerp_colour(COLOUR_FERTILITY_LOW, COLOUR_FERTILITY_HIGH, value)
+        return fertility_colour(value)
     if mode == OverlayMode.HYDROLOGICAL_POSITION:
         return lerp_colour((176, 132, 72), (45, 125, 210), value)
     if mode == OverlayMode.MOISTURE_BASELINE:
@@ -567,7 +576,7 @@ def overlay_colour(mode: OverlayMode, value: float) -> Colour:
         t = max(0.0, min(1.0, float(value)))
         return lerp_colour((80, 80, 80), (200, 200, 180), t)
     if mode == OverlayMode.LF_PLANT_FERTILITY:
-        return lerp_colour(COLOUR_FERTILITY_LOW, COLOUR_FERTILITY_HIGH, value)
+        return fertility_colour(value)
     if mode == OverlayMode.LF_PLANT_TEMPERATURE:
         t = max(0.0, min(1.0, float(value)))
         if t < 0.5:

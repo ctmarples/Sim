@@ -56,11 +56,16 @@ from settings import (
     BuildingStorageSpec,
     building_storage_spec,
 )
-from trees import SAPLING_ITEM_KEYS, sapling_item_key
+from trees import SAPLING_ITEM_KEYS, TREE_SEED_KEYS, sapling_item_key
 
 # Seeds share a dedicated carry pool (separate from wood/food/etc.).
-from berry_bushes import BERRY_SEED_KEYS
-SEED_ITEM_KEYS: tuple[str, ...] = ("berry_seeds", *BERRY_SEED_KEYS, *SEED_KEYS)
+from berry_bushes import BERRY_FOOD_KEYS, BERRY_SEED_KEYS
+SEED_ITEM_KEYS: tuple[str, ...] = (
+    "berry_seeds",
+    *BERRY_SEED_KEYS,
+    *SEED_KEYS,
+    *TREE_SEED_KEYS,
+)
 
 # Tools carried in dedicated tool slots (not general cargo stacks).
 from resources import RESOURCES
@@ -273,6 +278,7 @@ class BuildingKind(Enum):
     FARM = auto()
     FIELD = auto()
     ORCHARD = auto()
+    TREE_NURSERY = auto()
     MILL = auto()
     KITCHEN = auto()
     FIRE = auto()
@@ -281,6 +287,7 @@ class BuildingKind(Enum):
     TAILOR = auto()
     COBBLER = auto()
     MARKET = auto()
+    APIARY = auto()
     TENT = auto()
     HOUSE_SMALL = auto()  # 1×2
     HOUSE = auto()  # 2×2
@@ -325,6 +332,7 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
     BuildingKind.FARM: "Farm",
     BuildingKind.FIELD: "Field",
     BuildingKind.ORCHARD: "Orchard field",
+    BuildingKind.TREE_NURSERY: "Tree nursery",
     BuildingKind.MILL: "Mill",
     BuildingKind.KITCHEN: "Kitchen",
     BuildingKind.FIRE: "Fire",
@@ -333,6 +341,7 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
     BuildingKind.TAILOR: "Tailor",
     BuildingKind.COBBLER: "Cobbler",
     BuildingKind.MARKET: "Market",
+    BuildingKind.APIARY: "Apiary",
     BuildingKind.TENT: "Tent",
     BuildingKind.HOUSE_SMALL: "Cottage",
     BuildingKind.HOUSE: "House",
@@ -346,21 +355,22 @@ BUILDING_LABELS: dict[BuildingKind, str] = {
 
 
 FIELD_PLOT_KINDS: frozenset[BuildingKind] = frozenset(
-    {BuildingKind.FIELD, BuildingKind.ORCHARD}
+    {BuildingKind.FIELD, BuildingKind.ORCHARD, BuildingKind.TREE_NURSERY}
 )
 
 
 def is_field_plot_kind(kind: BuildingKind | None) -> bool:
-    """True for Field and Orchard field plot buildings."""
+    """True for Field, Orchard, and Tree nursery plot buildings."""
     return kind in FIELD_PLOT_KINDS
 
 def default_building_plot(kind: BuildingKind) -> tuple[int, int]:
     """Default footprint size. Fields are drag-sized; housing uses custom plots."""
-    if kind in (BuildingKind.FIELD, BuildingKind.ORCHARD):
+    if kind in (BuildingKind.FIELD, BuildingKind.ORCHARD, BuildingKind.TREE_NURSERY):
         return 1, 1
     if kind in (
         BuildingKind.TENT,
         BuildingKind.FIRE,
+        BuildingKind.APIARY,
         BuildingKind.BARN,
         BuildingKind.COMPOST_HEAP,
         BuildingKind.PANTRY,
@@ -644,6 +654,10 @@ class Inventory:
     maple_saplings: int = 0
     pine_saplings: int = 0
     cedar_saplings: int = 0
+    oak_seeds: int = 0
+    maple_seeds: int = 0
+    pine_seeds: int = 0
+    cedar_seeds: int = 0
     mushrooms: int = 0
     honey: int = 0
     book: int = 0
@@ -790,7 +804,6 @@ class Inventory:
             + self.mushrooms
             + self.honey
             + self.book
-            + self.berries
             + self.reeds
             + self.straw
             + self.fur
@@ -883,7 +896,7 @@ class Inventory:
         return self.add_item("mushrooms", n)
 
     def add_berries(self, n: int = 1) -> bool:
-        return self.add_item("berries", n)
+        return self.add_item("blackberries", n)
 
     def add_berry_seeds(self, n: int = 1) -> bool:
         return self.add_item("berry_seeds", n)
@@ -1072,7 +1085,6 @@ class Inventory:
             "mushrooms": self.mushrooms,
             "honey": self.honey,
             "book": self.book,
-            "berries": self.berries,
             "berry_seeds": self.berry_seeds,
             "reeds": self.reeds,
             "straw": self.straw,
@@ -1123,6 +1135,10 @@ class HomeStorage:
     maple_saplings: int = 0
     pine_saplings: int = 0
     cedar_saplings: int = 0
+    oak_seeds: int = 0
+    maple_seeds: int = 0
+    pine_seeds: int = 0
+    cedar_seeds: int = 0
     mushrooms: int = 0
     honey: int = 0
     berries: int = 0
@@ -1186,19 +1202,21 @@ class HomeStorage:
 
     def deposit_dict(self, items: dict[str, int]) -> None:
         from food_spoilage import on_food_merged
+        from berry_bushes import LEGACY_BERRY_FOOD
 
         for key, value in items.items():
             if key == "saplings":
                 # Legacy generic saplings → oak.
                 self.oak_saplings += int(value)
                 continue
-            if hasattr(self, key):
-                before = int(getattr(self, key, 0) or 0)
+            dest_key = "blackberries" if key == LEGACY_BERRY_FOOD else key
+            if hasattr(self, dest_key):
+                before = int(getattr(self, dest_key, 0) or 0)
                 amount = int(value)
-                setattr(self, key, before + amount)
+                setattr(self, dest_key, before + amount)
                 on_food_merged(
                     self,
-                    str(key),
+                    str(dest_key),
                     amount_before=before,
                     amount_added=amount,
                     src_quality=1.0,
@@ -1367,7 +1385,10 @@ class TaskArea:
 
 @dataclass
 class CropPlan:
-    """Sub-area inside a FarmField planted to one crop with a seasonal calendar."""
+    """Sub-area inside a FarmField planted to one crop with a seasonal calendar.
+
+    ``year`` is 1-based within the field's multi-year rotation (1..rotation_years).
+    """
 
     id: int
     x0: int
@@ -1376,6 +1397,7 @@ class CropPlan:
     y1: int
     crop_kind: str
     field_id: int
+    year: int = 1
 
     def normalised(self) -> tuple[int, int, int, int]:
         return (
@@ -1523,7 +1545,7 @@ def _unique_keys(*groups: tuple[str, ...]) -> tuple[str, ...]:
 
 
 _FORAGE_KEYS = _unique_keys(
-    ("mushrooms", "berries", "reeds", "honey"),
+    ("mushrooms", "reeds", "honey", *BERRY_FOOD_KEYS),
     PRODUCE_KEYS,
     ("berry_seeds", *SEED_ITEM_KEYS),
 )
@@ -1535,6 +1557,7 @@ RECIPE_PRIORITY_DEFAULT = 1
 # New kitchen buildings: stews highest, grill lowest (override per recipe in UI).
 _KITCHEN_CATEGORY_PRIORITY: dict[str, int] = {
     "stews": 1,
+    "porridge": 2,
     "bakery": 2,
     "sweet": 2,
     "grill": 3,
@@ -1557,6 +1580,10 @@ class Building:
     maple_saplings: int = 0
     pine_saplings: int = 0
     cedar_saplings: int = 0
+    oak_seeds: int = 0
+    maple_seeds: int = 0
+    pine_seeds: int = 0
+    cedar_seeds: int = 0
     mushrooms: int = 0
     honey: int = 0
     berries: int = 0
@@ -1631,8 +1658,7 @@ class Building:
     recipe_progress: dict[str, int] = field(default_factory=dict)
     # recipe name → priority 1 (highest) … 3 (lowest). Default 2.
     recipe_priority: dict[str, int] = field(default_factory=dict)
-    # Completed crafts per priority tier, used for weighted fair scheduling.
-    # Runtime-only: resetting this on load is harmless and avoids save churn.
+    # Completed crafts per priority tier (runtime counter; unused by picker).
     _recipe_priority_runs: dict[int, int] = field(default_factory=dict, repr=False)
     areas: list[TaskArea] = field(default_factory=list)
     fields: list[FarmField] = field(default_factory=list)  # legacy; migrated away
@@ -1640,6 +1666,8 @@ class Building:
     plot_w: int = 1
     plot_h: int = 1
     plans: list[CropPlan] = field(default_factory=list)
+    # Field rotation length in years (1–3). Plans are tagged with ``CropPlan.year``.
+    rotation_years: int = 1
     # Field only: cumulative crop health 0–1; ratchets down on env sample ticks.
     crop_health: float = 1.0
     # Field only: additive pest-control boost from alchemist treatments.
@@ -1657,6 +1685,12 @@ class Building:
     # 0 means fill up to remaining seasonal demand.
     market_supply_stocks: dict[str, int] = field(default_factory=dict)
     market_demand_season: str | None = None
+    # Compost heap: enabled foods → storehouse reserve (keep at least this much).
+    compost_food_mins: dict[str, int] = field(default_factory=dict)
+    # Compost heap: enabled foods → max units to hold on the heap (0 = fill room).
+    compost_food_caps: dict[str, int] = field(default_factory=dict)
+    # Apiary: only harvest when colony level is at least this (1–6).
+    apiary_min_harvest_level: int = 2
     draw_task_type: TaskType = TaskType.FULL_MANAGE
     work_mode: WorkMode = WorkMode.ALL
     crop_kind: str = "sage"  # legacy
@@ -1709,16 +1743,53 @@ class Building:
     def is_orchard(self) -> bool:
         return self.kind == BuildingKind.ORCHARD
 
-    def plan_covering(self, x: int, y: int) -> CropPlan | None:
+    @property
+    def is_tree_nursery(self) -> bool:
+        return self.kind == BuildingKind.TREE_NURSERY
+
+    def clamped_rotation_years(self) -> int:
+        return max(1, min(3, int(getattr(self, "rotation_years", 1) or 1)))
+
+    def set_rotation_years(self, years: int) -> None:
+        """Set 1–3 year rotation length; drop plans beyond the new span."""
+        self.rotation_years = max(1, min(3, int(years)))
+        span = self.clamped_rotation_years()
+        kept: list[CropPlan] = []
+        for plan in self.plans:
+            y = max(1, int(getattr(plan, "year", 1) or 1))
+            if y <= span:
+                plan.year = y
+                kept.append(plan)
+        self.plans = kept
+
+    def plans_for_year(self, year: int) -> list[CropPlan]:
+        y = max(1, int(year))
+        return [
+            plan
+            for plan in self.plans
+            if max(1, int(getattr(plan, "year", 1) or 1)) == y
+        ]
+
+    def plan_covering(self, x: int, y: int, *, year: int | None = None) -> CropPlan | None:
         """Latest plan covering the cell (Field buildings)."""
         hit: CropPlan | None = None
         for plan in self.plans:
+            if year is not None and max(1, int(getattr(plan, "year", 1) or 1)) != year:
+                continue
             if plan.contains(x, y):
                 hit = plan
         return hit
 
-    def plans_covering(self, x: int, y: int) -> list[CropPlan]:
-        return [plan for plan in self.plans if plan.contains(x, y)]
+    def plans_covering(self, x: int, y: int, *, year: int | None = None) -> list[CropPlan]:
+        return [
+            plan
+            for plan in self.plans
+            if plan.contains(x, y)
+            and (
+                year is None
+                or max(1, int(getattr(plan, "year", 1) or 1)) == year
+            )
+        ]
 
     def add_field_plan(
         self,
@@ -1729,20 +1800,78 @@ class Building:
         crop_kind: str,
         *,
         cell_planted: object | None = None,
+        year: int = 1,
     ) -> CropPlan | None:
         """Paint a crop plan. Compatible rotation plans stack on the same cells.
 
         Existing coverage is only carved away when schedules conflict (same plant
-        season, same harvest season, or grow clash). Harvest+plant in one season
-        is allowed so sage→cabbage→rye rotations can share an area.
-        ``cell_planted`` is accepted for callers but no longer drives removal.
+        season, same harvest season, or grow clash) within the same rotation year.
+        Harvest+plant in one season is allowed so sage→cabbage→rye rotations can
+        share an area. ``cell_planted`` is accepted for callers but no longer drives
+        removal.
         """
         del cell_planted  # kept for call-site compatibility
         if not is_field_plot_kind(self.kind):
             return None
         from crops import CROP_BY_KEY, ORCHARD_CROP_KEYS, schedules_conflict
+        from trees import TREE_BY_KEY
+
+        plan_year = max(1, min(self.clamped_rotation_years(), int(year or 1)))
+
         if self.kind == BuildingKind.ORCHARD and crop_kind not in ORCHARD_CROP_KEYS:
             return None
+        if self.kind == BuildingKind.TREE_NURSERY and crop_kind not in TREE_BY_KEY:
+            return None
+
+        if self.kind == BuildingKind.TREE_NURSERY:
+            # One species plan per cell — replace any overlapping nursery plans.
+            draft = CropPlan(
+                id=0,
+                x0=x0,
+                y0=y0,
+                x1=x1,
+                y1=y1,
+                crop_kind=crop_kind,
+                field_id=self.id,
+                year=plan_year,
+            )
+            draft.clip_to(self.plot_bounds())
+            if draft.is_empty():
+                return None
+            paint_cells = set(draft.cells())
+            rebuilt: list[CropPlan] = []
+            for plan in self.plans:
+                remaining = {cell for cell in plan.cells() if cell not in paint_cells}
+                if not remaining:
+                    continue
+                for rect in _cells_to_rects(remaining):
+                    rebuilt.append(
+                        CropPlan(
+                            id=self.next_plan_id,
+                            x0=rect[0],
+                            y0=rect[1],
+                            x1=rect[2],
+                            y1=rect[3],
+                            crop_kind=plan.crop_kind,
+                            field_id=self.id,
+                            year=max(1, int(getattr(plan, "year", 1) or 1)),
+                        )
+                    )
+                    self.next_plan_id += 1
+            plan = CropPlan(
+                id=self.next_plan_id,
+                x0=draft.x0,
+                y0=draft.y0,
+                x1=draft.x1,
+                y1=draft.y1,
+                crop_kind=crop_kind,
+                field_id=self.id,
+                year=plan_year,
+            )
+            self.next_plan_id += 1
+            rebuilt.append(plan)
+            self.plans = rebuilt
+            return plan
 
         new_crop = CROP_BY_KEY.get(crop_kind, CROP_BY_KEY["sage"])
         draft = CropPlan(
@@ -1753,15 +1882,18 @@ class Building:
             y1=y1,
             crop_kind=crop_kind,
             field_id=self.id,
+            year=plan_year,
         )
         draft.clip_to(self.plot_bounds())
         if draft.is_empty():
             return None
 
         paint_cells = set(draft.cells())
-        # Only remove cells from plans that cannot coexist with the new crop.
+        # Only remove cells from same-year plans that cannot coexist with the new crop.
         replace_by_plan: dict[int, set[tuple[int, int]]] = {}
         for plan in self.plans:
+            if max(1, int(getattr(plan, "year", 1) or 1)) != plan_year:
+                continue
             old_crop = CROP_BY_KEY.get(plan.crop_kind, CROP_BY_KEY["sage"])
             if not schedules_conflict(old_crop, new_crop):
                 continue
@@ -1770,7 +1902,6 @@ class Building:
                 replace_by_plan[plan.id] = overlap
 
         if replace_by_plan:
-            replace_cells = set().union(*replace_by_plan.values())
             rebuilt: list[CropPlan] = []
             for plan in self.plans:
                 cut = replace_by_plan.get(plan.id)
@@ -1790,6 +1921,7 @@ class Building:
                             y1=rect[3],
                             crop_kind=plan.crop_kind,
                             field_id=self.id,
+                            year=max(1, int(getattr(plan, "year", 1) or 1)),
                         )
                     )
                     self.next_plan_id += 1
@@ -1805,6 +1937,7 @@ class Building:
                 y1=rect[3],
                 crop_kind=crop_kind,
                 field_id=self.id,
+                year=plan_year,
             )
             self.next_plan_id += 1
             self.plans.append(plan)
@@ -1882,6 +2015,9 @@ class Building:
         total = sum(int(getattr(self, key, 0)) for key in SEED_KEYS)
         if self.is_seed_storage_key("berry_seeds"):
             total += int(getattr(self, "berry_seeds", 0))
+        for key in TREE_SEED_KEYS:
+            if self.is_seed_storage_key(key):
+                total += int(getattr(self, key, 0))
         return total
 
     @property
@@ -1899,7 +2035,6 @@ class Building:
             + self.saplings
             + self.mushrooms
             + self.honey
-            + self.berries
             + self.reeds
             + self.straw
             + self.fur
@@ -1925,6 +2060,8 @@ class Building:
         if self.seed_capacity <= 0:
             return False
         if key in SEED_KEYS:
+            return True
+        if key in TREE_SEED_KEYS and key in self.depositable_keys():
             return True
         return key == "berry_seeds" and "berry_seeds" in self.depositable_keys()
 
@@ -2010,6 +2147,59 @@ class Building:
             key, self.market_supply_min(key) + int(delta)
         )
 
+    def compost_food_enabled(self, key: str) -> bool:
+        return key in self.compost_food_mins
+
+    def compost_food_reserve(self, key: str) -> int:
+        return max(0, int(self.compost_food_mins.get(key, 0)))
+
+    def compost_food_cap(self, key: str) -> int:
+        return max(0, int(self.compost_food_caps.get(key, 0)))
+
+    def compost_food_target(self, key: str) -> int:
+        """Max units of ``key`` to hold on the heap (0 cap = fill remaining room)."""
+        if not self.compost_food_enabled(key):
+            return 0
+        cap = self.compost_food_cap(key)
+        if cap > 0:
+            return cap
+        have = int(getattr(self, key, 0) or 0)
+        return have + max(0, self.space_for_key(key))
+
+    def set_compost_food_enabled(self, key: str, enabled: bool) -> None:
+        from food_spoilage import spoilable_food_keys
+
+        if key not in spoilable_food_keys():
+            return
+        if enabled:
+            self.compost_food_mins.setdefault(key, 0)
+            self.compost_food_caps.setdefault(key, 0)
+        else:
+            self.compost_food_mins.pop(key, None)
+            self.compost_food_caps.pop(key, None)
+
+    def set_compost_food_reserve(self, key: str, amount: int) -> int:
+        from food_spoilage import spoilable_food_keys
+
+        if key not in spoilable_food_keys():
+            return 0
+        if key not in self.compost_food_mins:
+            self.set_compost_food_enabled(key, True)
+        value = max(0, int(amount))
+        self.compost_food_mins[key] = value
+        return value
+
+    def set_compost_food_cap(self, key: str, amount: int) -> int:
+        from food_spoilage import spoilable_food_keys
+
+        if key not in spoilable_food_keys():
+            return 0
+        if key not in self.compost_food_mins:
+            self.set_compost_food_enabled(key, True)
+        value = max(0, int(amount))
+        self.compost_food_caps[key] = value
+        return value
+
     def is_splitter(self) -> bool:
         """True when this forester has any split recipe enabled (logs → wood)."""
         if self.kind != BuildingKind.FORESTER:
@@ -2032,7 +2222,7 @@ class Building:
         if self.kind == BuildingKind.MILL:
             return recipe_registry.MILL_RECIPES
         if self.kind == BuildingKind.KITCHEN:
-            return recipe_registry.KITCHEN_RECIPES
+            return recipe_registry.kitchen_station_recipes()
         if self.kind == BuildingKind.FIRE:
             return recipe_registry.FIRE_RECIPES
         if self.kind == BuildingKind.CRAFT_BENCH:
@@ -2286,9 +2476,22 @@ class Building:
                 if (room := self.space_for_key(key)) > 0
             }
         if self.kind == BuildingKind.COMPOST_HEAP:
-            room = self.space_for_key("spoilage")
-            return {"spoilage": room} if room > 0 else {}
-
+            demand: dict[str, int] = {}
+            spoil_room = self.space_for_key("spoilage")
+            if spoil_room > 0:
+                demand["spoilage"] = spoil_room
+            for key in self.compost_food_mins:
+                have = int(getattr(self, key, 0) or 0)
+                target = self.compost_food_target(key)
+                if have >= target:
+                    continue
+                room = self.space_for_key(key)
+                if room <= 0:
+                    continue
+                need = min(target - have, room)
+                if need > 0:
+                    demand[key] = need
+            return demand
         memo = self._supply_memo
         fp = self._supply_stock_fp()
         if memo.get("fp") == fp and "demand" in memo:
@@ -2432,10 +2635,15 @@ class Building:
                 keep[key] = max(keep.get(key, 0), nn * 2)
 
         for recipe in self.enabled_recipes():
+            if self.kind == BuildingKind.FARM and "compost" in recipe.outputs:
+                continue
             _add_recipe(recipe)
         for recipe in self.enabled_split_recipes():
             _add_recipe(recipe)
         for recipe in self.addon_craft_recipes():
+            # Compost lives on the heap — do not reserve spoilage on the farm tray.
+            if self.kind == BuildingKind.FARM and "compost" in recipe.outputs:
+                continue
             _add_recipe(recipe)
 
         hold: dict[str, int] = {}
@@ -3160,20 +3368,11 @@ class Building:
                 if not candidates:
                     return None
 
-        # Priority is a weight, not an absolute starvation gate. A continuously
-        # ready priority-1 recipe should run most often, while priority 2/3 still
-        # receive turns. Ratios are 4:2:1 for tiers 1:2:3.
-        tier_weights = {1: 4, 2: 2, 3: 1}
-        ready_tiers = {self.get_recipe_priority(r.name) for r in candidates}
-        chosen_tier = min(
-            ready_tiers,
-            key=lambda p: (
-                int(self._recipe_priority_runs.get(p, 0)) / tier_weights[p],
-                p,
-            ),
-        )
+        # Strict priority: any ready tier-1 recipe beats tier-2/3. Lower tiers
+        # only run when nothing higher-priority is craftable right now.
+        best_prio = min(self.get_recipe_priority(r.name) for r in candidates)
         candidates = [
-            r for r in candidates if self.get_recipe_priority(r.name) == chosen_tier
+            r for r in candidates if self.get_recipe_priority(r.name) == best_prio
         ]
 
         rank = self._recipe_craft_rank
@@ -3270,6 +3469,9 @@ class Building:
             keys = preferred + rest
         for key in keys:
             self._take(inventory, key)
+        # Legacy generic berries inventory → blackberries storage.
+        if "blackberries" in keys and int(getattr(inventory, "berries", 0) or 0) > 0:
+            self._take(inventory, "berries")
 
     def deposit_needed_from(self, inventory: Inventory) -> int:
         """Deposit only recipe gaps (``supply_demand``). Returns units moved."""
@@ -3306,9 +3508,23 @@ class Building:
             for key in ("logs", "hardwood_logs"):
                 moved += self.deposit_key_from(inventory, key)
             # Fall through so foresters also accept sapling restocks.
+        if self.kind == BuildingKind.COMPOST_HEAP:
+            moved = self.deposit_key_from(inventory, "spoilage")
+            for key in self.compost_food_mins:
+                moved += self.deposit_key_from(inventory, key)
+            return moved
         if self.kind in (BuildingKind.FARM, BuildingKind.FORESTER):
             for key in self.plant_keys():
                 moved += self.deposit_key_from(inventory, key)
+            if self.kind == BuildingKind.FARM:
+                for key in ("compost", "mineral_powder", "insect_repellant"):
+                    if key in self.depositable_keys():
+                        moved += self.deposit_key_from(inventory, key)
+                # Spoilage for a linked heap is deposited by Game onto the heap.
+                if "spoilage" in self.depositable_keys() and (
+                    BuildingKind.COMPOST_HEAP not in self.linked_extensions
+                ):
+                    moved += self.deposit_key_from(inventory, "spoilage")
             return moved
         return moved
 
@@ -3360,15 +3576,13 @@ class Building:
                 stores = self.linked_food_storages()
                 if stores:
                     return any(s.deposit_one_from(inventory, key) for s in stores)
-        if key not in self.depositable_keys() or self.space_for_key(
-            "blackberries" if key == "berries" else key
-        ) <= 0:
+        dest_key = "blackberries" if key == "berries" else key
+        if dest_key not in self.depositable_keys() or self.space_for_key(dest_key) <= 0:
             return False
         if getattr(inventory, key, 0) <= 0:
             return False
         from food_spoilage import food_quality, on_food_merged, on_food_removed
 
-        dest_key = "blackberries" if key == "berries" else key
         src_q = food_quality(inventory, key)
         before = int(getattr(self, dest_key, 0) or 0)
         setattr(inventory, key, getattr(inventory, key) - 1)
@@ -3390,8 +3604,8 @@ class Building:
                 "meat",
                 "fish",
                 *SAPLING_ITEM_KEYS,
+                *TREE_SEED_KEYS,
                 "mushrooms",
-                "berries",
                 "berry_seeds",
                 "reeds",
                 "straw",
@@ -3405,7 +3619,7 @@ class Building:
         if self.kind == BuildingKind.WORKSTATION:
             return ()
         if self.kind == BuildingKind.FORESTER:
-            return ("logs", "hardwood_logs", "wood", *SAPLING_ITEM_KEYS)
+            return ("logs", "hardwood_logs", "wood", *SAPLING_ITEM_KEYS, *TREE_SEED_KEYS)
         if self.kind == BuildingKind.MASON:
             return ("rock",)
         if self.kind == BuildingKind.HUNTER:
@@ -3414,6 +3628,8 @@ class Building:
             return ("fish", "meat", "bait", "spoilage")
         if self.kind == BuildingKind.FORAGER:
             return _unique_keys(("wood", "rock"), _FORAGE_KEYS, ("spoilage",))
+        if self.kind == BuildingKind.APIARY:
+            return ("honey",)
         if self.kind == BuildingKind.FARM:
             keys = PRODUCE_KEYS + SEED_KEYS + ("straw",)
             # With a barn, wheat/rye sheaves live there until threshed.
@@ -3422,7 +3638,10 @@ class Building:
 
                 sheaves = set(barn_sheaf_keys())
                 keys = tuple(k for k in keys if k not in sheaves)
-            return (*keys, "spoilage", "compost", "mineral_powder", "insect_repellant")
+            extras = ("compost", "mineral_powder", "insect_repellant")
+            if BuildingKind.COMPOST_HEAP not in self.linked_extensions:
+                extras = ("spoilage",) + extras
+            return (*keys, *extras)
         if self.kind == BuildingKind.BARN:
             # Sheaves wait here until threshed; grain/straw outputs land on the farm.
             from farm_pipeline import barn_sheaf_keys
@@ -3431,8 +3650,8 @@ class Building:
         if self.kind in (BuildingKind.PANTRY, BuildingKind.CELLAR):
             return self.pantry_storage_keys()
         if self.kind == BuildingKind.COMPOST_HEAP:
-            return ("spoilage", "compost")
-        if self.kind in (BuildingKind.DRYING_RACK, BuildingKind.FIELD):
+            return ("spoilage", "compost", *tuple(self.compost_food_mins.keys()))
+        if self.kind in (BuildingKind.DRYING_RACK, BuildingKind.FIELD, BuildingKind.ORCHARD, BuildingKind.TREE_NURSERY):
             return ()
         if self.kind == BuildingKind.MILL:
             return MILL_INPUT_KEYS + MILL_OUTPUT_KEYS
@@ -3464,17 +3683,22 @@ class Building:
             # Finished compost is an output and may be distributed normally.
             return ("compost",)
         if self.kind in (BuildingKind.PANTRY, BuildingKind.CELLAR):
-            # Pantry is the preferred final food store; recipes and eaters access
-            # it directly, so general haulers must not shuttle it back home.
-            return ()
+            # Food stays put for cooks/eaters, but spoilage must leave for compost.
+            return ("spoilage",)
         if self.kind == BuildingKind.FORESTER:
             # Always allow hauling logs / wood; mins keep a split buffer on-site.
             return ("logs", "hardwood_logs", "wood")
         if self.kind == BuildingKind.FORAGER:
             return _unique_keys(("wood", "rock"), _FORAGE_KEYS, ("spoilage",))
+        if self.kind == BuildingKind.APIARY:
+            return ("honey",)
         if self.kind == BuildingKind.FARM:
             # Produce + straw, plus surplus grain/seeds (mill / storehouse).
-            return PRODUCE_KEYS + ("straw", "spoilage") + SEED_KEYS
+            # Spoilage stays on-site (or on the compost heap) when a heap is linked.
+            keys = PRODUCE_KEYS + ("straw",) + SEED_KEYS
+            if BuildingKind.COMPOST_HEAP not in self.linked_extensions:
+                keys = keys + ("spoilage",)
+            return keys
         if self.kind == BuildingKind.HUNTER:
             # Hide stays at the hut for drying-rack tanning; haul meat/fur/leather only.
             return ("meat", "fur", "feathers", "leather", "spoilage")
@@ -3509,7 +3733,7 @@ class Building:
 
     def plant_keys(self) -> tuple[str, ...]:
         if self.kind == BuildingKind.FORESTER:
-            return SAPLING_ITEM_KEYS
+            return (*SAPLING_ITEM_KEYS, *TREE_SEED_KEYS)
         if self.kind == BuildingKind.FARM:
             return SEED_KEYS
         return ()
@@ -3704,6 +3928,7 @@ class Building:
             BuildingKind.TENT,
             BuildingKind.HOUSE_SMALL,
             BuildingKind.HOUSE,
+            BuildingKind.APIARY,
         ):
             return ()
         if self.kind == BuildingKind.FORESTER:
@@ -4077,6 +4302,8 @@ class Villager:
         self.craft_recipe_name = None
         self.farm_job_kind = None
         self.target = None
+        if hasattr(self, "_carrying_bees"):
+            self._carrying_bees = False  # type: ignore[attr-defined]
 
     def clear_assignment(self) -> None:
         self.building_id = None

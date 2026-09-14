@@ -297,13 +297,16 @@ _SEEDS: int = 40
 BUILDING_STORAGE: dict[str, BuildingStorageSpec] = {
     "home": BuildingStorageSpec(capacity=_CARGO * 50),
     "workstation": BuildingStorageSpec(capacity=0),
-    "forester": BuildingStorageSpec(capacity=_CARGO),
+    "forester": BuildingStorageSpec(capacity=_CARGO, seed_capacity=_SEEDS),
     "mason": BuildingStorageSpec(capacity=_CARGO),
     "hunter": BuildingStorageSpec(capacity=_CARGO),
     "forager": BuildingStorageSpec(capacity=_CARGO, seed_capacity=_SEEDS),
+    "apiary": BuildingStorageSpec(capacity=_CARGO),
     "fisher": BuildingStorageSpec(capacity=_CARGO),
     "farm": BuildingStorageSpec(capacity=100, seed_capacity=_SEEDS),
     "field": BuildingStorageSpec(capacity=0),
+    "orchard": BuildingStorageSpec(capacity=0),
+    "tree_nursery": BuildingStorageSpec(capacity=0),
     "mill": BuildingStorageSpec(
         capacity=100 + _PROC_OUT,
         input_capacity=100,
@@ -413,6 +416,7 @@ WORKSTATION_COST_WOOD: int = 2
 WORKSTATION_COST_ROCK: int = 4
 # Chebyshev distance from Farm to a Field plot for workers to manage it.
 FARM_FIELD_RADIUS: int = 20
+FORESTER_NURSERY_RADIUS: int = 20
 
 STARTING_WOOD: int = 2  # processed wood (not logs)
 STARTING_ROCK: int = 2
@@ -674,8 +678,9 @@ COLOUR_PATH_TRAFFIC_LOW: Colour = (35, 35, 55)
 COLOUR_PATH_TRAFFIC_HIGH: Colour = (255, 130, 45)
 COLOUR_EROSION_LOW: Colour = (40, 36, 28)
 COLOUR_EROSION_HIGH: Colour = (210, 90, 40)
-COLOUR_FERTILITY_LOW: Colour = (90, 40, 30)
-COLOUR_FERTILITY_HIGH: Colour = (70, 200, 80)
+COLOUR_FERTILITY_LOW: Colour = (210, 45, 40)
+COLOUR_FERTILITY_MID: Colour = (235, 210, 55)
+COLOUR_FERTILITY_HIGH: Colour = (55, 190, 70)
 # Soil texture overlay: sandy yellow → white loam → orange-red clay.
 COLOUR_SOIL_TEXTURE_SANDY: Colour = (235, 200, 70)
 COLOUR_SOIL_TEXTURE_LOAM: Colour = (245, 245, 240)

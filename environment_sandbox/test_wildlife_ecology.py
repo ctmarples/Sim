@@ -195,6 +195,7 @@ class WildlifeEcologyTests(unittest.TestCase):
         cell.tree_age_years = 3
         self.assertEqual(self.world.age_trees_one_year(), 1)
         self.assertEqual(cell.feature, FeatureType.WOOD_BUSH)
+        self.assertEqual(cell.tree_species, "oak")
         self.assertGreater(cell.growth_ticks, 0)
 
     def test_existing_trees_receive_accelerated_lifecycle_ages(self):

@@ -31,7 +31,7 @@ class TutorialScenarioTests(unittest.TestCase):
                 game.scenario.quest_feedback.until = 0
                 game._update_scenario()
         self.assertEqual(game.scenario.state.key,"tutorial_slice")
-        self.assertEqual(game.player.inventory.berries,1)
+        self.assertEqual(game.player.inventory.blackberries,1)
         self.assertEqual((game.player.x,game.player.y),(game.world.cols-6,game.world.rows-3))
         self.assertEqual((game.player.energy,game.player.satiation),(.5,.5))
         self.assertEqual(game.sim_speed,1)
@@ -56,7 +56,7 @@ class TutorialScenarioTests(unittest.TestCase):
         self.assertEqual(game.scenario.prompt,"Press I to open inventory")
         game._toggle_player_diary_section(DetailCategory.INVENTORY);update()
         self.assertEqual(game.scenario.prompt,"Right click on the berries to eat.")
-        game._player_eat_item("berries");update()
+        game._player_eat_item("blackberries");update()
         self.assertTrue(game.scenario_dialog.open)
         game.scenario_dialog.dismissed=True;update()
         self.assertEqual(game.scenario.prompt,"Look around for some more food")

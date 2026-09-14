@@ -60,11 +60,14 @@ _TREE_SAPLINGS = tuple(
     ResourceDef(f"{t.key}_saplings", f"{t.label} saplings", "agriculture", f"{t.short}.p")
     for t in TREES
 )
+_TREE_SEEDS = tuple(
+    ResourceDef(f"{t.key}_seeds", f"{t.label} seeds", "agriculture", f"{t.short}.s")
+    for t in TREES
+)
 
 RESOURCES: list[ResourceDef] = [
     ResourceDef("meat", "Meat", "food", "meat"),
     ResourceDef("fish", "Fish", "food", "fish"),
-    ResourceDef("berries", "Berries", "food", "berr"),
     ResourceDef("blackberries", "Blackberries", "food", "blkb"),
     ResourceDef("sloe_berries", "Sloe berries", "food", "sloe"),
     ResourceDef("elderberries", "Elderberries", "food", "eldr"),
@@ -106,6 +109,7 @@ RESOURCES: list[ResourceDef] = [
     ResourceDef("wheat_flour", "Wheat flour", "wares", "w.fl"),
     ResourceDef("rye_flour", "Rye flour", "wares", "r.fl"),
     *_TREE_SAPLINGS,
+    *_TREE_SEEDS,
     ResourceDef("berry_seeds", "Berry seeds", "agriculture", "b.sd"),
     ResourceDef("blackberry_seeds", "Blackberry seeds", "agriculture", "bk.s"),
     ResourceDef("sloe_berry_seeds", "Sloe berry seeds", "agriculture", "sl.s"),

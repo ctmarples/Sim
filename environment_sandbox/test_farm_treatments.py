@@ -59,11 +59,13 @@ class FarmTreatmentTests(unittest.TestCase):
         cell.mineral_cycle_applied = True
         cell.weed_suppression = 0.10
         cell.repellant_season = "SUMMER"
+        cell.compost_season = "SPRING"
         loaded = _cell_from_save(_cell_to_dict(cell))
         self.assertTrue(loaded.compost_cycle_applied)
         self.assertTrue(loaded.mineral_cycle_applied)
         self.assertAlmostEqual(loaded.weed_suppression, 0.10)
         self.assertEqual(loaded.repellant_season, "SUMMER")
+        self.assertEqual(loaded.compost_season, "SPRING")
 
     def test_harvest_resets_crop_cycle_treatments(self) -> None:
         world = World(12, 12)
@@ -74,10 +76,12 @@ class FarmTreatmentTests(unittest.TestCase):
         cell.crop_kind = "wheat"
         cell.growth_ticks = 0
         cell.compost_cycle_applied = True
+        cell.compost_season = "SPRING"
         cell.mineral_cycle_applied = True
         cell.weed_suppression = 0.10
         self.assertEqual(world.harvest_crop_herb(0, 0), "wheat")
-        self.assertFalse(cell.compost_cycle_applied)
+        # Compost is seasonal; mineral resets each crop cycle.
+        self.assertEqual(cell.compost_season, "SPRING")
         self.assertFalse(cell.mineral_cycle_applied)
         self.assertEqual(cell.weed_suppression, 0.0)
 
@@ -88,17 +92,20 @@ class FarmTreatmentTests(unittest.TestCase):
         cell = Cell(TerrainType.SOIL)
         cell.fertility = 0.40
         game = Game.__new__(Game)
+        from seasons import Season
+
+        game.calendar_day = 1  # Spring
         game.buildings = {farm.id: farm}
         game.home_storage = HomeStorage()
         consumed: list[tuple[str, int]] = []
         game.record_consumed = lambda key, amount: consumed.append((key, amount))
 
-        game._farm_apply_preplant_treatments(worker, farm, cell)
+        game._farm_apply_preplant_treatments(worker, farm, cell, for_plough=True)
 
+        self.assertEqual(cell.compost_season, "SPRING")
         self.assertTrue(cell.compost_cycle_applied)
-        self.assertAlmostEqual(cell.fertility, 0.45)
+        self.assertAlmostEqual(cell.fertility, 0.50)
         self.assertEqual(farm.compost, 0)
-        self.assertEqual(worker.inventory.compost, 0)
         self.assertEqual(consumed, [("compost", 1)])
 
     def test_player_can_sow_the_crop_planned_for_a_field_cell(self) -> None:
@@ -111,6 +118,7 @@ class FarmTreatmentTests(unittest.TestCase):
         assert cell is not None
         cell.terrain = TerrainType.SOIL
         cell.feature = FeatureType.NONE
+        cell.ploughed = True
         game.buildings = {field.id: field}
         game.player = Player(2, 2)
         game.player.inventory.wheat_grain = 1
@@ -120,8 +128,17 @@ class FarmTreatmentTests(unittest.TestCase):
         game._refresh_indicators = lambda: None
         game._finish_player_work = lambda: None
         game._set_status = lambda _status: None
+        game.sounds = type("S", (), {"emit": lambda *a, **k: None})()
 
-        self.assertTrue(game._player_tend_field_cell(field, 2, 2))
+        # Bypass the timed job and apply sow immediately.
+        crop = __import__("crops", fromlist=["CROP_BY_KEY"]).CROP_BY_KEY["wheat"]
+        actions = game._field_tile_action_choices(field, 2, 2, crop)
+        self.assertEqual([a[0] for a in actions], ["sow"])
+        self.assertTrue(
+            game._player_apply_sow_job(
+                2, 2, {"crop_key": "wheat", "seed_key": "wheat_grain"}
+            )
+        )
         self.assertEqual(cell.feature, FeatureType.CROP_HERB)
         self.assertEqual(cell.crop_kind, "wheat")
         self.assertEqual(game.player.inventory.wheat_grain, 0)

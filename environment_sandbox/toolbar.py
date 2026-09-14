@@ -38,6 +38,7 @@ _BUILD_ICON: dict[BuildingKind, str] = {
     BuildingKind.FORAGER: "forager",
     BuildingKind.CRAFT_BENCH: "craft_bench",
     BuildingKind.HUNTER: "hunter",
+    BuildingKind.APIARY: "apiary",
     BuildingKind.FORESTER: "forester",
     BuildingKind.MASON: "mason",
     BuildingKind.WORKSTATION: "workstation",

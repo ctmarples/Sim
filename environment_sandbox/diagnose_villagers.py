@@ -47,7 +47,7 @@ INV_KEYS = (
     "knife",
     "twine",
     "mushrooms",
-    "berries",
+    "blackberries",
 )
 
 

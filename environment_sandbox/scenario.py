@@ -148,7 +148,7 @@ class ScenarioDirector:
         py = max(0, min(game.world.rows-1, int(start[1])))
         game.world.start_pos = (px, py)
         game.player.reset(px, py)
-        game.player.inventory.berries = 1
+        game.player.inventory.blackberries = 1
         game.player.energy = .5
         game.player.satiation = .5
         game.control_mode = "dog"
@@ -500,7 +500,7 @@ class ScenarioDirector:
             )
         ):
             self.state.step, self.prompt = "eat_berries", "Right click on the berries to eat."
-        elif step == "eat_berries" and int(game.player.inventory.berries) <= 0:
+        elif step == "eat_berries" and int(game.player.inventory.blackberries) <= 0:
             self.state.step, self.prompt = "last_berry_dialog", None
             self._request_dialog("Well that was the last of the berries. I should look for some more")
         elif step == "find_food":

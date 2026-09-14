@@ -22,14 +22,14 @@ def villager(required=("bread",), favourites=("stew",), *, virtues=(), vices=())
 class VillagerRequirementTests(unittest.TestCase):
     def test_meal_satisfaction_cases_and_selection_order(self):
         eater = villager()
-        stock = ["stew", "bread", "berries"]
+        stock = ["stew", "bread", "blackberries"]
         chosen = min(stock, key=lambda key: food_preference_key(
             key, eater.required_foods, eater.favourite_foods
         ))
         self.assertEqual(chosen, "stew")
         self.assertIs(classify_food_satisfaction(eater, ["stew"]), FoodSatisfaction.FAVOURITE)
         self.assertIs(classify_food_satisfaction(eater, ["bread"]), FoodSatisfaction.ACCEPTABLE)
-        self.assertIs(classify_food_satisfaction(eater, ["berries"]), FoodSatisfaction.UNWANTED)
+        self.assertIs(classify_food_satisfaction(eater, ["blackberries"]), FoodSatisfaction.UNWANTED)
         self.assertIs(classify_food_satisfaction(eater, []), FoodSatisfaction.NONE)
 
     def test_or_and_and_cooked_food_requirement_matching(self):
