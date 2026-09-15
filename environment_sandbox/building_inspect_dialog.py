@@ -1752,6 +1752,8 @@ class BuildingInspectDialog:
             if building.kind == BuildingKind.WORKSTATION
             else "Residents"
             if is_housing_kind(building.kind)
+            else "Apiary workers (shared)"
+            if building.kind == BuildingKind.APIARY
             else "Workers"
         )
         if is_housing_kind(building.kind):

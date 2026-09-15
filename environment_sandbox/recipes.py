@@ -775,6 +775,9 @@ def apply_recipe(storage: object, recipe: Recipe) -> None:
     for key, n in recipe.inputs.items():
         _consume_recipe_input(storage, str(key), int(n))
     apply_recipe_outputs(storage, recipe)
+    invalidate = getattr(storage, "invalidate_stock_cache", None)
+    if callable(invalidate):
+        invalidate()
 
 
 def apply_recipe_outputs(storage: object, recipe: Recipe) -> None:

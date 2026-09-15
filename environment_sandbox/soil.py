@@ -32,7 +32,11 @@ def _bal(key: str, default: float) -> float:
         return float(default)
 
 
-COMPOST_FERTILITY_FRACTION: float = 0.70  # workers compost when fert < this × tile target
+# Workers compost before plough when tile fertility is below this absolute
+# threshold (0–1). Per-field override: Building.compost_min_fertility.
+DEFAULT_COMPOST_MIN_FERTILITY: float = 0.70
+# Deprecated alias — absolute min, not a fraction of tile capacity.
+COMPOST_FERTILITY_FRACTION: float = DEFAULT_COMPOST_MIN_FERTILITY
 COMPOST_FERTILITY_BOOST: float = 0.10  # +10% absolute fertility per compost application
 FIELD_FERTILITY_HARD_CAP: float = 1.0  # compost may raise fertility up to 100%
 # Fraction of remaining gap closed each env sample (8×/year) under canopy litter.
@@ -75,10 +79,19 @@ def field_fertility_max(cell: Cell | None = None) -> float:
     return float(FIELD_FERTILITY_HARD_CAP)
 
 
-def cell_fertility_below_compost_threshold(cell: Cell) -> bool:
-    """True when fertility is under 70% of the landscape target."""
-    target = max(1e-6, field_fertility_target(cell))
-    return float(getattr(cell, "fertility", 0.0)) < COMPOST_FERTILITY_FRACTION * target
+def clamp_compost_min_fertility(value: float | None) -> float:
+    """Clamp a compost-before-plough min fertility to 0–1."""
+    if value is None:
+        return float(DEFAULT_COMPOST_MIN_FERTILITY)
+    return max(0.0, min(1.0, float(value)))
+
+
+def cell_fertility_below_compost_threshold(
+    cell: Cell, min_fertility: float | None = None
+) -> bool:
+    """True when fertility is under the absolute compost min (not tile capacity)."""
+    threshold = clamp_compost_min_fertility(min_fertility)
+    return float(getattr(cell, "fertility", 0.0)) < threshold
 
 
 def cell_is_canopy_litter_source(cell: Cell) -> bool:

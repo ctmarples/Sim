@@ -542,6 +542,9 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "compost_food_mins": {k: int(v) for k, v in b.compost_food_mins.items()},
             "compost_food_caps": {k: int(v) for k, v in b.compost_food_caps.items()},
             "apiary_min_harvest_level": int(getattr(b, "apiary_min_harvest_level", 2)),
+            "compost_min_fertility": float(
+                getattr(b, "compost_min_fertility", 0.70)
+            ),
             "recipe_enabled": dict(b.recipe_enabled),
             "recipe_progress": dict(b.recipe_progress),
             "recipe_priority": {k: int(v) for k, v in b.recipe_priority.items()},
@@ -1440,6 +1443,14 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             )
         except (TypeError, ValueError):
             building.apiary_min_harvest_level = 2
+        try:
+            from soil import clamp_compost_min_fertility
+
+            building.compost_min_fertility = clamp_compost_min_fertility(
+                bdata.get("compost_min_fertility", 0.70)
+            )
+        except (TypeError, ValueError):
+            building.compost_min_fertility = 0.70
         season_name = bdata.get("market_demand_season")
         building.market_demand_season = (
             str(season_name) if season_name else None

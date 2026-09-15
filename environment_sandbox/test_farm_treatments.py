@@ -87,8 +87,9 @@ class FarmTreatmentTests(unittest.TestCase):
 
     def test_bare_harvested_soil_gets_compost_before_direct_resowing(self) -> None:
         farm = Building(1, BuildingKind.FARM, 0, 0)
-        farm.compost = 1
+        farm.compost = 0
         worker = Villager(1, 0, 0)
+        worker.inventory.compost = 1
         cell = Cell(TerrainType.SOIL)
         cell.fertility = 0.40
         game = Game.__new__(Game)
@@ -105,7 +106,7 @@ class FarmTreatmentTests(unittest.TestCase):
         self.assertEqual(cell.compost_season, "SPRING")
         self.assertTrue(cell.compost_cycle_applied)
         self.assertAlmostEqual(cell.fertility, 0.50)
-        self.assertEqual(farm.compost, 0)
+        self.assertEqual(worker.inventory.compost, 0)
         self.assertEqual(consumed, [("compost", 1)])
 
     def test_player_can_sow_the_crop_planned_for_a_field_cell(self) -> None:
@@ -142,6 +143,64 @@ class FarmTreatmentTests(unittest.TestCase):
         self.assertEqual(cell.feature, FeatureType.CROP_HERB)
         self.assertEqual(cell.crop_kind, "wheat")
         self.assertEqual(game.player.inventory.wheat_grain, 0)
+
+    def test_plough_prioritises_lowest_fertility_when_compost_available(self) -> None:
+        game = Game.__new__(Game)
+        game.world = World(12, 12)
+        game.calendar_day = 30  # Summer — cabbage plant season
+        game.home_storage = HomeStorage()
+        game.villagers = []
+        game._tick_farm_plough = None
+        game._claimed_work_cells = lambda _vid: set()
+        game._closest_of = lambda origin, cells: min(
+            cells, key=lambda p: max(abs(p[0] - origin[0]), abs(p[1] - origin[1]))
+        )
+
+        field = Building(2, BuildingKind.FIELD, 2, 2)
+        field.plot_w = field.plot_h = 2
+        field.compost_min_fertility = 0.70
+        field.plans = [
+            CropPlan(1, 2, 2, 2, 2, "cabbage", field.id),
+            CropPlan(2, 3, 2, 3, 2, "cabbage", field.id),
+        ]
+        farm = Building(1, BuildingKind.FARM, 0, 0)
+        farm.compost = 3
+        game.buildings = {farm.id: farm, field.id: field}
+        game._fields_near_farm = lambda _b: [field]
+        game._farm_treatment_available = lambda *_a, **_k: True
+        game._linked_compost_heap = lambda _b: None
+
+        low = game.world.get_cell(2, 2)
+        high = game.world.get_cell(3, 2)
+        assert low is not None and high is not None
+        for cell, fert in ((low, 0.20), (high, 0.55)):
+            cell.terrain = TerrainType.SOIL
+            cell.feature = FeatureType.NONE
+            cell.ploughed = False
+            cell.fertility = fert
+
+        worker = Villager(1, 2, 2)
+        chosen = game._find_farm_plough_work(worker, farm)
+        self.assertEqual(chosen, (2, 2))
+
+        # No compost → still returns a plough tile (does not stall).
+        farm.compost = 0
+        game._farm_treatment_available = lambda *_a, **_k: False
+        chosen = game._find_farm_plough_work(worker, farm)
+        self.assertIn(chosen, {(2, 2), (3, 2)})
+
+    def test_compost_min_fertility_round_trips_in_save(self) -> None:
+        from soil import clamp_compost_min_fertility
+
+        field = Building(2, BuildingKind.FIELD, 1, 1)
+        field.compost_min_fertility = 0.45
+        loaded = Building(3, BuildingKind.FIELD, 1, 1)
+        loaded.compost_min_fertility = clamp_compost_min_fertility(
+            field.compost_min_fertility
+        )
+        self.assertAlmostEqual(loaded.compost_min_fertility, 0.45)
+        self.assertAlmostEqual(clamp_compost_min_fertility(1.5), 1.0)
+        self.assertAlmostEqual(clamp_compost_min_fertility(-0.2), 0.0)
 
 
 if __name__ == "__main__":

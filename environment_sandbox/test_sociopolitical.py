@@ -134,6 +134,41 @@ class SociopoliticalDataTests(unittest.TestCase):
         self.assertEqual(prios[0], WorkPriority.WORKPLACE)
         self.assertIn(WorkPriority.TRANSPORT, prios)
 
+    def test_mason_does_not_fall_back_to_village_haul(self) -> None:
+        """Quiet mason ticks must not pull Collect Rocks workers into village haul."""
+        from unittest.mock import Mock
+
+        from entities import Building, BuildingKind, VillagerState
+        from game import Game
+
+        mason = Building(1, BuildingKind.MASON, 0, 0)
+        mill = Building(2, BuildingKind.MILL, 1, 1)
+        villager = Villager(id=1, x=0, y=0, building_id=mason.id)
+        villager.state = VillagerState.IDLE
+        game = Game.__new__(Game)
+        game.buildings = {mason.id: mason, mill.id: mill}
+        game._is_general_hauler = Mock(return_value=False)
+        game._assigned_transport_has_work = Mock(return_value=False)
+        game._transport_has_work = Mock(return_value=True)
+        game._update_hauler = Mock()
+        game._update_assigned_transport = Mock()
+
+        self.assertTrue(game._workplace_blocks_village_haul(mason))
+        self.assertFalse(game._workplace_blocks_village_haul(mill))
+
+        building = game.buildings.get(villager.building_id)
+        self.assertIsNotNone(building)
+        assert building is not None
+        if game._assigned_transport_has_work(villager, building):
+            game._update_assigned_transport(villager, building)
+        elif (
+            not game._workplace_blocks_village_haul(building)
+            and game._transport_has_work(villager)
+        ):
+            game._update_hauler(villager)
+
+        game._update_hauler.assert_not_called()
+        game._update_assigned_transport.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

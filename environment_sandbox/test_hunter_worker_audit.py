@@ -154,6 +154,61 @@ class HunterWorkerAuditTests(unittest.TestCase):
         self.assertEqual(int(getattr(hunter, "_work_search_cd", 0)), 2)
         self.assertEqual(hunter.decision_cooldown, 9)
 
+    def test_search_cd_bypasses_idle_decision_park(self) -> None:
+        game, hut, hunter = self._hunter_game()
+        hunter._work_search_cd = 12  # type: ignore[attr-defined]
+        hunter.decision_cooldown = 80
+        hunter.idle_work_gen = game._work_gen
+        self.assertFalse(game._idle_decision_pending(hunter))
+
+    def test_gather_workers_never_day_park(self) -> None:
+        game, hut, hunter = self._hunter_game()
+        hunter.decision_cooldown = 0
+        hunter.idle_work_gen = 0
+        game._park_idle_decision(hunter)
+        self.assertEqual(hunter.decision_cooldown, 0)
+
+    def test_mason_primary_clears_search_cd_when_rocks_present(self) -> None:
+        from world import FeatureType, TerrainType, World
+
+        game = Game.__new__(Game)
+        game.world = World(16, 16)
+        game.ticks_per_day = 400
+        game._work_gen = 1
+        game.home_storage = HomeStorage()
+        mason = Building(id=2, kind=BuildingKind.MASON, x=5, y=5)
+        apply_building_storage(mason)
+        game.buildings = {mason.id: mason}
+        worker = Villager(id=1, x=5, y=5, building_id=mason.id)
+        game.villagers = [worker]
+        rock = game.world.get_cell(7, 5)
+        assert rock is not None
+        rock.feature = FeatureType.ROCK
+        rock.deposit = 3
+        rock.terrain = TerrainType.ROCK
+        worker._work_search_cd = 40  # type: ignore[attr-defined]
+        self.assertTrue(game._workplace_primary_available(worker, mason))
+        self.assertEqual(int(getattr(worker, "_work_search_cd", 0)), 0)
+
+    def test_gather_fallback_keeps_hunter_ticking(self) -> None:
+        game, hut, hunter = self._hunter_game()
+        game._villager_workplace_ids = Mock(return_value=[hut.id])
+        self.assertEqual(game._assigned_gather_workplace_fallback(hunter), hut.id)
+        game._pick_workplace_building = Mock(return_value=None)
+        game._update_workplace_worker = Mock()
+        game._villager_has_active_action = Mock(return_value=False)
+        game._park_idle_decision = Mock()
+        hunter._work_search_cd = 5  # type: ignore[attr-defined]
+        hunter.state = VillagerState.IDLE
+        hunter.target = None
+        # Simulate WORKPLACE priority when picker finds nothing.
+        bid = game._pick_workplace_building(hunter)
+        if bid is None:
+            bid = game._assigned_gather_workplace_fallback(hunter)
+        self.assertEqual(bid, hut.id)
+        game._update_workplace_worker(hunter, bid)
+        game._update_workplace_worker.assert_called_once_with(hunter, hut.id)
+
 
 if __name__ == "__main__":
     unittest.main()

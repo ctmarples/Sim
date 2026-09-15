@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import random
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -1696,6 +1697,9 @@ class Building:
     compost_food_caps: dict[str, int] = field(default_factory=dict)
     # Apiary: only harvest when colony level is at least this (1–6).
     apiary_min_harvest_level: int = 2
+    # Field: apply compost before plough when tile fertility is below this
+    # absolute value (0–1). Not relative to landscape / tile capacity.
+    compost_min_fertility: float = 0.70
     draw_task_type: TaskType = TaskType.FULL_MANAGE
     work_mode: WorkMode = WorkMode.ALL
     crop_kind: str = "sage"  # legacy
@@ -2028,6 +2032,9 @@ class Building:
     @property
     def cargo_stored_total(self) -> int:
         """Stock that counts against ``capacity`` (excludes separate seed pool)."""
+        cached = getattr(self, "_cargo_stored_cache", None)
+        if cached is not None:
+            return cached
         from resources import stack_units
 
         total = (
@@ -2059,7 +2066,18 @@ class Building:
             total += sum(getattr(self, key) for key in SEED_KEYS)
         elif not self.is_seed_storage_key("berry_seeds"):
             total += int(getattr(self, "berry_seeds", 0))
+        self._cargo_stored_cache = total
         return total
+
+    def invalidate_stock_cache(self) -> None:
+        """Clear memoized cargo totals after any stock mutation."""
+        self._cargo_stored_cache = None
+        for store in getattr(self, "_food_storages", ()) or ():
+            if isinstance(store, Building):
+                store._cargo_stored_cache = None
+        kitchen = getattr(self, "_linked_kitchen", None)
+        if isinstance(kitchen, Building):
+            kitchen._cargo_stored_cache = None
 
     def is_seed_storage_key(self, key: str) -> bool:
         if self.seed_capacity <= 0:
@@ -2819,6 +2837,7 @@ class Building:
         return ()
 
     @staticmethod
+    @functools.lru_cache(maxsize=1)
     def pantry_storage_keys() -> tuple[str, ...]:
         """Food ingredients and prepared food kept in kitchen cold storage."""
         from resource_balance import VILLAGER_FOOD_KEYS
@@ -3596,6 +3615,7 @@ class Building:
         on_food_merged(
             self, dest_key, amount_before=before, amount_added=1, src_quality=src_q
         )
+        self.invalidate_stock_cache()
         return True
 
     def depositable_keys(self) -> tuple[str, ...]:
@@ -3807,6 +3827,7 @@ class Building:
         on_food_merged(
             self, dest_key, amount_before=before, amount_added=take, src_quality=src_q
         )
+        self.invalidate_stock_cache()
 
     def withdraw_to_inventory(
         self, inventory: Inventory, keys: tuple[str, ...] | None = None
@@ -3837,6 +3858,7 @@ class Building:
                     src_quality=src_q,
                 )
                 taken += 1
+        self.invalidate_stock_cache()
 
     def give_item_to(self, inventory: Inventory, key: str) -> bool:
         if getattr(self, key) <= 0 or not inventory.can_add(1, key=key):
@@ -3851,6 +3873,7 @@ class Building:
         on_food_merged(
             inventory, key, amount_before=before, amount_added=1, src_quality=src_q
         )
+        self.invalidate_stock_cache()
         return True
 
     def give_sapling_to(self, inventory: Inventory) -> bool:
@@ -4207,6 +4230,8 @@ class Villager:
     craft_recipe_name: str | None = None
     # Farm pipeline job (FarmJobKind name); sticky until done or invalidated.
     farm_job_kind: str | None = None
+    # Field cell for the sticky farm job (kept while fetching compost/seeds).
+    farm_job_cell: tuple[int, int] | None = None
     priorities: list[WorkPriority] = field(
         default_factory=lambda: list(DEFAULT_PRIORITIES_UNASSIGNED)
     )
@@ -4306,6 +4331,7 @@ class Villager:
         self.construction_id = None
         self.craft_recipe_name = None
         self.farm_job_kind = None
+        self.farm_job_cell = None
         self.target = None
         if hasattr(self, "_carrying_bees"):
             self._carrying_bees = False  # type: ignore[attr-defined]

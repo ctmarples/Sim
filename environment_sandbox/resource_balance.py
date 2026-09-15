@@ -377,19 +377,24 @@ def requirement_met_in_stock(amounts: dict[str, int], requirement: str) -> bool:
         if any(int(amounts.get(k, 0)) > 0 for k in group):
             return True
         return any(
-            int(qty) > 0 and food_covers_requirement(key, req)
+            food_covers_requirement(key, req)
             for key, qty in amounts.items()
+            if int(qty) > 0
         )
     if req == "vegetables":
         if any(int(amounts.get(k, 0)) > 0 for k in VEGETABLE_KEYS):
             return True
         return any(
-            int(qty) > 0 and food_covers_requirement(key, req)
+            food_covers_requirement(key, req)
             for key, qty in amounts.items()
+            if int(qty) > 0
         )
-    return int(amounts.get(req, 0)) > 0 or any(
-        int(qty) > 0 and food_covers_requirement(key, req)
+    if int(amounts.get(req, 0)) > 0:
+        return True
+    return any(
+        food_covers_requirement(key, req)
         for key, qty in amounts.items()
+        if int(qty) > 0
     )
 
 

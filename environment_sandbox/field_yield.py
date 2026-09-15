@@ -499,6 +499,9 @@ def build_field_factors(status: dict) -> list[FieldFactorDisplay]:
                 "Fertility is the soil's current productive condition relative "
                 "to its local potential.",
                 f"{fertility:.2f} of {fert_pot:.2f} potential",
+                "Before ploughing, workers fetch one compost from the farm, "
+                "heap, barn, or storehouse and apply it when fertility is below "
+                "Compost to (one application per tile per season).",
             ],
         ),
         FieldFactorDisplay(

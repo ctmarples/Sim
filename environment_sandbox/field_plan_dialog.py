@@ -484,6 +484,24 @@ class FieldPlanDialog:
         elif action.startswith("factor_"):
             key = action[len("factor_") :]
             self.expanded_factor = None if self.expanded_factor == key else key
+        elif action == "compost_min_dec":
+            from soil import clamp_compost_min_fertility
+
+            cur = clamp_compost_min_fertility(
+                getattr(building, "compost_min_fertility", 0.70)
+            )
+            building.compost_min_fertility = clamp_compost_min_fertility(
+                round(cur - 0.05, 2)
+            )
+        elif action == "compost_min_inc":
+            from soil import clamp_compost_min_fertility
+
+            cur = clamp_compost_min_fertility(
+                getattr(building, "compost_min_fertility", 0.70)
+            )
+            building.compost_min_fertility = clamp_compost_min_fertility(
+                round(cur + 0.05, 2)
+            )
         elif action.startswith("rotation_years_"):
             try:
                 years = int(action[len("rotation_years_") :])
@@ -761,6 +779,8 @@ class FieldPlanDialog:
                 h += max(1, (len(line) + 47) // 48) * self.font_tiny.get_linesize()
             if fac.key == "health":
                 h += 28  # sparkline
+            if fac.key == "fertility":
+                h += BTN_H + 4  # compost min control
             if fac.overlay_key:
                 h += BTN_H + 2
             return h + 2
@@ -993,6 +1013,35 @@ class FieldPlanDialog:
                         sy = self._draw_health_sparkline(
                             surface, inset_x, sy, min(180, wrap_w)
                         )
+                    if fac.key == "fertility":
+                        from soil import clamp_compost_min_fertility
+
+                        min_f = clamp_compost_min_fertility(
+                            getattr(building, "compost_min_fertility", 0.70)
+                        )
+                        label = f"Compost to  {min_f:.1f}"
+                        surface.blit(
+                            self.font_small.render(label, True, COLOUR_TEXT),
+                            (inset_x, sy + 4),
+                        )
+                        bx = inset_x + max(
+                            150, 12 + self.font_small.size(label)[0]
+                        )
+                        for btn_label, action in (
+                            ("−", "compost_min_dec"),
+                            ("+", "compost_min_inc"),
+                        ):
+                            btn = pygame.Rect(bx, sy, BTN_H, BTN_H)
+                            hovered = (
+                                mouse_pos is not None and btn.collidepoint(mouse_pos)
+                            )
+                            self._draw_btn(
+                                surface, btn, btn_label, False, hovered=hovered
+                            )
+                            if view.colliderect(btn):
+                                self._buttons.append((action, btn))
+                            bx += BTN_H + 4
+                        sy += BTN_H + 4
                     if fac.overlay_key:
                         btn = pygame.Rect(
                             inset_x, sy, min(140, inner_w - 16), BTN_H - 2

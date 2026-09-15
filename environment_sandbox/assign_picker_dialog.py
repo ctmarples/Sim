@@ -72,6 +72,7 @@ _BUILD_ICON: dict[BuildingKind, str] = {
     BuildingKind.PANTRY: "pantry",
     BuildingKind.CELLAR: "cellar",
     BuildingKind.DRYING_RACK: "drying_rack",
+    BuildingKind.APIARY: "apiary",
 }
 
 
