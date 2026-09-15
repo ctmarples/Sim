@@ -2517,20 +2517,16 @@ class World:
         came_from: dict[tuple[int, int], tuple[int, int] | None] = {(sx, sy): None}
         dist: dict[tuple[int, int], int] | None = {(sx, sy): 0} if max_len is not None else None
 
-        # Fixed 8-neighbour order. Prefer toward-goal steps first for nicer
-        # diagonal routes among equal-length BFS paths — without sorting on
-        # every expanded node (that cost dominated hunter prey search).
-        sdx = 0 if gx == sx else (1 if gx > sx else -1)
-        sdy = 0 if gy == sy else (1 if gy > sy else -1)
-        toward = ((sdx, sdy), (sdx, 0), (0, sdy))
+        # Prefer steps that locally approach the goal. A single start→goal
+        # diagonal bias (used for every expansion) overshoots and produces long
+        # zigzag diagonals among equal-length BFS routes.
+        # Cardinal-then-diagonal toward the goal keeps short direct paths without
+        # the old per-node sort cost.
         base = (
             (-1, -1), (0, -1), (1, -1),
             (-1, 0), (1, 0),
             (-1, 1), (0, 1), (1, 1),
         )
-        seen_dir = {d for d in toward if d != (0, 0)}
-        directions = [d for d in toward if d != (0, 0)]
-        directions.extend(d for d in base if d not in seen_dir)
 
         found = False
         while queue and len(came_from) < node_cap:
@@ -2538,6 +2534,14 @@ class World:
             if (cx, cy) == (gx, gy):
                 found = True
                 break
+            ldx = 0 if gx == cx else (1 if gx > cx else -1)
+            ldy = 0 if gy == cy else (1 if gy > cy else -1)
+            # Diagonal first so open-field routes stay short (Chebyshev), then
+            # axis steps to finish the remaining offset cleanly.
+            toward = ((ldx, ldy), (ldx, 0), (0, ldy))
+            seen_dir = {d for d in toward if d != (0, 0)}
+            directions = [d for d in toward if d != (0, 0)]
+            directions.extend(d for d in base if d not in seen_dir)
             for dx, dy in directions:
                 nx, ny = cx + dx, cy + dy
                 if (nx, ny) in came_from:
@@ -2782,28 +2786,55 @@ class World:
         if hard_collision_changed:
             self.invalidate_movement_cache()
 
-        # Seasonal spawn/despawn timers: fire the same number of times as real ticks.
-        def _drain_timer(attr: str, interval: int, callback) -> None:
+        # Seasonal spawn/despawn timers. Coalesce stacked fires from calendar
+        # acceleration into one callback — otherwise short days hitch ~60ms×N
+        # herb/flora passes in a single eco flush.
+        def _drain_timer(
+            attr: str, interval: int, callback, *, coalesce: bool = False
+        ) -> None:
             remaining = ticks
             interval = max(1, interval)
+            fires = 0
             while remaining > 0:
                 left = max(0, int(getattr(self, attr)))
                 if left <= 0:
                     setattr(self, attr, interval)
-                    callback(day)
+                    fires += 1
                     remaining -= 1
                     continue
                 if left > remaining:
                     setattr(self, attr, left - remaining)
-                    return
+                    break
                 remaining -= left
                 setattr(self, attr, interval)
+                fires += 1
+            if fires <= 0:
+                return
+            if coalesce:
                 callback(day)
+            else:
+                for _ in range(fires):
+                    callback(day)
 
         if halt:
-            _drain_timer("_mushroom_timer", MUSHROOM_TICK_INTERVAL, self._tick_mushrooms_seasonal)
-            _drain_timer("_herb_timer", HERB_TICK_INTERVAL, self._tick_herbs_seasonal)
-            _drain_timer("_berry_spread_timer", BERRY_SPREAD_INTERVAL, self._tick_berry_fruit)
+            _drain_timer(
+                "_mushroom_timer",
+                MUSHROOM_TICK_INTERVAL,
+                self._tick_mushrooms_seasonal,
+                coalesce=True,
+            )
+            _drain_timer(
+                "_herb_timer",
+                HERB_TICK_INTERVAL,
+                self._tick_herbs_seasonal,
+                coalesce=True,
+            )
+            _drain_timer(
+                "_berry_spread_timer",
+                BERRY_SPREAD_INTERVAL,
+                self._tick_berry_fruit,
+                coalesce=True,
+            )
             return woke
 
         spread = trees_spread_factor(day)
@@ -2818,9 +2849,24 @@ class World:
         else:
             self._sprout_timer = max(0, self._sprout_timer - ticks)
 
-        _drain_timer("_mushroom_timer", MUSHROOM_TICK_INTERVAL, self._tick_mushrooms_seasonal)
-        _drain_timer("_berry_spread_timer", BERRY_SPREAD_INTERVAL, self._tick_berry_fruit)
-        _drain_timer("_herb_timer", HERB_TICK_INTERVAL, self._tick_herbs_seasonal)
+        _drain_timer(
+            "_mushroom_timer",
+            MUSHROOM_TICK_INTERVAL,
+            self._tick_mushrooms_seasonal,
+            coalesce=True,
+        )
+        _drain_timer(
+            "_berry_spread_timer",
+            BERRY_SPREAD_INTERVAL,
+            self._tick_berry_fruit,
+            coalesce=True,
+        )
+        _drain_timer(
+            "_herb_timer",
+            HERB_TICK_INTERVAL,
+            self._tick_herbs_seasonal,
+            coalesce=True,
+        )
         return woke
 
     def _tick_herbs_seasonal(self, day: float) -> None:
@@ -2868,10 +2914,24 @@ class World:
         crop_peak = (float(herb_leader.spawn_peak) * herb_activity
                      if herb_leader is not None else 0.0)
 
+        # Stripe the heavy spawn/despawn pass so one eco flush stays under a
+        # frame; 4 stripes cover the map with rate compensation.
+        stripe_n = 4
+        stripe = int(getattr(self, "_herb_stripe", 0) or 0) % stripe_n
+        self._herb_stripe = stripe + 1  # type: ignore[attr-defined]
+        rate_scale = float(stripe_n)
+
+        _weight_cache: dict[TerrainType, float] = {}
+
         def terrain_spawn_weight(terrain: TerrainType) -> float:
+            cached = _weight_cache.get(terrain)
+            if cached is not None:
+                return cached
             from balance_config import active_balance
 
-            return active_balance().get_float(f"FLORA_SPAWN_WEIGHT_{terrain.name}")
+            value = active_balance().get_float(f"FLORA_SPAWN_WEIGHT_{terrain.name}")
+            _weight_cache[terrain] = value
+            return value
 
         def pick_crop_for_terrain(terrain: TerrainType, sample_day: float) -> str:
             """Use developer spawn chances as relative weights in this terrain."""
@@ -2904,7 +2964,7 @@ class World:
                 return False
             return wild_n[terrain] < int(tot * WILD_PLANT_MAX_FRACTION)
 
-        for y in range(self.rows):
+        for y in range(stripe, self.rows, stripe_n):
             for x in range(self.cols):
                 cell = self.cells[y][x]
                 if cell.feature == FeatureType.REED:
@@ -2917,6 +2977,7 @@ class World:
                     if species is not None:
                         rate = min(1.0, rate + environmental_mortality_rate(
                             self.species_suitability_at(x, y, species).combined) / 8.0)
+                    rate = min(1.0, rate * rate_scale)
                     if self._forage_rng.random() < rate:
                         terrain = cell.terrain
                         cell.feature = FeatureType.NONE
@@ -2934,6 +2995,7 @@ class World:
                         if species is not None
                         else herb_despawn_rate(day, x, y, kind=cell.crop_kind)
                     )
+                    rate = min(1.0, rate * rate_scale)
                     if self._forage_rng.random() < rate:
                         terrain = cell.terrain
                         cell.feature = FeatureType.NONE
@@ -2955,7 +3017,7 @@ class World:
                     and room(cell.terrain)
                     and crop_peak > 0
                     and self._forage_rng.random()
-                    < crop_peak * terrain_spawn_weight(cell.terrain)
+                    < min(1.0, crop_peak * terrain_spawn_weight(cell.terrain) * rate_scale)
                 ):
                     # Prefer forage crops over scenic herbs on empty tiles so
                     # meadow caps are not filled by clover/nettle alone.
@@ -2980,7 +3042,12 @@ class World:
                     and cell.terrain in non_crop_species
                     and room(cell.terrain)
                     and self._forage_rng.random()
-                    < non_crop_peak[cell.terrain] * terrain_spawn_weight(cell.terrain)
+                    < min(
+                        1.0,
+                        non_crop_peak[cell.terrain]
+                        * terrain_spawn_weight(cell.terrain)
+                        * rate_scale,
+                    )
                 ):
                     local = local_day(day, x, y)
                     opportunities = [
@@ -3037,6 +3104,7 @@ class World:
                         if species is not None
                         else herb_despawn_rate(day, x, y, kind=obj.crop_kind)
                     )
+                    rate = min(1.0, rate * rate_scale)
                     if self._forage_rng.random() < rate:
                         cell.extra_objects.remove(obj)
                 wild_here = int(cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP)) + sum(
@@ -3048,7 +3116,10 @@ class World:
                     and cell.terrain in WILD_CROPS_BY_TERRAIN
                     and crop_peak > 0
                     and self._forage_rng.random()
-                    < crop_peak * 0.35 * terrain_spawn_weight(cell.terrain)
+                    < min(
+                        1.0,
+                        crop_peak * 0.35 * terrain_spawn_weight(cell.terrain) * rate_scale,
+                    )
                 ):
                     crop_key = pick_crop_for_terrain(
                         cell.terrain, local_day(day, x, y)

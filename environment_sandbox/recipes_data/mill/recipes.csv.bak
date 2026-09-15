@@ -1,3 +1,3 @@
 name,label,inputs,outputs,steps,icon_key,extraction,farming,hunting,crafting,labour,transport,resource_group,resource_short,food_satiation,food_walk_speed,food_work_efficiency,food_hunger_rate,food_edible
-wheat_flour,Wheat flour,wheat_grain:3,wheat_flour:1,,,,,,,,,,,,,,,
+wheat_flour,Wheat flour,wheat_grain:5,wheat_flour:1,,,,,,,,,,,,,,,
 rye_flour,Rye flour,rye_grain:3,rye_flour:1,,,,,,,,,,,,,,,

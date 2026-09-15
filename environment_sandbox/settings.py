@@ -35,7 +35,7 @@ SIM_SPEEDS: tuple[int, ...] = (0, 1, 2, 4, 8, 16, 32, 64, 128)
 # --- Time feel (edit these; ticks are derived) ---
 # Seconds are wall-clock at ×1 *if* the display holds 60 FPS.
 # ×1 burns PLAYBACK_TICKS_AT_X1 sim ticks each rendered frame (not extra catch-up).
-PLAYBACK_TICKS_AT_X1: int = 2  # sim ticks per displayed frame at ×1; speed ×N multiplies this
+PLAYBACK_TICKS_AT_X1: int = 1  # sim ticks per displayed frame at ×1; speed ×N multiplies this
 DAY_SECONDS_AT_X1: float = 300.0  # real seconds for one calendar day at ×1 / 60 FPS
 WALK_SECONDS_AT_X1: float = 0.40  # real seconds to walk one tile at ×1 / 60 FPS
 WORK_SECONDS_AT_X1: float = 10.0  # real seconds between work actions at ×1 / 60 FPS

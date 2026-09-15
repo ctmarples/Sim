@@ -1,6 +1,6 @@
 name,label,inputs,outputs,steps,category,icon_key,extraction,farming,hunting,crafting,labour,transport,resource_group,resource_short,food_satiation,food_walk_speed,food_work_efficiency,food_hunger_rate,food_edible
 bean_stew,Bean stew,beans:2;cabbage:1;sage:1,bean_stew:1,,stews,vegetable_soup,,,,,,,food,b.stw,3.5,1.0,1.1,0.9,
-mushroom_stew,Mushroom stew,mushrooms:2;turnip:1;sage:1,mushroom_stew:1,,stews,mushroom_stew,,,,,,,food,m.stw,3.5,1.1,1.0,0.9,
+mushroom_stew,Mushroom stew,mushrooms:3;sage:1,mushroom_stew:1,,stews,,,,,,,,food,m.stw,3.5,1.1,1.0,0.9,
 fish_stew,Fish stew,fish:1;onion:1;garlic:1,fish_stew:1,,stews,,,,,,,,food,f.stw,4.0,1.0,1.1,0.9,
 vegetable_soup,Vegetable soup,cabbage:1;turnip:1;carrot:1;onion:1,vegetable_soup:1,,stews,vegetable_soup,,,,,,,food,v.sp,4.5,1.0,1.0,0.8,
 bread_wheat,Bread (wheat),wheat_flour:1,bread:1,,bakery,bread,,,,,,,food,bread,3.0,1.0,1.0,0.75,

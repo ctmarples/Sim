@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 import random
 import time
+from collections import deque
 
 import pygame
 
@@ -37,6 +38,7 @@ from resource_balance import (
     WORK_SEARCH_RADIUS,
     PATH_DETOUR_RATIO,
     PATH_DETOUR_SLACK,
+    PATH_FIND_MAX_NODES,
     PATH_PICK_MAX_PER_RING,
     HONEY_PER_BEE_LEVEL,
     MAX_FOOD_TYPES_PER_MEAL,
@@ -2120,6 +2122,8 @@ class Game:
         self._tick_farm_sapling = {}
         self._tick_farm_repellant = {}
         self._tick_farm_board_has = {}
+        self._tick_transport_has_work = {}
+        self._tick_construction_has_work = {}
         self._tick_hunter_scoped = {}
         self._tick_mason_rocks = {}
         self._tick_meat_deposit = {}
@@ -2149,6 +2153,8 @@ class Game:
         self._tick_farm_sapling = {}
         self._tick_farm_repellant = {}
         self._tick_farm_board_has = {}
+        self._tick_transport_has_work = {}
+        self._tick_construction_has_work = {}
         self._tick_hunter_scoped = {}
         self._tick_mason_rocks = {}
         self._tick_meat_deposit = {}
@@ -11316,7 +11322,9 @@ class Game:
                     candidates.append((abs(dx) + abs(dy), y, x))
             for _distance, y, x in sorted(candidates):
                 target = (x, y)
-                if self.world.find_path((villager.x, villager.y), target) is None:
+                if self.world.find_path(
+                    (villager.x, villager.y), target, max_nodes=PATH_FIND_MAX_NODES
+                ) is None:
                     continue
                 villager._sleep_position = target  # type: ignore[attr-defined]
                 villager.target = target
@@ -13474,25 +13482,29 @@ class Game:
         import random as _random
 
         origin = (int(villager.x), int(villager.y))
-        candidates: list[tuple[int, int]] = []
+        walkable: list[tuple[int, int]] = []
         for dy in range(-radius, radius + 1):
             for dx in range(-radius, radius + 1):
                 if dx == 0 and dy == 0:
                     continue
                 x, y = origin[0] + dx, origin[1] + dy
-                if not self.world.is_walkable(x, y):
-                    continue
-                if self.world.find_path(origin, (x, y)) is None:
-                    continue
-                candidates.append((x, y))
-        if not candidates:
+                if self.world.is_walkable(x, y):
+                    walkable.append((x, y))
+        if not walkable:
             return None
         rng = _random.Random(
             (int(villager.id) * 7919)
             ^ (int(self.calendar_day) * 104729)
             ^ (int(villager.x) * 31 + int(villager.y))
         )
-        return rng.choice(candidates)
+        # Sample a few cells and BFS those only — full-radius path checks spiked FPS.
+        sample_n = min(12, len(walkable))
+        for x, y in rng.sample(walkable, sample_n):
+            if self.world.find_path(
+                origin, (x, y), max_nodes=PATH_FIND_MAX_NODES
+            ) is not None:
+                return (x, y)
+        return None
 
     def _can_start_happiness_break(self, villager: Villager) -> bool:
         if is_happiness_break_state(villager.state):
@@ -13703,13 +13715,14 @@ class Game:
         else:
             self._reset_tick_claims()
 
+        alive_ids = {v.id for v in self.villagers}
         for villager in list(self.villagers):
             if getattr(villager, "_scenario_controlled", False):
                 continue
             day_frac = self._calendar_rate_per_tick()
             if villager is not getattr(self, "_god_dog_villager", None):
                 self._update_villager_wellbeing(villager, day_frac)
-            if villager.id not in {v.id for v in self.villagers}:
+            if villager.id not in alive_ids:
                 continue
             self._reconcile_seasonal_workplace(villager)
             if villager.state == VillagerState.SLEEPING:
@@ -13776,15 +13789,38 @@ class Game:
                 if on_target:
                     continue
 
+            # Waiting on cooldowns/search: drain already happened; skip job re-scans.
+            # Still take a due walk step so multi-step trips do not freeze.
+            # Never skip when hungry — food seek must be able to abort the trip.
+            if (
+                not (villager.needs_food() or villager.seeking_food)
+                and self._ticks_until_villager_action(villager) > 1
+            ):
+                if villager.move_cooldown == 0:
+                    goal = self._villager_travel_goal(villager)
+                    if goal is not None and (villager.x, villager.y) != goal:
+                        if self._step_villager_toward(villager, goal):
+                            continue
+                        # Unreachable: fall through so workplace AI can re-target.
+                    else:
+                        continue
+                else:
+                    continue
+
             if villager.needs_food() or villager.seeking_food:
                 # Finish trips that actually carry cargo / build materials before
                 # eating.  An empty-handed hauler is only travelling to a pickup;
                 # making that state food-proof can strand a starving worker in a
                 # very slow home↔workplace loop and stall the whole supply chain.
+                # Critical hunger overrides non-food cargo so undepositable junk
+                # (e.g. seeds stuck at market) cannot starve a worker forever.
+                critical_hunger = float(getattr(villager, "satiation", 0.0)) <= 0.15
+                carrying_food = self._food_count(villager.inventory) > 0
                 transport_has_cargo = (
                     villager.state
                     in (VillagerState.DELIVERING, VillagerState.HAULING)
                     and not villager.inventory.is_empty
+                    and not (critical_hunger and not carrying_food)
                 )
                 if (
                     transport_has_cargo
@@ -13855,32 +13891,42 @@ class Game:
             # primary workplace work — that caused field ↔ store thrash with
             # leftover foreign cargo (e.g. fish on a farmer).
             if villager.state in (VillagerState.HAULING, VillagerState.DELIVERING):
-                if self._release_helper_haul_for_primary(villager):
-                    # Still dumping foreign cargo home — finish that trip.
-                    if villager.state in (
-                        VillagerState.HAULING,
-                        VillagerState.DELIVERING,
-                    ):
+                critical_hunger = float(getattr(villager, "satiation", 0.0)) <= 0.15
+                if not (
+                    critical_hunger
+                    and (villager.needs_food() or villager.seeking_food)
+                    and self._food_count(villager.inventory) <= 0
+                ):
+                    if self._release_helper_haul_for_primary(villager):
+                        # Still dumping foreign cargo home — finish that trip.
+                        if villager.state in (
+                            VillagerState.HAULING,
+                            VillagerState.DELIVERING,
+                        ):
+                            continue
+                        # Cleared to idle with empty pack — Workplace can claim this tick.
+                    elif self._uses_general_haul_update(villager):
+                        self._update_hauler(villager)
                         continue
-                    # Cleared to idle with empty pack — Workplace can claim this tick.
-                elif self._uses_general_haul_update(villager):
-                    self._update_hauler(villager)
-                    continue
-                else:
-                    building = self.buildings.get(villager.building_id)
-                    if building is not None:
-                        self._update_assigned_transport(villager, building)
                     else:
-                        home = self.world.home_pos
-                        villager.haul_building_id = None
-                        villager.target = home
-                        if (villager.x, villager.y) == home:
-                            self._deposit_home(villager.inventory, status=False)
-                            villager.state = VillagerState.IDLE
-                            villager.target = None
+                        building = self.buildings.get(villager.building_id)
+                        if building is not None:
+                            self._update_assigned_transport(villager, building)
                         else:
-                            self._step_villager_toward(villager, home)
-                    continue
+                            home = self.world.home_pos
+                            villager.haul_building_id = None
+                            villager.target = home
+                            if (villager.x, villager.y) == home:
+                                self._deposit_home(villager.inventory, status=False)
+                                villager.state = VillagerState.IDLE
+                                villager.target = None
+                            else:
+                                self._step_villager_toward(villager, home)
+                        continue
+                else:
+                    # Starving with non-food cargo: release deliver lock so food
+                    # seek can run (cargo stays in pack until after the meal).
+                    villager.state = VillagerState.WORKING
             for priority in prios:
                 if priority == WorkPriority.NONE:
                     continue
@@ -13939,7 +13985,10 @@ class Game:
                     or WorkPriority.BUILD in prios
                 ):
                     self._update_builder(villager)
-                elif self._leftover_build_mats_need_home(villager):
+                elif self._leftover_build_mats_need_home(villager) and (
+                    WorkPriority.BUILD in prios
+                    or villager.construction_id is not None
+                ):
                     self._update_leftover_build_mats(villager)
                 elif not villager.inventory.is_empty and self._is_general_hauler(
                     villager
@@ -16387,6 +16436,35 @@ class Game:
             return building.has_gather_cargo(inv) and not inv.can_add(1)
         return False
 
+    def _pack_fill_gather_kind(self, building: Building | None) -> bool:
+        """Workplaces that should fill the pack before returning cargo."""
+        if building is None:
+            return False
+        return building.kind in (
+            BuildingKind.FORAGER,
+            BuildingKind.FARM,
+            BuildingKind.HUNTER,
+            BuildingKind.FISHER,
+            BuildingKind.FORESTER,
+            BuildingKind.APIARY,
+            BuildingKind.MASON,
+        )
+
+    def _should_force_carry_deposit(
+        self, villager: Villager, building: Building
+    ) -> bool:
+        """Deposit carry while primary work may still exist.
+
+        Pack-fill gatherers must keep collecting until
+        ``_gather_cargo_needs_delivery`` — accepting any gather cargo early
+        sent foragers home after a single berry/honey pickup.
+        """
+        if not self._workplace_accepts_carry(villager, building):
+            return False
+        if self._pack_fill_gather_kind(building):
+            return self._gather_cargo_needs_delivery(villager, building)
+        return True
+
     def _forage_yield_amount(self, key: str) -> int:
         """Cargo units one collect of this forager recipe needs."""
         from berry_bushes import BERRY_FOOD_KEYS
@@ -17340,6 +17418,16 @@ class Game:
                 return True
             return self._fish_deposit_available(building, villager.id)
 
+        if building.kind == BuildingKind.MASON:
+            if villager.inventory.is_full:
+                return False
+            # Honour search backoff. Rocks are static — clearing the cooldown
+            # whenever any rock is in radius re-ran full multi-BFS every tick
+            # and hitching the sim (~0.5s on SP_new_1_hitch).
+            if int(getattr(villager, "_work_search_cd", 0) or 0) > 0:
+                return False
+            return self._mason_has_nearby_rocks(building)
+
         if building.kind == BuildingKind.FORAGER:
             if (
                 villager.inventory.is_full
@@ -17355,24 +17443,10 @@ class Game:
                 and self._work_target_valid(villager, building, villager.target)
             ):
                 return True
-            # Cheap presence only — pathfinding runs when the forager actually
-            # starts a job. Full BFS here was re-run by every P2/P3 probe.
+            # Static forage nodes: keep search backoff (hunter may still wake early).
             if int(getattr(villager, "_work_search_cd", 0) or 0) > 0:
-                if self._forager_has_nearby_work(villager, building):
-                    villager._work_search_cd = 0  # type: ignore[attr-defined]
-                    return True
                 return False
             return self._forager_has_nearby_work(villager, building)
-
-        if building.kind == BuildingKind.MASON:
-            if villager.inventory.is_full:
-                return False
-            if int(getattr(villager, "_work_search_cd", 0) or 0) > 0:
-                if self._mason_has_nearby_rocks(building):
-                    villager._work_search_cd = 0  # type: ignore[attr-defined]
-                    return True
-                return False
-            return self._mason_has_nearby_rocks(building)
 
         if int(getattr(villager, "_work_search_cd", 0) or 0) > 0:
             return False
@@ -17428,14 +17502,16 @@ class Game:
     ) -> bool:
         """Supply fetch or deposit for an assigned worker when primary work is blocked."""
         # Always finish delivering / clearing cargo even when field work remains —
-        # except apiary/gather jobs that still have room and primary work ready.
+        # except pack-fill gather jobs that still have room and should keep collecting.
         if not villager.inventory.is_empty:
             if (
-                building.kind == BuildingKind.APIARY
-                and self._apiary_has_work(villager, building)
-                and villager.inventory.can_add(1, key="honey")
+                self._pack_fill_gather_kind(building)
+                and building.has_gather_cargo(villager.inventory)
                 and not self._gather_cargo_needs_delivery(villager, building)
+                and villager.state
+                not in (VillagerState.HAULING, VillagerState.DELIVERING)
             ):
+                # Partial gather pack — keep collecting (apiary/forager/fisher/…).
                 return False
             return True
         if self._gather_cargo_needs_delivery(villager, building):
@@ -17735,14 +17811,15 @@ class Game:
             if self._workplace_primary_available(villager, building):
                 return bid
 
-        # Delivery last: pack-full gather cargo or any depositable carry.
+        # Delivery last: pack-full gather cargo, or depositable carry for
+        # non-pack-fill workplaces (processors / market).
         for bid in ids:
             building = self.buildings.get(bid)
             if building is None:
                 continue
             if self._gather_cargo_needs_delivery(villager, building):
                 return bid
-            if self._workplace_accepts_carry(villager, building):
+            if self._should_force_carry_deposit(villager, building):
                 return bid
 
         return None
@@ -17861,6 +17938,17 @@ class Game:
                 and not self._farm_pack_has_export_cargo(villager.inventory, villager)
             )
             gather_cargo = building.has_gather_cargo(villager.inventory)
+            # Pack-fill gatherers must not dump a partial pack just because the
+            # workplace can accept it (foragers were returning after one pea/berry).
+            if (
+                gather_cargo
+                and self._pack_fill_gather_kind(building)
+                and not self._gather_cargo_needs_delivery(villager, building)
+                and villager.state
+                not in (VillagerState.HAULING, VillagerState.DELIVERING)
+            ):
+                villager.haul_building_id = None
+                return False
             # Fisher/hunter/forager: once walking to the storehouse with gather
             # cargo, finish that trip. Haulers clearing the hut mid-walk must not
             # yank the worker back (storehouse ↔ hut thrash with a full pack).
@@ -17923,16 +18011,24 @@ class Game:
                     # Hunger must not leave an arrived cook holding edible
                     # supplies until an old crafting cooldown expires.
                     if villager.work_cooldown == 0 or villager.seeking_food:
+                        before_total = villager.inventory.total
                         if building.is_processor():
                             building.deposit_supply_from(villager.inventory)
                         else:
                             self._deposit_workplace_cargo(building, villager.inventory)
-                        self._apply_hauler_transfer_cooldown(villager)
+                        moved = before_total - villager.inventory.total
+                        if moved > 0:
+                            self._apply_hauler_transfer_cooldown(villager)
                         if villager.inventory.is_empty:
                             villager.state = VillagerState.IDLE
                             villager.target = None
                             return True
-                        if self._workplace_can_accept_cargo(building, villager.inventory):
+                        if (
+                            moved > 0
+                            and self._workplace_can_accept_cargo(
+                                building, villager.inventory
+                            )
+                        ):
                             # More workplace-compatible cargo — keep depositing next tick.
                             return True
                         if self._hunter_pack_has_tanning_hide(
@@ -17951,9 +18047,8 @@ class Game:
                                 villager.state = VillagerState.WORKING
                                 villager.target = dest
                                 return True
-                        # Leftover cargo this workplace will not take (e.g. fish on a
-                        # farmer after dropping seeds/produce) — finish at storehouse.
-                        # Idling here caused field ↔ farm-store thrash with foreign goods.
+                        # Rejected / undepositable cargo (e.g. seeds at market) —
+                        # finish at storehouse instead of looping transfer cooldowns.
                         villager.haul_building_id = None
                         villager.state = VillagerState.DELIVERING
                         villager.target = home
@@ -18352,11 +18447,19 @@ class Game:
         return True
 
     def _transport_has_work(self, villager: Villager) -> bool:
+        cache = getattr(self, "_tick_transport_has_work", None)
+        key = villager.id
+        if cache is not None and key in cache:
+            return cache[key]
         if not villager.inventory.is_empty:
-            return True
-        if self._find_haul_source(villager) is not None:
-            return True
-        return self._find_processor_needing_supply_for(villager) is not None
+            has = True
+        elif self._find_haul_source(villager) is not None:
+            has = True
+        else:
+            has = self._find_processor_needing_supply_for(villager) is not None
+        if cache is not None:
+            cache[key] = has
+        return has
 
     def _construction_delivery_active(self, villager: Villager) -> bool:
         """True while this villager should fetch/deliver construction materials."""
@@ -18365,52 +18468,69 @@ class Game:
         return self._construction_has_work(villager)
 
     def _construction_has_work(self, villager: Villager) -> bool:
+        cache = getattr(self, "_tick_construction_has_work", None)
+        key = villager.id
+        if cache is not None and key in cache:
+            return cache[key]
+
         if not self.construction_sites:
             if villager.construction_id is not None:
                 villager.construction_id = None
-            return False
-
+            has = False
         # Carrying build mats only counts if some site still needs them.
         # Otherwise release the claim so transport can clear leftover cargo.
-        if self._carrying_build_mats(villager):
+        elif self._carrying_build_mats(villager):
             if self._find_site_needing_materials(villager) is not None:
-                return True
-            if villager.construction_id is not None:
-                villager.construction_id = None
-            return False
-
-        if villager.construction_id is not None:
-            site = self.construction_sites.get(villager.construction_id)
-            if site is None or site.is_complete or not self.scenario.site_available_to_villagers(site):
-                villager.construction_id = None
-            elif site.materials_ready:
-                return True
-            elif (
-                (site.wood_needed > 0 and self._material_available("wood"))
-                or (site.logs_needed > 0 and self._material_available("logs"))
-                or (site.hardwood_needed > 0 and self._material_available("hardwood_logs"))
-                or (site.rock_needed > 0 and self._material_available("rock"))
-            ):
-                return True
+                has = True
             else:
-                # Assigned to a half-built site with nothing left to fetch.
-                villager.construction_id = None
+                if villager.construction_id is not None:
+                    villager.construction_id = None
+                has = False
+        else:
+            has = False
+            if villager.construction_id is not None:
+                site = self.construction_sites.get(villager.construction_id)
+                if site is None or site.is_complete or not self.scenario.site_available_to_villagers(site):
+                    villager.construction_id = None
+                elif site.materials_ready:
+                    has = True
+                elif (
+                    (site.wood_needed > 0 and self._material_available("wood"))
+                    or (site.logs_needed > 0 and self._material_available("logs"))
+                    or (site.hardwood_needed > 0 and self._material_available("hardwood_logs"))
+                    or (site.rock_needed > 0 and self._material_available("rock"))
+                ):
+                    has = True
+                else:
+                    # Assigned to a half-built site with nothing left to fetch.
+                    villager.construction_id = None
 
-        for site in self.construction_sites.values():
-            if not self.scenario.site_available_to_villagers(site):
-                continue
-            if not site.materials_ready:
-                if site.wood_needed > 0 and self._material_available("wood"):
-                    return True
-                if site.logs_needed > 0 and self._material_available("logs"):
-                    return True
-                if site.hardwood_needed > 0 and self._material_available("hardwood_logs"):
-                    return True
-                if site.rock_needed > 0 and self._material_available("rock"):
-                    return True
-            elif not site.is_complete:
-                return True
-        return False
+            if not has:
+                for site in self.construction_sites.values():
+                    if not self.scenario.site_available_to_villagers(site):
+                        continue
+                    if not site.materials_ready:
+                        if site.wood_needed > 0 and self._material_available("wood"):
+                            has = True
+                            break
+                        if site.logs_needed > 0 and self._material_available("logs"):
+                            has = True
+                            break
+                        if site.hardwood_needed > 0 and self._material_available(
+                            "hardwood_logs"
+                        ):
+                            has = True
+                            break
+                        if site.rock_needed > 0 and self._material_available("rock"):
+                            has = True
+                            break
+                    elif not site.is_complete:
+                        has = True
+                        break
+
+        if cache is not None:
+            cache[key] = has
+        return has
 
     def _material_available(self, key: str) -> bool:
         if getattr(self.home_storage, key, 0) > 0:
@@ -18432,6 +18552,11 @@ class Game:
     def _leftover_build_mats_need_home(self, villager: Villager) -> bool:
         """True when carrying construction mats no site can still accept."""
         if not self._carrying_build_mats(villager):
+            return False
+        # Forager/mason wood & rock are primary gather cargo — never treat them
+        # as stranded build mats (that forced a deposit after every wood bush).
+        building = self.buildings.get(villager.building_id or -1)
+        if building is not None and building.has_gather_cargo(villager.inventory):
             return False
         return self._find_site_needing_materials(villager) is None
 
@@ -18798,7 +18923,7 @@ class Game:
             return
         elif self._update_plant_stock_withdraw(villager, building):
             return
-        elif self._workplace_accepts_carry(villager, building):
+        elif self._should_force_carry_deposit(villager, building):
             self._force_assigned_delivery(villager, building)
             return
 
@@ -18815,25 +18940,20 @@ class Game:
         if target is None:
             search_cd = int(getattr(villager, "_work_search_cd", 0))
             if search_cd > 0:
-                # Rocks present in scope — clear backoff and collect.
-                if (
-                    building.kind == BuildingKind.MASON
-                    and self._mason_has_nearby_rocks(building)
-                ):
-                    villager._work_search_cd = 0  # type: ignore[attr-defined]
-                else:
-                    # Cooldown drains in `_update_villagers`; do not re-park idle.
-                    if self._workplace_accepts_carry(villager, building):
-                        self._force_assigned_delivery(villager, building)
-                        return
+                # Cooldown drains in `_update_villagers`; do not re-park idle.
+                # Do not clear mason/forager backoff just because resources exist
+                # in radius — that re-triggered multi-BFS rock/forage scans.
+                if self._should_force_carry_deposit(villager, building):
+                    self._force_assigned_delivery(villager, building)
                     return
+                return
             target = self._find_work_in_building(villager, building)
             if target is None:
                 villager._work_search_cd = 48  # type: ignore[attr-defined]
                 villager.decision_cooldown = 0
                 if self._maybe_assigned_transport(villager, building):
                     return
-                if self._workplace_accepts_carry(villager, building):
+                if self._should_force_carry_deposit(villager, building):
                     self._force_assigned_delivery(villager, building)
                     return
                 self._set_workplace_idle(villager, park=False)
@@ -18918,7 +19038,7 @@ class Game:
             pass
         elif self._maybe_assigned_transport(villager, building):
             return
-        elif self._workplace_accepts_carry(villager, building):
+        elif self._should_force_carry_deposit(villager, building):
             self._force_assigned_delivery(villager, building)
             return
 
@@ -19161,7 +19281,8 @@ class Game:
             candidates.append((dist // band, prio, dist, target, prio))
         if not candidates:
             return None
-        candidates.sort()
+        # Priority first, then distance (same rule as forager).
+        candidates.sort(key=lambda c: (c[1], c[2], c[3]))
         _band, _p, _d, target, prio = candidates[0]
         return target, prio
 
@@ -19477,7 +19598,9 @@ class Game:
                 )
             )
         if kind == FarmJobKind.TREAT:
-            cell = villager.target
+            # Prefer the sticky field cell — target may be home/heap while fetching
+            # insect_repellant, which must not invalidate the treat job.
+            cell = getattr(villager, "farm_job_cell", None) or villager.target
             if cell is None:
                 return False
             tile = self.world.get_cell(*cell)
@@ -19689,6 +19812,14 @@ class Game:
                     ):
                         return
 
+        if kind == FarmJobKind.TREAT and field_cell is not None:
+            # Stock may sit at home/heap while available=True; fetch before swinging
+            # or farmers loop forever on untreated berry/herb tiles.
+            if not self._farm_ensure_carry_supply(
+                villager, building, "insect_repellant", required=True
+            ):
+                return
+
         target = field_cell if field_cell is not None else villager.target
         target_valid = (
             self._farm_job_still_valid(villager, building, kind)
@@ -19717,13 +19848,11 @@ class Game:
             ):
                 return
             if kind == FarmJobKind.TREAT:
-                self._farm_apply_repellant(villager, building, target)
-                progressed = True
+                progressed = self._farm_apply_repellant(villager, building, target)
             else:
                 progressed = self._villager_perform_farm(villager, building, target)
             if not progressed:
-                # No-op swing (full pack, nothing to clear, etc.) — deliver or
-                # drop the claim so the board can pick a different cell.
+                # No-op swing (full pack, nothing to clear, missing treatment, etc.).
                 if self._gather_cargo_needs_delivery(villager, building) or (
                     not villager.inventory.can_add(1)
                 ):
@@ -19734,11 +19863,19 @@ class Game:
                     villager.farm_job_kind = None
                     villager.farm_job_cell = None
                     self._clear_villager_path(villager)
+                    if kind == FarmJobKind.TREAT:
+                        villager._work_search_cd = max(  # type: ignore[attr-defined]
+                            48, int(getattr(villager, "_work_search_cd", 0) or 0)
+                        )
                 return
             villager.target = None
             villager.farm_job_kind = None
             villager.farm_job_cell = None
             self._clear_villager_path(villager)
+            # Treated tiles must leave the per-tick repellant candidate cache.
+            cache = getattr(self, "_tick_farm_repellant", None)
+            if cache is not None and kind == FarmJobKind.TREAT:
+                cache.pop((building.id, self.season.name), None)
             if self._farm_pack_has_export_cargo(villager.inventory, villager) and (
                 self._gather_cargo_needs_delivery(villager, building)
                 or not villager.inventory.can_add(1)
@@ -19804,8 +19941,8 @@ class Game:
                 villager.state = VillagerState.WORKING
 
         self._execute_farm_job(villager, building, kind)
-        # Claim the next field job immediately so village haul cannot steal the
-        # farmer after a single plough/sow/weed/harvest swing.
+        # Claim the next field job immediately so idle-park / other priorities
+        # cannot pull the farmer after a single plough/sow/weed/harvest swing.
         if villager.farm_job_kind is None and villager.inventory.is_empty:
             job = self._assign_farm_job(villager, building)
             if job is not None:
@@ -22167,7 +22304,7 @@ class Game:
             return
         if self._workplace_primary_available(villager, building):
             pass
-        elif self._workplace_accepts_carry(villager, building):
+        elif self._should_force_carry_deposit(villager, building):
             self._force_assigned_delivery(villager, building)
             return
         elif hide_on_hand and self._try_addon_craft(villager, building):
@@ -23065,7 +23202,7 @@ class Game:
             pass
         elif self._maybe_assigned_transport(villager, building):
             return
-        elif self._workplace_accepts_carry(villager, building):
+        elif self._should_force_carry_deposit(villager, building):
             self._force_assigned_delivery(villager, building)
             return
 
@@ -24303,6 +24440,87 @@ class Game:
             return (tx, ty)
         return None
 
+    def _pick_nearest_adjacent_target(
+        self,
+        origin: tuple[int, int],
+        targets: list[tuple[int, int]],
+        *,
+        villager: Villager | None = None,
+        max_nodes: int | None = None,
+    ) -> tuple[int, int] | None:
+        """Nearest target reachable by standing on an adjacent walkable cell.
+
+        Single BFS from ``origin`` — O(visited) once instead of one find_path per
+        candidate (mason rock fields were the main hitch on SP_new_1_hitch).
+        """
+        if not targets:
+            return None
+        # Map approach cell → preferred target (Manhattan-nearest rock).
+        goals: dict[tuple[int, int], tuple[int, int]] = {}
+        for tx, ty in targets:
+            for ny, nx in self.world.neighbourhood(tx, ty, radius=1):
+                if not self.world.is_walkable(nx, ny):
+                    continue
+                prev = goals.get((nx, ny))
+                if prev is None:
+                    goals[(nx, ny)] = (tx, ty)
+                    continue
+                d_new = abs(nx - tx) + abs(ny - ty)
+                d_old = abs(nx - prev[0]) + abs(ny - prev[1])
+                if d_new < d_old:
+                    goals[(nx, ny)] = (tx, ty)
+        if not goals:
+            return None
+        if origin in goals:
+            chosen = goals[origin]
+            if villager is not None:
+                villager._path_cache = []  # type: ignore[attr-defined]
+                villager._path_goal = origin  # type: ignore[attr-defined]
+            return chosen
+
+        ox, oy = origin
+        node_cap = (
+            max_nodes
+            if max_nodes is not None
+            else min(
+                self.world.rows * self.world.cols + 8,
+                max(1024, (WORK_SEARCH_RADIUS + 8) * (WORK_SEARCH_RADIUS + 8) * 2),
+            )
+        )
+        base = (
+            (-1, -1), (0, -1), (1, -1),
+            (-1, 0), (1, 0),
+            (-1, 1), (0, 1), (1, 1),
+        )
+        queue: deque[tuple[int, int]] = deque([(ox, oy)])
+        came_from: dict[tuple[int, int], tuple[int, int] | None] = {(ox, oy): None}
+        found_goal: tuple[int, int] | None = None
+        while queue and len(came_from) < node_cap:
+            cx, cy = queue.popleft()
+            if (cx, cy) in goals:
+                found_goal = (cx, cy)
+                break
+            for dx, dy in base:
+                nx, ny = cx + dx, cy + dy
+                if (nx, ny) in came_from:
+                    continue
+                if not self.world.can_step(cx, cy, nx, ny):
+                    continue
+                came_from[(nx, ny)] = (cx, cy)
+                queue.append((nx, ny))
+        if found_goal is None:
+            return None
+        path: list[tuple[int, int]] = []
+        cur: tuple[int, int] | None = found_goal
+        while cur is not None and cur != origin:
+            path.append(cur)
+            cur = came_from.get(cur)
+        path.reverse()
+        if villager is not None:
+            villager._path_cache = list(path)  # type: ignore[attr-defined]
+            villager._path_goal = found_goal  # type: ignore[attr-defined]
+        return goals[found_goal]
+
     def _pick_nearest_reachable(
         self,
         origin: tuple[int, int],
@@ -24335,6 +24553,10 @@ class Game:
             by_dist.setdefault(d, []).append(item)
 
         per_ring = max(1, int(PATH_PICK_MAX_PER_RING))
+        # Hard cap on BFS attempts for one pick — mason rock fields with dozens
+        # of candidates otherwise burn hundreds of ms every search (SP_new_1_hitch).
+        max_tries = max(per_ring, min(8, per_ring * 2))
+        tries = 0
         # Cap BFS to the search disc — uncapped flood fills the whole map on
         # misses and tanks daytime FPS when many workers replan each tick.
         map_cap = self.world.rows * self.world.cols + 8
@@ -24342,7 +24564,7 @@ class Game:
         for d in sorted(by_dist):
             tried = 0
             for item in by_dist[d]:
-                if tried >= per_ring:
+                if tried >= per_ring or tries >= max_tries:
                     break
                 px, py = pos_fn(item)
                 goal = self._walk_goal_for_target(
@@ -24352,6 +24574,7 @@ class Game:
                     continue
                 path = self.world.find_path(origin, goal, max_nodes=node_budget)
                 tried += 1
+                tries += 1
                 if path is None:
                     continue
                 plen = len(path)
@@ -24368,6 +24591,8 @@ class Game:
                     villager._path_cache = list(path)  # type: ignore[attr-defined]
                     villager._path_goal = goal  # type: ignore[attr-defined]
                 return item
+            if tries >= max_tries:
+                break
         return None
 
     def _find_work_in_building(
@@ -24585,11 +24810,11 @@ class Game:
                         rocks.append((x, y))
         if not rocks:
             return None
-        return self._pick_nearest_reachable(
+        # One multi-goal BFS to the nearest stand-next-to cell. Probing each rock
+        # with its own find_path hitching ~0.5s on dense fields (SP_new_1_hitch).
+        return self._pick_nearest_adjacent_target(
             origin,
             rocks,
-            pos_fn=lambda p: p,
-            prefer_adjacent=True,
             villager=villager,
         )
 
@@ -24771,12 +24996,17 @@ class Game:
         claimed: set[tuple[int, int]],
         areas: list | None,
     ) -> tuple[int, int] | None:
-        """Pick forage work: nearby first, then priority within each distance band.
+        """Pick forage work: recipe priority first, then nearer cells.
 
-        Scans the forage index once, then path-tests only the best few candidates
-        (not one full path search per enabled recipe).
+        Scans the forage index once, then path-tests the best candidates per
+        priority tier (not one full path search per enabled recipe).
         """
-        ox, oy = origin
+        # Without drawn areas, rank and radius are from the hut so workers
+        # prefer nearby high-priority forage over far loose wood they walked past.
+        search_origin = (
+            origin if areas else building.center_cell()
+        )
+        ox, oy = search_origin
         band = max(1, int(FORAGER_PRIORITY_BAND))
         recipe_meta: list[tuple[str, int, str, int]] = []
         for recipe in building.enabled_recipes():
@@ -24840,7 +25070,7 @@ class Game:
             if name != "honey":
                 continue
             colony = self._find_honey_colony(
-                villager, building, origin=origin
+                villager, building, origin=search_origin
             )
             if colony is None:
                 continue
@@ -24854,33 +25084,50 @@ class Game:
             villager.forage_colony_id = None
             return None
 
-        candidates.sort(key=lambda c: (c[0], c[1], c[2], c[3]))
-        path_tries = max(1, int(PATH_PICK_MAX_PER_RING)) * 3
-        tried = 0
-        for _band, _prio, _dist, target, colony_id in candidates:
-            if tried >= path_tries:
-                break
-            tried += 1
+        # Priority tiers first (1 = highest). Within a tier, nearer to the hut
+        # (or area origin) wins. Never let a worse-priority wood bush beat a
+        # still-pathable higher-priority crop just because it is closer.
+        path_origin = (villager.x, villager.y)
+        candidates.sort(key=lambda c: (c[1], c[2], c[3]))
+
+        path_tries_per_tier = max(6, max(1, int(PATH_PICK_MAX_PER_RING)) * 3)
+        current_prio: int | None = None
+        tried_tier = 0
+        for _band, prio, _dist, target, colony_id in candidates:
+            if current_prio is None or prio != current_prio:
+                current_prio = prio
+                tried_tier = 0
+            if tried_tier >= path_tries_per_tier:
+                continue
+            tried_tier += 1
             goal = self._walk_goal_for_target(
-                target[0], target[1], prefer_adjacent=False, from_pos=origin
+                target[0], target[1], prefer_adjacent=False, from_pos=path_origin
             )
             if goal is None:
                 continue
-            path = self.world.find_path(origin, goal)
+            path = self.world.find_path(
+                path_origin,
+                goal,
+                max_nodes=min(
+                    self.world.rows * self.world.cols + 8,
+                    max(1024, (WORK_SEARCH_RADIUS + 8) ** 2 * 2),
+                ),
+            )
             if path is None:
                 continue
-            straight = abs(goal[0] - ox) + abs(goal[1] - oy)
-            if not self._path_detour_ok(straight, len(path)):
+            # First hit in a priority tier wins even on a long route; further
+            # candidates in the same tier still honour the detour gate.
+            straight = abs(goal[0] - path_origin[0]) + abs(goal[1] - path_origin[1])
+            if tried_tier > 1 and not self._path_detour_ok(straight, len(path)):
                 continue
             villager.forage_colony_id = colony_id
             if colony_id is not None:
                 self._register_colony_claim(colony_id)
             self._register_field_claim(villager, target)
-            if origin == (villager.x, villager.y):
+            if path_origin == (villager.x, villager.y):
                 villager._path_cache = list(path)  # type: ignore[attr-defined]
                 villager._path_goal = goal  # type: ignore[attr-defined]
             return target
-
         villager.forage_colony_id = None
         return None
 
@@ -25232,7 +25479,9 @@ class Game:
                     inv.add_item("honey", result[1])
                     self.record_produced("honey", result[1])
                     self.world.apply_extraction_disturbance(x, y)
-                    villager._return_after_harvest = True  # type: ignore[attr-defined]
+                    # Only latch a return when the pack cannot take another yield.
+                    if self._gather_cargo_needs_delivery(villager, building):
+                        villager._return_after_harvest = True  # type: ignore[attr-defined]
                     self._spend_work_energy(villager)
                     self._gain_job_skill(villager, building.kind.name)
                 return
@@ -25352,6 +25601,8 @@ class Game:
             if max(abs(nxt[0] - villager.x), abs(nxt[1] - villager.y)) > 1:
                 cache = None
         if cache_goal != goal or cache is None:
+            # Committed travel must not use a tight node cap — false "unreachable"
+            # clears targets and makes workers bounce between jobs.
             path = self.world.find_path((villager.x, villager.y), goal)
             villager._path_cache = path if path is not None else []  # type: ignore[attr-defined]
             villager._path_goal = goal  # type: ignore[attr-defined]
@@ -25396,10 +25647,14 @@ class Game:
         note_cell_step(villager, step[0], step[1], world_target=world_target)
         if footprint is not None:
             building = self._building_at(step[0], step[1])
+            # Only enter the doorway we are walking *to*. Passing another hut's
+            # center on the way (forager↔hunter share a row on SP_new_1) was
+            # trapping workers in the wrong cabin mid-delivery.
             if (
                 building is not None
                 and not building.is_field_plot
                 and step == building.center_cell()
+                and goal == building.center_cell()
             ):
                 villager._pending_building_entry_id = building.id  # type: ignore[attr-defined]
                 villager._pending_entry_inventory_total = (  # type: ignore[attr-defined]
@@ -25426,7 +25681,9 @@ class Game:
         self._clear_villager_path(villager)
         if relocated is None:
             return None
-        if self.world.find_path((villager.x, villager.y), relocated) is None:
+        if self.world.find_path(
+            (villager.x, villager.y), relocated, max_nodes=PATH_FIND_MAX_NODES
+        ) is None:
             return None
         return relocated
 

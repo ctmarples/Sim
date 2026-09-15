@@ -62,7 +62,7 @@ def _wall_clock_for_labeled_day(
 
 def test_seconds_match_ticks_per_frame() -> None:
     pb = PLAYBACK_TICKS_AT_X1
-    assert pb == 2
+    assert pb == 1
     assert playback_ticks_this_frame(1, pb) == pb
     assert playback_ticks_this_frame(2, pb) == 2 * pb
     assert playback_ticks_this_frame(0, pb) == 0
@@ -76,8 +76,8 @@ def test_seconds_match_ticks_per_frame() -> None:
     assert abs(ticks_to_seconds(seconds_to_ticks(10.0, pb), pb) - 10.0) < 1e-9
     assert DAY_SECONDS_AT_X1 == 300.0
     assert sim_hz_at_x1(pb) == FPS * pb
-    # Ignoring playback (seconds * FPS only) made 1s last half a second.
-    assert seconds_to_ticks(1.0, pb) != FPS
+    # Ignoring playback (seconds * FPS only) made 1s last half a second when pb was 2.
+    assert seconds_to_ticks(1.0, pb) == FPS
 
 
 def test_legacy_intervals_scale_with_playback() -> None:
@@ -123,10 +123,12 @@ def test_game_one_tick_per_playback_slot_each_frame() -> None:
 
     g = Game(headless=True)
     g.sim_speed = 1
+    g.balance.set("PLAYBACK_TICKS_AT_X1", PLAYBACK_TICKS_AT_X1)
+    g.balance.set("CALENDAR_MODE", 0)
     g.balance.set("DAY_SECONDS_AT_X1", 1.0)
     g._apply_time_balance()
     pb = g._playback_ticks()
-    assert pb == 2
+    assert pb == PLAYBACK_TICKS_AT_X1
     assert g.ticks_per_day == seconds_to_ticks(1.0, pb)
     g.calendar_day = 0
     g.day_tick = g.ticks_per_day

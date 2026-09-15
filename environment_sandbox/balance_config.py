@@ -245,7 +245,8 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
                 1,
                 8,
                 1,
-                "Usually leave at 2. Speed buttons multiply this. Higher = more sim per displayed frame.",
+                "Usually leave at 1. Speed buttons multiply this. Higher = more sim per displayed frame "
+                "(costs FPS). Lower = lighter CPU for the same wall-clock pace.",
             ),
         ),
     ),

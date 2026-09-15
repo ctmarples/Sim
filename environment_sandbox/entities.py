@@ -3780,9 +3780,10 @@ class Building:
                 return True
             return False
         if self.is_market():
+            # Stall restock only accepts enabled supply lines (see deposit_supply_from).
             return any(
                 int(getattr(inventory, key, 0)) > 0 and self.space_for_key(key) > 0
-                for key in self.depositable_keys()
+                for key in self.market_supply_mins
             )
         # Gather / forester lodge: accept any depositable cargo with room.
         keys = self.depositable_keys()
@@ -3927,6 +3928,10 @@ class Building:
         return keys
 
     def has_gather_cargo(self, inventory: Inventory) -> bool:
+        if self.is_market():
+            return any(
+                int(getattr(inventory, key, 0)) > 0 for key in self.market_supply_mins
+            )
         return any(getattr(inventory, key, 0) > 0 for key in self.gather_deposit_keys())
 
     def holding_only_plantables(self, inventory: Inventory) -> bool:
