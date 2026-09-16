@@ -23,6 +23,42 @@ class WildlifeRebalanceTests(unittest.TestCase):
         self.world = World(16, 16, seed=3)
         self.wildlife = WildlifeManager(seed=3)
 
+    def test_bees_only_breed_in_growing_season(self) -> None:
+        for season in (Season.AUTUMN, Season.WINTER):
+            self.assertFalse(self.wildlife._colony_breed_season_ok(AnimalKind.BEE, season))
+        self.assertTrue(self.wildlife._colony_breed_season_ok(AnimalKind.BEE, Season.SPRING))
+
+    def test_sparse_food_reduces_condition(self) -> None:
+        from wildlife import Colony
+
+        colony = Colony(id=1, kind=AnimalKind.BEE, x=0, y=0, level=3, habitat_id=None)
+        self.wildlife._colony_food_score = lambda *_: 0.1
+        before = colony.condition
+        self.wildlife._update_colony_condition(self.world, colony)
+        self.assertLess(colony.condition, before)
+
+    def test_split_transfers_parent_population(self) -> None:
+        for row in self.world.cells:
+            for cell in row:
+                cell.terrain = TerrainType.MEADOW
+                cell.feature = FeatureType.NONE
+        self.wildlife.refresh_habitats(self.world)
+        sites = self.wildlife._empty_colony_sites(AnimalKind.BEE)
+        from dataclasses import replace
+
+        second = replace(sites[0], id=len(self.wildlife.open_habitats))
+        self.wildlife.open_habitats.append(second)
+        colony = self.wildlife._spawn_colony(AnimalKind.BEE, sites[0], level=3)
+        colony.condition = 1.0
+        self.balance.set("WILDLIFE_COLONY_GROW_CHANCE", 0.0)
+        self.balance.set("WILDLIFE_COLONY_SPLIT_CHANCE", 1.0)
+        self.wildlife._colony_food_score = lambda *_: 1.0
+        self.wildlife.rng.random = lambda: 0.5
+        before = sum(c.level for c in self.wildlife.colonies)
+        self.wildlife._tick_colonies(self.world, season=Season.SPRING)
+        self.assertEqual(len(self.wildlife.colonies), 2)
+        self.assertEqual(sum(c.level for c in self.wildlife.colonies), before)
+
     def test_bare_field_is_not_forage(self) -> None:
         cell = self.world.get_cell(4, 4)
         assert cell is not None

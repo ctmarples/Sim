@@ -969,7 +969,7 @@ BALANCE_CATEGORIES: tuple[BalanceCategory, ...] = (
                 0.02,
                 "Base chance a colony gains a level when fed. Scaled by nest "
                 "ecology, condition, and unused forage capacity (1 − level/cap). "
-                "Bees grow year-round; rabbit/vole/frog only in spring–summer.",
+                "All colonies breed only in spring–summer.",
             ),
             BalanceParam(
                 "WILDLIFE_COLONY_SPLIT_CHANCE",

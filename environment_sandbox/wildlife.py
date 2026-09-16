@@ -12,7 +12,7 @@ Breed once each spring. Extinct populations may return via immigration chances.
 Bees / Rabbits / Frogs / Voles
 -----------------------------
 Colonies (not individuals). Level growth is density-dependent and condition-
-gated. Bees may grow year-round; rabbit/vole/frog only in spring–summer.
+gated. Colonies breed in spring–summer and splitting transfers parent population.
 Farm crops count as forage only while growing or standing — not bare fields.
 
 Wolves / Foxes
@@ -3423,27 +3423,23 @@ class WildlifeManager:
                 terrain += 1
         if plant <= 0 and terrain <= 0:
             return 0.0
-        # A few plant tiles are enough to saturate; terrain alone caps lower.
-        plant_score = min(1.0, plant / 4.0)
-        terrain_score = min(0.55, terrain / 8.0)
-        return max(plant_score, terrain_score)
+        # Food demand grows with population; sparse forage cannot sustain a
+        # large colony merely because at least one edible tile remains.
+        demand = max(1, colony.level * colony_forage_per_level(colony.kind))
+        return min(1.0, (plant + 0.55 * terrain) / demand)
 
     def _update_colony_condition(self, world: World, colony: Colony) -> None:
         gain = _bal_float("WILDLIFE_CONDITION_FED_GAIN", 0.20)
         loss = _bal_float("WILDLIFE_CONDITION_HUNGER_LOSS", 0.10)
         score = self._colony_food_score(world, colony)
         cur = max(0.0, min(1.0, float(getattr(colony, "condition", 0.7))))
-        if score > 0.0:
-            colony.condition = min(1.0, cur + gain * max(0.35, score))
-        else:
-            colony.condition = max(0.0, cur - loss)
+        change = gain * score - loss * (1.0 - score)
+        colony.condition = max(0.0, min(1.0, cur + change))
 
     @staticmethod
     def _colony_breed_season_ok(kind: AnimalKind, season: Season) -> bool:
-        """Bees grow year-round; small mammals/frogs only in spring–summer."""
-        if kind == AnimalKind.BEE:
-            return True
-        if kind in (AnimalKind.RABBIT, AnimalKind.VOLE, AnimalKind.FROG):
+        """Colony reproduction follows the spring–summer growing season."""
+        if kind in COLONY_KINDS:
             return season in (Season.SPRING, Season.SUMMER)
         return False
 
@@ -3691,7 +3687,7 @@ class WildlifeManager:
             ):
                 self.colonies.remove(colony)
 
-        # Level growth: bees any season; rabbit/vole/frog spring–summer only.
+        # Level growth follows the growing season for all colony species.
         from balance_config import active_balance
 
         grow_chance = active_balance().get_float("WILDLIFE_COLONY_GROW_CHANCE")
@@ -3762,7 +3758,11 @@ class WildlifeManager:
                     for bx, by in h.nest_tiles
                 )
             )
-            self._spawn_colony(colony.kind, sites[0], level=1)
+            offspring = self._spawn_colony(colony.kind, sites[0], level=1)
+            if offspring is not None:
+                colony.level -= offspring.level
+                colony.clamp_level()
+                self._sync_colony_members(colony, self._colony_habitat(colony))
 
     # ------------------------------------------------------------------
     # Wolf / fox packs
