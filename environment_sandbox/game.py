@@ -407,6 +407,7 @@ from world import (
     is_bare_rock,
     is_water_terrain,
 )
+from simulation import compost
 
 
 TASK_COLOURS = {
@@ -16663,150 +16664,37 @@ class Game:
         return None
 
     def _linked_compost_heap(self, farm: Building) -> Building | None:
-        """Completed compost-heap annex for this farm, if any."""
-        if farm.kind != BuildingKind.FARM:
-            return None
-        from extensions import linked_extensions
-
-        return next(
-            (b for b in linked_extensions(farm, self.buildings) if b.kind == BuildingKind.COMPOST_HEAP),
-            None,
-        )
+        return compost.linked_compost_heap(farm, self.buildings)
 
     def _migrate_spoilage_to_heap(self, farm: Building) -> None:
-        """Move farm-tray spoilage into the linked compost heap."""
-        heap = self._linked_compost_heap(farm)
-        if heap is None:
-            return
-        while int(getattr(farm, "spoilage", 0) or 0) > 0 and heap.space_for_key(
-            "spoilage"
-        ) > 0:
-            farm.spoilage = int(farm.spoilage) - 1
-            heap.spoilage = int(getattr(heap, "spoilage", 0) or 0) + 1
+        compost.migrate_spoilage_to_heap(farm, self.buildings)
 
     def _compost_input_have(self, farm: Building, key: str) -> int:
-        heap = self._linked_compost_heap(farm)
-        total = int(getattr(farm, key, 0) or 0)
-        if heap is not None:
-            total += int(getattr(heap, key, 0) or 0)
-        return total
+        return compost.compost_input_have(farm, key, self.buildings)
 
     def _compost_recipe_ready(self, farm: Building, recipe) -> bool:
-        self._migrate_spoilage_to_heap(farm)
-        return all(
-            self._compost_input_have(farm, key) >= int(need)
-            for key, need in recipe.inputs.items()
-        )
+        return compost.compost_recipe_ready(farm, recipe, self.buildings)
 
     def _apply_compost_recipe(self, farm: Building, recipe) -> None:
-        """Consume spoilage / produce compost on the linked heap."""
-        heap = self._linked_compost_heap(farm)
-        if heap is None:
-            return
-        self._migrate_spoilage_to_heap(farm)
-        for key, need in recipe.inputs.items():
-            left = int(need)
-            take_farm = min(left, int(getattr(farm, key, 0) or 0))
-            if take_farm:
-                setattr(farm, key, int(getattr(farm, key, 0) or 0) - take_farm)
-                left -= take_farm
-            if left > 0:
-                take_heap = min(left, int(getattr(heap, key, 0) or 0))
-                if take_heap:
-                    setattr(heap, key, int(getattr(heap, key, 0) or 0) - take_heap)
-                    left -= take_heap
-            self.record_consumed(key, int(need) - left)
-        for key, n in recipe.outputs.items():
-            before = int(getattr(heap, key, 0) or 0)
-            setattr(heap, key, before + int(n))
-            self.record_produced(key, int(n))
+        compost.apply_compost_recipe(
+            farm, recipe, self.buildings,
+            record_consumed=self.record_consumed,
+            record_produced=self.record_produced,
+        )
 
     def _pull_compost_food_from_storehouse(self, heap: Building) -> int:
-        """Move enabled food surplus from the storehouse onto the heap up to caps."""
-        from food_spoilage import on_food_merged, on_food_removed
-
-        moved = 0
-        for key in list(heap.compost_food_mins):
-            surplus = self._market_storehouse_surplus(
-                key, heap.compost_food_reserve(key)
-            )
-            if surplus <= 0:
-                continue
-            have = int(getattr(heap, key, 0) or 0)
-            target = heap.compost_food_target(key)
-            want = max(0, target - have)
-            room = heap.space_for_key(key)
-            take = min(surplus, want, room)
-            if take <= 0:
-                continue
-            store_before = int(getattr(self.home_storage, key, 0) or 0)
-            setattr(self.home_storage, key, store_before - take)
-            on_food_removed(self.home_storage, key)
-            heap_before = have
-            setattr(heap, key, heap_before + take)
-            on_food_merged(
-                heap,
-                key,
-                amount_before=heap_before,
-                amount_added=take,
-                src_quality=1.0,
-            )
-            moved += take
-        return moved
+        return compost.pull_compost_food_from_storehouse(
+            heap, self.home_storage,
+            storehouse_surplus=self._market_storehouse_surplus,
+        )
 
     def _convert_seasonal_compost(self) -> int:
-        """Convert complete batches physically stored in enabled compost heaps.
-
-        Spoilage and player-enabled food on the heap both count toward the
-        compost recipe input ratio (default 10→1).
-        """
-        made = 0
-        for farm in self.buildings.values():
-            if farm.kind != BuildingKind.FARM:
-                continue
-            recipe = next(
-                (r for r in farm.addon_craft_recipes() if "compost" in r.outputs),
-                None,
-            )
-            heap = self._linked_compost_heap(farm)
-            if recipe is None or heap is None or not farm.is_recipe_enabled(recipe.name):
-                continue
-            self._migrate_spoilage_to_heap(farm)
-            self._pull_compost_food_from_storehouse(heap)
-            need = max(1, int(recipe.inputs.get("spoilage", 10)))
-            out = max(1, int(recipe.outputs.get("compost", 1)))
-            food_pool = sum(
-                int(getattr(heap, key, 0) or 0) for key in heap.compost_food_mins
-            )
-            pool = int(getattr(heap, "spoilage", 0) or 0) + food_pool
-            batches = pool // need
-            if batches <= 0:
-                continue
-            left = batches * need
-            take_spoil = min(int(getattr(heap, "spoilage", 0) or 0), left)
-            if take_spoil:
-                heap.spoilage -= take_spoil
-                left -= take_spoil
-                self.record_consumed("spoilage", take_spoil)
-            if left > 0:
-                from food_spoilage import on_food_removed
-
-                for key in list(heap.compost_food_mins):
-                    if left <= 0:
-                        break
-                    have = int(getattr(heap, key, 0) or 0)
-                    take = min(have, left)
-                    if take <= 0:
-                        continue
-                    setattr(heap, key, have - take)
-                    on_food_removed(heap, key)
-                    self.record_consumed(key, take)
-                    left -= take
-            produced = batches * out
-            heap.compost += produced
-            self.record_produced("compost", produced)
-            made += produced
-        return made
+        return compost.convert_seasonal_compost(
+            self.buildings, self.home_storage,
+            storehouse_surplus=self._market_storehouse_surplus,
+            record_consumed=self.record_consumed,
+            record_produced=self.record_produced,
+        )
 
     def _migrate_sheaves_to_barn(self, farm: Building) -> None:
         """Move leftover farm sheaves into the barn (one-time drain)."""
