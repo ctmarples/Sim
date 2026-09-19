@@ -313,6 +313,13 @@ class ContentLabSession:
             elif action == "landscape_fields":
                 from developer_tools.landscape_fields_lab import LandscapeFieldsSession
                 LandscapeFieldsSession(self.game).start()
+            elif action == "map_forage_estimate":
+                from map_resource_estimate import estimate_map_resources, format_report
+                from random_map_generator import MapOptions
+
+                report = format_report(estimate_map_resources(MapOptions()), half=None)
+                print(report)
+                self.message = "Map forage estimate printed to console (python -m map_resource_estimate)."
             elif action == "back": self.leave()
             return True
         if event.type != pygame.KEYDOWN:
@@ -365,8 +372,9 @@ class ContentLabSession:
         for line in lines:surface.blit(body.render(line,True,(135,195,145) if '✕' not in line else (225,115,100)),(panel.x+20,y));y+=19
         surface.blit(body.render(self.message,True,(190,195,190)),(panel.x+12,panel.bottom-65))
         button(panel.x+12,panel.bottom-37,105,"Reset Lab","reset")
-        button(panel.x+125,panel.bottom-37,160,"Landscape Fields","landscape_fields")
-        button(panel.x+293,panel.bottom-37,150,"Back to Dev Tools","back")
+        button(panel.x+125,panel.bottom-37,150,"Landscape Fields","landscape_fields")
+        button(panel.x+283,panel.bottom-37,140,"Map Forage Est.","map_forage_estimate")
+        button(panel.x+431,panel.bottom-37,125,"Back to Dev Tools","back")
         # Draw open dropdowns last so their popup menus remain above the panel.
         if self.resource_dropdown.open:self.resource_dropdown.draw(surface,body)
         if self.recipe_dropdown.open:self.recipe_dropdown.draw(surface,body)

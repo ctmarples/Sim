@@ -6,6 +6,9 @@ Edit amounts and consumption here. Related catalogues (not duplicated):
 - ``trees.py`` — per-species wood yield and growth years
 - ``recipes.py`` — mill / kitchen craft input→output ratios
 - ``settings.py`` — tick cadence (animal/fish move & growth intervals)
+- ``map_resource_estimate.py`` — closed-form half-season forage expectations
+  for theoretical random maps (terrain mix × wild spawn rules); run
+  ``python -m map_resource_estimate`` when rebalancing seasonality
 """
 
 from __future__ import annotations
