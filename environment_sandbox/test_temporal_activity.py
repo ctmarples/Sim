@@ -71,10 +71,11 @@ class ActivityProfileTests(unittest.TestCase):
         autumn_early = activity_at_day(m, 56.5)
         autumn_late = activity_at_day(m, 70.5)
         self.assertLess(spring, 0.2)
-        self.assertLess(summer, 0.2)
-        self.assertGreater(autumn_early, 0.85)
+        self.assertLess(summer, 0.35)
+        self.assertGreater(autumn_early, 0.7)
         self.assertGreater(autumn_late, 0.85)
-        self.assertGreater(autumn_early, summer * 5)
+        self.assertGreater(autumn_late, autumn_early)
+        self.assertGreater(autumn_late, summer * 3)
 
     def test_fallen_wood_appearance_peaks_late_autumn_winter_early(self):
         w = WILD_BY_KEY["wood_bush"]
@@ -181,7 +182,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIsNotNone(WILD_BY_KEY["wheat"].activity_profile)
         self.assertEqual(len(WILD_BY_KEY["mushroom"].activity_profile), 8)
-        self.assertEqual(WILD_BY_KEY["mushroom"].activity_profile[4], 1.0)
+        self.assertEqual(WILD_BY_KEY["mushroom"].activity_profile[5], 1.0)
 
 
 class ProgressHelperTests(unittest.TestCase):

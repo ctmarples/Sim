@@ -101,10 +101,12 @@ SKILL_COL_W = 36
 # Fixed column widths (content starts after portrait gutter).
 COL_NAME_W = 140
 COL_BAR_W = 44
-COL_HOUSE_W = 78
+# Bed + housing + up to four food-tier icons (t1…t4).
+COL_HOUSE_W = 110
 COL_PAY_W = 40
 REQ_ICON = 16
 REQ_ICON_GAP = 2
+REQ_MAX_ICONS = 6
 
 
 def draw_requirement_icons(
@@ -114,11 +116,12 @@ def draw_requirement_icons(
     rows: list[dict],
     *,
     icon_size: int = REQ_ICON,
-    max_icons: int = 4,
-) -> int:
-    """Draw compact green/red requirement icons. Returns width used."""
+    max_icons: int = REQ_MAX_ICONS,
+) -> list[tuple[pygame.Rect, dict]]:
+    """Draw compact green/red requirement icons. Returns (rect, row) hits for tooltips."""
     from icons import blit_icon
 
+    hits: list[tuple[pygame.Rect, dict]] = []
     cur = x
     for row in list(rows or [])[:max_icons]:
         if not isinstance(row, dict):
@@ -134,8 +137,9 @@ def draw_requirement_icons(
             blit_icon(surface, ic, rect.centerx, rect.centery, icon_size - 4)
         except Exception:
             pass
+        hits.append((rect, row))
         cur += icon_size + REQ_ICON_GAP
-    return max(0, cur - x - REQ_ICON_GAP)
+    return hits
 
 
 def _column_layout(left: int, *, actions: bool) -> dict[str, int]:
@@ -553,6 +557,7 @@ class VillagerRosterDialog:
         self._move_offset = (0, 0)
         self.assign_building_id: int | None = None
         self._entries: list[RosterEntry] = []
+        self._tooltip: tuple[str, tuple[int, int]] | None = None
 
     @property
     def open(self) -> bool:
@@ -716,6 +721,7 @@ class VillagerRosterDialog:
         self._buttons = []
         self._row_hits = []
         self._header_hits = []
+        self._tooltip = None
 
         x = panel.x + PAD
         y = panel.y + TITLE_BAR_H + 6
@@ -851,14 +857,23 @@ class VillagerRosterDialog:
                 kind="happy",
             )
 
-            # Requirements column (housing + staple icons)
+            # Requirements column (housing + staple / food-tier icons)
             if entry.requirement_rows:
-                draw_requirement_icons(
+                req_hits = draw_requirement_icons(
                     surface,
                     cols["house"] + 2,
                     row_y + (ROW_H - REQ_ICON) // 2,
                     entry.requirement_rows,
                 )
+                if mouse_pos is not None and self._tooltip is None:
+                    for icon_rect, requirement in req_hits:
+                        if icon_rect.collidepoint(mouse_pos):
+                            detail = str(requirement.get("label") or "Requirement")
+                            coins = int(requirement.get("coins", 0) or 0)
+                            if coins > 0 and not bool(requirement.get("met")):
+                                detail += f" · {coins} coins/season if unmet"
+                            self._tooltip = (detail, (icon_rect.centerx, icon_rect.top))
+                            break
             else:
                 house_txt = "bed" if entry.housed else f"≥{entry.housing_need}"
                 ht = self.font_tiny.render(house_txt, True, COLOUR_TEXT_DIM)
@@ -955,6 +970,24 @@ class VillagerRosterDialog:
                 pygame.Rect(panel.right - 10, bar_y, 5, bar_h),
                 border_radius=2,
             )
+
+        if self._tooltip is not None:
+            tip, (tx, ty) = self._tooltip
+            text = self.font_small.render(tip, True, (0, 0, 0))
+            tip_r = text.get_rect()
+            tip_r.midbottom = (tx, ty - 4)
+            tip_r.x = max(4, min(tip_r.x, WINDOW_WIDTH - tip_r.w - 4))
+            bg = tip_r.inflate(10, 6)
+            from inventory_ui import TOOLTIP_BG, TOOLTIP_BORDER
+
+            old_clip = surface.get_clip()
+            surface.set_clip(None)
+            try:
+                pygame.draw.rect(surface, TOOLTIP_BG, bg, border_radius=4)
+                pygame.draw.rect(surface, TOOLTIP_BORDER, bg, 1, border_radius=4)
+                surface.blit(text, tip_r)
+            finally:
+                surface.set_clip(old_clip)
 
     def _draw_btn(
         self,

@@ -38,21 +38,31 @@ class KitchenTrayTests(unittest.TestCase):
         self.assertEqual(kitchen.fish, 1)
         self.assertEqual(kitchen.mushrooms, 3)
 
-    def test_kitchen_without_pantry_can_make_mushroom_stew(self) -> None:
-        kitchen = _kitchen("mushroom_stew")
-        kitchen.mushrooms = 2
-        kitchen.turnip = 1
-        kitchen.sage = 1
+    def test_full_pantry_still_allows_cooking_onto_kitchen_tray(self) -> None:
+        """Linked pantry full of raw food must not deadlock cooking.
 
+        add_recipe_output already falls back to the kitchen tray; craftable
+        selection must match that so cooks keep working.
+        """
+        kitchen = _kitchen("grilled_mushrooms")
+        pantry = Building(id=2, kind=BuildingKind.PANTRY, x=1, y=0)
+        apply_building_storage(pantry)
+        kitchen._food_storages = (pantry,)
+        pantry._linked_kitchen = kitchen
+        pantry.mushrooms = pantry.capacity
+
+        self.assertEqual(pantry.space_left, 0)
+        self.assertTrue(kitchen._recipe_output_fits(
+            next(r for r in kitchen.known_recipes() if r.name == "grilled_mushrooms")
+        ))
         recipe = kitchen.craftable_recipe()
-
         self.assertIsNotNone(recipe)
         assert recipe is not None
-        self.assertEqual(recipe.name, "mushroom_stew")
+        self.assertEqual(recipe.name, "grilled_mushrooms")
         kitchen.consume_recipe_item("mushrooms", 2)
-        kitchen.consume_recipe_item("sage", 1)
-        kitchen.add_recipe_output("mushroom_stew", 1)
-        self.assertEqual(kitchen.mushroom_stew, 1)
+        kitchen.add_recipe_output("grilled_mushrooms", 1)
+        self.assertEqual(kitchen.grilled_mushrooms, 1)
+        self.assertEqual(pantry.mushrooms, pantry.capacity - 2)
 
     def test_full_meat_leaves_no_room_and_is_haulable(self) -> None:
         kitchen = _kitchen("stew", "mushroom_stew")

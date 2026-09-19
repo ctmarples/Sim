@@ -11,6 +11,7 @@ class FoodSeekingTests(unittest.TestCase):
         game = Game.__new__(Game)
         game.villagers = []
         game.ticks_per_day = 240
+        game.day_tick = 0
         game._tick_job_change_deposit = Mock(return_value=False)
         game._satiation_decay = Mock(return_value=0.0)
         game._idle_decision_pending = Mock(return_value=False)
@@ -23,6 +24,11 @@ class FoodSeekingTests(unittest.TestCase):
         game._food_count = Mock(return_value=0)
         game._find_nearest_food_store = Mock(return_value=(5, 5))
         game._find_nearest_map_food = Mock(return_value=None)
+        game._begin_villager_building_entry = Mock()
+        game._reconcile_seasonal_workplace = Mock()
+        game._calendar_rate_per_tick = Mock(return_value=0.0)
+        game._trait_hunger_mult = Mock(return_value=1.0)
+        game.buildings = {}
 
         villager = SimpleNamespace(
             id=1,
@@ -77,24 +83,30 @@ class FoodSeekingTests(unittest.TestCase):
     def test_priority_food_in_store_is_sought_before_carried_fallback(self):
         game = Game.__new__(Game)
         game.world = SimpleNamespace(home_pos=(5, 5))
-        game.home_storage = SimpleNamespace(meat=1)
+        game.home_storage = SimpleNamespace(roasted_turnips=1)
         game.buildings = {}
         game._eat_random_from = Mock(return_value=1)
         game._inventory_needs_store_deposit = Mock(return_value=True)
         game._villager_needs_home_restock = Mock(return_value=False)
         game._step_villager_toward = Mock(return_value=True)
+        game._food_count = Mock(return_value=1)
+        game._find_nearest_food_store = Mock(
+            side_effect=lambda v, preferred_only=False: (5, 5) if preferred_only else None
+        )
+        game._food_store_at = Mock(return_value=SimpleNamespace(roasted_turnips=1))
 
         villager = SimpleNamespace(
             x=1,
             y=1,
             inventory=SimpleNamespace(cabbage=1, is_full=False),
-            required_foods=["meat"],
+            required_foods=["t1"],
             favourite_foods=[],
             seeking_food=True,
             satiation=0.5,
             target=None,
             work_cooldown=0,
             state=VillagerState.IDLE,
+            building_id=None,
         )
 
         game._update_seek_food(villager)

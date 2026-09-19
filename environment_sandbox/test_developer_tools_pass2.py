@@ -22,7 +22,7 @@ class Pass2DeveloperToolsTests(unittest.TestCase):
     def test_structured_rows_round_trip_without_raw_editor_syntax(self):
         amounts = [("fish", 2), ("garlic", 1)]
         self.assertEqual(parse_amount_rows(serialize_amount_rows(amounts)), amounts)
-        clauses = [["stew", "fish_stew"], ["bread"]]
+        clauses = [["t1"], ["t2"], ["t3"]]
         self.assertEqual(parse_food_requirements(serialize_food_requirements(clauses)), clauses)
 
     def test_shared_state_tracks_dirty_and_navigation_confirmation(self):

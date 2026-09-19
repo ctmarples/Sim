@@ -202,11 +202,20 @@ class ResourceTrackerDialog:
         return True
 
     def _resource_rows(self) -> list[tuple[str, ResourceDef | None]]:
+        from resources import resources_by_food_tier
+
         rows: list[tuple[str, ResourceDef | None]] = []
         by_group: dict[str, list[ResourceDef]] = {g: [] for g in GROUP_ORDER}
         for res in RESOURCES:
             by_group.setdefault(res.group, []).append(res)
         for group in GROUP_ORDER:
+            if group == "food":
+                rows.append((GROUP_LABELS.get(group, group), None))
+                for tier_label, items in resources_by_food_tier():
+                    rows.append((tier_label, None))
+                    for res in items:
+                        rows.append((res.label, res))
+                continue
             rows.append((GROUP_LABELS.get(group, group), None))
             for res in by_group.get(group, []):
                 rows.append((res.label, res))

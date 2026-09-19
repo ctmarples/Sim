@@ -30,7 +30,19 @@ class ResourceDef:
 # Display order within each group follows this list order.
 # Edible vegetables and pulses are food; fibre and unprocessed sheaves stay wares.
 _FOOD_CROP_KEYS = frozenset(
-    {"onion", "cabbage", "carrot", "garlic", "peas", "beans","turnip"}
+    {
+        "onion",
+        "cabbage",
+        "carrot",
+        "garlic",
+        "peas",
+        "beans",
+        "turnip",
+        "potato",
+        "pumpkin",
+        "kale",
+        "leek",
+    }
 )
 _CROP_PRODUCE_FOOD = tuple(
     ResourceDef(c.produce_key, c.label, "food", c.short)
@@ -73,6 +85,7 @@ RESOURCES: list[ResourceDef] = [
     ResourceDef("elderberries", "Elderberries", "food", "eldr"),
     ResourceDef("hazelnuts", "Hazelnuts", "food", "hazl"),
     ResourceDef("mushrooms", "Mushrooms", "food", "mush"),
+    ResourceDef("nettles", "Nettles", "food", "nett"),
     ResourceDef("honey", "Honey", "food", "hone"),
     ResourceDef("book", "Old farm book", "wares", "book", "book_inventory"),
     *_CROP_PRODUCE_FOOD,
@@ -211,19 +224,27 @@ def register_resource(
     label: str,
     group: str = "food",
     short: str | None = None,
+    icon_key: str | None = None,
 ) -> None:
     """Add or replace a catalogue entry (used by recipe JSON loader)."""
     global RESOURCE_KEYS
     short_label = short or key[:4]
-    entry = ResourceDef(key, label, group, short_label)
+    icon = (icon_key or "").strip()
+    entry = ResourceDef(key, label, group, short_label, icon)
     for i, existing in enumerate(RESOURCES):
         if existing.key == key:
-            # Recipe metadata may update legacy label/group fields, but the
-            # Resource catalogue owns icon, usage, stacking and tool behavior.
+            # Recipe metadata may update label/group/icon; keep usage/stack/tool
+            # fields from any prior catalogue or CSV override.
             RESOURCES[i] = ResourceDef(
-                key, label, group, short_label, existing.icon_key,
-                existing.usage, existing.stack_size,
-                existing.tool_effectiveness, existing.tool_targets,
+                key,
+                label,
+                group,
+                short_label,
+                icon or existing.icon_key,
+                existing.usage,
+                existing.stack_size,
+                existing.tool_effectiveness,
+                existing.tool_targets,
             )
             RESOURCE_KEYS = tuple(r.key for r in RESOURCES)
             return
@@ -243,6 +264,48 @@ def resources_by_group() -> list[tuple[str, list[ResourceDef]]]:
     for res in RESOURCES:
         grouped.setdefault(res.group, []).append(res)
     return [(g, grouped[g]) for g in GROUP_ORDER if grouped.get(g)]
+
+
+FOOD_TIER_SECTION_ORDER: tuple[str, ...] = ("t0", "t1", "t2", "t3", "t4")
+FOOD_TIER_SECTION_LABELS: dict[str, str] = {
+    "t0": "T0 Raw",
+    "t1": "T1 Fire",
+    "t2": "T2 Simple",
+    "t3": "T3 Kitchen",
+    "t4": "T4 Feast",
+}
+
+
+def food_tier_section_key(resource_key: str) -> str:
+    """Map a food resource to its T0–T4 panel section (recipe steps, else raw)."""
+    from resource_balance import food_tier
+
+    tier = food_tier(resource_key)
+    if tier is None:
+        return "t0"
+    return f"t{max(0, min(4, int(tier)))}"
+
+
+# Legacy catalogue rows superseded by craft outputs (meat_stew, wheat_bread, …).
+_FOOD_PANEL_EXCLUDE: frozenset[str] = frozenset(
+    {"stew", "fish_stew", "bread", "bread_wheat"}
+)
+
+
+def resources_by_food_tier() -> list[tuple[str, list[ResourceDef]]]:
+    """Food catalogue split into hire/cook tiers for the stock popup."""
+    buckets: dict[str, list[ResourceDef]] = {k: [] for k in FOOD_TIER_SECTION_ORDER}
+    for res in RESOURCES:
+        if res.group != "food":
+            continue
+        if res.key in _FOOD_PANEL_EXCLUDE:
+            continue
+        buckets.setdefault(food_tier_section_key(res.key), []).append(res)
+    return [
+        (FOOD_TIER_SECTION_LABELS.get(section, section), buckets[section])
+        for section in FOOD_TIER_SECTION_ORDER
+        if buckets.get(section)
+    ]
 
 
 def format_grouped_counts(amounts: dict[str, int], *, skip_zero: bool = False) -> list[str]:
@@ -312,10 +375,138 @@ def _crop_plant_style(crop, *, dense: bool = False) -> ResourceIconStyle:
     )
 
 
+def _soup_style(accent: tuple[int, int, int], *, body: tuple[int, int, int] = (120, 140, 70)) -> ResourceIconStyle:
+    return ResourceIconStyle("vegetable_soup", {"body": body, "accent": accent})
+
+
+def _stew_style(accent: tuple[int, int, int], *, body: tuple[int, int, int] = (140, 100, 70)) -> ResourceIconStyle:
+    return ResourceIconStyle("stew", {"body": body, "accent": accent})
+
+
+def _porridge_style(accent: tuple[int, int, int]) -> ResourceIconStyle:
+    return ResourceIconStyle("porridge", {"body": (210, 190, 140), "accent": accent})
+
+
+def _cooked_food_icon_style(key: str) -> ResourceIconStyle | None:
+    """Distinct inventory glyphs for each craft output (not raw crop plants)."""
+    from icons import ICON_FISH, ICON_MEAT_MARKER, ICON_MUSHROOM
+
+    styles: dict[str, ResourceIconStyle] = {
+        # T1 grill (roasted roots fall through to crop plant glyphs)
+        "grilled_mushrooms": ResourceIconStyle(
+            ICON_MUSHROOM, {"cap": (160, 100, 50), "stem": (210, 200, 180)}
+        ),
+        "grilled_fish": ResourceIconStyle(ICON_FISH, {"body": (200, 140, 70)}),
+        "grilled_meat": ResourceIconStyle(ICON_MEAT_MARKER, {"body": (160, 90, 45)}),
+        # T2 porridge / soups — each dish its own accent so they do not read as pea soup
+        "barley_gruel": _porridge_style((190, 160, 90)),
+        "wheat_porridge": _porridge_style((220, 190, 120)),
+        "rye_porridge": _porridge_style((160, 120, 70)),
+        "nettle_soup": _soup_style((70, 140, 80)),
+        "pea_soup": _soup_style((150, 180, 60)),
+        "potato_soup": _soup_style((210, 190, 120)),
+        "bean_stew": _soup_style((140, 90, 50)),
+        "pumpkin_soup": _soup_style((220, 140, 40)),
+        "mushroom_soup": ResourceIconStyle(
+            "mushroom_stew", {"body": (140, 100, 70), "accent": (107, 74, 46)}
+        ),
+        "leek_potato_soup": _soup_style((120, 170, 90)),
+        "kale_soup": _soup_style((50, 110, 55)),
+        # T3
+        "pea_ham_soup": _stew_style((160, 100, 50)),
+        "meat_stew": _stew_style((192, 96, 48)),
+        "fish_soup": ResourceIconStyle(
+            "fish_stew", {"body": (140, 100, 70), "accent": (64, 128, 176)}
+        ),
+        "root_stew": _soup_style((170, 120, 55)),
+        "souper_greens": _soup_style((60, 130, 70)),
+        "wheat_bread": ResourceIconStyle("bread", {"body": (210, 170, 100)}),
+        "rye_bread": ResourceIconStyle("bread", {"body": (160, 110, 60)}),
+        "bread": ResourceIconStyle("bread", {"body": (210, 170, 100)}),
+        "berry_jam": ResourceIconStyle(
+            "berry_jam", {"body": (160, 60, 90), "accent": (200, 80, 110)}
+        ),
+        # T4
+        "mushroom_pie": ResourceIconStyle(
+            "mushroom_stew", {"body": (140, 100, 70), "accent": (120, 80, 40)}
+        ),
+        "fish_pie": ResourceIconStyle(
+            "fish_stew", {"body": (140, 100, 70), "accent": (50, 110, 160)}
+        ),
+        "meat_pie": _stew_style((170, 70, 40)),
+        "spiced_stew": ResourceIconStyle(
+            "spiced_stew", {"body": (140, 100, 70), "accent": (180, 80, 40)}
+        ),
+        "berry_tart": ResourceIconStyle(
+            "berry_tart", {"body": (180, 120, 70), "accent": (160, 50, 90)}
+        ),
+        "lebkuchen": ResourceIconStyle(
+            "lebkuchen", {"body": (150, 90, 50), "accent": (100, 60, 30)}
+        ),
+        # Legacy keys
+        "stew": _stew_style((192, 96, 48)),
+        "fish_stew": ResourceIconStyle(
+            "fish_stew", {"body": (140, 100, 70), "accent": (64, 128, 176)}
+        ),
+        "mushroom_stew": ResourceIconStyle(
+            "mushroom_stew", {"body": (140, 100, 70), "accent": (107, 74, 46)}
+        ),
+        "vegetable_soup": _soup_style((80, 140, 60)),
+    }
+    return styles.get(key)
+
+
+def _icon_stem_style(stem: str) -> ResourceIconStyle | None:
+    """Default recolour when a resource only names an icon stem."""
+    stem = str(stem or "").strip()
+    if not stem:
+        return None
+    defaults: dict[str, ResourceIconStyle] = {
+        "vegetable_soup": _soup_style((80, 140, 60)),
+        "stew": _stew_style((192, 96, 48)),
+        "fish_stew": ResourceIconStyle(
+            "fish_stew", {"body": (140, 100, 70), "accent": (64, 128, 176)}
+        ),
+        "mushroom_stew": ResourceIconStyle(
+            "mushroom_stew", {"body": (140, 100, 70), "accent": (107, 74, 46)}
+        ),
+        "spiced_stew": ResourceIconStyle(
+            "spiced_stew", {"body": (140, 100, 70), "accent": (180, 80, 40)}
+        ),
+        "porridge": _porridge_style((200, 170, 100)),
+        "bread": ResourceIconStyle("bread", {"body": (210, 170, 100)}),
+        "berry_jam": ResourceIconStyle(
+            "berry_jam", {"body": (160, 60, 90), "accent": (200, 80, 110)}
+        ),
+        "berry_tart": ResourceIconStyle(
+            "berry_tart", {"body": (180, 120, 70), "accent": (160, 50, 90)}
+        ),
+        "lebkuchen": ResourceIconStyle(
+            "lebkuchen", {"body": (150, 90, 50), "accent": (100, 60, 30)}
+        ),
+    }
+    return defaults.get(stem)
+
+
 def resource_icon_style(key: str) -> ResourceIconStyle:
     """Return icon style matching map feature colours (and seed composites)."""
+    # Per-key cooked styles first so CSV icon_key alone does not flatten every
+    # T2 soup to the same un-recoloured vegetable_soup glyph.
+    cooked = _cooked_food_icon_style(key)
+    if cooked is not None:
+        return cooked
+
     authored = next((r for r in RESOURCES if r.key == key and r.icon_key), None)
     if authored is not None:
+        # Recipe/CSV stem: prefer a known style for that stem, else bare icon.
+        stem_style = _icon_stem_style(authored.icon_key)
+        if stem_style is not None:
+            return stem_style
+        from crops import CROP_BY_KEY
+
+        crop = CROP_BY_KEY.get(authored.icon_key)
+        if crop is not None:
+            return _crop_plant_style(crop, dense=False)
         return ResourceIconStyle(authored.icon_key, {})
     from icons import (
         ICON_AXE,
@@ -557,15 +748,41 @@ def resource_icon_style(key: str) -> ResourceIconStyle:
         # Sparse plant icon matches wild flora / diary (not field-dense canopy).
         return _crop_plant_style(crop, dense=False)
 
+    # Wild herbs / forage (nettles, etc.) — use sparse plant recolours, not dense.
+    try:
+        from wild_species import WILD_SPECIES
+
+        wild = next(
+            (
+                s
+                for s in WILD_SPECIES
+                if s.resource_key == key or s.key == key
+            ),
+            None,
+        )
+        if wild is not None and getattr(wild, "icon_base", None):
+            recolour = {
+                str(cls): tuple(int(c) for c in colour)  # type: ignore[misc]
+                for cls, colour in (getattr(wild, "icon_recolour", ()) or ())
+            }
+            return ResourceIconStyle(str(wild.icon_base), recolour)
+    except Exception:
+        pass
+
     # Drop-in recipe icons: any category below assets/icons, resolved by stem.
     from icons import has_icon
 
     if has_icon(key):
         return ResourceIconStyle(key, {})
 
+    # Never fall back to dense crop canopy for catalogue foods — that made every
+    # unrecognised cooked dish look like a generic plant.
+    if any(r.key == key and r.group == "food" for r in RESOURCES):
+        return ResourceIconStyle(ICON_FLOWER, {"stem": COLOUR_TREE_CANOPY})
+
     try:
         return ResourceIconStyle(
-            crop_icon_base(key, dense=True), {"stem": COLOUR_TREE_CANOPY}
+            crop_icon_base(key, dense=False), {"stem": COLOUR_TREE_CANOPY}
         )
     except Exception:
         return ResourceIconStyle(ICON_FLOWER, {"stem": COLOUR_TREE_CANOPY})

@@ -21,6 +21,7 @@ from .widgets import Dropdown, FloatField, IntegerField
 WORKSTATION_KINDS = {
     "mill": BuildingKind.MILL,
     "kitchen": BuildingKind.KITCHEN,
+    "fire": BuildingKind.FIRE,
     "craft_bench": BuildingKind.CRAFT_BENCH,
     "alchemist": BuildingKind.ALCHEMIST,
     "tailor": BuildingKind.TAILOR,

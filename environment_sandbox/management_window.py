@@ -1656,21 +1656,18 @@ class ManagementWindow:
             if entry.requirement_rows:
                 req_x = cols["house"] + 2
                 req_y = row_y + (ROW_H - REQ_ICON) // 2
-                draw_requirement_icons(
+                req_hits = draw_requirement_icons(
                     surface,
                     req_x,
                     req_y,
                     entry.requirement_rows,
                 )
-                if mouse_pos is not None:
-                    for req_i, requirement in enumerate(entry.requirement_rows[:4]):
-                        icon_rect = pygame.Rect(
-                            req_x + req_i * (REQ_ICON + 2), req_y, REQ_ICON, REQ_ICON
-                        )
+                if mouse_pos is not None and self._tooltip is None:
+                    for icon_rect, requirement in req_hits:
                         if icon_rect.collidepoint(mouse_pos):
                             detail = str(requirement.get("label") or "Requirement")
                             coins = int(requirement.get("coins", 0) or 0)
-                            if coins > 0:
+                            if coins > 0 and not bool(requirement.get("met")):
                                 detail += f" · {coins} coins/season if unmet"
                             self._tooltip = (detail, (icon_rect.centerx, icon_rect.top))
                             break

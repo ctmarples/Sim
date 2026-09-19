@@ -62,6 +62,7 @@ VILLAGER_FOOD_KEYS: list[str] = [
     "elderberries",
     "hazelnuts",
     "mushrooms",
+    "nettles",
     "honey",
     "fish",
     "meat",
@@ -72,6 +73,10 @@ VILLAGER_FOOD_KEYS: list[str] = [
     "cabbage",
     "carrot",
     "garlic",
+    "potato",
+    "pumpkin",
+    "kale",
+    "leek",
 ]
 
 # 5 meal-points ≈ one full stew-sized meal.
@@ -117,6 +122,7 @@ FOODS: list[FoodDef] = [
     FoodDef("elderberries", satiation=1.0),
     FoodDef("hazelnuts", satiation=1.2),
     FoodDef("mushrooms", satiation=1.0),
+    FoodDef("nettles", satiation=1.0),
     FoodDef("honey", satiation=1.5, hunger_rate=0.8, walk_speed=1.5),
     FoodDef("onion", satiation=1.0),
     FoodDef("peas", satiation=1.0),
@@ -125,6 +131,10 @@ FOODS: list[FoodDef] = [
     FoodDef("cabbage", satiation=1.0),
     FoodDef("carrot", satiation=1.0),
     FoodDef("garlic", satiation=1.0),
+    FoodDef("potato", satiation=1.0),
+    FoodDef("pumpkin", satiation=1.0),
+    FoodDef("kale", satiation=1.0),
+    FoodDef("leek", satiation=1.0),
     # 3 meat ≈ 1 stew → 5/3 points each. Raw: mild speed/work penalty.
     FoodDef("meat", satiation=MEAL_POINTS_FULL / 3.0, walk_speed=0.8, work_efficiency=0.8),
     FoodDef("fish", satiation=MEAL_POINTS_FULL / 3.0, walk_speed=0.8, work_efficiency=0.8),
@@ -274,11 +284,24 @@ def storage_meal_score(
 
 
 # Local alias so this module does not import society (cycle risk).
-HIRE_STAPLE_FOODS_LOCAL: tuple[str, ...] = ("meat", "fish", "bread")
+HIRE_STAPLE_FOODS_LOCAL: tuple[str, ...] = ("t1", "t2", "t3", "t4")
 
 # Raw produce keys that satisfy the ``vegetables`` hire requirement.
 VEGETABLE_KEYS: frozenset[str] = frozenset(
-    {"onion", "peas", "beans", "turnip", "cabbage", "carrot", "garlic"}
+    {
+        "onion",
+        "peas",
+        "beans",
+        "turnip",
+        "cabbage",
+        "carrot",
+        "garlic",
+        "potato",
+        "pumpkin",
+        "kale",
+        "leek",
+        "nettles",
+    }
 )
 
 # Composite hire requirement keys (OR groups and category labels).
@@ -286,14 +309,35 @@ REQUIREMENT_OR_GROUPS: dict[str, frozenset[str]] = {
     "meat/fish": frozenset({"meat", "fish"}),
 }
 
+# Cooked-food hire tiers from recipe ``steps`` (t1 = steps 1, …).
+FOOD_TIER_KEYS: tuple[str, ...] = ("t1", "t2", "t3", "t4")
+FOOD_TIER_BY_KEY: dict[str, int] = {}
+
 REQUIREMENT_LABELS: dict[str, str] = {
     "meat/fish": "Meat or fish",
     "vegetables": "Vegetables",
+    "t1": "Tier 1 food",
+    "t2": "Tier 2 food",
+    "t3": "Tier 3 food",
+    "t4": "Tier 4 food",
 }
 
 REQUIREMENT_ICONS: dict[str, str] = {
     "meat/fish": "meat",
     "vegetables": "vegetable_soup",
+    # Icon stems (not recipe output keys) — blit_icon resolves file names.
+    "t1": "mushroom",
+    "t2": "vegetable_soup",
+    "t3": "stew",
+    "t4": "spiced_stew",
+}
+
+# Short examples for hire-hall tooltips (first matching stocked recipe outputs).
+FOOD_TIER_EXAMPLES: dict[int, tuple[str, ...]] = {
+    1: ("roasted turnips", "roasted carrots", "grilled mushrooms"),
+    2: ("pea soup", "potato soup", "grilled meat"),
+    3: ("meat stew", "fish soup", "wheat bread"),
+    4: ("meat pie", "fish pie", "spiced stew"),
 }
 
 # Which hire requirement keys each edible item satisfies (includes cooked dishes).
@@ -310,12 +354,27 @@ FOOD_REQUIREMENT_TAGS: dict[str, frozenset[str]] = {
     "cabbage": frozenset({"vegetables"}),
     "carrot": frozenset({"vegetables"}),
     "garlic": frozenset({"vegetables"}),
+    "potato": frozenset({"vegetables"}),
+    "pumpkin": frozenset({"vegetables"}),
+    "kale": frozenset({"vegetables"}),
+    "leek": frozenset({"vegetables"}),
+    "nettles": frozenset({"vegetables"}),
     "vegetable_soup": frozenset({"vegetables"}),
     "root_soup": frozenset({"vegetables"}),
+    "green_soup": frozenset({"vegetables"}),
+    "nettle_soup": frozenset({"vegetables"}),
+    "potato_soup": frozenset({"vegetables"}),
+    "pumpkin_soup": frozenset({"vegetables"}),
+    "leek_and_potato_soup": frozenset({"vegetables"}),
+    "kale_soup": frozenset({"vegetables"}),
     "roasted_turnips": frozenset({"vegetables"}),
     "pea_soup": frozenset({"vegetables"}),
+    "pea_and_ham_soup": frozenset({"meat", "meat/fish", "vegetables"}),
     "bean_stew": frozenset({"vegetables"}),
     "mushroom_stew": frozenset({"vegetables"}),
+    "mushroom_pie": frozenset({"vegetables", "bread"}),
+    "fish_pie": frozenset({"fish", "meat/fish", "vegetables"}),
+    "meat_pie": frozenset({"meat", "meat/fish", "vegetables", "bread"}),
     "barley_gruel": frozenset({"bread"}),
     "wheat_porridge": frozenset({"bread"}),
     "rye_porridge": frozenset({"bread"}),
@@ -343,6 +402,33 @@ FOOD_STAPLE_TAGS: dict[str, frozenset[str]] = {
 }
 
 
+def register_food_tier(key: str, tier: int) -> None:
+    """Record hire-food tier from recipe ``steps`` (1–4)."""
+    level = int(tier)
+    if level < 1 or level > 4 or not key:
+        return
+    FOOD_TIER_BY_KEY[str(key)] = level
+
+
+def food_tier(key: str) -> int | None:
+    level = FOOD_TIER_BY_KEY.get(str(key))
+    return int(level) if level is not None else None
+
+
+def food_tier_requirement_hint(requirement: str) -> str:
+    """Human-readable hire tip for ``t1``…``t4`` (label + example dishes)."""
+    req = str(requirement)
+    if req not in FOOD_TIER_KEYS:
+        return REQUIREMENT_LABELS.get(req, req)
+    tier = int(req[1])
+    label = REQUIREMENT_LABELS.get(req, f"Tier {tier} food")
+    examples = FOOD_TIER_EXAMPLES.get(tier, ())
+    if not examples:
+        return f"{label} (any {tier}-step cooked dish)"
+    shown = ", ".join(examples[:3])
+    return f"{label} — any {tier}-step dish (e.g. {shown})"
+
+
 def food_requirement_tags(key: str) -> frozenset[str]:
     tags = set(FOOD_REQUIREMENT_TAGS.get(key, ()))
     tags.update(FOOD_STAPLE_TAGS.get(key, ()))
@@ -351,6 +437,9 @@ def food_requirement_tags(key: str) -> frozenset[str]:
     staples = tags & frozenset({"meat", "fish"})
     if staples:
         tags.add("meat/fish")
+    tier = food_tier(key)
+    if tier is not None:
+        tags.add(f"t{tier}")
     return frozenset(tags)
 
 
@@ -366,12 +455,20 @@ def food_staple_tags(key: str) -> frozenset[str]:
 def food_covers_requirement(food_key: str, requirement: str) -> bool:
     if food_key == requirement:
         return True
-    return requirement in food_requirement_tags(food_key)
+    req = str(requirement)
+    if req in FOOD_TIER_KEYS:
+        return food_tier(food_key) == int(req[1])
+    return req in food_requirement_tags(food_key)
 
 
 def requirement_met_in_stock(amounts: dict[str, int], requirement: str) -> bool:
     """True if village stock satisfies one hire food requirement key."""
     req = str(requirement)
+    if req in FOOD_TIER_KEYS:
+        want = int(req[1])
+        return any(
+            food_tier(key) == want and int(qty) > 0 for key, qty in amounts.items()
+        )
     if req in REQUIREMENT_OR_GROUPS:
         group = REQUIREMENT_OR_GROUPS[req]
         if any(int(amounts.get(k, 0)) > 0 for k in group):

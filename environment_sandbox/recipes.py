@@ -68,6 +68,23 @@ _BUILDING_RECIPE_ATTR: dict[str, str] = {
 }
 
 
+# CSV ``icon_key`` values that are shared dish glyphs, not unique portraits.
+_SHARED_DISH_ICON_STEMS: frozenset[str] = frozenset(
+    {
+        "vegetable_soup",
+        "stew",
+        "fish_stew",
+        "mushroom_stew",
+        "spiced_stew",
+        "porridge",
+        "bread",
+        "berry_jam",
+        "berry_tart",
+        "lebkuchen",
+    }
+)
+
+
 @dataclass(frozen=True)
 class Recipe:
     """Consume ``inputs`` to produce ``outputs`` (gather recipes use empty inputs)."""
@@ -87,14 +104,19 @@ class Recipe:
     def display_icon_key(self) -> str:
         """Key for ``resource_icon_style`` (resource / icon id — not a resolved SVG stem).
 
-        Prefer an authored ``icon_key`` (e.g. hunter deer) so meat outputs still
-        show the animal. Otherwise use the primary output resource key so crop
-        produce keeps stem/flower recolours.
+        Prefer an authored ``icon_key`` when it names a distinct portrait (e.g.
+        hunter ``deer_male`` for meat). Shared dish stems (``vegetable_soup``,
+        ``porridge``, …) are glyph templates only — resolve via the primary
+        output key so each soup/stew keeps its own recolour.
         """
+        out_key = next(iter(self.outputs), None) if self.outputs else None
         if self.icon_key:
-            return self.icon_key
-        if self.outputs:
-            return next(iter(self.outputs))
+            stem = str(self.icon_key).strip()
+            if stem in _SHARED_DISH_ICON_STEMS and out_key:
+                return out_key
+            return stem
+        if out_key:
+            return out_key
         return self.name
 
     def skill_req_map(self) -> dict[SkillType, int]:
@@ -299,10 +321,11 @@ def _apply_row_metadata(row: dict[str, str], recipe: Recipe) -> None:
                 label=label or RECIPE_LABELS.get(recipe.name) or out_key,
                 group=resource_group,
                 short=_cell(row, "resource_short") or out_key[:4],
+                icon_key=recipe.icon_key or _cell(row, "icon_key") or None,
             )
 
     if satiation and recipe.outputs:
-        from resource_balance import FOOD_BY_KEY, register_food, register_sweet_food
+        from resource_balance import FOOD_BY_KEY, register_food, register_food_tier, register_sweet_food
 
         out_key = next(iter(recipe.outputs))
         edible_raw = _cell(row, "food_edible").lower()
@@ -317,6 +340,8 @@ def _apply_row_metadata(row: dict[str, str], recipe: Recipe) -> None:
                 hunger_rate=float(_cell(row, "food_hunger_rate") or "1.0"),
                 edible=edible,
             )
+        if int(recipe.steps) > 0:
+            register_food_tier(out_key, int(recipe.steps))
         if (recipe.category or "").lower() == "sweet":
             register_sweet_food(out_key)
 
@@ -406,7 +431,7 @@ def _apply_json_metadata(data: dict, recipe: Recipe) -> None:
 
     food = data.get("food")
     if isinstance(food, dict) and recipe.outputs:
-        from resource_balance import FOOD_BY_KEY, MEAL_POINTS_FULL, register_food
+        from resource_balance import FOOD_BY_KEY, MEAL_POINTS_FULL, register_food, register_food_tier
 
         out_key = next(iter(recipe.outputs))
         if out_key == recipe.name or out_key not in FOOD_BY_KEY:
@@ -418,12 +443,21 @@ def _apply_json_metadata(data: dict, recipe: Recipe) -> None:
                 hunger_rate=float(food.get("hunger_rate", 1.0)),
                 edible=bool(food.get("edible", True)),
             )
+        if int(recipe.steps) > 0:
+            register_food_tier(out_key, int(recipe.steps))
 
 
-def _load_building_csv(folder: Path, existing: list[Recipe], seen: set[str]) -> None:
+def _load_building_csv(
+    folder: Path,
+    existing: list[Recipe],
+    seen: set[str],
+    *,
+    route_other_stations: dict[str, list[Recipe]] | None = None,
+) -> None:
     path = folder / "recipes.csv"
     if not path.is_file():
         return
+    folder_name = folder.name
     with path.open(encoding="utf-8", newline="") as fh:
         reader = csv.DictReader(fh)
         for row in reader:
@@ -434,11 +468,42 @@ def _load_building_csv(folder: Path, existing: list[Recipe], seen: set[str]) -> 
             except (ValueError, KeyError) as exc:
                 print(f"Skipping bad recipe row in {path}: {exc}")
                 continue
+            station = _cell(row, "station").lower()
+            if (
+                route_other_stations is not None
+                and station
+                and station != folder_name
+                and station in _BUILDING_RECIPE_ATTR
+            ):
+                # Kitchen CSV marks grill/porridge rows ``station=fire`` — those
+                # belong on the fire building, not only in the kitchen merge.
+                route_other_stations.setdefault(station, []).append(recipe)
+                _apply_row_metadata(row, recipe)
+                continue
             if recipe.name in seen:
                 continue
             existing.append(recipe)
             seen.add(recipe.name)
             _apply_row_metadata(row, recipe)
+
+
+def _merge_routed_station_recipes(
+    globals_map: dict, routed: dict[str, list[Recipe]]
+) -> None:
+    """Overlay recipes authored under another folder's ``station=`` column."""
+    for station, recipes in routed.items():
+        attr = _BUILDING_RECIPE_ATTR.get(station)
+        if not attr:
+            continue
+        existing = list(globals_map[attr])
+        by_name = {recipe.name: index for index, recipe in enumerate(existing)}
+        for recipe in recipes:
+            if recipe.name in by_name:
+                existing[by_name[recipe.name]] = recipe
+            else:
+                by_name[recipe.name] = len(existing)
+                existing.append(recipe)
+        globals_map[attr] = tuple(existing)
 
 
 def _load_building_json(folder: Path, existing: list[Recipe], seen: set[str]) -> None:
@@ -476,16 +541,19 @@ def _load_directory_recipes() -> None:
         return
 
     g = globals()
+    routed: dict[str, list[Recipe]] = {}
     for building, attr in _BUILDING_RECIPE_ATTR.items():
         folder = _RECIPES_DATA_DIR / building
         existing: list[Recipe] = list(g[attr])
         seen = {r.name for r in existing}
         if folder.is_dir():
-            _load_building_csv(folder, existing, seen)
+            route = routed if building == "kitchen" else None
+            _load_building_csv(folder, existing, seen, route_other_stations=route)
             _load_building_json(folder, existing, seen)
         if building == "forager":
             _append_forager_crop_produce(existing, seen)
         g[attr] = tuple(existing)
+    _merge_routed_station_recipes(g, routed)
 
 
 def output_keys_for_recipes(recipes: tuple[Recipe, ...] | list[Recipe]) -> tuple[str, ...]:

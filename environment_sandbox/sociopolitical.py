@@ -132,7 +132,7 @@ class OpenApplicant:
     name: str
     skills: dict[str, int]
     housing_need: int = 1
-    required_foods: list[str] = field(default_factory=lambda: ["bread"])
+    required_foods: list[str] = field(default_factory=lambda: ["t1"])
     favourite_foods: list[str] = field(default_factory=list)
     template_id: str = ""
     portrait_seed: int = 0
@@ -160,7 +160,7 @@ class OpenApplicant:
             name=str(data.get("name", "Applicant")),
             skills={str(k): int(v) for k, v in dict(data.get("skills") or {}).items()},
             housing_need=max(1, int(data.get("housing_need", 1) or 1)),
-            required_foods=list(data.get("required_foods") or ["bread"]),
+            required_foods=list(data.get("required_foods") or ["t1"]),
             favourite_foods=list(data.get("favourite_foods") or []),
             template_id=str(data.get("template_id", "") or ""),
             portrait_seed=int(data.get("portrait_seed", 0) or 0),

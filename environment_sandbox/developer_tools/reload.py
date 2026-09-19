@@ -47,9 +47,10 @@ def load_recipe_catalogue_from_disk(data_dir: Path | None = None) -> tuple[Recip
 
     base = Path(data_dir or recipes._RECIPES_DATA_DIR)
     report = validate_recipe_catalogue(base)
-    result: dict[str, tuple[object, ...]] = {}
+    result: dict[str, list[object]] = {folder: [] for folder in recipes._BUILDING_RECIPE_ATTR}
+    routed: dict[str, list[object]] = {}
     for folder in recipes._BUILDING_RECIPE_ATTR:
-        loaded: list[object] = []
+        loaded = result[folder]
         directory = base / folder
         csv_path = directory / "recipes.csv"
         if csv_path.is_file():
@@ -59,9 +60,20 @@ def load_recipe_catalogue_from_disk(data_dir: Path | None = None) -> tuple[Recip
                         if not row or not recipes._cell(row, "name"):
                             continue
                         try:
-                            loaded.append(recipes._recipe_from_row(row))
+                            recipe = recipes._recipe_from_row(row)
                         except Exception as exc:
                             report.add(ValidationSeverity.ERROR, "recipe_parse_error", str(exc), file=str(csv_path), row=row_no)
+                            continue
+                        station = recipes._cell(row, "station").lower()
+                        if (
+                            folder == "kitchen"
+                            and station
+                            and station != folder
+                            and station in recipes._BUILDING_RECIPE_ATTR
+                        ):
+                            routed.setdefault(station, []).append(recipe)
+                            continue
+                        loaded.append(recipe)
             except Exception as exc:
                 report.add(ValidationSeverity.ERROR, "recipe_file_error", str(exc), file=str(csv_path))
         for json_path in sorted(directory.glob("*.json")) if directory.is_dir() else ():
@@ -74,8 +86,18 @@ def load_recipe_catalogue_from_disk(data_dir: Path | None = None) -> tuple[Recip
         if folder == "forager":
             seen = {item.name for item in loaded}
             recipes._append_forager_crop_produce(loaded, seen)
-        result[folder] = tuple(loaded)
-    return RecipeCatalogue(result), report
+    for station, recipes_list in routed.items():
+        if station not in result:
+            continue
+        existing = result[station]
+        by_name = {item.name: index for index, item in enumerate(existing)}
+        for recipe in recipes_list:
+            if recipe.name in by_name:
+                existing[by_name[recipe.name]] = recipe
+            else:
+                by_name[recipe.name] = len(existing)
+                existing.append(recipe)
+    return RecipeCatalogue({folder: tuple(items) for folder, items in result.items()}), report
 
 
 def _apply_recipe_metadata(data_dir: Path) -> None:

@@ -355,8 +355,8 @@ def bootstrap_sociopolitical_test(game: Game) -> SettlementPoliticalState:
             name=preset["name"],
             skills=skills,
             housing_need=1,
-            required_foods=["bread", "meat"],
-            favourite_foods=["stew"],
+            required_foods=["t1"],
+            favourite_foods=["meat_stew"],
             happiness=0.72,
             energy=1.0,
             satiation=0.85,
@@ -757,7 +757,7 @@ def maybe_spawn_open_applicant(game: Game) -> None:
             name=cand.name,
             skills=skills or {"labour": 2},
             housing_need=int(cand.housing_need),
-            required_foods=list(cand.required_foods or ["bread"]),
+            required_foods=list(cand.required_foods or ["t1"]),
             favourite_foods=list(cand.favourite_foods or []),
             template_id=str(getattr(cand, "template_id", "") or ""),
             portrait_seed=int(getattr(cand, "portrait_seed", 0) or 0),
@@ -772,7 +772,7 @@ def maybe_spawn_open_applicant(game: Game) -> None:
         name=rng.choice(("Tavi", "Rook", "Esha", "Cal", "Miri", "Wren")),
         skills=skills,
         housing_need=1,
-        required_foods=["bread"],
+        required_foods=["t1"],
         portrait_seed=rng.randint(1, 99999),
     )
     game._set_status(f"Open admission: {state.open_applicant.name} seeks a place to settle.")

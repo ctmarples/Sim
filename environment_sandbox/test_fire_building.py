@@ -20,19 +20,14 @@ class FireBuildingTests(unittest.TestCase):
         self.assertEqual(
             {r.name for r in fire.known_recipes()},
             {
-                "grilled_meat",
-                "grilled_fish",
-                "grilled_mushrooms",
                 "roasted_turnips",
-                "root_soup",
-                "pea_s",
+                "roasted_carrots",
+                "grilled_mushrooms",
+                "grilled_fish",
+                "grilled_meat",
                 "barley_gruel",
                 "wheat_porridge",
                 "rye_porridge",
-                "vegetable_pottage",
-                "pease_pottage",
-                "mushroom_pottage",
-                "berry_porridge",
             },
         )
         self.assertTrue(fire.is_processor())

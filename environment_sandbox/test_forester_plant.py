@@ -95,6 +95,31 @@ class ForesterPlantTests(unittest.TestCase):
         cell.feature = FeatureType.NONE
         self.assertTrue(game._player_can_plant_here(3, 3))
 
+    def test_split_deposit_keeps_saplings(self) -> None:
+        """Withdrawing plant stock then splitting must not dump saplings back."""
+        game, lodge, villager = self._forester_with_plant_area()
+        lodge.hardwood_logs = 2
+        lodge.oak_saplings = 0
+        villager.inventory.oak_saplings = 4
+        villager.inventory.equip_tool("axe")
+        villager.x, villager.y = lodge.center_cell()
+        game._forester_try_split = Mock(return_value=True)
+        game._forester_needs_axe = Mock(return_value=True)
+        game._ensure_forester_axe = Mock(return_value=True)
+        game._update_plant_stock_withdraw = Mock(return_value=False)
+        game._gather_cargo_needs_delivery = Mock(return_value=False)
+        game._workplace_primary_available = Mock(return_value=True)
+        game._maybe_assigned_transport = Mock(return_value=False)
+        game._should_force_carry_deposit = Mock(return_value=False)
+        game._pick_forester_all_work = Mock(
+            return_value=(lodge.center_cell(), "split")
+        )
+        game._register_field_claim = Mock()
+        game._clear_villager_path = Mock()
+        game._update_forester(villager, lodge)
+        self.assertEqual(villager.inventory.oak_saplings, 4)
+        self.assertEqual(lodge.oak_saplings, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

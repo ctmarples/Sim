@@ -1797,7 +1797,13 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
         hid = vdata.get("housing_id")
         villager.housing_id = int(hid) if hid is not None else None
         villager.housing_need = int(vdata.get("housing_need", 1))
-        villager.required_foods = list(vdata.get("required_foods") or ["meat"])
+        from society import normalize_required_foods
+
+        villager.tier = max(1, min(3, int(vdata.get("tier", getattr(villager, "tier", 1)) or 1)))
+        villager.required_foods = normalize_required_foods(
+            list(vdata.get("required_foods") or []),
+            tier=int(villager.tier),
+        )
         villager.favourite_foods = list(vdata.get("favourite_foods") or [])
         villager.favourite_is_junk = bool(vdata.get("favourite_is_junk", False))
         villager.required_workplace = str(vdata.get("required_workplace", "") or "")

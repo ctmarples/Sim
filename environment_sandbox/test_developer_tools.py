@@ -120,7 +120,7 @@ class ValidationReloadTests(unittest.TestCase):
         fields = ["template_id", "name", "tier", "housing_need", "required_foods", "favourite_foods", "favourite_is_junk", "virtues", "vices"]
         fields += [s.name.lower() for s in SKILL_ORDER] + [f"{s.name.lower()}_cap" for s in SKILL_ORDER]
         fields += ["required_workplace", "signing_fee"]
-        row = {key: "" for key in fields}; row.update(template_id="one", name="One", tier="1", housing_need="1", required_foods="bread", favourite_foods="bread", favourite_is_junk="0", virtues="Steady", vices="Moody", signing_fee="0")
+        row = {key: "" for key in fields}; row.update(template_id="one", name="One", tier="1", housing_need="1", required_foods="t1", favourite_foods="meat_stew", favourite_is_junk="0", virtues="Steady", vices="Moody", signing_fee="0")
         for skill in SKILL_ORDER: row[skill.name.lower()] = "1"; row[f"{skill.name.lower()}_cap"] = "2"
         with path.open("w", encoding="utf-8", newline="") as fh:
             writer = csv.DictWriter(fh, fieldnames=fields); writer.writeheader(); writer.writerow(row)

@@ -125,7 +125,6 @@ class RecipeProgressDisplayTests(unittest.TestCase):
         kitchen.fuel_wood = 5
         kitchen.meat = 1
         kitchen.onion = 1
-        kitchen.cabbage = 1
         kitchen.carrot = 1
         kitchen.recipe_progress["stew"] = 1
 
@@ -140,10 +139,10 @@ class RecipeProgressDisplayTests(unittest.TestCase):
         apply_building_storage(kitchen)
         kitchen.ensure_recipe_state()
         kitchen.fuel_wood = 5
+        kitchen.kale = 1
         kitchen.cabbage = 1
-        kitchen.turnip = 1
-        kitchen.carrot = 1
-        kitchen.onion = 1
+        kitchen.garlic = 1
+        kitchen.leek = 1
         kitchen.recipe_progress["stew"] = 1
 
         picked = kitchen.craftable_recipe()
@@ -186,8 +185,8 @@ class RecipeProgressDisplayTests(unittest.TestCase):
         kitchen.ensure_recipe_state()
         kitchen.fuel_wood = 20
         kitchen.fish = 20
-        kitchen.onion = 20
         kitchen.garlic = 20
+        kitchen.thyme = 20
         kitchen.blackberries = 20
         kitchen.honey = 20
         kitchen.set_recipe_priority("fish_stew", 1)

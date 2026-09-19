@@ -513,18 +513,44 @@ class ResourceBar:
             lines = []
         self._popup_group = group
         if not lines:
-            if group in ("coins", "housing") or not defs:
+            if group in ("coins", "housing") or (group != "food" and not defs):
                 return
 
             from inventory_ui import draw_item_tooltip, draw_resource_cell
+            from resources import resources_by_food_tier
 
             cell_size = 42
             gap = 4
-            cols = min(8, max(1, len(defs)))
-            rows = (len(defs) + cols - 1) // cols
+            header_h = 16
             padding = 8
+            sections: list[tuple[str | None, list]] = []
+            if group == "food":
+                for label, items in resources_by_food_tier():
+                    sections.append((label, items))
+            else:
+                sections.append((None, defs))
+            if not any(items for _, items in sections):
+                return
+
+            cols = 8
+            total_rows = 0
+            section_meta: list[tuple[str | None, list, int]] = []
+            for label, items in sections:
+                if not items:
+                    continue
+                rows = (len(items) + cols - 1) // cols
+                section_meta.append((label, items, rows))
+                total_rows += rows
+                if label:
+                    total_rows += 0  # header drawn in-row budget via extra height
+            header_count = sum(1 for label, _, _ in section_meta if label)
             width = padding * 2 + cols * cell_size + (cols - 1) * gap
-            height = padding * 2 + rows * cell_size + (rows - 1) * gap
+            height = (
+                padding * 2
+                + total_rows * cell_size
+                + max(0, total_rows - 1) * gap
+                + header_count * (header_h + 4)
+            )
             popup = pygame.Rect(chip.x, MAP_OFFSET_Y + 4, width, height)
             if popup.right > WINDOW_WIDTH - 8:
                 popup.x = WINDOW_WIDTH - width - 8
@@ -533,27 +559,37 @@ class ResourceBar:
             pygame.draw.rect(surface, COLOUR_MENU_BG, popup, border_radius=4)
             pygame.draw.rect(surface, COLOUR_TOOLBAR_BORDER, popup, 1, border_radius=4)
             hovered_key: str | None = None
-            for index, res in enumerate(defs):
-                col = index % cols
-                row = index // cols
-                cell = pygame.Rect(
-                    popup.x + padding + col * (cell_size + gap),
-                    popup.y + padding + row * (cell_size + gap),
-                    cell_size,
-                    cell_size,
-                )
-                hovered = cell.collidepoint(mouse_pos)
-                draw_resource_cell(
-                    surface,
-                    cell=cell,
-                    key=res.key,
-                    count=int(amounts.get(res.key, 0)),
-                    fonts=(self.font, self.font_small, self.font_small),
-                    hovered=hovered,
-                    dimmed=int(amounts.get(res.key, 0)) <= 0,
-                )
-                if hovered:
-                    hovered_key = res.key
+            y = popup.y + padding
+            for label, items, _rows in section_meta:
+                if label:
+                    surface.blit(
+                        self.font_small.render(label, True, COLOUR_TEXT_DIM),
+                        (popup.x + padding, y),
+                    )
+                    y += header_h + 2
+                for index, res in enumerate(items):
+                    col = index % cols
+                    row = index // cols
+                    cell = pygame.Rect(
+                        popup.x + padding + col * (cell_size + gap),
+                        y + row * (cell_size + gap),
+                        cell_size,
+                        cell_size,
+                    )
+                    hovered = cell.collidepoint(mouse_pos)
+                    draw_resource_cell(
+                        surface,
+                        cell=cell,
+                        key=res.key,
+                        count=int(amounts.get(res.key, 0)),
+                        fonts=(self.font, self.font_small, self.font_small),
+                        hovered=hovered,
+                        dimmed=int(amounts.get(res.key, 0)) <= 0,
+                    )
+                    if hovered:
+                        hovered_key = res.key
+                rows = (len(items) + cols - 1) // cols
+                y += rows * (cell_size + gap)
             if hovered_key is not None:
                 draw_item_tooltip(
                     surface,

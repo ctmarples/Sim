@@ -158,7 +158,7 @@ def validate_recipe_catalogue(data_dir: Path | None = None) -> ValidationReport:
 
 def validate_traveller_catalogue(path: Path | None = None) -> ValidationReport:
     from entities import BuildingKind
-    from resource_balance import REQUIREMENT_LABELS, REQUIREMENT_OR_GROUPS
+    from resource_balance import FOOD_TIER_KEYS
     from resources import RESOURCE_KEYS
     from society import SKILL_ORDER, VICE_POOL, VIRTUE_POOL
 
@@ -171,7 +171,8 @@ def validate_traveller_catalogue(path: Path | None = None) -> ValidationReport:
         report.add(ValidationSeverity.ERROR, "traveller_file_error", str(exc), file=str(csv_path))
         return report
     seen: set[str] = set()
-    foods = set(RESOURCE_KEYS) | set(REQUIREMENT_OR_GROUPS) | set(REQUIREMENT_LABELS)
+    favourite_foods = set(RESOURCE_KEYS)
+    required_foods = set(FOOD_TIER_KEYS)
     workplaces = {kind.name.lower() for kind in BuildingKind}
     for number, row in enumerate(rows, 2):
         key = str(row.get("template_id") or "").strip()
@@ -193,10 +194,12 @@ def validate_traveller_catalogue(path: Path | None = None) -> ValidationReport:
         integer("tier", 1, 3)
         integer("housing_need", 1, 3)
         integer("signing_fee", 0, 10**9)
-        for field_name in ("required_foods", "favourite_foods"):
-            for food in (v.strip() for v in str(row.get(field_name) or "").split(";") if v.strip()):
-                if food not in foods:
-                    report.add(ValidationSeverity.ERROR, f"unknown_{field_name}", f"Unknown food expression {food!r}", file=str(csv_path), row=number, field=field_name)
+        for food in (v.strip() for v in str(row.get("required_foods") or "").split(";") if v.strip()):
+            if food not in required_foods:
+                report.add(ValidationSeverity.ERROR, "unknown_required_foods", f"Unknown food expression {food!r}", file=str(csv_path), row=number, field="required_foods")
+        for food in (v.strip() for v in str(row.get("favourite_foods") or "").split(";") if v.strip()):
+            if food not in favourite_foods:
+                report.add(ValidationSeverity.ERROR, "unknown_favourite_foods", f"Unknown food expression {food!r}", file=str(csv_path), row=number, field="favourite_foods")
         for field_name, pool in (("virtues", set(VIRTUE_POOL)), ("vices", set(VICE_POOL))):
             for trait in (v.strip() for v in str(row.get(field_name) or "").split(";") if v.strip()):
                 if trait not in pool:

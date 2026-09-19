@@ -3116,17 +3116,32 @@ class Building:
         *,
         stock_amounts: dict[str, int] | None = None,
     ) -> bool:
+        from recipes import Recipe as RecipeCls
         from recipes import recipe_output_fits
 
         stores = self.linked_food_storages() if self.kind == BuildingKind.KITCHEN else ()
         if stores:
-            if any(
-                sum(s.space_for_key(str(key)) for s in stores) < int(amount)
-                for key, amount in recipe.outputs.items()
-            ):
+            # Prefer pantry, but cooked food may land on the kitchen tray when
+            # the pantry is packed with raw ingredients (same as add_recipe_output).
+            overflow: dict[str, int] = {}
+            for key, amount in recipe.outputs.items():
+                need = int(amount)
+                pantry_room = sum(s.space_for_key(str(key)) for s in stores)
+                if pantry_room < need:
+                    overflow[str(key)] = need
+            if not overflow:
+                return recipe_output_fits(
+                    self, recipe, capacity=None, stock_amounts=stock_amounts
+                )
+            if self.output_capacity <= 0:
                 return False
+            overflow_recipe = RecipeCls(recipe.name, {}, overflow)
             return recipe_output_fits(
-                self, recipe, capacity=None, stock_amounts=stock_amounts
+                self,
+                overflow_recipe,
+                output_capacity=self.output_capacity,
+                output_keys=self.processor_output_keys(),
+                stock_amounts=stock_amounts,
             )
 
         if self.output_capacity > 0:
@@ -4267,7 +4282,21 @@ class Villager:
     housed: bool = False
     housing_id: int | None = None
     housing_need: int = 1
-    required_foods: list[str] = field(default_factory=lambda: ["meat"])
+    required_foods: list[str] = field(default_factory=lambda: ["t1"])
+    favourite_foods: list[str] = field(default_factory=list)
+    favourite_is_junk: bool = False
+    required_workplace: str = ""
+    signing_fee: int = 0
+    virtues: list[str] = field(default_factory=list)
+    vices: list[str] = field(default_factory=list)
+    energy: float = 1.0
+    satiation: float = 0.75
+    happiness: float = 0.7
+    housed: bool = False
+    housing_id: int | None = None
+    portrait_seed: int = 0
+    template_id: str = ""
+    tier: int = 1
     favourite_foods: list[str] = field(default_factory=list)
     favourite_is_junk: bool = False
     required_workplace: str = ""
@@ -4318,8 +4347,14 @@ class Villager:
             self.virtues, self.vices = pick_traits(
                 random.Random(self.portrait_seed ^ 0xA5A5)
             )
-            if self.favourite_is_junk and "Glutton" not in self.vices:
-                self.vices = (self.vices + ["Glutton"])[:2]
+        from society import normalize_required_foods
+
+        self.tier = max(1, min(3, int(self.tier or 1)))
+        self.required_foods = normalize_required_foods(
+            self.required_foods, tier=self.tier
+        )
+        if self.favourite_is_junk and "Glutton" not in self.vices:
+            self.vices = (self.vices + ["Glutton"])[:2]
 
     def clear_work_stickies(self) -> None:
         """Drop in-progress task state without changing workplace assignment."""

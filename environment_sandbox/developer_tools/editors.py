@@ -308,7 +308,7 @@ class TravellerEditorService:
     def new(self) -> TravellerRecord:
         assert self.document
         row = {key: "" for key in self.document.header}
-        row.update(template_id="", name="", tier="1", housing_need="1", required_foods="meat", favourite_is_junk="0", signing_fee="0")
+        row.update(template_id="", name="", tier="1", housing_need="1", required_foods="t1", favourite_is_junk="0", signing_fee="0")
         from society import SKILL_ORDER
         for skill in SKILL_ORDER:
             key = skill.name.lower(); row[key] = "1"; row[f"{key}_cap"] = "5"

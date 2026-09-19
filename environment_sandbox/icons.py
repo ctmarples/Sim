@@ -1602,8 +1602,8 @@ def blit_icon(
     ``name`` is a logical base (``crop_plant``) or concrete stem; numbered
     variants are resolved via ``variant`` (1-based).
     """
-    stem = resolve_icon_name(name, variant)
     try:
+        stem = resolve_icon_name(name, variant)
         icon = get_icon(
             stem,
             cell_px,
@@ -1613,7 +1613,7 @@ def blit_icon(
             prefer_png=prefer_png,
             stipple=stipple,
         )
-    except (FileNotFoundError, OSError):
+    except (FileNotFoundError, OSError, ValueError):
         return pygame.Rect(cx, cy, 0, 0)
     if feet_anchor:
         dest = pygame.Rect(

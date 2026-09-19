@@ -2,5 +2,6 @@ name,label,inputs,outputs,steps,icon_key,extraction,farming,hunting,crafting,lab
 wood,Wood,,wood:1,,,,,,,,,,,,,,,
 rock,Rock,,rock:1,,,,,,,,,,,,,,,
 mushrooms,Mushrooms,,mushrooms:1,,,,,,,,,,,,,,,
+nettles,Nettles,,nettles:1,,,,,,,,,,,,,,,
 honey,Honey,,honey:1,,,,,,,,,,,,,,,
 reeds,Reeds,,reeds:1,,,,,,,,,,,,,,,

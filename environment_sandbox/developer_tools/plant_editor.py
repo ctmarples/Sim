@@ -113,7 +113,8 @@ def _project(records):
                 if f.name in {"key","label","feature","terrains","resource_key","yield_amount","crop_key","icon_base","icon_recolour"} or f.name not in d:continue
                 v=d[f.name]
                 if f.name.endswith("_niche") and v is not None:v=NicheRange(*v)
-                elif f.name in {"terrains","edge_terrains","ecology_tags","spawn_rise","spawn_fall","patch_extras","despawn_fade","despawn_fade_end","fruit_rise","fruit_fall","activity_profile"}:v=tuple(v)
+                elif f.name in {"terrains","edge_terrains","ecology_tags","spawn_rise","spawn_fall","patch_extras","despawn_fade","despawn_fade_end","fruit_rise","fruit_fall","activity_profile"}:
+                    v=tuple(v) if v is not None else ()
                 elif f.name.endswith("colour") and v is not None:v=tuple(v)
                 kwargs[f.name]=v
             feature=d.get("feature","WILD_CROP" if p.can_be_cultivated else "HERB")

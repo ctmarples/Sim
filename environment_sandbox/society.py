@@ -117,7 +117,7 @@ JOB_SKILL_REQUIREMENTS: dict[str, tuple[SkillType, int]] = {
     "FORESTER": (SkillType.EXTRACTION, 1),
     "MASON": (SkillType.EXTRACTION, 1),
     "FORAGER": (SkillType.EXTRACTION, 1),
-    "FISHER": (SkillType.EXTRACTION, 1),
+    "FISHER": (SkillType.HUNTING, 1),
     "HUNTER": (SkillType.HUNTING, 1),
     "FARM": (SkillType.FARMING, 1),
     "FIELD": (SkillType.FARMING, 1),
@@ -247,7 +247,34 @@ HAPPINESS_BREAK_CONFIG: dict[str, Any] = {
     "engaged_return_walk_mult": 1.15,
 }
 
-HIRE_STAPLE_FOODS: tuple[str, ...] = ("meat", "fish", "bread")
+HIRE_STAPLE_FOODS: tuple[str, ...] = ("t1", "t2", "t3", "t4")
+
+
+def required_foods_for_tier(tier: int) -> list[str]:
+    """Hire food needs: tier N requires cooked dishes of steps 1…N (``t1``…``tN``)."""
+    from resource_balance import FOOD_TIER_KEYS
+
+    n = max(1, min(len(FOOD_TIER_KEYS), int(tier or 1)))
+    return [FOOD_TIER_KEYS[i] for i in range(n)]
+
+
+def normalize_required_foods(
+    foods: list[str] | None, *, tier: int = 1
+) -> list[str]:
+    """Keep only generic food-tier keys; rewrite legacy meat/bread/veg lists."""
+    from resource_balance import FOOD_TIER_KEYS
+
+    keys = [str(k).strip() for k in (foods or []) if str(k).strip()]
+    if keys and all(k in FOOD_TIER_KEYS for k in keys):
+        # Deduplicate, preserve order.
+        seen: set[str] = set()
+        out: list[str] = []
+        for k in keys:
+            if k not in seen:
+                seen.add(k)
+                out.append(k)
+        return out
+    return required_foods_for_tier(tier)
 
 VIRTUE_POOL: tuple[str, ...] = (
     "Hardy",
@@ -589,7 +616,7 @@ class HireCandidate:
     y: int
     skills: dict[SkillType, SkillState] = field(default_factory=blank_skills)
     housing_need: int = 1
-    required_foods: list[str] = field(default_factory=lambda: ["meat"])
+    required_foods: list[str] = field(default_factory=lambda: required_foods_for_tier(1))
     favourite_foods: list[str] = field(default_factory=list)
     favourite_is_junk: bool = False
     required_workplace: str = ""
@@ -614,6 +641,9 @@ class HireCandidate:
             if self.favourite_is_junk and "Glutton" not in self.vices:
                 self.vices = (self.vices + ["Glutton"])[:2]
         self.tier = max(1, min(3, int(self.tier or 1)))
+        self.required_foods = normalize_required_foods(
+            self.required_foods, tier=self.tier
+        )
 
     def to_dict(self) -> dict:
         return {
@@ -651,7 +681,7 @@ class HireCandidate:
             y=int(data["y"]),
             skills=skills_from_dict(data.get("skills")),
             housing_need=int(data.get("housing_need", 1)),
-            required_foods=list(data.get("required_foods") or ["meat"]),
+            required_foods=list(data.get("required_foods") or []),
             favourite_foods=list(data.get("favourite_foods") or []),
             favourite_is_junk=bool(data.get("favourite_is_junk", False)),
             required_workplace=str(data.get("required_workplace", "") or ""),
@@ -726,7 +756,10 @@ def load_traveller_templates(path: str | None = None) -> list[TravellerTemplate]
                     name=str(row.get("name") or "Traveller"),
                     tier=max(1, min(3, int(row.get("tier", 1) or 1))),
                     housing_need=max(1, min(3, int(row.get("housing_need", 1) or 1))),
-                    required_foods=_split_csv_list(row.get("required_foods", "meat")),
+                    required_foods=normalize_required_foods(
+                        _split_csv_list(row.get("required_foods", "")),
+                        tier=max(1, min(3, int(row.get("tier", 1) or 1))),
+                    ),
                     favourite_foods=_split_csv_list(row.get("favourite_foods", "")),
                     favourite_is_junk=str(row.get("favourite_is_junk", "0")).strip()
                     in ("1", "true", "True", "yes"),
@@ -769,7 +802,9 @@ def hire_candidate_from_template(
         y=community.y + rng.randint(-1, 1),
         skills=skills_from_template(template),
         housing_need=template.housing_need,
-        required_foods=list(template.required_foods) or ["meat"],
+        required_foods=normalize_required_foods(
+            template.required_foods, tier=template.tier
+        ),
         favourite_foods=list(template.favourite_foods),
         favourite_is_junk=template.favourite_is_junk,
         required_workplace=template.required_workplace,
@@ -871,20 +906,25 @@ def random_name(rng: random.Random) -> str:
 
 
 def _pick_foods(rng: random.Random) -> tuple[list[str], list[str], bool]:
-    pool = ["meat", "fish", "bread", "meat/fish", "vegetables"]
-    rng.shuffle(pool)
-    required = [pool[0]]
-    if rng.random() < 0.35:
-        extra = pool[1]
-        if extra not in required and extra != required[0]:
-            required.append(extra)
+    from resource_balance import FOOD_TIER_KEYS
+
+    tier = rng.randint(1, 3)
+    required = list(FOOD_TIER_KEYS[:tier])
     favourites: list[str] = []
     junk = False
     if rng.random() < 0.45:
-        favourites = [rng.choice(("meat", "grilled_meat", "stew", "vegetable_soup"))]
+        favourites = [
+            rng.choice(
+                ("meat_stew", "grilled_meat", "fish_soup", "pea_soup", "spiced_stew")
+            )
+        ]
         junk = rng.random() < 0.55
     elif rng.random() < 0.35:
-        favourites = [rng.choice(("bread", "blackberries", "honey", "fish", "grilled_fish"))]
+        favourites = [
+            rng.choice(
+                ("blackberries", "honey", "roasted_turnips", "grilled_fish", "wheat_bread")
+            )
+        ]
     return required, favourites, junk
 
 
@@ -984,7 +1024,9 @@ def staple_food_available(amounts: dict[str, int], required: list[str]) -> bool:
 
 
 def any_staple_available(amounts: dict[str, int]) -> bool:
-    return any(int(amounts.get(k, 0)) > 0 for k in HIRE_STAPLE_FOODS)
+    from resource_balance import FOOD_TIER_KEYS, requirement_met_in_stock
+
+    return any(requirement_met_in_stock(amounts, key) for key in FOOD_TIER_KEYS)
 
 
 def hire_unmet_requirements(
@@ -1040,8 +1082,10 @@ def requirement_label(key: str) -> str:
         return "Free bed"
     if key == "housing":
         return "Housing"
-    from resource_balance import REQUIREMENT_LABELS
+    from resource_balance import FOOD_TIER_KEYS, REQUIREMENT_LABELS, food_tier_requirement_hint
 
+    if key in FOOD_TIER_KEYS:
+        return food_tier_requirement_hint(key)
     if key in REQUIREMENT_LABELS:
         return REQUIREMENT_LABELS[key]
     from resources import resource_label
@@ -1056,9 +1100,18 @@ def requirement_icon(key: str) -> str:
     from resource_balance import REQUIREMENT_ICONS
     from resources import resource_icon
 
-    if key in REQUIREMENT_ICONS:
-        return REQUIREMENT_ICONS[key]
-    return resource_icon(key)
+    mapped = REQUIREMENT_ICONS.get(key)
+    if mapped:
+        # Prefer resolving through the resource catalogue so recipe keys like
+        # grilled_mushrooms map to a real icon stem (mushroom).
+        try:
+            return resource_icon(mapped)
+        except Exception:
+            return mapped
+    try:
+        return resource_icon(key)
+    except Exception:
+        return key
 
 
 def villager_requirement_rows(
@@ -1093,16 +1146,13 @@ def villager_requirement_rows(
         from resource_balance import requirement_met_in_stock
 
         met = requirement_met_in_stock(foods, key)
+        base = requirement_label(key)
         rows.append(
             {
                 "key": key,
                 "icon": requirement_icon(key),
                 "met": met,
-                "label": (
-                    f"{requirement_label(key)} in stock"
-                    if met
-                    else f"{requirement_label(key)} missing"
-                ),
+                "label": f"{base} — in stock" if met else f"{base} — missing",
                 "coins": 0 if met else SEASON_MISSING_REQ_PAY_COINS,
             }
         )
@@ -1147,16 +1197,13 @@ def candidate_requirement_rows(
     for food in required_foods:
         key = str(food)
         met = requirement_met_in_stock(foods, key)
+        base = requirement_label(key)
         rows.append(
             {
                 "key": key,
                 "icon": requirement_icon(key),
                 "met": met,
-                "label": (
-                    f"{requirement_label(key)} in stock"
-                    if met
-                    else f"{requirement_label(key)} missing"
-                ),
+                "label": f"{base} — in stock" if met else f"{base} — missing",
                 "coins": 0 if met else SEASON_MISSING_REQ_PAY_COINS,
             }
         )

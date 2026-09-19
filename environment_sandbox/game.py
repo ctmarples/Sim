@@ -10194,7 +10194,7 @@ class Game:
                     action="fish_deposit",
                     x=target_x,
                     y=target_y,
-                    skill=SkillType.EXTRACTION,
+                    skill=SkillType.HUNTING,
                     label="Collecting fish",
                 )
             return
@@ -13454,7 +13454,7 @@ class Game:
             action="fish_catch",
             x=item.x,
             y=item.y,
-            skill=SkillType.EXTRACTION,
+            skill=SkillType.HUNTING,
             label="Fishing",
             tag=f"fish:{item.id}",
             meta={"fish_id": item.id},
@@ -18167,7 +18167,7 @@ class Game:
                 self._clear_villager_path(villager)
             return
 
-        building.deposit_from_inventory(villager.inventory)
+        building.deposit_from_inventory(villager.inventory, keep_plantables=True)
 
         if not villager.inventory.has_equipped_tool("axe"):
             return
@@ -18985,7 +18985,10 @@ class Game:
 
         if (villager.x, villager.y) == target:
             if kind == "split" or target == (bx, by):
-                building.deposit_from_inventory(villager.inventory)
+                # Keep saplings/seeds so plant-stock withdraw ↔ split does not loop.
+                building.deposit_from_inventory(
+                    villager.inventory, keep_plantables=True
+                )
                 if self._forester_try_split(villager, building):
                     return
                 villager.target = None
@@ -24888,14 +24891,18 @@ class Game:
 
         Scans the forage index once, then path-tests the best candidates per
         priority tier (not one full path search per enabled recipe).
+
+        Distance gates use the hut (or drawn-area origin): only forage inside
+        ``WORK_SEARCH_RADIUS``. Ranking and pathfinding use the villager so a
+        worker already out gathering keeps packing nearby cells instead of
+        crossing back through the hut to the opposite edge of the radius.
         """
-        # Without drawn areas, rank and radius are from the hut so workers
-        # prefer nearby high-priority forage over far loose wood they walked past.
-        search_origin = (
-            origin if areas else building.center_cell()
-        )
-        ox, oy = search_origin
-        band = max(1, int(FORAGER_PRIORITY_BAND))
+        bx, by = building.center_cell()
+        # Drawn areas: stay inside the painted zone around ``origin``.
+        # Free roam: every candidate must lie near the hut.
+        radius_origin = origin if areas else (bx, by)
+        ox, oy = radius_origin
+        vx, vy = villager.x, villager.y
         recipe_meta: list[tuple[str, int, str, int]] = []
         for recipe in building.enabled_recipes():
             if not self._forage_resource_unlocked(recipe.name):
@@ -24912,6 +24919,7 @@ class Game:
             villager.forage_colony_id = None
             return None
 
+        # (priority, dist_villager, dist_building, cell, colony_id)
         candidates: list[tuple[int, int, int, tuple[int, int], int | None]] = []
 
         def consider_cell(x: int, y: int) -> None:
@@ -24927,13 +24935,18 @@ class Game:
             key = self._forage_key_for_cell(cell)
             if key is None:
                 return
+            dist_b = abs(x - ox) + abs(y - oy)
+            if dist_b > WORK_SEARCH_RADIUS:
+                return
+            # Also stay local to the walker — stops diameter-crossing trips
+            # once they are already out at the edge of the hut radius.
+            dist_v = abs(x - vx) + abs(y - vy)
+            if dist_v > WORK_SEARCH_RADIUS:
+                return
             for name, priority, _cargo_key, _need in recipe_meta:
                 if name != key:
                     continue
-                dist = abs(x - ox) + abs(y - oy)
-                if dist > WORK_SEARCH_RADIUS:
-                    return
-                candidates.append((dist // band, priority, dist, (x, y), None))
+                candidates.append((priority, dist_v, dist_b, (x, y), None))
                 return
 
         if areas:
@@ -24958,30 +24971,31 @@ class Game:
             if name != "honey":
                 continue
             colony = self._find_honey_colony(
-                villager, building, origin=search_origin
+                villager, building, origin=radius_origin
             )
             if colony is None:
                 continue
-            dist = abs(colony.x - ox) + abs(colony.y - oy)
-            if dist <= WORK_SEARCH_RADIUS:
+            dist_b = abs(colony.x - ox) + abs(colony.y - oy)
+            dist_v = abs(colony.x - vx) + abs(colony.y - vy)
+            if dist_b <= WORK_SEARCH_RADIUS and dist_v <= WORK_SEARCH_RADIUS:
                 candidates.append(
-                    (dist // band, priority, dist, (colony.x, colony.y), colony.id)
+                    (priority, dist_v, dist_b, (colony.x, colony.y), colony.id)
                 )
 
         if not candidates:
             villager.forage_colony_id = None
             return None
 
-        # Priority tiers first (1 = highest). Within a tier, nearer to the hut
-        # (or area origin) wins. Never let a worse-priority wood bush beat a
-        # still-pathable higher-priority crop just because it is closer.
-        path_origin = (villager.x, villager.y)
-        candidates.sort(key=lambda c: (c[1], c[2], c[3]))
+        # Priority first. Within a tier: nearer the villager, then nearer the
+        # hut — never let a far same-priority bush across the radius beat a
+        # bush next to the walker.
+        path_origin = (vx, vy)
+        candidates.sort(key=lambda c: (c[0], c[1], c[2], c[3]))
 
         path_tries_per_tier = max(6, max(1, int(PATH_PICK_MAX_PER_RING)) * 3)
         current_prio: int | None = None
         tried_tier = 0
-        for _band, prio, _dist, target, colony_id in candidates:
+        for prio, _dist_v, _dist_b, target, colony_id in candidates:
             if current_prio is None or prio != current_prio:
                 current_prio = prio
                 tried_tier = 0
@@ -25003,10 +25017,8 @@ class Game:
             )
             if path is None:
                 continue
-            # First hit in a priority tier wins even on a long route; further
-            # candidates in the same tier still honour the detour gate.
             straight = abs(goal[0] - path_origin[0]) + abs(goal[1] - path_origin[1])
-            if tried_tier > 1 and not self._path_detour_ok(straight, len(path)):
+            if not self._path_detour_ok(straight, len(path)):
                 continue
             villager.forage_colony_id = colony_id
             if colony_id is not None:

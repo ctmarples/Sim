@@ -31,9 +31,14 @@ class PlantForageYieldTests(unittest.TestCase):
     def test_scenic_herbs_are_not_sage(self):
         from wild_species import plant_forage_yield
 
-        for kind in ("clover", "yarrow", "meadowsweet", "nettle"):
+        for kind in ("clover", "yarrow", "meadowsweet"):
             self.assertIsNone(plant_forage_yield("HERB", kind))
             self.assertIsNone(plant_forage_yield("WILD_CROP", kind))
+
+    def test_nettle_is_collectable_herb(self):
+        from wild_species import plant_forage_yield
+
+        self.assertEqual(plant_forage_yield("HERB", "nettle"), ("nettles", 3))
 
     def test_wild_crops_keep_their_produce(self):
         from wild_species import plant_forage_yield
