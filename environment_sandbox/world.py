@@ -34,10 +34,9 @@ from trees import (
 from flora_equilibrium import (
     FLORA_ESTABLISHMENT_PASSES,
     MAX_WILD_PER_CELL,
-    allocate_capacity,
-    composition_weight,
+    cell_species_weight,
+    draw_cell_plants,
     pass_fill_scale,
-    wild_plant_capacity,
 )
 from seasons import (
     HALF_SEASON_DAYS,
@@ -3002,8 +3001,8 @@ class World:
                     tree_species = tree_cell.tree_species
                     break
         if cell.feature == FeatureType.NONE:
-            if species.counts_toward_cap and not self._wild_plant_room(cell.terrain):
-                return False
+            # Soft tile-cap is applied in ``_plan_flora_cohort``; do not hard-stop
+            # primary placement with the legacy tile-fraction room check.
             cell.feature = feature
             cell.crop_kind = species.key
             cell.deposit = deposit
@@ -3114,61 +3113,57 @@ class World:
         sample = start + float(HALF_SEASON_DAYS) * 0.5
         return start, end, sample
 
-    @staticmethod
-    def _weighted_sample_sites(
-        sites: list[tuple[float, int, int]],
-        need: int,
-        rng: random.Random,
-        *,
-        cell_load: dict[tuple[int, int], int] | None = None,
-        max_per_cell: int = MAX_WILD_PER_CELL,
-    ) -> list[tuple[int, int]]:
-        """Pick up to ``need`` sites with probability ∝ suitability (no replacement).
-
-        Eligible cells with load already at ``max_per_cell`` are skipped. Zero or
-        negative scores get a tiny floor so hard-passed sites still compete.
-        """
-        if need <= 0 or not sites:
-            return []
-        load = cell_load if cell_load is not None else {}
-        pool: list[tuple[float, int, int]] = []
-        for score, x, y in sites:
-            if load.get((x, y), 0) >= max_per_cell:
-                continue
-            pool.append((max(float(score), 1e-6), x, y))
-        picked: list[tuple[int, int]] = []
-        while pool and len(picked) < need:
-            weights = [item[0] for item in pool]
-            idx = rng.choices(range(len(pool)), weights=weights, k=1)[0]
-            _score, x, y = pool.pop(idx)
-            picked.append((x, y))
-            load[(x, y)] = load.get((x, y), 0) + 1
-            # Same cell may still appear if sites listed it once only; load gate
-            # above already filtered. No re-insert.
-        return picked
-
-    def _queue_species_cohort(
+    def _cell_flora_candidates(
         self,
-        species,
-        target: float,
-        sites: list[tuple[float, int, int]],
+        x: int,
+        y: int,
+        species_list: list,
         *,
-        abs_half_start: float,
-        abs_expire: float,
-        cell_load: dict[tuple[int, int], int],
-        pending: list[tuple[float, float, int, int, str]],
-    ) -> None:
-        """Schedule plant slots via suitability-weighted random sampling."""
-        need = max(0, int(round(float(target))))
-        if need <= 0 or not sites:
-            return
-        chosen = self._weighted_sample_sites(
-            sites, need, self._forage_rng, cell_load=cell_load
-        )
-        half_len = float(HALF_SEASON_DAYS)
-        for x, y in chosen:
-            emerge = abs_half_start + self._forage_rng.random() * half_len
-            pending.append((emerge, abs_expire, x, y, species.key))
+        day: float,
+    ) -> list[tuple[str, float]]:
+        """Eligible species weights for one cell after hard terrain/niche filters."""
+        cell = self.cells[y][x]
+        weighted: list[tuple[str, float]] = []
+        for species in species_list:
+            near_name = getattr(species, "near_feature", None)
+            near_feature = None
+            if near_name:
+                try:
+                    near_feature = FeatureType[near_name]
+                except KeyError:
+                    near_feature = None
+            on_host = near_feature is not None and cell.feature == near_feature
+            if on_host:
+                suitability = self.species_suitability_at(x, y, species)
+                if not environment_allows_seasonal_flora(species, suitability):
+                    continue
+                suit = float(suitability.combined) * 0.85
+            else:
+                if cell.terrain.name not in species.terrains:
+                    continue
+                if not self._species_can_occupy(x, y, species):
+                    continue
+                suitability = self.species_suitability_at(x, y, species)
+                if not environment_allows_seasonal_flora(species, suitability):
+                    continue
+                suit = float(suitability.combined)
+                if cell.feature in (
+                    FeatureType.HERB,
+                    FeatureType.WILD_CROP,
+                    FeatureType.REED,
+                    FeatureType.MUSHROOM,
+                    FeatureType.WOOD_BUSH,
+                ):
+                    suit *= 0.7
+            weight = cell_species_weight(
+                species,
+                suitability=suit,
+                day=day,
+                species_weight=self._flora_species_weight(species.key),
+            )
+            if weight > 0.0:
+                weighted.append((species.key, weight))
+        return weighted
 
     def _plan_flora_cohort(
         self,
@@ -3176,10 +3171,11 @@ class World:
         *,
         fill_scale: float,
     ) -> list[tuple[float, float, int, int, str]]:
-        """Build the plant list for the half-season containing ``day``.
+        """Build the plant list via per-cell soft-cap probability draws.
 
-        Near-tree species share each terrain's normal capacity — no bonus forest
-        pool. They only occupy sites that pass ``near_feature``.
+        Hard filters (terrain, near_feature, moisture/texture) decide eligibility.
+        Soft ``FLORA_TILE_CAP × fill_scale`` is the chance each cell slot plants;
+        among eligible species, odds follow niche × temporal × catalogue weights.
         """
         half = half_season_index(day)
         half_start, _half_end, sample = self._half_season_bounds(half)
@@ -3187,10 +3183,9 @@ class World:
         year_day = float(day) % float(YEAR_DAYS)
         abs_half_start = abs_now - (year_day - half_start)
         half_len = float(HALF_SEASON_DAYS)
-        abs_expire = abs_half_start + half_len  # end of this half
+        abs_expire = abs_half_start + half_len
 
         pending: list[tuple[float, float, int, int, str]] = []
-        cell_load: dict[tuple[int, int], int] = {}
 
         terrain_cells: dict[TerrainType, list[tuple[int, int]]] = {}
         for y, row in enumerate(self.cells):
@@ -3205,43 +3200,33 @@ class World:
             ]
             for key in WILD_CROPS_BY_TERRAIN.get(terrain, ()):
                 species = WILD_BY_KEY.get(key)
-                if species is not None and species.spawn_peak > 0 and species not in species_list:
+                if (
+                    species is not None
+                    and species.spawn_peak > 0
+                    and species not in species_list
+                ):
                     species_list.append(species)
             if not species_list:
                 continue
-            claims = []
-            site_cache: dict[str, list[tuple[float, int, int]]] = {}
-            for species in species_list:
-                sites = self._scored_sites_for_species(species, cells)
-                site_cache[species.key] = sites
-                mean_suit = (
-                    sum(s for s, _x, _y in sites) / len(sites) if sites else 0.0
-                )
-                intensity, seasonal = composition_weight(
-                    species,
-                    mean_suitability=mean_suit,
-                    day=sample,
-                    species_weight=self._flora_species_weight(species.key),
-                )
-                if not sites or intensity <= 0.0:
-                    continue
-                claims.append((species, intensity, seasonal))
-            if not claims:
+            tile_cap = self._flora_tile_cap(terrain)
+            if tile_cap <= 0.0:
                 continue
-            capacity = wild_plant_capacity(
-                len(cells), tile_fraction=self._flora_tile_cap(terrain)
-            )
-            fill = fill_scale
-            for species, target in allocate_capacity(claims, capacity, terrain_fill=fill):
-                self._queue_species_cohort(
-                    species,
-                    target,
-                    site_cache.get(species.key, []),
-                    abs_half_start=abs_half_start,
-                    abs_expire=abs_expire,
-                    cell_load=cell_load,
-                    pending=pending,
+            for x, y in cells:
+                weighted = self._cell_flora_candidates(
+                    x, y, species_list, day=sample
                 )
+                if not weighted:
+                    continue
+                picks = draw_cell_plants(
+                    weighted,
+                    tile_cap=tile_cap,
+                    fill_scale=fill_scale,
+                    rng=self._forage_rng,
+                    max_per_cell=MAX_WILD_PER_CELL,
+                )
+                for key in picks:
+                    emerge = abs_half_start + self._forage_rng.random() * half_len
+                    pending.append((emerge, abs_expire, x, y, key))
 
         pending.sort(key=lambda item: item[0])
         return pending
@@ -3275,10 +3260,8 @@ class World:
     def _install_flora_half_season(self, day: float, *, fill_scale: float = 1.0) -> int:
         """Atomic half-season stand: clear previous cohort, place the new one now.
 
-        Composition is rolled once for the half (activity × intensity × tile cap).
-        Plants stay until the next half-season install (or pick). Staggered
-        emerge is skipped on purpose — overlapping cohorts could not share the
-        terrain tile cap, which caused a bare-map gap when the old stand expired.
+        Each cell soft-rolls occupancy (tile cap × fill) then picks among
+        hard-filtered species by niche × season × catalogue weights.
         """
         abs_day = self._flora_absolute_day(day)
         self._clear_live_flora_plants()

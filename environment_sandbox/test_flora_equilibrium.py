@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import random
 import unittest
 from collections import Counter
 
 from balance_config import BalanceState, set_active_balance
-from flora_equilibrium import allocate_capacity, composition_weight, wild_plant_capacity
+from flora_equilibrium import (
+    allocate_capacity,
+    draw_cell_plants,
+    expected_plants_for_species,
+    wild_plant_capacity,
+)
 from seasons import HALF_SEASON_DAYS, half_season_index
 from world import FeatureType, TerrainType, World
 
@@ -25,33 +31,35 @@ class FloraEquilibriumUnitTests(unittest.TestCase):
         self.assertAlmostEqual(out[a], 50.0)
         self.assertAlmostEqual(out[b], 0.0)
 
-    def test_weighted_sample_not_greedy_top_n(self):
-        """Suitability-weighted picks must sometimes choose below the top scores."""
-        import random
-
-        # Five excellent cells + many mediocre ones. Greedy need=5 always takes
-        # only the excellent band; weighted sampling should often include y=1.
-        sites = [(1.0, i, 0) for i in range(5)] + [(0.25, i, 1) for i in range(95)]
-        low_hits = 0
-        trials = 200
+    def test_draw_cell_respects_soft_cap_rate(self):
+        weighted = [("peas", 1.0), ("beans", 1.0)]
+        trials = 4000
+        planted = 0
         for seed in range(trials):
-            picked = World._weighted_sample_sites(sites, 5, random.Random(seed))
-            if any(y == 1 for _x, y in picked):
-                low_hits += 1
-        self.assertGreater(low_hits, trials // 4)
+            picks = draw_cell_plants(
+                weighted, tile_cap=0.20, fill_scale=1.0, rng=random.Random(seed)
+            )
+            planted += len(picks)
+        # 3 slots × 0.20 occupy → ~0.60 plants/cell expected
+        rate = planted / trials
+        self.assertGreater(rate, 0.45)
+        self.assertLess(rate, 0.75)
 
-    def test_weighted_sample_respects_cell_load_cap(self):
-        import random
-
-        from flora_equilibrium import MAX_WILD_PER_CELL as CAP
-
-        sites = [(1.0, 0, 0), (0.9, 1, 0), (0.8, 2, 0)]
-        load = {(0, 0): CAP}
-        picked = World._weighted_sample_sites(
-            sites, 3, random.Random(1), cell_load=load, max_per_cell=CAP
+    def test_draw_cell_zero_cap_means_empty(self):
+        picks = draw_cell_plants(
+            [("peas", 2.0)], tile_cap=0.0, fill_scale=1.0, rng=random.Random(0)
         )
-        self.assertNotIn((0, 0), picked)
-        self.assertEqual(len(picked), 2)
+        self.assertEqual(picks, [])
+
+    def test_expected_plants_splits_by_weight(self):
+        total = expected_plants_for_species(
+            tiles=100,
+            tile_cap=0.2,
+            fill_scale=1.0,
+            species_weight=1.0,
+            weight_sum=2.0,
+        )
+        self.assertAlmostEqual(total, 100 * 0.2 * 3 * 0.5)
 
 
 class FloraEquilibriumWorldTests(unittest.TestCase):
@@ -118,7 +126,6 @@ class FloraEquilibriumWorldTests(unittest.TestCase):
                     if obj.feature in (FeatureType.MUSHROOM, FeatureType.WOOD_BUSH)
                 )
         self.assertGreater(open_crops, 0)
-        # Mush/wood share terrain capacity — must not dominate open forage.
         self.assertLess(litter, open_crops)
 
     def test_summer_heat_does_not_empty_grass(self) -> None:
@@ -174,7 +181,6 @@ class FloraEquilibriumWorldTests(unittest.TestCase):
         self.assertEqual(world._flora_half_index, half_season_index(next_day))
         after = self._flora_count(world)
         self.assertGreater(after, before * 0.5)
-        # Same-day re-tick must not clear again.
         world._tick_flora_half_season(next_day)
         self.assertEqual(self._flora_count(world), after)
 

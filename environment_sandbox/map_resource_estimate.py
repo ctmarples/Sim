@@ -5,13 +5,10 @@ Balance model (same as live ``World.establish_flora_equilibrium``):
 * **Seasonal probability** — ``activity_profile`` (via ``activity_at_day``)
 * **Spatial probability** — terrain ecology × plant niches
 * **Intensity** — ``spawn_peak × spawn_activity × FLORA_SPECIES_WEIGHT × soft niche``
-* **Composition** — each half-season, plant counts are the terrain capacity
-  allocated in proportion to those weights (normalized). A species' peak
-  half-season is when it holds its largest share — not blocked by earlier
-  carryover filling the cap.
-* **Capacity** — ``FLORA_TILE_CAP_<terrain>`` (default 0.20) of tiles may host
-  a primary wild plant, and the ``wild_plant`` subcell family allows up to
-  ``MAX_WILD_PER_CELL`` (3) plants per tile.
+* **Composition** — per-cell soft occupancy: each tile slot plants with
+  probability ``FLORA_TILE_CAP``, then picks a species ∝ those weights × season
+* **Capacity** — expected plants ≈ ``tiles × FLORA_TILE_CAP × MAX_WILD_PER_CELL``
+  when eligible species exist (soft mottling, not a global dump into niches)
 
 Live ``spawn_rise``/``spawn_fall`` envelopes are ignored here.
 
@@ -39,8 +36,8 @@ from seasons import (
 from flora_equilibrium import (
     MAX_WILD_PER_CELL,
     FLORA_ESTABLISHMENT_PASSES,
-    allocate_capacity,
     composition_weight,
+    expected_plants_for_species,
     wild_plant_capacity,
 )
 from wild_species import (
@@ -408,18 +405,28 @@ def _composition_weight(
 
 def _allocate_capacity(
     rows: list[tuple[WildSpeciesDef, float, float, float, bool]],
-    capacity: float,
     *,
-    terrain_fill: float = 1.0,
+    tiles: float,
+    tile_cap: float,
+    fill_scale: float,
 ) -> list[tuple[WildSpeciesDef, float, float, bool]]:
-    """Allocate plant counts; preserves suitability flags for estimate rows."""
-    slim = [(s, intensity, seasonal) for s, intensity, seasonal, _su, _ok in rows]
-    allocated = allocate_capacity(slim, capacity, terrain_fill=terrain_fill)
-    meta = {(s.key): (suit, ok) for s, _i, _a, suit, ok in rows}
-    return [
-        (s, plants, meta[s.key][0], meta[s.key][1])
-        for s, plants in allocated
+    """Expected plants under the per-cell soft-cap model."""
+    weights = [
+        (s, max(0.0, intensity) * max(0.0, seasonal), suit, ok)
+        for s, intensity, seasonal, suit, ok in rows
     ]
+    weight_sum = sum(w for _s, w, _su, _ok in weights)
+    out: list[tuple[WildSpeciesDef, float, float, bool]] = []
+    for species, weight, suit, ok in weights:
+        plants = expected_plants_for_species(
+            tiles=tiles,
+            tile_cap=tile_cap,
+            fill_scale=fill_scale,
+            species_weight=weight,
+            weight_sum=weight_sum,
+        )
+        out.append((species, plants, suit, ok))
+    return out
 
 
 def estimate_flora_year(
@@ -428,12 +435,11 @@ def estimate_flora_year(
     *,
     passes: float | None = None,
 ) -> list[list[SpeciesHalfSeason]]:
-    """Per half-season flora via capacity × intensity share × activity × pass fill.
+    """Per half-season flora via per-cell soft occupancy expectations.
 
-    * Terrain capacity: ``tiles × FLORA_TILE_CAP × max_per_cell``
-    * Species intensity: ``spawn_peak × spawn_activity × FLORA_SPECIES_WEIGHT × soft niche``
-    * Pass fill: ``passes / 32`` (establishment effort only)
-    * Temporal: ``activity_profile`` (under-full seasons leave capacity empty)
+    * Soft fill: ``FLORA_TILE_CAP × passes/32`` chance per cell slot
+    * Species odds: peak × activity × species weight × soft niche × season
+    * Up to ``MAX_WILD_PER_CELL`` slots per cell
     """
     opt = (options or MapOptions()).normalized()
     pass_scale = float(FLORA_ESTABLISHMENT_PASSES if passes is None else passes) / float(
@@ -485,9 +491,11 @@ def estimate_flora_year(
                     species_weight=_flora_species_weight(species.key),
                 )
                 claims.append((species, intensity, seasonal_spatial, suit, ok))
-            capacity = wild_plant_capacity(tiles, tile_fraction=tile_cap)
             for species, plants, suit, ok in _allocate_capacity(
-                claims, capacity, terrain_fill=pass_scale
+                claims,
+                tiles=tiles,
+                tile_cap=tile_cap,
+                fill_scale=pass_scale,
             ):
                 if plants < 1e-9:
                     continue
