@@ -33,6 +33,8 @@ MONTH_SHORT: tuple[str, ...] = (
 class MonthBucket:
     produced: dict[str, int] = field(default_factory=dict)
     consumed: dict[str, int] = field(default_factory=dict)
+    spawned: dict[str, int] = field(default_factory=dict)
+    spawned_reachable: dict[str, int] = field(default_factory=dict)
     stock: dict[str, int] = field(default_factory=dict)
 
     def add_produced(self, key: str, amount: int) -> None:
@@ -45,6 +47,20 @@ class MonthBucket:
             return
         self.consumed[key] = int(self.consumed.get(key, 0)) + int(amount)
 
+    def add_spawned(self, key: str, amount: int) -> None:
+        """Wild flora units that became available on the map (forage potential)."""
+        if amount <= 0:
+            return
+        self.spawned[key] = int(self.spawned.get(key, 0)) + int(amount)
+
+    def add_spawned_reachable(self, key: str, amount: int) -> None:
+        """Spawn units that landed inside a forager work radius (discoverable)."""
+        if amount <= 0:
+            return
+        self.spawned_reachable[key] = int(self.spawned_reachable.get(key, 0)) + int(
+            amount
+        )
+
     def set_stock(self, amounts: dict[str, int]) -> None:
         self.stock = {str(k): int(v) for k, v in amounts.items() if int(v) > 0}
 
@@ -52,6 +68,10 @@ class MonthBucket:
         return {
             "produced": {k: int(v) for k, v in self.produced.items() if v},
             "consumed": {k: int(v) for k, v in self.consumed.items() if v},
+            "spawned": {k: int(v) for k, v in self.spawned.items() if v},
+            "spawned_reachable": {
+                k: int(v) for k, v in self.spawned_reachable.items() if v
+            },
             "stock": {k: int(v) for k, v in self.stock.items() if v},
         }
 
@@ -61,8 +81,18 @@ class MonthBucket:
             return cls()
         produced = {str(k): int(v) for k, v in (data.get("produced") or {}).items()}
         consumed = {str(k): int(v) for k, v in (data.get("consumed") or {}).items()}
+        spawned = {str(k): int(v) for k, v in (data.get("spawned") or {}).items()}
+        spawned_reachable = {
+            str(k): int(v) for k, v in (data.get("spawned_reachable") or {}).items()
+        }
         stock = {str(k): int(v) for k, v in (data.get("stock") or {}).items()}
-        return cls(produced=produced, consumed=consumed, stock=stock)
+        return cls(
+            produced=produced,
+            consumed=consumed,
+            spawned=spawned,
+            spawned_reachable=spawned_reachable,
+            stock=stock,
+        )
 
 
 def month_label(absolute_month: int) -> str:
@@ -106,6 +136,14 @@ class ResourceHistory:
     def record_consumed(self, key: str, amount: int = 1) -> None:
         self.current.add_consumed(key, amount)
 
+    def record_spawned(self, key: str, amount: int = 1) -> None:
+        """Record wild flora forage units that appeared on the map."""
+        self.current.add_spawned(key, amount)
+
+    def record_spawned_reachable(self, key: str, amount: int = 1) -> None:
+        """Record spawn units that landed inside a forager work radius."""
+        self.current.add_spawned_reachable(key, amount)
+
     def record_stock(self, amounts: dict[str, int]) -> None:
         """Snapshot village stock into the in-progress month (call before advance_day)."""
         self.current.set_stock(amounts)
@@ -123,12 +161,13 @@ class ResourceHistory:
             out = out[-HISTORY_MONTHS:]
         return out
 
-    def series(self, key: str) -> tuple[list[str], list[int], list[int], list[int]]:
-        """Labels, produced[], consumed[], stock[] for the chart window (padded to 24)."""
+    def series(self, key: str) -> tuple[list[str], list[int], list[int], list[int], list[int]]:
+        """Labels, produced[], consumed[], spawned[], stock[] for the chart window."""
         window = self._window_buckets()
         labels = [month_label(idx) for idx, _ in window]
         produced = [int(b.produced.get(key, 0)) for _, b in window]
         consumed = [int(b.consumed.get(key, 0)) for _, b in window]
+        spawned = [int(b.spawned.get(key, 0)) for _, b in window]
         stock = [int(b.stock.get(key, 0)) for _, b in window]
         pad = HISTORY_MONTHS - len(labels)
         if pad > 0:
@@ -136,20 +175,54 @@ class ResourceHistory:
             labels = [month_label(first - pad + i) for i in range(pad)] + labels
             produced = [0] * pad + produced
             consumed = [0] * pad + consumed
+            spawned = [0] * pad + spawned
             stock = [0] * pad + stock
-        return labels, produced, consumed, stock
+        return labels, produced, consumed, spawned, stock
 
-    def totals(self, key: str) -> tuple[int, int]:
-        _labels, produced, consumed, _stock = self.series(key)
-        return sum(produced), sum(consumed)
+    def totals(self, key: str) -> tuple[int, int, int]:
+        _labels, produced, consumed, spawned, _stock = self.series(key)
+        return sum(produced), sum(consumed), sum(spawned)
 
     def keys_with_activity(self) -> set[str]:
         keys: set[str] = set()
         for _, bucket in self._window_buckets():
             keys.update(k for k, v in bucket.produced.items() if v)
             keys.update(k for k, v in bucket.consumed.items() if v)
+            keys.update(k for k, v in bucket.spawned.items() if v)
             keys.update(k for k, v in bucket.stock.items() if v)
         return keys
+
+    def spawned_totals(self) -> dict[str, int]:
+        totals: dict[str, int] = {}
+        for _, bucket in self._window_buckets():
+            for key, value in bucket.spawned.items():
+                if value:
+                    totals[key] = int(totals.get(key, 0)) + int(value)
+        return totals
+
+    def spawned_reachable_totals(self) -> dict[str, int]:
+        totals: dict[str, int] = {}
+        for _, bucket in self._window_buckets():
+            for key, value in bucket.spawned_reachable.items():
+                if value:
+                    totals[key] = int(totals.get(key, 0)) + int(value)
+        return totals
+
+    def produced_totals(self) -> dict[str, int]:
+        totals: dict[str, int] = {}
+        for _, bucket in self._window_buckets():
+            for key, value in bucket.produced.items():
+                if value:
+                    totals[key] = int(totals.get(key, 0)) + int(value)
+        return totals
+
+    def consumed_totals(self) -> dict[str, int]:
+        totals: dict[str, int] = {}
+        for _, bucket in self._window_buckets():
+            for key, value in bucket.consumed.items():
+                if value:
+                    totals[key] = int(totals.get(key, 0)) + int(value)
+        return totals
 
     def to_dict(self) -> dict[str, Any]:
         return {

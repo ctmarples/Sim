@@ -25,6 +25,7 @@ LIST_W = 178
 MAX_SELECTED = 8
 CHART_COLOUR_PROD = (90, 190, 120)
 CHART_COLOUR_CONS = (220, 120, 100)
+CHART_COLOUR_SPAWN = (230, 190, 80)
 CHART_COLOUR_STOCK = (110, 170, 230)
 CHART_GRID = (55, 58, 68)
 CHART_AXIS = (90, 95, 110)
@@ -64,6 +65,7 @@ class ResourceTrackerDialog:
         self.selected_keys: list[str] = ["wood"]
         self.show_produced: bool = True
         self.show_consumed: bool = True
+        self.show_spawned: bool = True
         self.show_stock: bool = True
         self._row_h = 20
 
@@ -148,14 +150,23 @@ class ResourceTrackerDialog:
                     self.show_produced = not self.show_produced
                 elif metric == "consumed":
                     self.show_consumed = not self.show_consumed
+                elif metric == "spawned":
+                    self.show_spawned = not self.show_spawned
                 elif metric == "stock":
                     self.show_stock = not self.show_stock
                 # Keep at least one metric visible.
-                if not (self.show_produced or self.show_consumed or self.show_stock):
+                if not (
+                    self.show_produced
+                    or self.show_consumed
+                    or self.show_spawned
+                    or self.show_stock
+                ):
                     if metric == "produced":
                         self.show_produced = True
                     elif metric == "consumed":
                         self.show_consumed = True
+                    elif metric == "spawned":
+                        self.show_spawned = True
                     else:
                         self.show_stock = True
                 return True
@@ -350,9 +361,10 @@ class ResourceTrackerDialog:
         """Draw Prod / Cons / Total toggles; return y below them."""
         self._metric_rects = []
         specs = (
-            ("produced", "Production", self.show_produced, CHART_COLOUR_PROD),
-            ("consumed", "Consumption", self.show_consumed, CHART_COLOUR_CONS),
-            ("stock", "Total", self.show_stock, CHART_COLOUR_STOCK),
+            ("produced", "Foraged", self.show_produced, CHART_COLOUR_PROD),
+            ("consumed", "Used", self.show_consumed, CHART_COLOUR_CONS),
+            ("spawned", "Spawned", self.show_spawned, CHART_COLOUR_SPAWN),
+            ("stock", "Stock", self.show_stock, CHART_COLOUR_STOCK),
         )
         x = area.x + 10
         y = area.y + 8
@@ -392,14 +404,14 @@ class ResourceTrackerDialog:
         # Summary lines for selected resources
         summary_y = below_toggles + 2
         for key in keys[:4]:
-            labels, produced, consumed, stock = history.series(key)
+            labels, produced, consumed, spawned, stock = history.series(key)
             del labels, stock
-            tot_p, tot_c = sum(produced), sum(consumed)
+            tot_p, tot_c, tot_s = sum(produced), sum(consumed), sum(spawned)
             now = int(stock_now.get(key, 0))
             colour = self._resource_colour(key) if multi else COLOUR_TEXT
             line = (
                 f"{self._label_for(key)}  stock {now}  "
-                f"prod {tot_p}  cons {tot_c}"
+                f"spawn {tot_s}  forage {tot_p}  used {tot_c}"
             )
             surface.blit(
                 self.font_small.render(line, True, colour),
@@ -425,9 +437,18 @@ class ResourceTrackerDialog:
         series_list: list[tuple[str, str, list[int], tuple[int, int, int]]] = []
         labels: list[str] = []
         for key in keys:
-            labs, produced, consumed, stock = history.series(key)
+            labs, produced, consumed, spawned, stock = history.series(key)
             labels = labs
             base = self._resource_colour(key) if multi else None
+            if self.show_spawned:
+                series_list.append(
+                    (
+                        key,
+                        "spawn",
+                        spawned,
+                        base if multi else CHART_COLOUR_SPAWN,
+                    )
+                )
             if self.show_produced:
                 series_list.append(
                     (

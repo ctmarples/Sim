@@ -2321,6 +2321,9 @@ class Building:
             return True
         if not self.has_recipes():
             return True
+        known = {recipe.name for recipe in self.known_recipes()}
+        if key not in known:
+            return False
         return self.is_recipe_enabled(key)
 
     def ensure_recipe_state(self) -> None:

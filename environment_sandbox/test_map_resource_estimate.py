@@ -97,17 +97,17 @@ class MapResourceEstimateTests(unittest.TestCase):
             arid.by_resource(2).get("reeds", 0.0),
         )
 
-    def test_terrain_fill_weight_scales_abundance(self):
-        """FLORA_SPAWN_WEIGHT must change absolute plants (not cancel in shares)."""
+    def test_terrain_tile_cap_scales_abundance(self):
+        """FLORA_TILE_CAP must change absolute plants (not cancel in shares)."""
         from unittest.mock import patch
 
         from map_resource_estimate import estimate_flora_year, estimate_terrain_counts
 
         opt = MapOptions()
         terrain = estimate_terrain_counts(opt)
-        with patch("map_resource_estimate._flora_spawn_weight", return_value=1.0):
+        with patch("map_resource_estimate._flora_tile_cap", return_value=0.20):
             full = estimate_flora_year(terrain, opt)
-        with patch("map_resource_estimate._flora_spawn_weight", return_value=0.5):
+        with patch("map_resource_estimate._flora_tile_cap", return_value=0.10):
             half = estimate_flora_year(terrain, opt)
         thyme_full = sum(
             r.expected_stock for r in full[3] if r.species_key == "thyme"
@@ -117,6 +117,28 @@ class MapResourceEstimateTests(unittest.TestCase):
         )
         self.assertGreater(thyme_full, 0.0)
         self.assertAlmostEqual(thyme_half / thyme_full, 0.5, places=2)
+
+    def test_species_weight_amplifies_before_competition(self):
+        from unittest.mock import patch
+
+        from map_resource_estimate import estimate_flora_year, estimate_terrain_counts
+
+        opt = MapOptions()
+        terrain = estimate_terrain_counts(opt)
+
+        def boost_peas(key: str) -> float:
+            return 4.0 if key == "peas" else 1.0
+
+        with patch("map_resource_estimate._flora_species_weight", return_value=1.0):
+            baseline = estimate_flora_year(terrain, opt)
+        with patch(
+            "map_resource_estimate._flora_species_weight", side_effect=boost_peas
+        ):
+            boosted = estimate_flora_year(terrain, opt)
+        peas0 = sum(r.expected_stock for r in baseline[0] if r.species_key == "peas")
+        peas1 = sum(r.expected_stock for r in boosted[0] if r.species_key == "peas")
+        self.assertGreater(peas0, 0.0)
+        self.assertGreater(peas1, peas0)
 
     def test_species_peak_shifts_relative_share(self):
         est = estimate_map_resources(MapOptions())

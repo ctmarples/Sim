@@ -160,39 +160,42 @@ class Toolbar:
                 "file_tracker", "Tracker…", 8, TOOLBAR_HEIGHT + 56, 110, 24, "menu"
             ),
             self._make_btn(
-                "file_balance", "Balance…", 8, TOOLBAR_HEIGHT + 82, 110, 24, "menu"
+                "file_resources", "Resources…", 8, TOOLBAR_HEIGHT + 82, 110, 24, "menu"
+            ),
+            self._make_btn(
+                "file_balance", "Balance…", 8, TOOLBAR_HEIGHT + 108, 110, 24, "menu"
             ),
             self._make_btn(
                 "file_sociopolitical",
                 "Sociopolitical…",
                 8,
-                TOOLBAR_HEIGHT + 108,
+                TOOLBAR_HEIGHT + 134,
                 110,
                 24,
                 "menu",
             ),
             self._make_btn(
-                "file_sound", "Sound…", 8, TOOLBAR_HEIGHT + 134, 110, 24, "menu"
+                "file_sound", "Sound…", 8, TOOLBAR_HEIGHT + 160, 110, 24, "menu"
             ),
             self._make_btn(
-                "file_repopulate", "Repopulate…", 8, TOOLBAR_HEIGHT + 160, 110, 24, "menu"
+                "file_repopulate", "Repopulate…", 8, TOOLBAR_HEIGHT + 186, 110, 24, "menu"
             ),
             self._make_btn(
-                "file_map_generator", "Map generator…", 8, TOOLBAR_HEIGHT + 186,
+                "file_map_generator", "Map generator…", 8, TOOLBAR_HEIGHT + 212,
                 110, 24, "menu",
             ),
             self._make_btn(
-                "file_terrain_types", "Terrain types…", 8, TOOLBAR_HEIGHT + 212,
+                "file_terrain_types", "Terrain types…", 8, TOOLBAR_HEIGHT + 238,
                 110, 24, "menu",
             ),
-            self._make_btn("file_subtile_test", "Habitat test", 8, TOOLBAR_HEIGHT + 238, 110, 24, "menu"),
-            self._make_btn("file_niche_test", "Niche test", 8, TOOLBAR_HEIGHT + 264, 110, 24, "menu"),
-            self._make_btn("file_landscape_fields", "Landscape fields", 8, TOOLBAR_HEIGHT + 290, 110, 24, "menu"),
-            self._make_btn("file_reset", "Reset", 8, TOOLBAR_HEIGHT + 316, 110, 24, "menu"),
-            self._make_btn("day_slower", "Shorter day", 8, TOOLBAR_HEIGHT + 342, 110, 24, "menu"),
-            self._make_btn("day_faster", "Longer day", 8, TOOLBAR_HEIGHT + 368, 110, 24, "menu"),
-            self._make_btn("file_time_demo", "Time demo…", 8, TOOLBAR_HEIGHT + 394, 110, 24, "menu"),
-            self._make_btn("file_quit", "Quit", 8, TOOLBAR_HEIGHT + 420, 110, 24, "menu"),
+            self._make_btn("file_subtile_test", "Habitat test", 8, TOOLBAR_HEIGHT + 264, 110, 24, "menu"),
+            self._make_btn("file_niche_test", "Niche test", 8, TOOLBAR_HEIGHT + 290, 110, 24, "menu"),
+            self._make_btn("file_landscape_fields", "Landscape fields", 8, TOOLBAR_HEIGHT + 316, 110, 24, "menu"),
+            self._make_btn("file_reset", "Reset", 8, TOOLBAR_HEIGHT + 342, 110, 24, "menu"),
+            self._make_btn("day_slower", "Shorter day", 8, TOOLBAR_HEIGHT + 368, 110, 24, "menu"),
+            self._make_btn("day_faster", "Longer day", 8, TOOLBAR_HEIGHT + 394, 110, 24, "menu"),
+            self._make_btn("file_time_demo", "Time demo…", 8, TOOLBAR_HEIGHT + 420, 110, 24, "menu"),
+            self._make_btn("file_quit", "Quit", 8, TOOLBAR_HEIGHT + 446, 110, 24, "menu"),
         ]
 
     def task_buttons_for(

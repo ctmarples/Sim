@@ -22,7 +22,7 @@ import random
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Iterator
+from typing import Callable, Iterator
 
 from crops import CROP_BY_KEY
 from trees import (
@@ -31,18 +31,24 @@ from trees import (
     pick_tree_species,
     resolve_tree,
 )
+from flora_equilibrium import (
+    FLORA_ESTABLISHMENT_PASSES,
+    MAX_WILD_PER_CELL,
+    allocate_capacity,
+    composition_weight,
+    pass_fill_scale,
+    wild_plant_capacity,
+)
 from seasons import (
+    HALF_SEASON_DAYS,
+    N_HALF_SEASONS,
+    YEAR_DAYS,
     growth_halted,
-    herb_despawn_rate,
-    herb_spawn_rate,
+    half_season_index,
     local_day,
-    mushroom_despawn_rate,
-    mushroom_spawn_rate,
-    Season,
     season_for_day,
     trees_grow_factor,
     trees_spread_factor,
-    wood_bush_spawn_rate,
 )
 from resource_balance import (
     BERRY_BUSH_YIELD,
@@ -50,7 +56,6 @@ from resource_balance import (
     BERRY_REGEN_TICKS,
     BERRY_SPREAD_INTERVAL,
     HERB_TICK_INTERVAL,
-    MUSHROOM_SPREAD_CHANCE,
     MUSHROOM_TICK_INTERVAL,
     NATURAL_SPROUT_CHANCE,
     NATURAL_SPROUT_INTERVAL,
@@ -59,26 +64,18 @@ from resource_balance import (
     ROCK_LARGE_MIN,
     ROCK_SMALL_MAX,
     ROCK_SMALL_MIN,
-    WILD_PLANT_MAX_FRACTION,
     WOOD_BUSH_SEED_CHANCE,
     WOOD_BUSH_YIELD,
 )
 from wild_species import (
     WILD_BY_KEY,
-    activity_at_day,
     non_crop_on_terrain,
     resolve_species,
-    spawn_group_leader,
-    species_despawn_rate,
     species_fruiting,
-    species_spawn_rate,
     species_environment_suitability,
     environment_allows_establishment,
-    environmental_mortality_rate,
+    environment_allows_seasonal_flora,
     normalize_temperature_c,
-    spawn_probability,
-    WILD_PROPAGULE_NEIGHBOUR_BONUS,
-    WILD_PROPAGULE_MAX_MULTIPLIER,
     format_environment_debug,
     wild_crops_by_terrain,
 )
@@ -466,6 +463,16 @@ class World:
         self._berry_spread_timer = BERRY_SPREAD_INTERVAL
         self._herb_timer = HERB_TICK_INTERVAL
         self._forage_rng = random.Random(seed + 123)
+        self._flora_half_index: int | None = None
+        # (abs_emerge, abs_expire, x, y, species_key)
+        self._flora_pending: list[tuple[float, float, int, int, str]] = []
+        # (abs_expire, x, y, species_key) for plants that have emerged
+        self._flora_live: list[tuple[float, int, int, str]] = []
+        self._flora_year_index: int = 0
+        self._flora_last_year_day: float | None = None
+        # Optional sink for wild forage units that appear on the map
+        # (resource_key → amount). Bound by Game to ResourceHistory.record_spawned.
+        self.on_wild_spawn: Callable[[str, int], None] | None = None
         self._growth_cells: list[tuple[int, int]] | None = None
         self._growth_index_age = 0
         self._water_patches_cache: list[list[tuple[int, int]]] | None = None
@@ -998,13 +1005,9 @@ class World:
         # Flora niches need climate grids; bind a spring snapshot then clear.
         prev_maps = self._bind_generation_env_maps()
         try:
-            self._seed_initial_reeds(rng)
             self._seed_initial_berries(rng)
-            # Establish wild crops / scenic herbs so meadow forage exists on day 0.
-            spring_day = 12.0
-            for _ in range(24):
-                self._tick_herbs_seasonal(spring_day)
-                self._tick_mushrooms_seasonal(spring_day)
+            # Equilibrium composition for the current calendar day (spring early).
+            self.establish_flora_equilibrium(12.0, passes=FLORA_ESTABLISHMENT_PASSES)
         finally:
             self.env_maps = prev_maps
         self._clear_settlement_yard()
@@ -2869,347 +2872,468 @@ class World:
         )
         return woke
 
-    def _tick_herbs_seasonal(self, day: float) -> None:
-        """Wild crop patches on meadow / grass / soil by crop preference."""
-        self._wild_tick_disturbance = self._build_effective_disturbance_grid()
-        wild_n: dict[TerrainType, int] = {}
-        total_n: dict[TerrainType, int] = {}
-        catalogue_terrains = {
-            TerrainType[name] for species in WILD_BY_KEY.values()
-            for name in species.terrains if name in TerrainType.__members__
-        }
-        terrains = tuple(set(WILD_CROPS_BY_TERRAIN.keys()) | catalogue_terrains)
-        # One map pass, rather than one full scan per catalogue terrain.
-        wild_features = (FeatureType.WILD_CROP, FeatureType.HERB,
-                         FeatureType.BERRY_BUSH, FeatureType.REED)
-        terrain_set = set(terrains)
-        for terrain in terrains:
-            wild_n[terrain] = 0
-            total_n[terrain] = 0
-        for row in self.cells:
-            for cell in row:
-                if cell.terrain not in terrain_set:
-                    continue
-                total_n[cell.terrain] += 1
-                if cell.feature in wild_features:
-                    wild_n[cell.terrain] += 1
+    def _flora_tile_cap(self, terrain: TerrainType) -> float:
+        """Fraction of terrain tiles allowed to hold wild flora (balance)."""
+        from balance_config import active_balance
+        from wild_species import WILD_PLANT_MAX_FRACTION
 
-        herb_leader = spawn_group_leader("wild_crop")
-        herb_activity = float(herb_leader.spawn_activity) if herb_leader else 0.55
-        non_crop_species = {
-            # Species tied to a neighbouring feature have dedicated spawn
-            # passes below. Including them here spawned mushrooms/fallen wood
-            # independently as well, bypassing proximity and doubling output.
-            terrain: sorted(
-                            (s for s in non_crop_on_terrain(terrain.name)
-                             if not s.near_feature),
-                            key=lambda s: (0 if s.edge_terrains else 1, s.key))
-            for terrain in terrains
-        }
-        non_crop_peak = {
-            terrain: max((species.spawn_peak * species.spawn_activity
-                          for species in species_list), default=0.0)
-            for terrain, species_list in non_crop_species.items()
-        }
-        crop_peak = (float(herb_leader.spawn_peak) * herb_activity
-                     if herb_leader is not None else 0.0)
-
-        # Stripe the heavy spawn/despawn pass so one eco flush stays under a
-        # frame; 4 stripes cover the map with rate compensation.
-        stripe_n = 4
-        stripe = int(getattr(self, "_herb_stripe", 0) or 0) % stripe_n
-        self._herb_stripe = stripe + 1  # type: ignore[attr-defined]
-        rate_scale = float(stripe_n)
-
-        _weight_cache: dict[TerrainType, float] = {}
-
-        def terrain_spawn_weight(terrain: TerrainType) -> float:
-            cached = _weight_cache.get(terrain)
-            if cached is not None:
-                return cached
-            from balance_config import active_balance
-
-            value = active_balance().get_float(f"FLORA_SPAWN_WEIGHT_{terrain.name}")
-            _weight_cache[terrain] = value
-            return value
-
-        def pick_crop_for_terrain(terrain: TerrainType, sample_day: float) -> str:
-            """Use developer spawn chances as relative weights in this terrain."""
-            keys = WILD_CROPS_BY_TERRAIN[terrain]
-            weighted = [
-                (
-                    key,
-                    max(
-                        0.0,
-                        species_spawn_rate(WILD_BY_KEY[key], sample_day)
-                        * float(WILD_BY_KEY[key].spawn_activity)
-                        * activity_at_day(WILD_BY_KEY[key], sample_day),
+        try:
+            return max(
+                0.0,
+                min(
+                    1.0,
+                    float(
+                        active_balance().get_float(f"FLORA_TILE_CAP_{terrain.name}")
                     ),
-                )
-                for key in keys
-            ]
-            total = sum(weight for _key, weight in weighted)
-            if total <= 0.0:
-                return self._forage_rng.choice(keys)
-            pick = self._forage_rng.random() * total
-            for key, weight in weighted:
-                pick -= weight
-                if pick <= 0.0:
-                    return key
-            return weighted[-1][0]
+                ),
+            )
+        except Exception:
+            return float(WILD_PLANT_MAX_FRACTION)
 
-        def room(terrain: TerrainType) -> bool:
-            tot = total_n.get(terrain, 0)
-            if tot <= 0:
-                return False
-            return wild_n[terrain] < int(tot * WILD_PLANT_MAX_FRACTION)
-
-        for y in range(stripe, self.rows, stripe_n):
-            for x in range(self.cols):
-                cell = self.cells[y][x]
-                if cell.feature == FeatureType.REED:
-                    species = resolve_species("REED", cell.crop_kind)
-                    rate = (
-                        species_despawn_rate(species, local_day(day, x, y))
-                        if species is not None
-                        else 0.0
-                    )
-                    if species is not None:
-                        rate = min(1.0, rate + environmental_mortality_rate(
-                            self.species_suitability_at(x, y, species).combined) / 8.0)
-                    rate = min(1.0, rate * rate_scale)
-                    if self._forage_rng.random() < rate:
-                        terrain = cell.terrain
-                        cell.feature = FeatureType.NONE
-                        cell.deposit = 0
-                        cell.growth_ticks = 0
-                        cell.crop_kind = None
-                        if terrain in wild_n:
-                            wild_n[terrain] = max(0, wild_n[terrain] - 1)
-                    elif species is not None:
-                        self._try_wild_species_spread(x, y, species, wild_n, total_n, day)
-                elif cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP):
-                    species = resolve_species(cell.feature.name, cell.crop_kind)
-                    rate = (
-                        species_despawn_rate(species, local_day(day, x, y))
-                        if species is not None
-                        else herb_despawn_rate(day, x, y, kind=cell.crop_kind)
-                    )
-                    rate = min(1.0, rate * rate_scale)
-                    if self._forage_rng.random() < rate:
-                        terrain = cell.terrain
-                        cell.feature = FeatureType.NONE
-                        cell.deposit = 0
-                        cell.growth_ticks = 0
-                        cell.crop_kind = None
-                        if terrain in wild_n:
-                            wild_n[terrain] = max(0, wild_n[terrain] - 1)
-                    else:
-                        # Wild crops and scenic herbs both may spread; crops used
-                        # to skip this and lost meadow space to clover/nettle.
-                        if species is not None:
-                            self._try_wild_species_spread(
-                                x, y, species, wild_n, total_n, day
-                            )
-                elif (
-                    cell.feature == FeatureType.NONE
-                    and cell.terrain in WILD_CROPS_BY_TERRAIN
-                    and room(cell.terrain)
-                    and crop_peak > 0
-                    and self._forage_rng.random()
-                    < min(1.0, crop_peak * terrain_spawn_weight(cell.terrain) * rate_scale)
-                ):
-                    # Prefer forage crops over scenic herbs on empty tiles so
-                    # meadow caps are not filled by clover/nettle alone.
-                    base_chance = herb_spawn_rate(day, x, y) * herb_activity
-                    if self._forage_rng.random() < base_chance / crop_peak:
-                        crop_key = pick_crop_for_terrain(
-                            cell.terrain, local_day(day, x, y)
-                        )
-                        species = WILD_BY_KEY[crop_key]
-                        score = self.species_suitability_at(x, y, species)
-                        sample = local_day(day, x, y)
-                        if (environment_allows_establishment(species, score)
-                                and self._forage_rng.random()
-                                < spawn_probability(score.combined)
-                                * activity_at_day(species, sample)):
-                            self._plant_wild_crop_patch(
-                                x, y, crop_key, wild_n=wild_n, total_n=total_n,
-                                environment_checked=True,
-                            )
-                elif (
-                    cell.feature == FeatureType.NONE
-                    and cell.terrain in non_crop_species
-                    and room(cell.terrain)
-                    and self._forage_rng.random()
-                    < min(
-                        1.0,
-                        non_crop_peak[cell.terrain]
-                        * terrain_spawn_weight(cell.terrain)
-                        * rate_scale,
-                    )
-                ):
-                    local = local_day(day, x, y)
-                    opportunities = [
-                        (
-                            species,
-                            species_spawn_rate(species, local)
-                            * species.spawn_activity
-                            * activity_at_day(species, local),
-                        )
-                        for species in non_crop_species[cell.terrain]
-                        if species.spawn_peak > 0
-                    ]
-                    # These species share one empty-tile establishment opportunity;
-                    # adding every chance made four flowers quadruple tick work and
-                    # drove the terrain straight to its cap.
-                    total_opportunity = sum(chance for _, chance in opportunities)
-                    roll_chance = max((chance for _, chance in opportunities), default=0.0)
-                    peak = non_crop_peak[cell.terrain]
-                    if (opportunities and peak > 0
-                            and self._forage_rng.random() < roll_chance / peak):
-                        pick = self._forage_rng.random() * total_opportunity
-                        species = opportunities[-1][0]
-                        for candidate, chance in opportunities:
-                            pick -= chance
-                            if pick <= 0:
-                                species = candidate
-                                break
-                        if self._species_can_occupy(x, y, species):
-                            suitability = self.species_suitability_at(x, y, species)
-                            if not environment_allows_establishment(species, suitability):
-                                continue
-                            if self._forage_rng.random() >= (
-                                spawn_probability(suitability.combined)
-                                * activity_at_day(species, local)
-                            ):
-                                continue
-                            try:
-                                cell.feature = FeatureType[species.feature]
-                            except KeyError:
-                                pass
-                            else:
-                                cell.crop_kind = species.key
-                                wild_n[cell.terrain] = wild_n.get(cell.terrain, 0) + 1
-                # A vegetated ecology cell can hold up to three individually
-                # selected plants. Each additional plant gets its own species
-                # suitability roll and free subcell rather than cloning the
-                # primary cell icon/anchor.
-                for obj in list(cell.extra_objects):
-                    if obj.feature not in (FeatureType.HERB, FeatureType.WILD_CROP):
-                        continue
-                    species = resolve_species(obj.feature.name, obj.crop_kind)
-                    rate = (
-                        species_despawn_rate(species, local_day(day, x, y))
-                        if species is not None
-                        else herb_despawn_rate(day, x, y, kind=obj.crop_kind)
-                    )
-                    rate = min(1.0, rate * rate_scale)
-                    if self._forage_rng.random() < rate:
-                        cell.extra_objects.remove(obj)
-                wild_here = int(cell.feature in (FeatureType.HERB, FeatureType.WILD_CROP)) + sum(
-                    obj.feature in (FeatureType.HERB, FeatureType.WILD_CROP)
-                    for obj in cell.extra_objects
-                )
-                if (
-                    0 < wild_here < 3
-                    and cell.terrain in WILD_CROPS_BY_TERRAIN
-                    and crop_peak > 0
-                    and self._forage_rng.random()
-                    < min(
-                        1.0,
-                        crop_peak * 0.35 * terrain_spawn_weight(cell.terrain) * rate_scale,
-                    )
-                ):
-                    crop_key = pick_crop_for_terrain(
-                        cell.terrain, local_day(day, x, y)
-                    )
-                    species = WILD_BY_KEY[crop_key]
-                    score = self.species_suitability_at(x, y, species)
-                    sample = local_day(day, x, y)
-                    if (
-                        environment_allows_establishment(species, score)
-                        and self._forage_rng.random()
-                        < spawn_probability(score.combined) * activity_at_day(species, sample)
-                    ):
-                        self.add_natural_object(
-                            x,
-                            y,
-                            FeatureType.WILD_CROP,
-                            crop_kind=crop_key,
-                        )
-        self._wild_tick_disturbance = None
-
-    def _try_wild_species_spread(self, x, y, species, wild_n, total_n, day: float = 0.0) -> bool:
-        """One modest propagule attempt; establishment is scored at the target."""
-        if species.spread_chance <= 0:
-            return False
-        targets = [(nx, ny) for ny, nx in self.neighbourhood(x, y, radius=1)
-                   if (nx, ny) != (x, y) and self.cells[ny][nx].feature == FeatureType.NONE]
-        if not targets:
-            return False
-        nx, ny = self._forage_rng.choice(targets)
-        target = self.cells[ny][nx]
-        if not self._wild_plant_room(target.terrain, wild_n=wild_n, total_n=total_n):
-            return False
-        if not self.species_can_establish_at(nx, ny, species):
-            return False
-        neighbours = sum(1 for ay, ax in self.neighbourhood(nx, ny, radius=1)
-                         if self.cells[ay][ax].crop_kind == species.key)
-        pressure = min(WILD_PROPAGULE_MAX_MULTIPLIER,
-                       1.0 + neighbours * WILD_PROPAGULE_NEIGHBOUR_BONUS)
-        suitability = self.species_suitability_at(nx, ny, species).combined
+    def _flora_species_weight(self, species_key: str) -> float:
+        """Manual pre-competition weight for a wild species (balance)."""
         from balance_config import active_balance
 
-        terrain_weight = active_balance().get_float(
-            f"FLORA_SPAWN_WEIGHT_{target.terrain.name}"
-        )
-        sample = local_day(day, nx, ny)
-        if self._forage_rng.random() >= (
-            species.spread_chance
-            * spawn_probability(suitability)
-            * pressure
-            * terrain_weight
-            * activity_at_day(species, sample)
-        ):
-            return False
-        target.feature = FeatureType[species.feature]
-        target.crop_kind = species.key
-        target.deposit = 0
-        wild_n[target.terrain] = wild_n.get(target.terrain, 0) + 1
-        return True
+        try:
+            return max(
+                0.0, float(active_balance().get_float(f"FLORA_SPECIES_WEIGHT_{species_key}"))
+            )
+        except Exception:
+            return 1.0
 
-    def _plant_wild_crop_patch(
-        self,
-        x: int,
-        y: int,
-        crop_key: str,
-        *,
-        wild_n: dict[TerrainType, int] | None = None,
-        total_n: dict[TerrainType, int] | None = None,
-        environment_checked: bool = False,
-    ) -> None:
-        """Place a small contiguous wild-crop patch centred near (x, y)."""
-        if not self.plant_wild_crop(x, y, crop_key, wild_n=wild_n, total_n=total_n,
-                                    environment_checked=environment_checked):
-            return
-        species = WILD_BY_KEY.get(crop_key) or spawn_group_leader("wild_crop")
-        lo, hi = (1, 4) if species is None else species.patch_extras
-        extras = self._forage_rng.randint(int(lo), int(hi))
-        placed = 0
-        candidates = [
-            (nx, ny)
-            for ny, nx in self.neighbourhood(x, y, radius=2)
-            if (nx, ny) != (x, y)
-        ]
-        self._forage_rng.shuffle(candidates)
-        for nx, ny in candidates:
-            if placed >= extras:
-                break
-            if self._forage_rng.random() > 0.55:
+    def _seasonal_flora_features(self) -> frozenset:
+        return frozenset({
+            FeatureType.WILD_CROP,
+            FeatureType.HERB,
+            FeatureType.REED,
+            FeatureType.MUSHROOM,
+            FeatureType.WOOD_BUSH,
+        })
+
+    def _clear_seasonal_flora(self, *, include_berries: bool = True) -> None:
+        """Remove equilibrium-managed flora. Berries optional."""
+        flora = set(self._seasonal_flora_features())
+        if include_berries:
+            flora.add(FeatureType.BERRY_BUSH)
+        for row in self.cells:
+            for cell in row:
+                if cell.feature in flora:
+                    cell.feature = FeatureType.NONE
+                    cell.deposit = 0
+                    cell.growth_ticks = 0
+                    cell.crop_kind = None
+                    cell.tree_species = None
+                cell.extra_objects = [
+                    obj for obj in cell.extra_objects if obj.feature not in flora
+                ]
+        self._flora_pending = []
+        self._flora_live = []
+
+    def _restore_fruiting_bushes(self) -> None:
+        """Place permanent fruiting bushes from catalogue ``initial_count``."""
+        for species in WILD_BY_KEY.values():
+            if not species.fruiting or species.initial_count <= 0:
                 continue
-            if self.plant_wild_crop(nx, ny, crop_key, wild_n=wild_n, total_n=total_n):
+            try:
+                feature = FeatureType[species.feature]
+            except KeyError:
+                continue
+            sites = []
+            for y, row in enumerate(self.cells):
+                for x, cell in enumerate(row):
+                    if cell.feature != FeatureType.NONE or not self._species_can_occupy(x, y, species):
+                        continue
+                    suitability = self.species_suitability_at(x, y, species)
+                    if environment_allows_establishment(species, suitability):
+                        sites.append((suitability.combined, self._forage_rng.random(), x, y))
+            sites.sort(reverse=True)
+            for _score, _tie, x, y in sites[: int(species.initial_count)]:
+                cell = self.cells[y][x]
+                cell.feature = feature
+                cell.crop_kind = species.key
+                cell.deposit = 0
+                cell.growth_ticks = 0
+                if feature == FeatureType.BERRY_BUSH:
+                    cell.tree_age_years = 1
+
+    def _flora_absolute_day(self, day: float) -> float:
+        """Monotonic day clock so emerge/expire survive year wraps."""
+        year_day = float(day) % float(YEAR_DAYS)
+        if self._flora_last_year_day is not None and year_day + 1e-6 < self._flora_last_year_day:
+            self._flora_year_index += 1
+        self._flora_last_year_day = year_day
+        return float(self._flora_year_index) * float(YEAR_DAYS) + year_day
+
+    def _try_place_equilibrium_species(self, x: int, y: int, species) -> bool:
+        """Place one plant of ``species`` at (x, y) without patch extras."""
+        try:
+            feature = FeatureType[species.feature]
+        except KeyError:
+            return False
+        cell = self.cells[y][x]
+        near_name = getattr(species, "near_feature", None)
+        on_host = False
+        if near_name:
+            try:
+                on_host = cell.feature == FeatureType[near_name]
+            except KeyError:
+                on_host = False
+        if on_host:
+            suitability = self.species_suitability_at(x, y, species)
+            if not environment_allows_seasonal_flora(species, suitability):
+                return False
+        else:
+            if not self._species_can_occupy(x, y, species):
+                return False
+            suitability = self.species_suitability_at(x, y, species)
+            if not environment_allows_seasonal_flora(species, suitability):
+                return False
+        deposit = 0
+        growth = 0
+        tree_species = None
+        if feature == FeatureType.WOOD_BUSH:
+            deposit = int(WOOD_BUSH_YIELD)
+            growth = self._fallen_wood_lifetime_ticks()
+            for ty, tx in self.neighbourhood(x, y, radius=1):
+                if (tx, ty) == (x, y):
+                    continue
+                tree_cell = self.cells[ty][tx]
+                if tree_cell.feature == FeatureType.TREE and tree_cell.tree_species:
+                    tree_species = tree_cell.tree_species
+                    break
+        if cell.feature == FeatureType.NONE:
+            if species.counts_toward_cap and not self._wild_plant_room(cell.terrain):
+                return False
+            cell.feature = feature
+            cell.crop_kind = species.key
+            cell.deposit = deposit
+            cell.growth_ticks = growth
+            cell.tree_species = tree_species
+            if growth > 0:
+                self.note_growth_cell(x, y)
+            self._emit_wild_spawn(species, deposit, x=x, y=y)
+            return True
+        obj = self.add_natural_object(
+            x,
+            y,
+            feature,
+            crop_kind=species.key,
+            deposit=deposit,
+            growth_ticks=growth,
+            tree_species=tree_species,
+        )
+        if obj is not None and growth > 0:
+            self.note_growth_cell(x, y)
+        if obj is not None:
+            self._emit_wild_spawn(species, deposit, x=x, y=y)
+        return obj is not None
+
+    def _emit_wild_spawn(
+        self, species, deposit: int = 0, *, x: int | None = None, y: int | None = None
+    ) -> None:
+        """Notify the resource tracker of forage units that appeared."""
+        sink = getattr(self, "on_wild_spawn", None)
+        if sink is None:
+            return
+        key = str(getattr(species, "resource_key", "") or "")
+        if not key:
+            return
+        amount = int(deposit) if int(deposit) > 0 else max(0, int(getattr(species, "yield_amount", 0) or 0))
+        if amount <= 0:
+            return
+        try:
+            sink(key, amount, x=x, y=y)
+        except TypeError:
+            sink(key, amount)
+
+    def _remove_species_plant_at(self, x: int, y: int, species_key: str) -> bool:
+        cell = self.cells[y][x]
+        for obj in list(cell.extra_objects):
+            if obj.crop_kind == species_key:
+                cell.extra_objects.remove(obj)
+                return True
+        if cell.crop_kind == species_key and cell.feature != FeatureType.NONE:
+            cell.feature = FeatureType.NONE
+            cell.deposit = 0
+            cell.growth_ticks = 0
+            cell.crop_kind = None
+            cell.tree_species = None
+            return True
+        return False
+
+    def _scored_sites_for_species(
+        self,
+        species,
+        cells: list[tuple[int, int]],
+    ) -> list[tuple[float, int, int]]:
+        """Scored eligible sites among ``cells`` (suitability, x, y)."""
+        scored: list[tuple[float, int, int]] = []
+        near_name = getattr(species, "near_feature", None)
+        near_feature = None
+        if near_name:
+            try:
+                near_feature = FeatureType[near_name]
+            except KeyError:
+                near_feature = None
+        for x, y in cells:
+            cell = self.cells[y][x]
+            if cell.terrain.name not in species.terrains and not (
+                near_feature is not None and cell.feature == near_feature
+            ):
+                continue
+            on_host = near_feature is not None and cell.feature == near_feature
+            if on_host:
+                suitability = self.species_suitability_at(x, y, species)
+                if not environment_allows_seasonal_flora(species, suitability):
+                    continue
+                scored.append((suitability.combined * 0.85, x, y))
+                continue
+            if not self._species_can_occupy(x, y, species):
+                continue
+            suitability = self.species_suitability_at(x, y, species)
+            if not environment_allows_seasonal_flora(species, suitability):
+                continue
+            if cell.feature == FeatureType.NONE:
+                scored.append((suitability.combined, x, y))
+            elif cell.feature in (
+                FeatureType.HERB,
+                FeatureType.WILD_CROP,
+                FeatureType.REED,
+                FeatureType.MUSHROOM,
+                FeatureType.WOOD_BUSH,
+            ):
+                scored.append((suitability.combined * 0.7, x, y))
+        return scored
+
+    @staticmethod
+    def _half_season_bounds(half: int) -> tuple[float, float, float]:
+        """Return ``(half_start, half_end, sample_day)`` in year-day units."""
+        h = int(half) % N_HALF_SEASONS
+        start = float(h * HALF_SEASON_DAYS)
+        end = start + float(HALF_SEASON_DAYS)
+        sample = start + float(HALF_SEASON_DAYS) * 0.5
+        return start, end, sample
+
+    @staticmethod
+    def _weighted_sample_sites(
+        sites: list[tuple[float, int, int]],
+        need: int,
+        rng: random.Random,
+        *,
+        cell_load: dict[tuple[int, int], int] | None = None,
+        max_per_cell: int = MAX_WILD_PER_CELL,
+    ) -> list[tuple[int, int]]:
+        """Pick up to ``need`` sites with probability ∝ suitability (no replacement).
+
+        Eligible cells with load already at ``max_per_cell`` are skipped. Zero or
+        negative scores get a tiny floor so hard-passed sites still compete.
+        """
+        if need <= 0 or not sites:
+            return []
+        load = cell_load if cell_load is not None else {}
+        pool: list[tuple[float, int, int]] = []
+        for score, x, y in sites:
+            if load.get((x, y), 0) >= max_per_cell:
+                continue
+            pool.append((max(float(score), 1e-6), x, y))
+        picked: list[tuple[int, int]] = []
+        while pool and len(picked) < need:
+            weights = [item[0] for item in pool]
+            idx = rng.choices(range(len(pool)), weights=weights, k=1)[0]
+            _score, x, y = pool.pop(idx)
+            picked.append((x, y))
+            load[(x, y)] = load.get((x, y), 0) + 1
+            # Same cell may still appear if sites listed it once only; load gate
+            # above already filtered. No re-insert.
+        return picked
+
+    def _queue_species_cohort(
+        self,
+        species,
+        target: float,
+        sites: list[tuple[float, int, int]],
+        *,
+        abs_half_start: float,
+        abs_expire: float,
+        cell_load: dict[tuple[int, int], int],
+        pending: list[tuple[float, float, int, int, str]],
+    ) -> None:
+        """Schedule plant slots via suitability-weighted random sampling."""
+        need = max(0, int(round(float(target))))
+        if need <= 0 or not sites:
+            return
+        chosen = self._weighted_sample_sites(
+            sites, need, self._forage_rng, cell_load=cell_load
+        )
+        half_len = float(HALF_SEASON_DAYS)
+        for x, y in chosen:
+            emerge = abs_half_start + self._forage_rng.random() * half_len
+            pending.append((emerge, abs_expire, x, y, species.key))
+
+    def _plan_flora_cohort(
+        self,
+        day: float,
+        *,
+        fill_scale: float,
+    ) -> list[tuple[float, float, int, int, str]]:
+        """Build the plant list for the half-season containing ``day``.
+
+        Near-tree species share each terrain's normal capacity — no bonus forest
+        pool. They only occupy sites that pass ``near_feature``.
+        """
+        half = half_season_index(day)
+        half_start, _half_end, sample = self._half_season_bounds(half)
+        abs_now = self._flora_absolute_day(day)
+        year_day = float(day) % float(YEAR_DAYS)
+        abs_half_start = abs_now - (year_day - half_start)
+        half_len = float(HALF_SEASON_DAYS)
+        abs_expire = abs_half_start + half_len  # end of this half
+
+        pending: list[tuple[float, float, int, int, str]] = []
+        cell_load: dict[tuple[int, int], int] = {}
+
+        terrain_cells: dict[TerrainType, list[tuple[int, int]]] = {}
+        for y, row in enumerate(self.cells):
+            for x, cell in enumerate(row):
+                terrain_cells.setdefault(cell.terrain, []).append((x, y))
+
+        for terrain, cells in terrain_cells.items():
+            if terrain in (TerrainType.ROCK, TerrainType.URBAN, TerrainType.PATH):
+                continue
+            species_list = [
+                s for s in non_crop_on_terrain(terrain.name) if s.spawn_peak > 0
+            ]
+            for key in WILD_CROPS_BY_TERRAIN.get(terrain, ()):
+                species = WILD_BY_KEY.get(key)
+                if species is not None and species.spawn_peak > 0 and species not in species_list:
+                    species_list.append(species)
+            if not species_list:
+                continue
+            claims = []
+            site_cache: dict[str, list[tuple[float, int, int]]] = {}
+            for species in species_list:
+                sites = self._scored_sites_for_species(species, cells)
+                site_cache[species.key] = sites
+                mean_suit = (
+                    sum(s for s, _x, _y in sites) / len(sites) if sites else 0.0
+                )
+                intensity, seasonal = composition_weight(
+                    species,
+                    mean_suitability=mean_suit,
+                    day=sample,
+                    species_weight=self._flora_species_weight(species.key),
+                )
+                if not sites or intensity <= 0.0:
+                    continue
+                claims.append((species, intensity, seasonal))
+            if not claims:
+                continue
+            capacity = wild_plant_capacity(
+                len(cells), tile_fraction=self._flora_tile_cap(terrain)
+            )
+            fill = fill_scale
+            for species, target in allocate_capacity(claims, capacity, terrain_fill=fill):
+                self._queue_species_cohort(
+                    species,
+                    target,
+                    site_cache.get(species.key, []),
+                    abs_half_start=abs_half_start,
+                    abs_expire=abs_expire,
+                    cell_load=cell_load,
+                    pending=pending,
+                )
+
+        pending.sort(key=lambda item: item[0])
+        return pending
+
+    def _clear_live_flora_plants(self) -> None:
+        """Remove plants tracked in ``_flora_live`` (not berries)."""
+        for _expire, x, y, key in self._flora_live:
+            self._remove_species_plant_at(x, y, key)
+        self._flora_live = []
+        self._flora_pending = []
+
+    def _emerge_pending_flora(self, abs_day: float, *, force_all: bool = False) -> int:
+        """Place scheduled plants. ``force_all`` places the whole cohort now."""
+        if not self._flora_pending:
+            return 0
+        remaining: list[tuple[float, float, int, int, str]] = []
+        placed = 0
+        for emerge, expire, x, y, key in self._flora_pending:
+            if not force_all and emerge > abs_day + 1e-9:
+                remaining.append((emerge, expire, x, y, key))
+                continue
+            species = WILD_BY_KEY.get(key)
+            if species is None:
+                continue
+            if self._try_place_equilibrium_species(x, y, species):
+                self._flora_live.append((expire, x, y, key))
                 placed += 1
+        self._flora_pending = remaining
+        return placed
+
+    def _install_flora_half_season(self, day: float, *, fill_scale: float = 1.0) -> int:
+        """Atomic half-season stand: clear previous cohort, place the new one now.
+
+        Composition is rolled once for the half (activity × intensity × tile cap).
+        Plants stay until the next half-season install (or pick). Staggered
+        emerge is skipped on purpose — overlapping cohorts could not share the
+        terrain tile cap, which caused a bare-map gap when the old stand expired.
+        """
+        abs_day = self._flora_absolute_day(day)
+        self._clear_live_flora_plants()
+        # Also strip any untracked seasonal flora left on the map.
+        seasonal = self._seasonal_flora_features()
+        for row in self.cells:
+            for cell in row:
+                if cell.feature in seasonal:
+                    cell.feature = FeatureType.NONE
+                    cell.deposit = 0
+                    cell.growth_ticks = 0
+                    cell.crop_kind = None
+                    cell.tree_species = None
+                cell.extra_objects = [
+                    obj for obj in cell.extra_objects if obj.feature not in seasonal
+                ]
+        self._flora_half_index = half_season_index(day)
+        self._flora_pending = self._plan_flora_cohort(day, fill_scale=fill_scale)
+        return self._emerge_pending_flora(abs_day, force_all=True)
+
+    def _tick_flora_half_season(self, day: float) -> None:
+        """Install a new stand when the half-season changes; otherwise idle."""
+        half = half_season_index(day)
+        if self._flora_half_index == half:
+            return
+        self._wild_tick_disturbance = self._build_effective_disturbance_grid()
+        try:
+            self._install_flora_half_season(day, fill_scale=1.0)
+        finally:
+            self._wild_tick_disturbance = None
+
+    def establish_flora_equilibrium(self, day: float, *, passes: float = 32) -> int:
+        """Rebuild seasonal flora for the half-season containing ``day``."""
+        self._wild_tick_disturbance = self._build_effective_disturbance_grid()
+        try:
+            self._clear_seasonal_flora(include_berries=True)
+            self._restore_fruiting_bushes()
+            self._flora_year_index = 0
+            self._flora_last_year_day = None
+            fill = pass_fill_scale(passes)
+            self._install_flora_half_season(day, fill_scale=fill)
+            self._tick_berry_fruit(day)
+        finally:
+            self._wild_tick_disturbance = None
+        flora = self._seasonal_flora_features() | {FeatureType.BERRY_BUSH}
+        return sum(
+            int(cell.feature in flora)
+            + sum(obj.feature in flora for obj in cell.extra_objects)
+            for row in self.cells
+            for cell in row
+        )
+
+    def _tick_herbs_seasonal(self, day: float) -> None:
+        """Half-season flora clock."""
+        self._tick_flora_half_season(day)
 
     def _tick_berry_fruit(self, day: float) -> None:
         """Refresh or clear berries on permanent bushes; never spawn/despawn bushes."""
@@ -3218,7 +3342,6 @@ class World:
                 cell = self.cells[y][x]
                 if cell.feature != FeatureType.BERRY_BUSH:
                     continue
-                # Legacy / natural bushes without an age stamp are mature.
                 if cell.tree_age_years < 1 and cell.growth_ticks <= 0:
                     cell.tree_age_years = 1
                 if cell.tree_age_years < 1:
@@ -3226,127 +3349,24 @@ class World:
                 species = resolve_species("BERRY_BUSH", cell.crop_kind)
                 if species is not None and species_fruiting(species, local_day(day, x, y)):
                     if cell.deposit <= 0 and cell.growth_ticks <= 0:
-                        cell.deposit = int(species.yield_amount)
+                        amount = int(species.yield_amount)
+                        cell.deposit = amount
                         if not cell.crop_kind:
                             cell.crop_kind = species.key
+                        if amount > 0 and species.resource_key:
+                            sink = getattr(self, "on_wild_spawn", None)
+                            if sink is not None:
+                                try:
+                                    sink(str(species.resource_key), amount, x=x, y=y)
+                                except TypeError:
+                                    sink(str(species.resource_key), amount)
                 else:
                     cell.deposit = 0
                     cell.growth_ticks = 0
 
     def _tick_mushrooms_seasonal(self, day: float) -> None:
-        mushroom = WILD_BY_KEY["mushroom"]
-        wood = WILD_BY_KEY["wood_bush"]
-        mush_terrains = tuple(
-            TerrainType[n] for n in mushroom.terrains if n in TerrainType.__members__
-        )
-        wood_terrains = tuple(
-            TerrainType[n] for n in wood.terrains if n in TerrainType.__members__
-        )
-
-        # Fallen wood appearance is independent of mushroom winter cleanup.
-        wood_candidates: set[tuple[int, int]] = set()
-        for y in range(self.rows):
-            for x in range(self.cols):
-                if self.cells[y][x].feature != FeatureType.TREE:
-                    continue
-                for ny, nx in self.neighbourhood(x, y, radius=1):
-                    if (nx, ny) == (x, y):
-                        continue
-                    wood_candidates.add((nx, ny))
-        for nx, ny in wood_candidates:
-            cell = self.cells[ny][nx]
-            if (
-                cell.feature == FeatureType.NONE
-                and cell.terrain in wood_terrains
-                and self._forage_rng.random() < wood_bush_spawn_rate(day, nx, ny)
-            ):
-                species = None
-                for ty, tx in self.neighbourhood(nx, ny, radius=1):
-                    if (tx, ty) == (nx, ny):
-                        continue
-                    tree_cell = self.cells[ty][tx]
-                    if (
-                        tree_cell.feature == FeatureType.TREE
-                        and tree_cell.tree_species
-                    ):
-                        species = tree_cell.tree_species
-                        break
-                cell.feature = FeatureType.WOOD_BUSH
-                cell.crop_kind = wood.key
-                cell.tree_species = species
-                cell.deposit = WOOD_BUSH_YIELD
-                cell.growth_ticks = self._fallen_wood_lifetime_ticks()
-
-        # Winter clears mushrooms; wood continues aging via growth_ticks.
-        if season_for_day(int(day)) == Season.WINTER:
-            self.clear_mushrooms()
-            return
-
-        existing = [
-            (x, y)
-            for y in range(self.rows)
-            for x in range(self.cols)
-            if self.cells[y][x].feature == FeatureType.MUSHROOM
-        ]
-        for extra_y, row in enumerate(self.cells):
-            for extra_x, cell in enumerate(row):
-                for obj in list(cell.extra_objects):
-                    if (
-                        obj.feature == FeatureType.MUSHROOM
-                        and self._forage_rng.random()
-                        < mushroom_despawn_rate(day, extra_x, extra_y)
-                    ):
-                        cell.extra_objects.remove(obj)
-        for mx, my in existing:
-            if self._forage_rng.random() < mushroom_despawn_rate(day, mx, my):
-                cell = self.cells[my][mx]
-                cell.feature = FeatureType.NONE
-                cell.deposit = 0
-                cell.crop_kind = None
-                continue
-            # Seasonal spread while mushrooms are peaking.
-            for ny, nx in self.neighbourhood(mx, my, radius=1):
-                if (nx, ny) == (mx, my):
-                    continue
-                cell = self.cells[ny][nx]
-                if (
-                    cell.feature == FeatureType.NONE
-                    and cell.terrain in mush_terrains
-                    and self.species_can_establish_at(nx, ny, mushroom)
-                    and self._forage_rng.random()
-                    < MUSHROOM_SPREAD_CHANCE
-                    * mushroom_spawn_rate(day, nx, ny)
-                    * 20.0
-                    * self.species_suitability_at(nx, ny, mushroom).combined
-                ):
-                    cell.feature = FeatureType.MUSHROOM
-                    cell.crop_kind = mushroom.key
-
-        for y in range(self.rows):
-            for x in range(self.cols):
-                if self.cells[y][x].feature != FeatureType.TREE:
-                    continue
-                if self._forage_rng.random() < mushroom_spawn_rate(day, x, y) * 0.35:
-                    self.add_natural_object(
-                        x,
-                        y,
-                        FeatureType.MUSHROOM,
-                        crop_kind=mushroom.key,
-                    )
-                for ny, nx in self.neighbourhood(x, y, radius=1):
-                    if (nx, ny) == (x, y):
-                        continue
-                    cell = self.cells[ny][nx]
-                    if (
-                        cell.feature == FeatureType.NONE
-                        and cell.terrain in mush_terrains
-                        and self.species_can_establish_at(nx, ny, mushroom)
-                        and self._forage_rng.random()
-                        < mushroom_spawn_rate(day, nx, ny)
-                        * self.species_suitability_at(nx, ny, mushroom).combined
-                    ):
-                        cell.feature = FeatureType.MUSHROOM
-                        cell.crop_kind = mushroom.key
+        """Half-season flora clock (same cohort as herbs)."""
+        self._tick_flora_half_season(day)
 
     def clear_mushrooms(self) -> None:
         """Remove seasonal mushrooms; fallen wood has its own lifetime."""
@@ -3364,64 +3384,8 @@ class World:
                 ]
 
     def respawn_flora(self, day: float, *, passes: int = 32) -> int:
-        """Replace non-tree natural flora for the current season and ecology."""
-        flora = {
-            FeatureType.WILD_CROP,
-            FeatureType.HERB,
-            FeatureType.REED,
-            FeatureType.MUSHROOM,
-            FeatureType.BERRY_BUSH,
-            FeatureType.WOOD_BUSH,
-        }
-        for row in self.cells:
-            for cell in row:
-                if cell.feature in flora:
-                    cell.feature = FeatureType.NONE
-                    cell.deposit = 0
-                    cell.growth_ticks = 0
-                    cell.crop_kind = None
-                cell.extra_objects = [obj for obj in cell.extra_objects if obj.feature not in flora]
-
-        # Permanent fruiting plants do not use the recurring spawn envelope,
-        # so restore their configured initial population at the best live sites.
-        for species in WILD_BY_KEY.values():
-            if not species.fruiting or species.initial_count <= 0:
-                continue
-            try:
-                feature = FeatureType[species.feature]
-            except KeyError:
-                continue
-            sites = []
-            for y, row in enumerate(self.cells):
-                for x, cell in enumerate(row):
-                    if cell.feature != FeatureType.NONE or not self._species_can_occupy(x, y, species):
-                        continue
-                    suitability = self.species_suitability_at(x, y, species)
-                    if environment_allows_establishment(species, suitability):
-                        sites.append((suitability.combined, self._forage_rng.random(), x, y))
-            sites.sort(reverse=True)
-            for _score, _tie, x, y in sites[:int(species.initial_count)]:
-                cell = self.cells[y][x]
-                cell.feature = feature
-                cell.crop_kind = species.key
-                cell.deposit = 0
-                cell.growth_ticks = 0
-                if feature == FeatureType.BERRY_BUSH:
-                    cell.tree_age_years = 1
-
-        # Repeated canonical seasonal ticks build an established population,
-        # while retaining the current day's spawn windows and live niche maps.
-        for _ in range(max(1, int(passes))):
-            self._tick_herbs_seasonal(day)
-            self._tick_mushrooms_seasonal(day)
-        self._tick_berry_fruit(day)
-
-        return sum(
-            int(cell.feature in flora)
-            + sum(obj.feature in flora for obj in cell.extra_objects)
-            for row in self.cells
-            for cell in row
-        )
+        """Replace non-tree natural flora with this half-season's equilibrium stand."""
+        return self.establish_flora_equilibrium(day, passes=float(passes))
 
     def reconcile_flora_with_catalogue(self) -> int:
         """Remove loaded wild flora whose authored terrain match is no longer valid."""
@@ -3469,14 +3433,15 @@ class World:
         wild_n: dict[TerrainType, int] | None = None,
         total_n: dict[TerrainType, int] | None = None,
     ) -> bool:
-        """True while wild plants cover less than WILD_PLANT_MAX_FRACTION of terrain."""
+        """True while wild plants cover less than this terrain's tile cap."""
+        cap = self._flora_tile_cap(terrain)
         if wild_n is not None and total_n is not None:
             tot = total_n.get(terrain, 0)
-            return tot > 0 and wild_n.get(terrain, 0) < int(tot * WILD_PLANT_MAX_FRACTION)
+            return tot > 0 and wild_n.get(terrain, 0) < int(tot * cap)
         wild, total = self._wild_plant_counts(terrain)
         if total <= 0:
             return False
-        return wild < int(total * WILD_PLANT_MAX_FRACTION)
+        return wild < int(total * cap)
 
     def _try_natural_sprouts(self) -> None:
         """Patches of 4+ trees have a 1/8 chance to sprout a sapling on an adjacent empty cell."""

@@ -1440,20 +1440,50 @@ _FLORA_TERRAINS = (
     "SOIL", "FOREST_FLOOR", "GRASS", "MEADOW", "RIPARIAN",
     "WATER", "RIVER", "ROCK", "URBAN", "PATH",
 )
+
+
+def _flora_balance_species_keys() -> tuple[str, ...]:
+    """Spawnable catalogue keys (stable order) for per-species weight params."""
+    try:
+        from wild_species import WILD_SPECIES
+    except Exception:
+        return ()
+    return tuple(
+        sorted(s.key for s in WILD_SPECIES if float(getattr(s, "spawn_peak", 0.0) or 0.0) > 0.0)
+    )
+
+
+_FLORA_TILE_CAP_PARAMS = tuple(
+    BalanceParam(
+        f"FLORA_TILE_CAP_{name}",
+        f"{name.replace('_', ' ').title()} tile cap",
+        "float", 0.20, 0.0, 1.0, 0.01,
+        "Fraction of this terrain's tiles that may hold wild flora. "
+        "Species then compete inside that budget by niche and season.",
+        "",
+    )
+    for name in _FLORA_TERRAINS
+)
+_FLORA_SPECIES_WEIGHT_PARAMS = tuple(
+    BalanceParam(
+        f"FLORA_SPECIES_WEIGHT_{key}",
+        f"{key.replace('_', ' ').title()} weight",
+        "float", 1.0, 0.0, 5.0, 0.05,
+        "Manual multiplier applied before niche/season competition on each terrain.",
+        "×",
+    )
+    for key in _flora_balance_species_keys()
+)
 BALANCE_CATEGORIES += (
     BalanceCategory(
         "flora",
-        "Flora",
-        tuple(
-            BalanceParam(
-                f"FLORA_SPAWN_WEIGHT_{name}",
-                f"{name.replace('_', ' ').title()} spawn strength",
-                "float", 1.0, 0.0, 3.0, 0.1,
-                "Scales total wild-flora spawn pressure on this terrain while preserving relative species chances.",
-                "×",
-            )
-            for name in _FLORA_TERRAINS
-        ),
+        "Flora terrain caps",
+        _FLORA_TILE_CAP_PARAMS,
+    ),
+    BalanceCategory(
+        "flora_species",
+        "Flora species weights",
+        _FLORA_SPECIES_WEIGHT_PARAMS,
     ),
 )
 

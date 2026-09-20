@@ -1240,6 +1240,8 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
     world._herb_timer = int(world_data.get("herb_timer", world._herb_timer))
 
     game.world = world
+    if hasattr(game, "_bind_wild_spawn_tracker"):
+        game._bind_wild_spawn_tracker()
     if hasattr(game, "env_maps"):
         # Flora suitability / reed seeding read world.env_maps; keep it wired
         # to the game's live climate grids (also refreshed below).

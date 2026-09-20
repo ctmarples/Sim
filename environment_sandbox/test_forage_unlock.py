@@ -26,6 +26,57 @@ class ForageUnlockTests(unittest.TestCase):
     def test_unrestricted_when_flora_none(self):
         self.assertIsNone(forage_resource_keys_for_flora(None))
 
+    def test_tree_diary_does_not_unlock_logs(self):
+        keys = forage_resource_keys_for_flora({"tree:pine", "tree:oak", "wild:thyme"})
+        self.assertIn("thyme", keys)
+        self.assertIn("wood", keys)
+        self.assertNotIn("logs", keys)
+        self.assertNotIn("hardwood_logs", keys)
+
+    def test_forager_rejects_unknown_log_keys(self):
+        building = Building(1, BuildingKind.FORAGER, 0, 0)
+        building.ensure_recipe_state()
+        self.assertTrue(building.allows_forage_key("wood"))
+        self.assertFalse(building.allows_forage_key("logs"))
+        self.assertFalse(building.allows_forage_key("hardwood_logs"))
+
+
+class ForagerTreeSeparationTests(unittest.TestCase):
+    def test_full_forage_does_not_match_trees(self):
+        from entities import TaskType
+        from game import Game
+        from world import FeatureType, TerrainType
+
+        class FakeCell:
+            feature = FeatureType.TREE
+            deposit = 3
+            tree_species = "pine"
+            crop_kind = None
+            extra_objects = []
+            terrain = TerrainType.GRASS
+
+        game = Game.__new__(Game)
+        self.assertIsNone(game._forage_key_for_cell(FakeCell()))
+        self.assertFalse(game._cell_matches_task(FakeCell(), TaskType.FULL_FORAGE))
+        self.assertTrue(game._cell_matches_task(FakeCell(), TaskType.CHOP_TREES))
+
+    def test_loose_wood_is_forage_wood(self):
+        from entities import TaskType
+        from game import Game
+        from world import FeatureType, TerrainType
+
+        class FakeCell:
+            feature = FeatureType.WOOD_BUSH
+            deposit = 1
+            tree_species = None
+            crop_kind = "wood_bush"
+            extra_objects = []
+            terrain = TerrainType.GRASS
+
+        game = Game.__new__(Game)
+        self.assertEqual(game._forage_key_for_cell(FakeCell()), "wood")
+        self.assertTrue(game._cell_matches_task(FakeCell(), TaskType.FULL_FORAGE))
+
 
 class PlantForageYieldTests(unittest.TestCase):
     def test_scenic_herbs_are_not_sage(self):

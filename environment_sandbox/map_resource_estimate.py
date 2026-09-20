@@ -1,17 +1,17 @@
 """Probability-based map resource estimates for forage / seasonality balance.
 
-Balance model (target game logic — not yet the live herb tick):
+Balance model (same as live ``World.establish_flora_equilibrium``):
 
 * **Seasonal probability** — ``activity_profile`` (via ``activity_at_day``)
-* **Spatial probability** — terrain ecology × plant niches (``suit^1.5``)
-* **Intensity** — ``spawn_peak × spawn_activity × FLORA_SPAWN_WEIGHT``
+* **Spatial probability** — terrain ecology × plant niches
+* **Intensity** — ``spawn_peak × spawn_activity × FLORA_SPECIES_WEIGHT × soft niche``
 * **Composition** — each half-season, plant counts are the terrain capacity
   allocated in proportion to those weights (normalized). A species' peak
   half-season is when it holds its largest share — not blocked by earlier
   carryover filling the cap.
-* **Capacity** — matches game rules: ``WILD_PLANT_MAX_FRACTION`` (0.20) of
-  tiles may host a primary wild plant, and the ``wild_plant`` subcell family
-  allows up to ``MAX_WILD_PER_CELL`` (3) plants per tile.
+* **Capacity** — ``FLORA_TILE_CAP_<terrain>`` (default 0.20) of tiles may host
+  a primary wild plant, and the ``wild_plant`` subcell family allows up to
+  ``MAX_WILD_PER_CELL`` (3) plants per tile.
 
 Live ``spawn_rise``/``spawn_fall`` envelopes are ignored here.
 
@@ -36,13 +36,20 @@ from seasons import (
     ambient_temperature_c,
     half_season_name,
 )
+from flora_equilibrium import (
+    MAX_WILD_PER_CELL,
+    FLORA_ESTABLISHMENT_PASSES,
+    allocate_capacity,
+    composition_weight,
+    wild_plant_capacity,
+)
 from wild_species import (
     WILD_BY_KEY,
     WILD_PLANT_MAX_FRACTION,
     WILD_SPECIES,
     WildSpeciesDef,
     activity_at_day,
-    environment_allows_establishment,
+    environment_allows_seasonal_flora,
     normalize_temperature_c,
     spawn_probability,
     species_environment_suitability,
@@ -84,25 +91,6 @@ def patch_plant_multiplier(species) -> float:
         return 1.0
     # Neighbour extras roll randint(lo,hi) then each candidate succeeds ~55%.
     return 1.0 + 0.55 * mean_unit_yield(int(lo), int(hi))
-
-
-# Matches ``World.respawn_flora`` default passes (map-gen fill only; equilibrium
-# composition below does not use passes for seasonal shares).
-FLORA_ESTABLISHMENT_PASSES: float = 32.0
-
-# Game: ``subtile_layout.object_footprint`` family ``wild_plant`` max_per_cell.
-MAX_WILD_PER_CELL: int = 3
-
-
-def wild_plant_capacity(tiles: float) -> float:
-    """Max expected wild plants on ``tiles`` of one terrain.
-
-    ``World._wild_plant_room`` allows primary wild features on at most
-    ``WILD_PLANT_MAX_FRACTION`` of tiles; each such tile can hold up to
-    ``MAX_WILD_PER_CELL`` plants in separate subcells (HERB / WILD_CROP /
-    REED / BERRY_BUSH family).
-    """
-    return float(tiles) * float(WILD_PLANT_MAX_FRACTION) * float(MAX_WILD_PER_CELL)
 
 
 # Default low-disturbance wild landscape (settlement footprint is tiny).
@@ -299,11 +287,29 @@ def estimate_wildlife_seed() -> WildlifeSeedEstimate:
     )
 
 
-def _flora_spawn_weight(terrain_key: str) -> float:
+def _flora_tile_cap(terrain_key: str) -> float:
+    """Fraction of terrain tiles allowed to hold wild flora."""
+    from wild_species import WILD_PLANT_MAX_FRACTION
+
     try:
         from balance_config import active_balance
 
-        return float(active_balance().get_float(f"FLORA_SPAWN_WEIGHT_{terrain_key}"))
+        return max(
+            0.0,
+            min(1.0, float(active_balance().get_float(f"FLORA_TILE_CAP_{terrain_key}"))),
+        )
+    except Exception:
+        return float(WILD_PLANT_MAX_FRACTION)
+
+
+def _flora_species_weight(species_key: str) -> float:
+    """Manual pre-competition species weight from balance."""
+    try:
+        from balance_config import active_balance
+
+        return max(
+            0.0, float(active_balance().get_float(f"FLORA_SPECIES_WEIGHT_{species_key}"))
+        )
     except Exception:
         return 1.0
 
@@ -364,15 +370,20 @@ def _suitability_on_terrain(
         disturbance=DEFAULT_DISTURBANCE,
         soil_texture=DEFAULT_SOIL_TEXTURE,
     )
-    ok = environment_allows_establishment(species, score)
+    ok = environment_allows_seasonal_flora(species, score)
     return float(score.combined), ok
 
 
 def _species_on_terrain(terrain_key: str) -> list[WildSpeciesDef]:
+    """Species that may place on this terrain, including near-feature specialists.
+
+    Near-tree species share the terrain capacity (no bonus forest pool); the
+    live world only places them on sites that satisfy ``near_feature``.
+    """
     return [
         s
         for s in WILD_SPECIES
-        if terrain_key in s.terrains and not s.near_feature
+        if terrain_key in s.terrains and s.spawn_peak > 0
     ]
 
 
@@ -384,23 +395,15 @@ def _composition_weight(
     options: MapOptions,
     species_weight: float = 1.0,
 ) -> tuple[float, float, float, bool]:
-    """Factors for capacity demand: intensity (relative) × activity (temporal).
-
-    Intensity = ``spawn_peak × spawn_activity × species_weight × soft_niche``.
-    Terrain ``FLORA_SPAWN_WEIGHT`` is applied later as a fill scale (not here —
-    a shared per-terrain factor would cancel inside share normalization).
-    """
+    """Factors for capacity demand: intensity (relative) × activity (temporal)."""
     suit, ok = _suitability_on_terrain(species, terrain_key, day, options)
-    if species.spawn_peak <= 0 or suit <= 0.0:
-        return 0.0, 0.0, suit, ok
-    intensity = (
-        float(species.spawn_peak)
-        * float(species.spawn_activity)
-        * max(0.0, float(species_weight))
-        * (0.35 + 0.65 * spawn_probability(suit))
+    intensity, seasonal = composition_weight(
+        species,
+        mean_suitability=suit,
+        day=day,
+        species_weight=species_weight,
     )
-    seasonal = activity_at_day(species, day)
-    return intensity, max(0.0, seasonal), suit, ok
+    return intensity, seasonal, suit, ok
 
 
 def _allocate_capacity(
@@ -409,29 +412,14 @@ def _allocate_capacity(
     *,
     terrain_fill: float = 1.0,
 ) -> list[tuple[WildSpeciesDef, float, float, bool]]:
-    """Allocate plant counts from intensity shares × activity × terrain fill.
-
-    ``terrain_fill`` is ``FLORA_SPAWN_WEIGHT_*`` (and optional establishment-pass
-    scale): it multiplies absolute demand. Shares use species intensity only.
-    If total demand exceeds capacity, scale down; never scale up.
-    """
-    if capacity <= 0.0:
-        return [(s, 0.0, suit, ok) for s, _i, _a, suit, ok in rows]
-    intensity_sum = sum(max(0.0, intensity) for _s, intensity, _a, _su, _ok in rows)
-    if intensity_sum <= 0.0:
-        return [(s, 0.0, suit, ok) for s, _i, _a, suit, ok in rows]
-    fill = max(0.0, float(terrain_fill))
-    demands: list[tuple[WildSpeciesDef, float, float, bool]] = []
-    total_demand = 0.0
-    for species, intensity, seasonal_spatial, suit, ok in rows:
-        share = max(0.0, intensity) / intensity_sum
-        demand = capacity * fill * share * max(0.0, seasonal_spatial)
-        demands.append((species, demand, suit, ok))
-        total_demand += demand
-    if total_demand > capacity > 0.0:
-        scale = capacity / total_demand
-        return [(s, d * scale, suit, ok) for s, d, suit, ok in demands]
-    return demands
+    """Allocate plant counts; preserves suitability flags for estimate rows."""
+    slim = [(s, intensity, seasonal) for s, intensity, seasonal, _su, _ok in rows]
+    allocated = allocate_capacity(slim, capacity, terrain_fill=terrain_fill)
+    meta = {(s.key): (suit, ok) for s, _i, _a, suit, ok in rows}
+    return [
+        (s, plants, meta[s.key][0], meta[s.key][1])
+        for s, plants in allocated
+    ]
 
 
 def estimate_flora_year(
@@ -440,10 +428,11 @@ def estimate_flora_year(
     *,
     passes: float | None = None,
 ) -> list[list[SpeciesHalfSeason]]:
-    """Per half-season flora via capacity × intensity share × activity × fill.
+    """Per half-season flora via capacity × intensity share × activity × pass fill.
 
-    * Species intensity: ``spawn_peak × spawn_activity × soft niche``
-    * Terrain fill: ``FLORA_SPAWN_WEIGHT`` × ``passes / 32`` (establishment effort)
+    * Terrain capacity: ``tiles × FLORA_TILE_CAP × max_per_cell``
+    * Species intensity: ``spawn_peak × spawn_activity × FLORA_SPECIES_WEIGHT × soft niche``
+    * Pass fill: ``passes / 32`` (establishment effort only)
     * Temporal: ``activity_profile`` (under-full seasons leave capacity empty)
     """
     opt = (options or MapOptions()).normalized()
@@ -485,7 +474,7 @@ def estimate_flora_year(
             candidates = _species_on_terrain(terrain_key)
             if not candidates:
                 continue
-            flora_w = _flora_spawn_weight(terrain_key)
+            tile_cap = _flora_tile_cap(terrain_key)
             claims: list[tuple[WildSpeciesDef, float, float, float, bool]] = []
             for species in candidates:
                 intensity, seasonal_spatial, suit, ok = _composition_weight(
@@ -493,11 +482,12 @@ def estimate_flora_year(
                     terrain_key=terrain_key,
                     day=day,
                     options=opt,
+                    species_weight=_flora_species_weight(species.key),
                 )
                 claims.append((species, intensity, seasonal_spatial, suit, ok))
-            capacity = wild_plant_capacity(tiles)
+            capacity = wild_plant_capacity(tiles, tile_fraction=tile_cap)
             for species, plants, suit, ok in _allocate_capacity(
-                claims, capacity, terrain_fill=flora_w * pass_scale
+                claims, capacity, terrain_fill=pass_scale
             ):
                 if plants < 1e-9:
                     continue
@@ -510,39 +500,6 @@ def estimate_flora_year(
                         ok=ok,
                         plants=plants,
                         note=f"on {terrain_key}",
-                        forageable=True,
-                    )
-                )
-
-        forest = terrain.counts.get("forest", 0.0)
-        tree_tiles = forest * FOREST_TREE_CHANCE
-        if tree_tiles > 0:
-            near = [s for s in WILD_SPECIES if s.near_feature == "TREE" and s.spawn_peak > 0]
-            flora_w = _flora_spawn_weight("FOREST_FLOOR")
-            claims = []
-            for species in near:
-                intensity, seasonal_spatial, suit, ok = _composition_weight(
-                    species,
-                    terrain_key="FOREST_FLOOR",
-                    day=day,
-                    options=opt,
-                )
-                claims.append((species, intensity, seasonal_spatial, suit, ok))
-            capacity = tree_tiles * float(MAX_WILD_PER_CELL)
-            for species, plants, suit, ok in _allocate_capacity(
-                claims, capacity, terrain_fill=flora_w * pass_scale
-            ):
-                if plants < 1e-9:
-                    continue
-                rows.append(
-                    _species_row(
-                        species,
-                        half=half,
-                        day=day,
-                        suitability=suit,
-                        ok=ok,
-                        plants=plants,
-                        note="near_tree",
                         forageable=True,
                     )
                 )

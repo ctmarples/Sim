@@ -618,12 +618,12 @@ def forage_resource_keys_for_flora(flora_keys: set[str] | None) -> frozenset[str
 
     ``None`` flora_keys means unrestricted (sandbox / post-tutorial).
     Wood, rock, and honey stay available even with an empty flora list.
+    Tree yields (logs) are forester work — never unlocked as forage.
     """
     if flora_keys is None:
         return None
     allowed: set[str] = set(ALWAYS_FORAGE_KEYS)
     from crops import CROP_BY_KEY
-    from trees import TREE_BY_KEY
 
     for raw in flora_keys:
         key = str(raw or "")
@@ -631,9 +631,6 @@ def forage_resource_keys_for_flora(flora_keys: set[str] | None) -> frozenset[str
             continue
         group, name = key.split(":", 1)
         if group == "tree":
-            tree = TREE_BY_KEY.get(name)
-            if tree is not None:
-                allowed.add(tree.yield_key)
             continue
         if group not in ("wild", "plant"):
             continue
@@ -776,6 +773,22 @@ def environment_allows_establishment(species: WildSpeciesDef, suitability: Plant
     """
     pairs = (
         (species.temperature_niche, suitability.temperature),
+        (species.moisture_niche, suitability.moisture),
+        (species.texture_niche, suitability.soil_texture),
+    )
+    return all(niche is None or score >= MIN_NICHE_RESPONSE_FOR_ESTABLISHMENT
+               for niche, score in pairs)
+
+
+def environment_allows_seasonal_flora(species: WildSpeciesDef, suitability: PlantSuitability) -> bool:
+    """Hard gates for half-season wild flora placement (not permanent crops).
+
+    Temperature is already expressed by ``activity_profile`` and soft niche
+    intensity. Using it as a hard site veto empties open grass/soil in summer
+    while niche-less specialists (e.g. wood_bush) still carpet tree edges.
+    Moisture and texture remain persistent site filters.
+    """
+    pairs = (
         (species.moisture_niche, suitability.moisture),
         (species.texture_niche, suitability.soil_texture),
     )

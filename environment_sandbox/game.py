@@ -288,6 +288,7 @@ from scenario_dialog import ScenarioDialog
 from resource_inspect_dialog import ResourceInspectDialog
 from resource_tracker import ResourceHistory
 from resource_tracker_dialog import ResourceTrackerDialog
+from resources_panel_dialog import ResourcesPanelDialog
 from villager_inspect_dialog import DetailCategory, VillagerInspectDialog
 from resource_bar import VIEW_LABELS, ResourceBar
 from recipes import (
@@ -591,6 +592,7 @@ class Game:
         self.inspected_animal_id: int | None = None
         self.inspected_tree_cell: tuple[int, int] | None = None
         self.resource_tracker = ResourceTrackerDialog()
+        self.resources_panel = ResourcesPanelDialog()
         self.balance_dialog = BalanceDialog()
         self.wildlife_repopulate_dialog = WildlifeRepopulateDialog()
         self.political = SettlementPoliticalState()
@@ -727,6 +729,7 @@ class Game:
         # Cyclic env layers (8×/year): biodiversity → pest-control modifiers.
         self.env_maps = EnvMaps.blank(self.world.rows, self.world.cols)
         self.world.env_maps = self.env_maps
+        self._bind_wild_spawn_tracker()
         self.weather = WeatherState(seed=self.world.seed ^ 0x51A7)
         self.rain_effect = RainEffect(self.world.seed)
         # Compat aliases used by overlay draw / older diagnostics.
@@ -1351,6 +1354,7 @@ class Game:
                 return
             label = map_path.stem if map_path is not None else "generated map"
         self.world = world
+        self._bind_wild_spawn_tracker()
         self.buildings.clear()
         self.construction_sites.clear()
         self.villagers.clear()
@@ -1392,6 +1396,10 @@ class Game:
         self._invalidate_forage_index()
         self._bake_erosion()
         self._sample_environment()
+        # Generated maps only place trees/rocks/companions; fill seasonal flora
+        # with the equilibrium model once climate grids exist.
+        if generated is not None:
+            self.world.establish_flora_equilibrium(float(self.calendar_day))
         self._refresh_indicators()
         self._last_save_path = None
         self._loaded_save_name = None
@@ -1610,6 +1618,7 @@ class Game:
             or self.villager_inspect.open
             or self.resource_inspect.open
             or self.resource_tracker.open
+            or self.resources_panel.open
             or self.balance_dialog.open
             or self.habitat_inspect.open
             or self.player_inventory.open
@@ -1918,6 +1927,7 @@ class Game:
         self.inspected_animal_id = None
         self.inspected_tree_cell = None
         self.resource_tracker.close()
+        self.resources_panel.close()
         self.balance_dialog.close()
         self.habitat_inspect.close()
         self.player_inventory.close()
@@ -1971,6 +1981,7 @@ class Game:
         self.inspected_animal_id = None
         self.inspected_tree_cell = None
         self.resource_tracker.close()
+        self.resources_panel.close()
         self.habitat_inspect.close()
         self.management.close()
         self.assign_picker.close()
@@ -1987,6 +1998,35 @@ class Game:
         if amount > 0:
             self._tick_village_stock = None
             self._bump_work_gen()
+
+    def record_spawned(
+        self, key: str, amount: int = 1, *, x: int | None = None, y: int | None = None
+    ) -> None:
+        """Wild flora units that appeared on the map (forage potential)."""
+        self.resource_history.record_spawned(key, amount)
+        if x is None or y is None or amount <= 0:
+            return
+        if self._spawn_in_forager_reach(int(x), int(y)):
+            self.resource_history.record_spawned_reachable(key, amount)
+
+    def _spawn_in_forager_reach(self, x: int, y: int) -> bool:
+        """True when a cell is discovered and inside any forager hut radius."""
+        if not self.is_discovered(x, y):
+            return False
+        for building in self.buildings.values():
+            if building.kind != BuildingKind.FORAGER:
+                continue
+            bx, by = building.center_cell()
+            if abs(x - bx) + abs(y - by) <= WORK_SEARCH_RADIUS:
+                return True
+        return False
+
+    def _bind_wild_spawn_tracker(self) -> None:
+        """Route world flora placements into the resource spawn ledger."""
+        world = getattr(self, "world", None)
+        if world is None:
+            return
+        world.on_wild_spawn = self.record_spawned
 
     def _bump_work_gen(self) -> None:
         self._work_gen += 1
@@ -2402,6 +2442,14 @@ class Game:
                     event
                 ):
                     continue
+                if self.resources_panel.open and self.resources_panel.handle_keydown(
+                    event
+                ):
+                    pending = self.resources_panel.pending_add
+                    if pending is not None:
+                        self.resources_panel.pending_add = None
+                        self._resources_panel_add_to_storehouse(pending)
+                    continue
                 if self.balance_dialog.open and self.balance_dialog.handle_keydown(
                     event
                 ):
@@ -2504,6 +2552,15 @@ class Game:
                 ):
                     self.resource_tracker.handle_mousedown(event.pos)
                     continue
+                if self.resources_panel.open and self.resources_panel.contains(
+                    event.pos
+                ):
+                    self.resources_panel.handle_mousedown(event.pos)
+                    pending = self.resources_panel.pending_add
+                    if pending is not None:
+                        self.resources_panel.pending_add = None
+                        self._resources_panel_add_to_storehouse(pending)
+                    continue
                 if self.balance_dialog.open and self.balance_dialog.contains(
                     event.pos
                 ):
@@ -2599,6 +2656,9 @@ class Game:
                 if self.resource_tracker.open and self.resource_tracker._moving:
                     self.resource_tracker.handle_mouseup(event.pos)
                     continue
+                if self.resources_panel.open and self.resources_panel._moving:
+                    self.resources_panel.handle_mouseup(event.pos)
+                    continue
                 if self.balance_dialog.open:
                     self.balance_dialog.handle_mouseup(event.pos, self.balance)
                     if self.balance_dialog.pending_time_apply:
@@ -2659,6 +2719,9 @@ class Game:
                 if self.resource_tracker.open and self.resource_tracker._moving:
                     self.resource_tracker.handle_mousemotion(event.pos)
                     continue
+                if self.resources_panel.open and self.resources_panel._moving:
+                    self.resources_panel.handle_mousemotion(event.pos)
+                    continue
                 if self.balance_dialog.open and self.balance_dialog._moving:
                     self.balance_dialog.handle_mousemotion(event.pos)
                     continue
@@ -2675,6 +2738,8 @@ class Game:
                     self.resource_inspect.handle_mousemotion(event.pos)
                 if self.resource_tracker.open:
                     self.resource_tracker.handle_mousemotion(event.pos)
+                if self.resources_panel.open:
+                    self.resources_panel.handle_mousemotion(event.pos)
                 if self.drawing or self._height_painting:
                     self._on_mouse_drag(event.pos)
                 elif self.habitat_view_mode:
@@ -2725,6 +2790,10 @@ class Game:
                 if self.resource_inspect.open and self.resource_inspect.contains(mouse):
                     continue
                 if self.resource_tracker.open and self.resource_tracker.handle_mousewheel(
+                    event.y, mouse
+                ):
+                    continue
+                if self.resources_panel.open and self.resources_panel.handle_mousewheel(
                     event.y, mouse
                 ):
                     continue
@@ -2924,6 +2993,10 @@ class Game:
                 return
             if self.resource_tracker.open:
                 self.resource_tracker.close()
+                return
+            if self.resources_panel.open:
+                self.resources_panel.close()
+                return
             if self.balance_dialog.open:
                 self.balance_dialog.close()
                 return
@@ -7662,6 +7735,8 @@ class Game:
             self.file_dialog.open_load()
         elif action == "file_tracker":
             self.resource_tracker.toggle(self.resource_history)
+        elif action == "file_resources":
+            self.resources_panel.toggle()
         elif action == "file_balance":
             self.balance_dialog.toggle()
             if self.balance_dialog.open:
@@ -7707,6 +7782,31 @@ class Game:
             self._cycle_ticks_per_day(-1)
         elif action == "day_faster":
             self._cycle_ticks_per_day(1)
+
+    def _resources_panel_add_to_storehouse(self, keys: list[str]) -> None:
+        """Cheat/debug deposit: add panel amount of each selected key to storehouse."""
+        from entities import ensure_storage_item_fields
+        from resources import resource_label
+
+        ensure_storage_item_fields()
+        amount = max(1, int(self.resources_panel.amount))
+        added: list[str] = []
+        for key in keys:
+            if not hasattr(self.home_storage, key):
+                setattr(self.home_storage, key, 0)
+            self.home_storage.deposit_dict({key: amount})
+            self.record_produced(key, amount)
+            added.append(f"{amount} {resource_label(key)}")
+        self._tick_village_stock = None
+        msg = f"Storehouse +{', '.join(added)}"
+        self.resources_panel.set_status(msg)
+        self._set_status(msg)
+
+    def _storehouse_stock_amounts(self) -> dict[str, int]:
+        """Home storehouse counts only (for the Resources panel)."""
+        from resources import amounts_from_obj
+
+        return amounts_from_obj(self.home_storage)
 
     def _set_control_mode(self, mode: str) -> None:
         mode = "god" if str(mode).lower() == "god" else "dog"
@@ -25209,10 +25309,6 @@ class Game:
 
             yield_info = plant_forage_yield(cell.feature.name, cell.crop_kind)
             return yield_info[0] if yield_info else None
-        if cell.feature == FeatureType.TREE and cell.deposit > 0:
-            from trees import resolve_tree
-
-            return resolve_tree(cell.tree_species).yield_key
         return None
 
     def _building_allows_cell(self, building: Building, cell) -> bool:
@@ -25309,11 +25405,6 @@ class Game:
                 from wild_species import is_harvestable, resolve_species
 
                 return is_harvestable(resolve_species("REED", cell.crop_kind))
-            if cell.feature == FeatureType.TREE and cell.deposit > 0:
-                from trees import resolve_tree
-
-                # Softwood only when forager wood recipe is used.
-                return resolve_tree(cell.tree_species).yield_key == "logs"
             return False
         if task_type == TaskType.SPLIT_LOGS:
             return False
@@ -25347,7 +25438,6 @@ class Game:
                 task = building.default_draw_task()
             tasks = {task}
         inv = villager.inventory
-        require_axe = building.kind == BuildingKind.FORESTER
 
         if (
             allow_collect
@@ -25389,11 +25479,12 @@ class Game:
         did_work = False
         if (
             allow_collect
+            and building.kind == BuildingKind.FORESTER
             and cell.feature == FeatureType.TREE
             and (TaskType.CHOP_TREES in tasks or TaskType.FULL_MANAGE in tasks)
             and self._building_allows_cell(building, cell)
         ):
-            if self._chop_tree(x, y, inv, status=False, require_axe=require_axe):
+            if self._chop_tree(x, y, inv, status=False, require_axe=True):
                 did_work = True
         elif allow_collect and cell.feature == FeatureType.ROCK and (
             TaskType.COLLECT_ROCKS in tasks or TaskType.FULL_FORAGE in tasks
@@ -25436,14 +25527,6 @@ class Game:
                 if not is_harvestable(resolve_species("REED", cell.crop_kind)):
                     return
             if self._collect_herb(x, y, inv, status=False):
-                did_work = True
-        elif (
-            allow_collect
-            and cell.feature == FeatureType.TREE
-            and TaskType.FULL_FORAGE in tasks
-            and self._building_allows_cell(building, cell)
-        ):
-            if self._chop_tree(x, y, inv, status=False, require_axe=require_axe):
                 did_work = True
         elif allow_plant and cell.feature == FeatureType.NONE:
             # Prefer inventory stock (filled by storage withdraw). Fall back to remote pull.
@@ -26632,6 +26715,11 @@ class Game:
             self.screen,
             self.resource_history,
             stock_now=self._village_stock_amounts(),
+            mouse_pos=mouse,
+        )
+        self.resources_panel.draw(
+            self.screen,
+            stock_now=self._storehouse_stock_amounts(),
             mouse_pos=mouse,
         )
         self.balance_dialog.draw(self.screen, self.balance, mouse_pos=mouse)

@@ -1,0 +1,3375 @@
+{
+  "save": "/Users/christophermarples/PycharmProjects/Sim/saves/flora_rebalance.json",
+  "days": 112,
+  "ticks_per_day": 3600,
+  "elapsed_sec": 3705.5,
+  "focus": [
+    {
+      "key": "peas",
+      "label": "Peas",
+      "spawned": 693,
+      "spawned_reachable": 249,
+      "foraged": 5,
+      "consumed": 5,
+      "stock": 0,
+      "forage_of_spawn": 0.007215007215007215,
+      "forage_of_reachable": 0.020080321285140562,
+      "tier": null,
+      "is_food": true,
+      "recipes": [
+        {
+          "name": "pea_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "pea_ham_soup",
+          "need": 2,
+          "tier": 3
+        },
+        {
+          "name": "fish_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "key": "beans",
+      "label": "Beans",
+      "spawned": 579,
+      "spawned_reachable": 234,
+      "foraged": 10,
+      "consumed": 10,
+      "stock": 0,
+      "forage_of_spawn": 0.017271157167530225,
+      "forage_of_reachable": 0.042735042735042736,
+      "tier": null,
+      "is_food": true,
+      "recipes": [
+        {
+          "name": "bean_stew",
+          "need": 2,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "key": "nettles",
+      "label": "Nettles",
+      "spawned": 4005,
+      "spawned_reachable": 1272,
+      "foraged": 38,
+      "consumed": 38,
+      "stock": 0,
+      "forage_of_spawn": 0.009488139825218476,
+      "forage_of_reachable": 0.029874213836477988,
+      "tier": null,
+      "is_food": true,
+      "recipes": [
+        {
+          "name": "nettle_soup",
+          "need": 2,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "key": "potato",
+      "label": "Potato",
+      "spawned": 1965,
+      "spawned_reachable": 1059,
+      "foraged": 7,
+      "consumed": 7,
+      "stock": 0,
+      "forage_of_spawn": 0.0035623409669211198,
+      "forage_of_reachable": 0.0066100094428706326,
+      "tier": null,
+      "is_food": true,
+      "recipes": [
+        {
+          "name": "potato_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "leek_potato_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "kale_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "fish_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "key": "mushrooms",
+      "label": "Mushrooms",
+      "spawned": 6560,
+      "spawned_reachable": 4248,
+      "foraged": 48,
+      "consumed": 44,
+      "stock": 0,
+      "forage_of_spawn": 0.007317073170731708,
+      "forage_of_reachable": 0.011299435028248588,
+      "tier": null,
+      "is_food": true,
+      "recipes": [
+        {
+          "name": "mushroom_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "mushroom_pie",
+          "need": 2,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "key": "onion",
+      "label": "Onion",
+      "spawned": 2112,
+      "spawned_reachable": 1293,
+      "foraged": 35,
+      "consumed": 34,
+      "stock": 0,
+      "forage_of_spawn": 0.016571969696969696,
+      "forage_of_reachable": 0.027068832173240527,
+      "tier": null,
+      "is_food": true,
+      "recipes": [
+        {
+          "name": "potato_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "meat_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "mushroom_pie",
+          "need": 1,
+          "tier": 4
+        },
+        {
+          "name": "meat_pie",
+          "need": 1,
+          "tier": 4
+        },
+        {
+          "name": "spiced_stew",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "key": "garlic",
+      "label": "Garlic",
+      "spawned": 2583,
+      "spawned_reachable": 1722,
+      "foraged": 76,
+      "consumed": 73,
+      "stock": 0,
+      "forage_of_spawn": 0.029423151374370887,
+      "forage_of_reachable": 0.04413472706155633,
+      "tier": null,
+      "is_food": true,
+      "recipes": [
+        {
+          "name": "nettle_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "fish_soup",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "key": "kale",
+      "label": "Kale",
+      "spawned": 1461,
+      "spawned_reachable": 768,
+      "foraged": 22,
+      "consumed": 21,
+      "stock": 0,
+      "forage_of_spawn": 0.015058179329226557,
+      "forage_of_reachable": 0.028645833333333332,
+      "tier": null,
+      "is_food": true,
+      "recipes": [
+        {
+          "name": "kale_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "key": "leek",
+      "label": "Leek",
+      "spawned": 1815,
+      "spawned_reachable": 768,
+      "foraged": 31,
+      "consumed": 29,
+      "stock": 0,
+      "forage_of_spawn": 0.017079889807162536,
+      "forage_of_reachable": 0.040364583333333336,
+      "tier": null,
+      "is_food": true,
+      "recipes": [
+        {
+          "name": "leek_potato_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "pea_ham_soup",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "fish_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "key": "pumpkin",
+      "label": "Pumpkin",
+      "spawned": 2043,
+      "spawned_reachable": 354,
+      "foraged": 10,
+      "consumed": 9,
+      "stock": 0,
+      "forage_of_spawn": 0.004894762604013705,
+      "forage_of_reachable": 0.02824858757062147,
+      "tier": null,
+      "is_food": true,
+      "recipes": [
+        {
+          "name": "pumpkin_soup",
+          "need": 2,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "key": "carrot",
+      "label": "Carrot",
+      "spawned": 1875,
+      "spawned_reachable": 1041,
+      "foraged": 47,
+      "consumed": 45,
+      "stock": 0,
+      "forage_of_spawn": 0.025066666666666668,
+      "forage_of_reachable": 0.04514889529298751,
+      "tier": null,
+      "is_food": true,
+      "recipes": [
+        {
+          "name": "meat_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "meat_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "key": "turnip",
+      "label": "Turnip",
+      "spawned": 2412,
+      "spawned_reachable": 969,
+      "foraged": 12,
+      "consumed": 12,
+      "stock": 0,
+      "forage_of_spawn": 0.004975124378109453,
+      "forage_of_reachable": 0.01238390092879257,
+      "tier": null,
+      "is_food": true,
+      "recipes": [
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "key": "cabbage",
+      "label": "Cabbage",
+      "spawned": 2436,
+      "spawned_reachable": 1245,
+      "foraged": 2,
+      "consumed": 2,
+      "stock": 0,
+      "forage_of_spawn": 0.0008210180623973727,
+      "forage_of_reachable": 0.001606425702811245,
+      "tier": null,
+      "is_food": true,
+      "recipes": [
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "spiced_stew",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "key": "blackberries",
+      "label": "Blackberries",
+      "spawned": 44,
+      "spawned_reachable": 0,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 0,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": null,
+      "tier": null,
+      "is_food": true,
+      "recipes": [
+        {
+          "name": "blackberry_jam",
+          "need": 3,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "key": "honey",
+      "label": "Honey",
+      "spawned": 0,
+      "spawned_reachable": 0,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 0,
+      "forage_of_spawn": null,
+      "forage_of_reachable": null,
+      "tier": null,
+      "is_food": true,
+      "recipes": [
+        {
+          "name": "blackberry_jam",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "sloe_jam",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "elderberry_jam",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "berry_tart",
+          "need": 1,
+          "tier": 4
+        },
+        {
+          "name": "lebkuchen",
+          "need": 2,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "key": "thyme",
+      "label": "Thyme",
+      "spawned": 3429,
+      "spawned_reachable": 1980,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 440,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "tier": null,
+      "is_food": false,
+      "recipes": [
+        {
+          "name": "bean_stew",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "mushroom_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "fish_soup",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "mushroom_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "key": "sage",
+      "label": "Sage",
+      "spawned": 828,
+      "spawned_reachable": 702,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 71,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "tier": null,
+      "is_food": false,
+      "recipes": [
+        {
+          "name": "pumpkin_soup",
+          "need": 1,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "key": "mint",
+      "label": "Mint",
+      "spawned": 882,
+      "spawned_reachable": 213,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 0,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "tier": null,
+      "is_food": false,
+      "recipes": [
+        {
+          "name": "pea_soup",
+          "need": 1,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "key": "wheat",
+      "label": "Wheat sheaf",
+      "spawned": 2121,
+      "spawned_reachable": 327,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 25,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "tier": null,
+      "is_food": false,
+      "recipes": []
+    },
+    {
+      "key": "rye",
+      "label": "Rye sheaf",
+      "spawned": 2718,
+      "spawned_reachable": 1587,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 59,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "tier": null,
+      "is_food": false,
+      "recipes": []
+    },
+    {
+      "key": "barley",
+      "label": "Barley",
+      "spawned": 2139,
+      "spawned_reachable": 594,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 4,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "tier": null,
+      "is_food": false,
+      "recipes": [
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    }
+  ],
+  "cooked_by_tier": {},
+  "wild_species": [
+    {
+      "species": "mushroom",
+      "resource": "mushrooms",
+      "label": "Mushroom",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 4,
+      "spawn_peak": 0.025,
+      "spawned": 6560,
+      "spawned_reachable": 4248,
+      "foraged": 48,
+      "consumed": 44,
+      "stock": 0,
+      "forage_of_spawn": 0.007317073170731708,
+      "forage_of_reachable": 0.011299435028248588,
+      "recipes_using": [
+        {
+          "name": "mushroom_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "mushroom_pie",
+          "need": 2,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "nettle",
+      "resource": "nettles",
+      "label": "Nettle",
+      "terrains": [
+        "GRASS",
+        "MEADOW",
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.035,
+      "spawned": 4005,
+      "spawned_reachable": 1272,
+      "foraged": 38,
+      "consumed": 38,
+      "stock": 0,
+      "forage_of_spawn": 0.009488139825218476,
+      "forage_of_reachable": 0.029874213836477988,
+      "recipes_using": [
+        {
+          "name": "nettle_soup",
+          "need": 2,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "thyme",
+      "resource": "thyme",
+      "label": "Thyme",
+      "terrains": [
+        "MEADOW",
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 3429,
+      "spawned_reachable": 1980,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 440,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": [
+        {
+          "name": "bean_stew",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "mushroom_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "fish_soup",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "mushroom_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "hemp",
+      "resource": "hemp",
+      "label": "Hemp",
+      "terrains": [
+        "MEADOW",
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 3012,
+      "spawned_reachable": 582,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 69,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "rosemary",
+      "resource": "rosemary",
+      "label": "Rosemary",
+      "terrains": [
+        "MEADOW",
+        "SOIL"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2781,
+      "spawned_reachable": 2274,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 687,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "rye",
+      "resource": "rye",
+      "label": "Rye",
+      "terrains": [
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2718,
+      "spawned_reachable": 1587,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 59,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "garlic",
+      "resource": "garlic",
+      "label": "Garlic",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2583,
+      "spawned_reachable": 1722,
+      "foraged": 76,
+      "consumed": 73,
+      "stock": 0,
+      "forage_of_spawn": 0.029423151374370887,
+      "forage_of_reachable": 0.04413472706155633,
+      "recipes_using": [
+        {
+          "name": "nettle_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "fish_soup",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "cabbage",
+      "resource": "cabbage",
+      "label": "Cabbage",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2436,
+      "spawned_reachable": 1245,
+      "foraged": 2,
+      "consumed": 2,
+      "stock": 0,
+      "forage_of_spawn": 0.0008210180623973727,
+      "forage_of_reachable": 0.001606425702811245,
+      "recipes_using": [
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "spiced_stew",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "turnip",
+      "resource": "turnip",
+      "label": "Turnip",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2412,
+      "spawned_reachable": 969,
+      "foraged": 12,
+      "consumed": 12,
+      "stock": 0,
+      "forage_of_spawn": 0.004975124378109453,
+      "forage_of_reachable": 0.01238390092879257,
+      "recipes_using": [
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "barley",
+      "resource": "barley",
+      "label": "Barley",
+      "terrains": [
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2139,
+      "spawned_reachable": 594,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 4,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": [
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "wheat",
+      "resource": "wheat",
+      "label": "Wheat",
+      "terrains": [
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2121,
+      "spawned_reachable": 327,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 25,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "onion",
+      "resource": "onion",
+      "label": "Onion",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2112,
+      "spawned_reachable": 1293,
+      "foraged": 35,
+      "consumed": 34,
+      "stock": 0,
+      "forage_of_spawn": 0.016571969696969696,
+      "forage_of_reachable": 0.027068832173240527,
+      "recipes_using": [
+        {
+          "name": "potato_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "meat_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "mushroom_pie",
+          "need": 1,
+          "tier": 4
+        },
+        {
+          "name": "meat_pie",
+          "need": 1,
+          "tier": 4
+        },
+        {
+          "name": "spiced_stew",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "pumpkin",
+      "resource": "pumpkin",
+      "label": "Pumpkin",
+      "terrains": [
+        "MEADOW",
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2043,
+      "spawned_reachable": 354,
+      "foraged": 10,
+      "consumed": 9,
+      "stock": 0,
+      "forage_of_spawn": 0.004894762604013705,
+      "forage_of_reachable": 0.02824858757062147,
+      "recipes_using": [
+        {
+          "name": "pumpkin_soup",
+          "need": 2,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "potato",
+      "resource": "potato",
+      "label": "Potato",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 1965,
+      "spawned_reachable": 1059,
+      "foraged": 7,
+      "consumed": 7,
+      "stock": 0,
+      "forage_of_spawn": 0.0035623409669211198,
+      "forage_of_reachable": 0.0066100094428706326,
+      "recipes_using": [
+        {
+          "name": "potato_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "leek_potato_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "kale_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "fish_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "carrot",
+      "resource": "carrot",
+      "label": "Carrot",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 1875,
+      "spawned_reachable": 1041,
+      "foraged": 47,
+      "consumed": 45,
+      "stock": 0,
+      "forage_of_spawn": 0.025066666666666668,
+      "forage_of_reachable": 0.04514889529298751,
+      "recipes_using": [
+        {
+          "name": "meat_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "meat_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "leek",
+      "resource": "leek",
+      "label": "Leek",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 1815,
+      "spawned_reachable": 768,
+      "foraged": 31,
+      "consumed": 29,
+      "stock": 0,
+      "forage_of_spawn": 0.017079889807162536,
+      "forage_of_reachable": 0.040364583333333336,
+      "recipes_using": [
+        {
+          "name": "leek_potato_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "pea_ham_soup",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "fish_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "wood_bush",
+      "resource": "wood",
+      "label": "Fallen wood",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR",
+        "GRASS",
+        "MEADOW"
+      ],
+      "yield_amount": 1,
+      "spawn_peak": 0.01,
+      "spawned": 1684,
+      "spawned_reachable": 674,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 219,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "kale",
+      "resource": "kale",
+      "label": "Kale",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 1461,
+      "spawned_reachable": 768,
+      "foraged": 22,
+      "consumed": 21,
+      "stock": 0,
+      "forage_of_spawn": 0.015058179329226557,
+      "forage_of_reachable": 0.028645833333333332,
+      "recipes_using": [
+        {
+          "name": "kale_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "reed",
+      "resource": "reeds",
+      "label": "Reed",
+      "terrains": [
+        "RIPARIAN"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.09,
+      "spawned": 1296,
+      "spawned_reachable": 153,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 0,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "mint",
+      "resource": "mint",
+      "label": "Mint",
+      "terrains": [
+        "MEADOW"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 882,
+      "spawned_reachable": 213,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 0,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": [
+        {
+          "name": "pea_soup",
+          "need": 1,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "sage",
+      "resource": "sage",
+      "label": "Sage",
+      "terrains": [
+        "MEADOW"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 828,
+      "spawned_reachable": 702,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 71,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": [
+        {
+          "name": "pumpkin_soup",
+          "need": 1,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "flax",
+      "resource": "flax",
+      "label": "Flax",
+      "terrains": [
+        "MEADOW"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 717,
+      "spawned_reachable": 306,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 25,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "peas",
+      "resource": "peas",
+      "label": "Peas",
+      "terrains": [
+        "MEADOW",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 693,
+      "spawned_reachable": 249,
+      "foraged": 5,
+      "consumed": 5,
+      "stock": 0,
+      "forage_of_spawn": 0.007215007215007215,
+      "forage_of_reachable": 0.020080321285140562,
+      "recipes_using": [
+        {
+          "name": "pea_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "pea_ham_soup",
+          "need": 2,
+          "tier": 3
+        },
+        {
+          "name": "fish_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "beans",
+      "resource": "beans",
+      "label": "Beans",
+      "terrains": [
+        "MEADOW"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 579,
+      "spawned_reachable": 234,
+      "foraged": 10,
+      "consumed": 10,
+      "stock": 0,
+      "forage_of_spawn": 0.017271157167530225,
+      "forage_of_reachable": 0.042735042735042736,
+      "recipes_using": [
+        {
+          "name": "bean_stew",
+          "need": 2,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "sloe",
+      "resource": "sloe_berries",
+      "label": "Sloe berry bush",
+      "terrains": [
+        "GRASS"
+      ],
+      "yield_amount": 4,
+      "spawn_peak": 0.0,
+      "spawned": 56,
+      "spawned_reachable": 0,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 0,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": null,
+      "recipes_using": [
+        {
+          "name": "sloe_jam",
+          "need": 3,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "blackberry",
+      "resource": "blackberries",
+      "label": "Blackberry bush",
+      "terrains": [
+        "GRASS"
+      ],
+      "yield_amount": 4,
+      "spawn_peak": 0.0,
+      "spawned": 44,
+      "spawned_reachable": 0,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 0,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": null,
+      "recipes_using": [
+        {
+          "name": "blackberry_jam",
+          "need": 3,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "elderberry",
+      "resource": "elderberries",
+      "label": "Elder berry bush",
+      "terrains": [
+        "GRASS"
+      ],
+      "yield_amount": 4,
+      "spawn_peak": 0.0,
+      "spawned": 28,
+      "spawned_reachable": 0,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 0,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": null,
+      "recipes_using": [
+        {
+          "name": "elderberry_jam",
+          "need": 3,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "hazel",
+      "resource": "hazelnuts",
+      "label": "Hazel bush",
+      "terrains": [
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.0,
+      "spawned": 3,
+      "spawned_reachable": 0,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 0,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": null,
+      "recipes_using": []
+    }
+  ],
+  "weak_focus": [
+    {
+      "species": "blackberry",
+      "resource": "blackberries",
+      "label": "Blackberry bush",
+      "terrains": [
+        "GRASS"
+      ],
+      "yield_amount": 4,
+      "spawn_peak": 0.0,
+      "spawned": 44,
+      "spawned_reachable": 0,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 0,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": null,
+      "recipes_using": [
+        {
+          "name": "blackberry_jam",
+          "need": 3,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "beans",
+      "resource": "beans",
+      "label": "Beans",
+      "terrains": [
+        "MEADOW"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 579,
+      "spawned_reachable": 234,
+      "foraged": 10,
+      "consumed": 10,
+      "stock": 0,
+      "forage_of_spawn": 0.017271157167530225,
+      "forage_of_reachable": 0.042735042735042736,
+      "recipes_using": [
+        {
+          "name": "bean_stew",
+          "need": 2,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "peas",
+      "resource": "peas",
+      "label": "Peas",
+      "terrains": [
+        "MEADOW",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 693,
+      "spawned_reachable": 249,
+      "foraged": 5,
+      "consumed": 5,
+      "stock": 0,
+      "forage_of_spawn": 0.007215007215007215,
+      "forage_of_reachable": 0.020080321285140562,
+      "recipes_using": [
+        {
+          "name": "pea_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "pea_ham_soup",
+          "need": 2,
+          "tier": 3
+        },
+        {
+          "name": "fish_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "sage",
+      "resource": "sage",
+      "label": "Sage",
+      "terrains": [
+        "MEADOW"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 828,
+      "spawned_reachable": 702,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 71,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": [
+        {
+          "name": "pumpkin_soup",
+          "need": 1,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "mint",
+      "resource": "mint",
+      "label": "Mint",
+      "terrains": [
+        "MEADOW"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 882,
+      "spawned_reachable": 213,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 0,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": [
+        {
+          "name": "pea_soup",
+          "need": 1,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "kale",
+      "resource": "kale",
+      "label": "Kale",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 1461,
+      "spawned_reachable": 768,
+      "foraged": 22,
+      "consumed": 21,
+      "stock": 0,
+      "forage_of_spawn": 0.015058179329226557,
+      "forage_of_reachable": 0.028645833333333332,
+      "recipes_using": [
+        {
+          "name": "kale_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "leek",
+      "resource": "leek",
+      "label": "Leek",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 1815,
+      "spawned_reachable": 768,
+      "foraged": 31,
+      "consumed": 29,
+      "stock": 0,
+      "forage_of_spawn": 0.017079889807162536,
+      "forage_of_reachable": 0.040364583333333336,
+      "recipes_using": [
+        {
+          "name": "leek_potato_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "pea_ham_soup",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "fish_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "carrot",
+      "resource": "carrot",
+      "label": "Carrot",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 1875,
+      "spawned_reachable": 1041,
+      "foraged": 47,
+      "consumed": 45,
+      "stock": 0,
+      "forage_of_spawn": 0.025066666666666668,
+      "forage_of_reachable": 0.04514889529298751,
+      "recipes_using": [
+        {
+          "name": "meat_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "meat_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "potato",
+      "resource": "potato",
+      "label": "Potato",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 1965,
+      "spawned_reachable": 1059,
+      "foraged": 7,
+      "consumed": 7,
+      "stock": 0,
+      "forage_of_spawn": 0.0035623409669211198,
+      "forage_of_reachable": 0.0066100094428706326,
+      "recipes_using": [
+        {
+          "name": "potato_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "leek_potato_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "kale_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "fish_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "pumpkin",
+      "resource": "pumpkin",
+      "label": "Pumpkin",
+      "terrains": [
+        "MEADOW",
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2043,
+      "spawned_reachable": 354,
+      "foraged": 10,
+      "consumed": 9,
+      "stock": 0,
+      "forage_of_spawn": 0.004894762604013705,
+      "forage_of_reachable": 0.02824858757062147,
+      "recipes_using": [
+        {
+          "name": "pumpkin_soup",
+          "need": 2,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "onion",
+      "resource": "onion",
+      "label": "Onion",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2112,
+      "spawned_reachable": 1293,
+      "foraged": 35,
+      "consumed": 34,
+      "stock": 0,
+      "forage_of_spawn": 0.016571969696969696,
+      "forage_of_reachable": 0.027068832173240527,
+      "recipes_using": [
+        {
+          "name": "potato_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "meat_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "mushroom_pie",
+          "need": 1,
+          "tier": 4
+        },
+        {
+          "name": "meat_pie",
+          "need": 1,
+          "tier": 4
+        },
+        {
+          "name": "spiced_stew",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "wheat",
+      "resource": "wheat",
+      "label": "Wheat",
+      "terrains": [
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2121,
+      "spawned_reachable": 327,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 25,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "barley",
+      "resource": "barley",
+      "label": "Barley",
+      "terrains": [
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2139,
+      "spawned_reachable": 594,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 4,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": [
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "turnip",
+      "resource": "turnip",
+      "label": "Turnip",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2412,
+      "spawned_reachable": 969,
+      "foraged": 12,
+      "consumed": 12,
+      "stock": 0,
+      "forage_of_spawn": 0.004975124378109453,
+      "forage_of_reachable": 0.01238390092879257,
+      "recipes_using": [
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "cabbage",
+      "resource": "cabbage",
+      "label": "Cabbage",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2436,
+      "spawned_reachable": 1245,
+      "foraged": 2,
+      "consumed": 2,
+      "stock": 0,
+      "forage_of_spawn": 0.0008210180623973727,
+      "forage_of_reachable": 0.001606425702811245,
+      "recipes_using": [
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "spiced_stew",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "garlic",
+      "resource": "garlic",
+      "label": "Garlic",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2583,
+      "spawned_reachable": 1722,
+      "foraged": 76,
+      "consumed": 73,
+      "stock": 0,
+      "forage_of_spawn": 0.029423151374370887,
+      "forage_of_reachable": 0.04413472706155633,
+      "recipes_using": [
+        {
+          "name": "nettle_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "fish_soup",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "rye",
+      "resource": "rye",
+      "label": "Rye",
+      "terrains": [
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2718,
+      "spawned_reachable": 1587,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 59,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "thyme",
+      "resource": "thyme",
+      "label": "Thyme",
+      "terrains": [
+        "MEADOW",
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 3429,
+      "spawned_reachable": 1980,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 440,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": [
+        {
+          "name": "bean_stew",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "mushroom_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "fish_soup",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "mushroom_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "nettle",
+      "resource": "nettles",
+      "label": "Nettle",
+      "terrains": [
+        "GRASS",
+        "MEADOW",
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.035,
+      "spawned": 4005,
+      "spawned_reachable": 1272,
+      "foraged": 38,
+      "consumed": 38,
+      "stock": 0,
+      "forage_of_spawn": 0.009488139825218476,
+      "forage_of_reachable": 0.029874213836477988,
+      "recipes_using": [
+        {
+          "name": "nettle_soup",
+          "need": 2,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "mushroom",
+      "resource": "mushrooms",
+      "label": "Mushroom",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 4,
+      "spawn_peak": 0.025,
+      "spawned": 6560,
+      "spawned_reachable": 4248,
+      "foraged": 48,
+      "consumed": 44,
+      "stock": 0,
+      "forage_of_spawn": 0.007317073170731708,
+      "forage_of_reachable": 0.011299435028248588,
+      "recipes_using": [
+        {
+          "name": "mushroom_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "mushroom_pie",
+          "need": 2,
+          "tier": 4
+        }
+      ]
+    }
+  ],
+  "high_spawn_low_forage": [
+    {
+      "species": "thyme",
+      "resource": "thyme",
+      "label": "Thyme",
+      "terrains": [
+        "MEADOW",
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 3429,
+      "spawned_reachable": 1980,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 440,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": [
+        {
+          "name": "bean_stew",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "mushroom_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "fish_soup",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "mushroom_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "hemp",
+      "resource": "hemp",
+      "label": "Hemp",
+      "terrains": [
+        "MEADOW",
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 3012,
+      "spawned_reachable": 582,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 69,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "rosemary",
+      "resource": "rosemary",
+      "label": "Rosemary",
+      "terrains": [
+        "MEADOW",
+        "SOIL"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2781,
+      "spawned_reachable": 2274,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 687,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "rye",
+      "resource": "rye",
+      "label": "Rye",
+      "terrains": [
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2718,
+      "spawned_reachable": 1587,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 59,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "barley",
+      "resource": "barley",
+      "label": "Barley",
+      "terrains": [
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2139,
+      "spawned_reachable": 594,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 4,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": [
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "wheat",
+      "resource": "wheat",
+      "label": "Wheat",
+      "terrains": [
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2121,
+      "spawned_reachable": 327,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 25,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "wood_bush",
+      "resource": "wood",
+      "label": "Fallen wood",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR",
+        "GRASS",
+        "MEADOW"
+      ],
+      "yield_amount": 1,
+      "spawn_peak": 0.01,
+      "spawned": 1684,
+      "spawned_reachable": 674,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 219,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "reed",
+      "resource": "reeds",
+      "label": "Reed",
+      "terrains": [
+        "RIPARIAN"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.09,
+      "spawned": 1296,
+      "spawned_reachable": 153,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 0,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "mint",
+      "resource": "mint",
+      "label": "Mint",
+      "terrains": [
+        "MEADOW"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 882,
+      "spawned_reachable": 213,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 0,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": [
+        {
+          "name": "pea_soup",
+          "need": 1,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "sage",
+      "resource": "sage",
+      "label": "Sage",
+      "terrains": [
+        "MEADOW"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 828,
+      "spawned_reachable": 702,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 71,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": [
+        {
+          "name": "pumpkin_soup",
+          "need": 1,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "flax",
+      "resource": "flax",
+      "label": "Flax",
+      "terrains": [
+        "MEADOW"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 717,
+      "spawned_reachable": 306,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 25,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "sloe",
+      "resource": "sloe_berries",
+      "label": "Sloe berry bush",
+      "terrains": [
+        "GRASS"
+      ],
+      "yield_amount": 4,
+      "spawn_peak": 0.0,
+      "spawned": 56,
+      "spawned_reachable": 0,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 0,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": null,
+      "recipes_using": [
+        {
+          "name": "sloe_jam",
+          "need": 3,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "cabbage",
+      "resource": "cabbage",
+      "label": "Cabbage",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2436,
+      "spawned_reachable": 1245,
+      "foraged": 2,
+      "consumed": 2,
+      "stock": 0,
+      "forage_of_spawn": 0.0008210180623973727,
+      "forage_of_reachable": 0.001606425702811245,
+      "recipes_using": [
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "spiced_stew",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "potato",
+      "resource": "potato",
+      "label": "Potato",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 1965,
+      "spawned_reachable": 1059,
+      "foraged": 7,
+      "consumed": 7,
+      "stock": 0,
+      "forage_of_spawn": 0.0035623409669211198,
+      "forage_of_reachable": 0.0066100094428706326,
+      "recipes_using": [
+        {
+          "name": "potato_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "leek_potato_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "kale_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "fish_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "pumpkin",
+      "resource": "pumpkin",
+      "label": "Pumpkin",
+      "terrains": [
+        "MEADOW",
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2043,
+      "spawned_reachable": 354,
+      "foraged": 10,
+      "consumed": 9,
+      "stock": 0,
+      "forage_of_spawn": 0.004894762604013705,
+      "forage_of_reachable": 0.02824858757062147,
+      "recipes_using": [
+        {
+          "name": "pumpkin_soup",
+          "need": 2,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "turnip",
+      "resource": "turnip",
+      "label": "Turnip",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2412,
+      "spawned_reachable": 969,
+      "foraged": 12,
+      "consumed": 12,
+      "stock": 0,
+      "forage_of_spawn": 0.004975124378109453,
+      "forage_of_reachable": 0.01238390092879257,
+      "recipes_using": [
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "peas",
+      "resource": "peas",
+      "label": "Peas",
+      "terrains": [
+        "MEADOW",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 693,
+      "spawned_reachable": 249,
+      "foraged": 5,
+      "consumed": 5,
+      "stock": 0,
+      "forage_of_spawn": 0.007215007215007215,
+      "forage_of_reachable": 0.020080321285140562,
+      "recipes_using": [
+        {
+          "name": "pea_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "pea_ham_soup",
+          "need": 2,
+          "tier": 3
+        },
+        {
+          "name": "fish_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "mushroom",
+      "resource": "mushrooms",
+      "label": "Mushroom",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 4,
+      "spawn_peak": 0.025,
+      "spawned": 6560,
+      "spawned_reachable": 4248,
+      "foraged": 48,
+      "consumed": 44,
+      "stock": 0,
+      "forage_of_spawn": 0.007317073170731708,
+      "forage_of_reachable": 0.011299435028248588,
+      "recipes_using": [
+        {
+          "name": "mushroom_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "mushroom_pie",
+          "need": 2,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "nettle",
+      "resource": "nettles",
+      "label": "Nettle",
+      "terrains": [
+        "GRASS",
+        "MEADOW",
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.035,
+      "spawned": 4005,
+      "spawned_reachable": 1272,
+      "foraged": 38,
+      "consumed": 38,
+      "stock": 0,
+      "forage_of_spawn": 0.009488139825218476,
+      "forage_of_reachable": 0.029874213836477988,
+      "recipes_using": [
+        {
+          "name": "nettle_soup",
+          "need": 2,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "kale",
+      "resource": "kale",
+      "label": "Kale",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 1461,
+      "spawned_reachable": 768,
+      "foraged": 22,
+      "consumed": 21,
+      "stock": 0,
+      "forage_of_spawn": 0.015058179329226557,
+      "forage_of_reachable": 0.028645833333333332,
+      "recipes_using": [
+        {
+          "name": "kale_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "onion",
+      "resource": "onion",
+      "label": "Onion",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2112,
+      "spawned_reachable": 1293,
+      "foraged": 35,
+      "consumed": 34,
+      "stock": 0,
+      "forage_of_spawn": 0.016571969696969696,
+      "forage_of_reachable": 0.027068832173240527,
+      "recipes_using": [
+        {
+          "name": "potato_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "meat_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "mushroom_pie",
+          "need": 1,
+          "tier": 4
+        },
+        {
+          "name": "meat_pie",
+          "need": 1,
+          "tier": 4
+        },
+        {
+          "name": "spiced_stew",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "leek",
+      "resource": "leek",
+      "label": "Leek",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 1815,
+      "spawned_reachable": 768,
+      "foraged": 31,
+      "consumed": 29,
+      "stock": 0,
+      "forage_of_spawn": 0.017079889807162536,
+      "forage_of_reachable": 0.040364583333333336,
+      "recipes_using": [
+        {
+          "name": "leek_potato_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "pea_ham_soup",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "fish_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "beans",
+      "resource": "beans",
+      "label": "Beans",
+      "terrains": [
+        "MEADOW"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 579,
+      "spawned_reachable": 234,
+      "foraged": 10,
+      "consumed": 10,
+      "stock": 0,
+      "forage_of_spawn": 0.017271157167530225,
+      "forage_of_reachable": 0.042735042735042736,
+      "recipes_using": [
+        {
+          "name": "bean_stew",
+          "need": 2,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "carrot",
+      "resource": "carrot",
+      "label": "Carrot",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 1875,
+      "spawned_reachable": 1041,
+      "foraged": 47,
+      "consumed": 45,
+      "stock": 0,
+      "forage_of_spawn": 0.025066666666666668,
+      "forage_of_reachable": 0.04514889529298751,
+      "recipes_using": [
+        {
+          "name": "meat_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "meat_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "garlic",
+      "resource": "garlic",
+      "label": "Garlic",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2583,
+      "spawned_reachable": 1722,
+      "foraged": 76,
+      "consumed": 73,
+      "stock": 0,
+      "forage_of_spawn": 0.029423151374370887,
+      "forage_of_reachable": 0.04413472706155633,
+      "recipes_using": [
+        {
+          "name": "nettle_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "fish_soup",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    }
+  ],
+  "reachable_low_pickup": [
+    {
+      "species": "rosemary",
+      "resource": "rosemary",
+      "label": "Rosemary",
+      "terrains": [
+        "MEADOW",
+        "SOIL"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2781,
+      "spawned_reachable": 2274,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 687,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "thyme",
+      "resource": "thyme",
+      "label": "Thyme",
+      "terrains": [
+        "MEADOW",
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 3429,
+      "spawned_reachable": 1980,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 440,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": [
+        {
+          "name": "bean_stew",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "mushroom_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "fish_soup",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "mushroom_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "rye",
+      "resource": "rye",
+      "label": "Rye",
+      "terrains": [
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2718,
+      "spawned_reachable": 1587,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 59,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "sage",
+      "resource": "sage",
+      "label": "Sage",
+      "terrains": [
+        "MEADOW"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 828,
+      "spawned_reachable": 702,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 71,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": [
+        {
+          "name": "pumpkin_soup",
+          "need": 1,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "wood_bush",
+      "resource": "wood",
+      "label": "Fallen wood",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR",
+        "GRASS",
+        "MEADOW"
+      ],
+      "yield_amount": 1,
+      "spawn_peak": 0.01,
+      "spawned": 1684,
+      "spawned_reachable": 674,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 219,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "barley",
+      "resource": "barley",
+      "label": "Barley",
+      "terrains": [
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2139,
+      "spawned_reachable": 594,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 4,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": [
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "hemp",
+      "resource": "hemp",
+      "label": "Hemp",
+      "terrains": [
+        "MEADOW",
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 3012,
+      "spawned_reachable": 582,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 69,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "wheat",
+      "resource": "wheat",
+      "label": "Wheat",
+      "terrains": [
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2121,
+      "spawned_reachable": 327,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 25,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "flax",
+      "resource": "flax",
+      "label": "Flax",
+      "terrains": [
+        "MEADOW"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 717,
+      "spawned_reachable": 306,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 25,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "mint",
+      "resource": "mint",
+      "label": "Mint",
+      "terrains": [
+        "MEADOW"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 882,
+      "spawned_reachable": 213,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 0,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": [
+        {
+          "name": "pea_soup",
+          "need": 1,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "reed",
+      "resource": "reeds",
+      "label": "Reed",
+      "terrains": [
+        "RIPARIAN"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.09,
+      "spawned": 1296,
+      "spawned_reachable": 153,
+      "foraged": 0,
+      "consumed": 0,
+      "stock": 0,
+      "forage_of_spawn": 0.0,
+      "forage_of_reachable": 0.0,
+      "recipes_using": []
+    },
+    {
+      "species": "cabbage",
+      "resource": "cabbage",
+      "label": "Cabbage",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2436,
+      "spawned_reachable": 1245,
+      "foraged": 2,
+      "consumed": 2,
+      "stock": 0,
+      "forage_of_spawn": 0.0008210180623973727,
+      "forage_of_reachable": 0.001606425702811245,
+      "recipes_using": [
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "spiced_stew",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "potato",
+      "resource": "potato",
+      "label": "Potato",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 1965,
+      "spawned_reachable": 1059,
+      "foraged": 7,
+      "consumed": 7,
+      "stock": 0,
+      "forage_of_spawn": 0.0035623409669211198,
+      "forage_of_reachable": 0.0066100094428706326,
+      "recipes_using": [
+        {
+          "name": "potato_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "leek_potato_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "kale_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "fish_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "mushroom",
+      "resource": "mushrooms",
+      "label": "Mushroom",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 4,
+      "spawn_peak": 0.025,
+      "spawned": 6560,
+      "spawned_reachable": 4248,
+      "foraged": 48,
+      "consumed": 44,
+      "stock": 0,
+      "forage_of_spawn": 0.007317073170731708,
+      "forage_of_reachable": 0.011299435028248588,
+      "recipes_using": [
+        {
+          "name": "mushroom_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "mushroom_pie",
+          "need": 2,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "turnip",
+      "resource": "turnip",
+      "label": "Turnip",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2412,
+      "spawned_reachable": 969,
+      "foraged": 12,
+      "consumed": 12,
+      "stock": 0,
+      "forage_of_spawn": 0.004975124378109453,
+      "forage_of_reachable": 0.01238390092879257,
+      "recipes_using": [
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "peas",
+      "resource": "peas",
+      "label": "Peas",
+      "terrains": [
+        "MEADOW",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 693,
+      "spawned_reachable": 249,
+      "foraged": 5,
+      "consumed": 5,
+      "stock": 0,
+      "forage_of_spawn": 0.007215007215007215,
+      "forage_of_reachable": 0.020080321285140562,
+      "recipes_using": [
+        {
+          "name": "pea_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "pea_ham_soup",
+          "need": 2,
+          "tier": 3
+        },
+        {
+          "name": "fish_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "onion",
+      "resource": "onion",
+      "label": "Onion",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2112,
+      "spawned_reachable": 1293,
+      "foraged": 35,
+      "consumed": 34,
+      "stock": 0,
+      "forage_of_spawn": 0.016571969696969696,
+      "forage_of_reachable": 0.027068832173240527,
+      "recipes_using": [
+        {
+          "name": "potato_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "meat_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "mushroom_pie",
+          "need": 1,
+          "tier": 4
+        },
+        {
+          "name": "meat_pie",
+          "need": 1,
+          "tier": 4
+        },
+        {
+          "name": "spiced_stew",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "pumpkin",
+      "resource": "pumpkin",
+      "label": "Pumpkin",
+      "terrains": [
+        "MEADOW",
+        "GRASS"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2043,
+      "spawned_reachable": 354,
+      "foraged": 10,
+      "consumed": 9,
+      "stock": 0,
+      "forage_of_spawn": 0.004894762604013705,
+      "forage_of_reachable": 0.02824858757062147,
+      "recipes_using": [
+        {
+          "name": "pumpkin_soup",
+          "need": 2,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "kale",
+      "resource": "kale",
+      "label": "Kale",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 1461,
+      "spawned_reachable": 768,
+      "foraged": 22,
+      "consumed": 21,
+      "stock": 0,
+      "forage_of_spawn": 0.015058179329226557,
+      "forage_of_reachable": 0.028645833333333332,
+      "recipes_using": [
+        {
+          "name": "kale_soup",
+          "need": 2,
+          "tier": 2
+        },
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "nettle",
+      "resource": "nettles",
+      "label": "Nettle",
+      "terrains": [
+        "GRASS",
+        "MEADOW",
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.035,
+      "spawned": 4005,
+      "spawned_reachable": 1272,
+      "foraged": 38,
+      "consumed": 38,
+      "stock": 0,
+      "forage_of_spawn": 0.009488139825218476,
+      "forage_of_reachable": 0.029874213836477988,
+      "recipes_using": [
+        {
+          "name": "nettle_soup",
+          "need": 2,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "leek",
+      "resource": "leek",
+      "label": "Leek",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 1815,
+      "spawned_reachable": 768,
+      "foraged": 31,
+      "consumed": 29,
+      "stock": 0,
+      "forage_of_spawn": 0.017079889807162536,
+      "forage_of_reachable": 0.040364583333333336,
+      "recipes_using": [
+        {
+          "name": "leek_potato_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "pea_ham_soup",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "fish_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    },
+    {
+      "species": "beans",
+      "resource": "beans",
+      "label": "Beans",
+      "terrains": [
+        "MEADOW"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 579,
+      "spawned_reachable": 234,
+      "foraged": 10,
+      "consumed": 10,
+      "stock": 0,
+      "forage_of_spawn": 0.017271157167530225,
+      "forage_of_reachable": 0.042735042735042736,
+      "recipes_using": [
+        {
+          "name": "bean_stew",
+          "need": 2,
+          "tier": 2
+        }
+      ]
+    },
+    {
+      "species": "garlic",
+      "resource": "garlic",
+      "label": "Garlic",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 2583,
+      "spawned_reachable": 1722,
+      "foraged": 76,
+      "consumed": 73,
+      "stock": 0,
+      "forage_of_spawn": 0.029423151374370887,
+      "forage_of_reachable": 0.04413472706155633,
+      "recipes_using": [
+        {
+          "name": "nettle_soup",
+          "need": 1,
+          "tier": 2
+        },
+        {
+          "name": "fish_soup",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "souper_greens",
+          "need": 1,
+          "tier": 3
+        }
+      ]
+    },
+    {
+      "species": "carrot",
+      "resource": "carrot",
+      "label": "Carrot",
+      "terrains": [
+        "SOIL",
+        "FOREST_FLOOR"
+      ],
+      "yield_amount": 3,
+      "spawn_peak": 0.045,
+      "spawned": 1875,
+      "spawned_reachable": 1041,
+      "foraged": 47,
+      "consumed": 45,
+      "stock": 0,
+      "forage_of_spawn": 0.025066666666666668,
+      "forage_of_reachable": 0.04514889529298751,
+      "recipes_using": [
+        {
+          "name": "meat_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "root_stew",
+          "need": 1,
+          "tier": 3
+        },
+        {
+          "name": "meat_pie",
+          "need": 1,
+          "tier": 4
+        }
+      ]
+    }
+  ],
+  "spawned_totals": {
+    "mushrooms": 6560,
+    "nettles": 4005,
+    "thyme": 3429,
+    "hemp": 3012,
+    "rosemary": 2781,
+    "rye": 2718,
+    "garlic": 2583,
+    "cabbage": 2436,
+    "turnip": 2412,
+    "barley": 2139,
+    "wheat": 2121,
+    "onion": 2112,
+    "pumpkin": 2043,
+    "potato": 1965,
+    "carrot": 1875,
+    "leek": 1815,
+    "wood": 1684,
+    "kale": 1461,
+    "reeds": 1296,
+    "mint": 882,
+    "sage": 828,
+    "flax": 717,
+    "peas": 693,
+    "beans": 579,
+    "sloe_berries": 56,
+    "blackberries": 44,
+    "elderberries": 28,
+    "hazelnuts": 3
+  },
+  "spawned_reachable_totals": {
+    "mushrooms": 4248,
+    "rosemary": 2274,
+    "thyme": 1980,
+    "garlic": 1722,
+    "rye": 1587,
+    "onion": 1293,
+    "nettles": 1272,
+    "cabbage": 1245,
+    "potato": 1059,
+    "carrot": 1041,
+    "turnip": 969,
+    "leek": 768,
+    "kale": 768,
+    "sage": 702,
+    "wood": 674,
+    "barley": 594,
+    "hemp": 582,
+    "pumpkin": 354,
+    "wheat": 327,
+    "flax": 306,
+    "peas": 249,
+    "beans": 234,
+    "mint": 213,
+    "reeds": 153
+  },
+  "foraged_totals": {
+    "garlic": 76,
+    "mushrooms": 48,
+    "carrot": 47,
+    "nettles": 38,
+    "onion": 35,
+    "leek": 31,
+    "kale": 22,
+    "turnip": 12,
+    "pumpkin": 10,
+    "garlic_seeds": 10,
+    "beans": 10,
+    "carrot_seeds": 9,
+    "potato": 7,
+    "kale_seeds": 6,
+    "peas": 5,
+    "leek_seeds": 4,
+    "onion_seeds": 4,
+    "cabbage": 2,
+    "potato_seeds": 2,
+    "bean_seeds": 2,
+    "turnip_seeds": 2,
+    "pumpkin_seeds": 1,
+    "pea_seeds": 1
+  },
+  "consumed_totals": {
+    "garlic": 73,
+    "carrot": 45,
+    "mushrooms": 44,
+    "nettles": 38,
+    "onion": 34,
+    "leek": 29,
+    "kale": 21,
+    "turnip": 12,
+    "beans": 10,
+    "pumpkin": 9,
+    "potato": 7,
+    "peas": 5,
+    "cabbage": 2
+  }
+}
