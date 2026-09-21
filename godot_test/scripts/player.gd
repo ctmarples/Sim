@@ -6,9 +6,15 @@ signal status_requested(message: String)
 signal container_open_requested(container_inventory: ItemInventory, container_name: String)
 
 @export var speed := 210.0
+@export_range(0.1, 2.0, 0.05) var minimum_zoom := 0.35
+@export_range(1.0, 8.0, 0.1) var maximum_zoom := 3.5
+@export_range(0.1, 4.0, 0.1) var keyboard_zoom_rate := 1.2
+@export_range(1.0, 20.0, 0.5) var zoom_smoothing := 10.0
 var map_bounds := Rect2(20.0, 20.0, 1160.0, 760.0)
 var interaction_range := 60.0
 var inventory := ItemInventory.new()
+var target_zoom := 1.0
+var camera_base_position := Vector2.ZERO
 
 
 func open_container(container_inventory: ItemInventory, container_name: String) -> void:
@@ -20,6 +26,37 @@ func open_container(container_inventory: ItemInventory, container_name: String) 
 func _ready() -> void:
 	animated_sprite.play("walk_right")
 	animated_sprite.pause()
+	target_zoom = $Camera2D.zoom.x
+	camera_base_position = $Camera2D.position
+
+
+func _process(delta: float) -> void:
+	var zoom_direction := 0.0
+	if Input.is_key_pressed(KEY_EQUAL) or Input.is_key_pressed(KEY_PLUS) or Input.is_key_pressed(KEY_KP_ADD):
+		zoom_direction += 1.0
+	if Input.is_key_pressed(KEY_MINUS) or Input.is_key_pressed(KEY_KP_SUBTRACT):
+		zoom_direction -= 1.0
+	if zoom_direction != 0.0:
+		target_zoom *= exp(zoom_direction * keyboard_zoom_rate * delta)
+		target_zoom = clampf(target_zoom, minimum_zoom, maximum_zoom)
+	var weight := 1.0 - exp(-zoom_smoothing * delta)
+	var current_zoom: float = $Camera2D.zoom.x
+	current_zoom = lerpf(current_zoom, target_zoom, weight)
+	$Camera2D.zoom = Vector2.ONE * current_zoom
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			target_zoom = minf(maximum_zoom, target_zoom * 1.18)
+			get_viewport().set_input_as_handled()
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			target_zoom = maxf(minimum_zoom, target_zoom / 1.18)
+			get_viewport().set_input_as_handled()
+
+
+func set_camera_projection_offset(offset: Vector2) -> void:
+	$Camera2D.position = camera_base_position + offset
 
 
 func _physics_process(_delta: float) -> void:
@@ -45,17 +82,18 @@ func _physics_process(_delta: float) -> void:
 	position.y = clampf(position.y, map_bounds.position.y, map_bounds.end.y)
 
 
-func configure_for_map(map_rect: Rect2, cell_size: float) -> void:
+func configure_for_map(map_rect: Rect2, cell_size: float, projected_map_rect: Rect2 = Rect2()) -> void:
 	map_bounds = map_rect.grow(-cell_size * 0.5)
 	interaction_range = cell_size * 1.5
 	# Dog SVG import is 400px around a 40-unit logical viewBox.
 	$AnimatedSprite2D.scale = Vector2.ONE * (cell_size / 400.0)
 	$AnimatedSprite2D.position.y = -cell_size * 0.5
 	$Camera2D.position.y = -cell_size * 0.5
-	$Camera2D.limit_left = roundi(map_rect.position.x)
-	$Camera2D.limit_top = roundi(map_rect.position.y)
-	$Camera2D.limit_right = roundi(map_rect.end.x)
-	$Camera2D.limit_bottom = roundi(map_rect.end.y)
+	var camera_rect: Rect2 = projected_map_rect if projected_map_rect.has_area() else map_rect
+	$Camera2D.limit_left = floori(camera_rect.position.x)
+	$Camera2D.limit_top = floori(camera_rect.position.y)
+	$Camera2D.limit_right = ceili(camera_rect.end.x)
+	$Camera2D.limit_bottom = ceili(camera_rect.end.y)
 
 
 func _interact() -> void:

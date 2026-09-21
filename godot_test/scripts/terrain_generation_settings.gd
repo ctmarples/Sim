@@ -16,6 +16,6 @@ extends Resource
 
 @export_category("Height Test")
 @export var height_enabled := true
-@export_range(0.0, 80.0, 1.0) var height_amplitude := 32.0
+@export_range(0.0, 512.0, 1.0, "or_greater") var height_amplitude := 32.0
 @export_range(0.005, 0.25, 0.005) var height_frequency := 0.035
-@export_range(0.0, 4.0, 0.1) var height_lift_pixels := 1.0
+@export_range(0.0, 16.0, 0.1, "or_greater") var height_lift_pixels := 1.0

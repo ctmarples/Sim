@@ -58,12 +58,35 @@ func get_map_rect() -> Rect2:
 	return Rect2(global_position, get_map_size())
 
 
+func get_projected_map_rect() -> Rect2:
+	var first := true
+	var minimum := Vector2.ZERO
+	var maximum := Vector2.ZERO
+	for y in map_data.rows + 1:
+		for x in map_data.columns + 1:
+			var logical := to_global(Vector2(x, y) * map_data.cell_size)
+			var projected := project_global_position(logical)
+			if first:
+				minimum = projected
+				maximum = projected
+				first = false
+			else:
+				minimum = minimum.min(projected)
+				maximum = maximum.max(projected)
+	return Rect2(minimum, maximum - minimum)
+
+
 func height_lift_at_global(logical_global_position: Vector2) -> float:
 	return map_data.height_at_world(to_local(logical_global_position)) * generation_settings.height_lift_pixels
 
 
+func projection_offset_at_global(logical_global_position: Vector2) -> Vector2:
+	var height := map_data.height_at_world(to_local(logical_global_position))
+	return Vector2(0.0, -height * generation_settings.height_lift_pixels)
+
+
 func project_global_position(logical_global_position: Vector2) -> Vector2:
-	return logical_global_position - Vector2(0.0, height_lift_at_global(logical_global_position))
+	return logical_global_position + projection_offset_at_global(logical_global_position)
 
 
 func relief_shade_at_global(logical_global_position: Vector2) -> float:

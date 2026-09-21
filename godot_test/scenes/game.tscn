@@ -1,18 +1,20 @@
 [gd_scene load_steps=11 format=3 uid="uid://di2fo8ba1j26s"]
 
 [ext_resource type="Script" uid="uid://bptktfxumv5uj" path="res://scripts/map.gd" id="1_map"]
-[ext_resource type="PackedScene" path="res://scenes/player.tscn" id="2_player"]
+[ext_resource type="PackedScene" uid="uid://cvdj5ktgqxhgj" path="res://scenes/player.tscn" id="2_player"]
 [ext_resource type="Shader" uid="uid://b1ixiw5tjd78m" path="res://shaders/grass.gdshader" id="3_grass"]
 [ext_resource type="Script" uid="uid://cqblwqmoeono" path="res://scripts/terrain_renderer.gd" id="4_renderer"]
 [ext_resource type="Script" uid="uid://br4v6b328j0ff" path="res://scripts/terrain_generation_settings.gd" id="5_settings"]
-[ext_resource type="Script" path="res://scripts/inventory_panel.gd" id="6_inventory"]
+[ext_resource type="Script" uid="uid://ddxs24vmq477q" path="res://scripts/inventory_panel.gd" id="6_inventory"]
 [ext_resource type="Script" path="res://scripts/villager_panel.gd" id="7_villager_panel"]
-[ext_resource type="Script" path="res://scripts/debug_overlay.gd" id="8_debug"]
+[ext_resource type="Script" uid="uid://cwnn3blop1qjl" path="res://scripts/debug_overlay.gd" id="8_debug"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_grass"]
 shader = ExtResource("3_grass")
 shader_parameter/terrain_grid_size = Vector2i(30, 20)
 shader_parameter/terrain_cell_size = 40.0
+shader_parameter/height_lift_pixels = 1.0
+shader_parameter/terrain_max_height = 32.0
 
 [sub_resource type="Resource" id="TerrainGenerationSettings_map"]
 script = ExtResource("5_settings")
@@ -20,6 +22,7 @@ columns = 100
 rows = 100
 seed = 3889
 soil_threshold = 0.24
+height_amplitude = 100.0
 
 [node name="Game" type="Node2D"]
 script = ExtResource("1_map")
@@ -55,7 +58,7 @@ theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 22
-text = "Move: WASD/arrows   E interact   I inventory   V villagers   G grid   O objects"
+text = "Move: WASD/arrows   E interact   I inventory   V villagers   +/- or wheel zoom   G grid   O objects"
 
 [node name="InventoryPanel" type="PanelContainer" parent="HUD"]
 visible = false
@@ -66,40 +69,51 @@ offset_bottom = 350.0
 script = ExtResource("6_inventory")
 
 [node name="Margin" type="MarginContainer" parent="HUD/InventoryPanel"]
+layout_mode = 2
 theme_override_constants/margin_left = 14
 theme_override_constants/margin_top = 10
 theme_override_constants/margin_right = 14
 theme_override_constants/margin_bottom = 10
 
 [node name="Root" type="VBoxContainer" parent="HUD/InventoryPanel/Margin"]
+layout_mode = 2
 theme_override_constants/separation = 8
 
 [node name="Title" type="Label" parent="HUD/InventoryPanel/Margin/Root"]
+layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Inventory"
 
 [node name="Hint" type="Label" parent="HUD/InventoryPanel/Margin/Root"]
+layout_mode = 2
 text = "Click a tool to equip it"
 
 [node name="Panes" type="HBoxContainer" parent="HUD/InventoryPanel/Margin/Root"]
+layout_mode = 2
 theme_override_constants/separation = 20
 
 [node name="PlayerPane" type="VBoxContainer" parent="HUD/InventoryPanel/Margin/Root/Panes"]
 custom_minimum_size = Vector2(250, 0)
+layout_mode = 2
 
 [node name="Name" type="Label" parent="HUD/InventoryPanel/Margin/Root/Panes/PlayerPane"]
+layout_mode = 2
 text = "Player"
 
 [node name="Items" type="VBoxContainer" parent="HUD/InventoryPanel/Margin/Root/Panes/PlayerPane"]
+layout_mode = 2
 
 [node name="ContainerPane" type="VBoxContainer" parent="HUD/InventoryPanel/Margin/Root/Panes"]
 visible = false
 custom_minimum_size = Vector2(250, 0)
+layout_mode = 2
 
 [node name="Name" type="Label" parent="HUD/InventoryPanel/Margin/Root/Panes/ContainerPane"]
+layout_mode = 2
 text = "Building"
 
 [node name="Items" type="VBoxContainer" parent="HUD/InventoryPanel/Margin/Root/Panes/ContainerPane"]
+layout_mode = 2
 
 [node name="VillagerPanel" type="PanelContainer" parent="HUD"]
 visible = false
@@ -110,32 +124,37 @@ offset_bottom = 280.0
 script = ExtResource("7_villager_panel")
 
 [node name="Margin" type="MarginContainer" parent="HUD/VillagerPanel"]
+layout_mode = 2
 theme_override_constants/margin_left = 12
 theme_override_constants/margin_top = 10
 theme_override_constants/margin_right = 12
 theme_override_constants/margin_bottom = 10
 
 [node name="Rows" type="VBoxContainer" parent="HUD/VillagerPanel/Margin"]
+layout_mode = 2
 theme_override_constants/separation = 7
 
 [node name="Title" type="Label" parent="HUD/VillagerPanel/Margin/Rows"]
+layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Villagers"
 
 [node name="List" type="VBoxContainer" parent="HUD/VillagerPanel/Margin/Rows"]
+layout_mode = 2
 
 [node name="Selected" type="Label" parent="HUD/VillagerPanel/Margin/Rows"]
+layout_mode = 2
 text = "Selected: none"
 
 [node name="Status" type="Label" parent="HUD/VillagerPanel/Margin/Rows"]
+layout_mode = 2
 text = "Select a villager"
 autowrap_mode = 2
 
 [node name="Assign" type="Button" parent="HUD/VillagerPanel/Margin/Rows"]
+layout_mode = 2
 disabled = true
 text = "Assign"
-
-[connection signal="pressed" from="HUD/VillagerPanel/Margin/Rows/Assign" to="HUD/VillagerPanel" method="_on_assign_pressed"]
 
 [node name="Status" type="Label" parent="HUD"]
 visible = false
@@ -143,16 +162,17 @@ offset_left = 330.0
 offset_top = 480.0
 offset_right = 630.0
 offset_bottom = 520.0
-text = "Status"
-horizontal_alignment = 1
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.85)
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 20
+text = "Status"
+horizontal_alignment = 1
 
 [node name="StatusTimer" type="Timer" parent="HUD"]
 wait_time = 1.5
 one_shot = true
 
+[connection signal="pressed" from="HUD/VillagerPanel/Margin/Rows/Assign" to="HUD/VillagerPanel" method="_on_assign_pressed"]
 [connection signal="timeout" from="HUD/StatusTimer" to="." method="_on_status_timer_timeout"]

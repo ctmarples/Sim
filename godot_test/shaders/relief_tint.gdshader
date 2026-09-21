@@ -5,7 +5,7 @@ uniform sampler2D relief_corner_map : filter_linear, repeat_disable;
 uniform vec2 terrain_origin = vec2(0.0);
 uniform vec2 terrain_grid_size = vec2(1.0);
 uniform float terrain_cell_size = 40.0;
-uniform float projection_lift = 0.0;
+uniform vec2 projection_offset = vec2(0.0);
 varying vec2 relief_canvas_position;
 
 void vertex() {
@@ -16,7 +16,7 @@ void fragment() {
 	vec4 source = texture(TEXTURE, UV) * COLOR;
 	vec3 colour = source.rgb;
 	vec2 logical_position = relief_canvas_position - terrain_origin;
-	logical_position.y += projection_lift;
+	logical_position -= projection_offset;
 	vec2 corner_coordinate = logical_position / terrain_cell_size;
 	vec2 relief_uv = (corner_coordinate + vec2(0.5)) / (terrain_grid_size + vec2(1.0));
 	float relief_shade = texture(relief_corner_map, clamp(relief_uv, vec2(0.0), vec2(1.0))).r;

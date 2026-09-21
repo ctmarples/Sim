@@ -65,21 +65,22 @@ func _update_projected_actor_visuals() -> void:
 					break
 		if visual == null:
 			continue
-		var projection_lift := terrain.height_lift_at_global(projection_sample)
 		_project_canvas_item(visual, projection_sample, terrain, &"projection_base_position")
-		_apply_relief_tint(visual, terrain, projection_lift)
+		_apply_relief_tint(visual, terrain, terrain.projection_offset_at_global(projection_sample))
 		if selection_area:
 			_project_canvas_item(selection_area, projection_sample, terrain, &"projection_base_position")
+		if actor is Player:
+			actor.set_camera_projection_offset(terrain.projection_offset_at_global(projection_sample))
 
 
 func _project_canvas_item(item: Node2D, logical_position: Vector2, terrain: TerrainRenderer, metadata_key: StringName) -> void:
 	if not item.has_meta(metadata_key):
 		item.set_meta(metadata_key, item.position)
 	var base_position: Vector2 = item.get_meta(metadata_key)
-	item.position = base_position - Vector2(0.0, terrain.height_lift_at_global(logical_position))
+	item.position = base_position + terrain.projection_offset_at_global(logical_position)
 
 
-func _apply_relief_tint(item: CanvasItem, terrain: TerrainRenderer, projection_lift: float) -> void:
+func _apply_relief_tint(item: CanvasItem, terrain: TerrainRenderer, projection_offset: Vector2) -> void:
 	var shader_material := item.material as ShaderMaterial
 	if shader_material == null or shader_material.shader != RELIEF_TINT_SHADER:
 		shader_material = ShaderMaterial.new()
@@ -89,7 +90,7 @@ func _apply_relief_tint(item: CanvasItem, terrain: TerrainRenderer, projection_l
 	shader_material.set_shader_parameter("terrain_origin", terrain.global_position)
 	shader_material.set_shader_parameter("terrain_grid_size", Vector2(terrain.map_data.columns, terrain.map_data.rows))
 	shader_material.set_shader_parameter("terrain_cell_size", terrain.map_data.cell_size)
-	shader_material.set_shader_parameter("projection_lift", projection_lift)
+	shader_material.set_shader_parameter("projection_offset", projection_offset)
 
 
 func _build_trees() -> void:
@@ -121,7 +122,7 @@ func _build_trees() -> void:
 
 func _configure_player_for_map() -> void:
 	var terrain: TerrainRenderer = $Ground/ProceduralTerrain
-	$Actors/Player.configure_for_map(terrain.get_map_rect(), terrain.map_data.cell_size)
+	$Actors/Player.configure_for_map(terrain.get_map_rect(), terrain.map_data.cell_size, terrain.get_projected_map_rect())
 	$DebugOverlay.bind(terrain)
 
 

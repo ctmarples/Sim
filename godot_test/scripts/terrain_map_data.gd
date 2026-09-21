@@ -49,6 +49,12 @@ func set_corner_height(vertex: Vector2i, height: float) -> void:
 		height_peak = maxf(height_peak, safe_height)
 
 
+func recalculate_height_peak() -> void:
+	height_peak = 0.0
+	for height in corner_heights:
+		height_peak = maxf(height_peak, height)
+
+
 func height_at_world(world_position: Vector2) -> float:
 	var grid_position := world_position / cell_size
 	var cell := Vector2i(floori(grid_position.x), floori(grid_position.y))
