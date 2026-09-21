@@ -56,11 +56,24 @@ interact={
 "deadzone": 0.2,
 "events": [Object(InputEventKey,"physical_keycode":69)]
 }
+villager_list={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"physical_keycode":86)]
+}
+debug_grid={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"physical_keycode":71)]
+}
+debug_objects={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"physical_keycode":79)]
+}
 
 [layer_names]
 
 2d_physics/layer_1="World"
 2d_physics/layer_2="Player"
+2d_physics/layer_3="Selectable"
 
 [rendering]
 

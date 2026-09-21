@@ -72,14 +72,34 @@ const vec3 SOIL_PALETTE[48] = {
 };
 
 varying vec2 terrain_world_position;
+varying float terrain_relief_shade;
 uniform sampler2D soil_corner_map : filter_nearest, repeat_disable;
+uniform sampler2D height_corner_map : filter_nearest, repeat_disable;
+uniform sampler2D relief_corner_map : filter_linear, repeat_disable;
 uniform ivec2 terrain_grid_size = ivec2(12, 8);
 uniform float terrain_cell_size = 100.0;
+uniform float height_lift_pixels = 1.0;
+uniform float terrain_max_height = 32.0;
 
 void vertex() {
-	// An untextured Polygon2D has no useful UV. Explicit coordinates prevent
-	// every pixel sampling the same point, which caused the flat-green result.
+	// Preserve flat logical coordinates before the mesh is height-projected so
+	// terrain texture scale and terrain boundaries do not stretch with relief.
 	terrain_world_position = VERTEX;
+	ivec2 corner = clamp(ivec2(round(VERTEX / terrain_cell_size)), ivec2(0), terrain_grid_size);
+	float h = texelFetch(height_corner_map, corner, 0).r;
+	float he = texelFetch(height_corner_map, min(corner + ivec2(1, 0), terrain_grid_size), 0).r;
+	float hw = texelFetch(height_corner_map, max(corner - ivec2(1, 0), ivec2(0)), 0).r;
+	float hs = texelFetch(height_corner_map, min(corner + ivec2(0, 1), terrain_grid_size), 0).r;
+	float hn = texelFetch(height_corner_map, max(corner - ivec2(0, 1), ivec2(0)), 0).r;
+	float gx = (he - hw) * 0.5;
+	float gy = (hs - hn) * 0.5;
+	float lit = (gx - gy * 0.35) / 1.35 / max(8.0, terrain_max_height * 0.15);
+	float response = lit * 0.28 * 4.0;
+	if (response < 0.0) {
+		response *= 1.5;
+	}
+	terrain_relief_shade = clamp(1.0 + response, 0.55, 1.10);
+	VERTEX.y -= h * height_lift_pixels;
 }
 
 float hash_2d(ivec2 cell, int salt) {
@@ -171,5 +191,16 @@ void fragment() {
 	// Exact soft land-to-land band used by compose_cell_fills.
 	float soil_blend = clamp((field - 0.08) / 0.84, 0.0, 1.0);
 	soil_blend = soil_blend * soil_blend * (3.0 - 2.0 * soil_blend);
-	COLOR = vec4(mix(sample_grass(world), sample_soil(world), soil_blend), 1.0);
+	vec3 colour = mix(sample_grass(world), sample_soil(world), soil_blend);
+	vec2 relief_coordinate = terrain_world_position / terrain_cell_size;
+	vec2 relief_uv = (relief_coordinate + vec2(0.5)) / (vec2(terrain_grid_size) + vec2(1.0));
+	float visible_relief_shade = texture(relief_corner_map, clamp(relief_uv, vec2(0.0), vec2(1.0))).r;
+	if (visible_relief_shade >= 1.0) {
+		float highlight = clamp((visible_relief_shade - 1.0) / 0.10, 0.0, 1.0) * 0.10;
+		colour = mix(colour, vec3(248.0, 228.0, 175.0) / 255.0, highlight);
+	} else {
+		float shadow = clamp((1.0 - visible_relief_shade) / 0.28, 0.0, 1.0) * 0.25;
+		colour = mix(colour, vec3(72.0, 46.0, 28.0) / 255.0, shadow);
+	}
+	COLOR = vec4(colour, 1.0);
 }

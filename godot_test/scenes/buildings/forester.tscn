@@ -1,0 +1,30 @@
+[gd_scene load_steps=4 format=3 uid="uid://btrxox1chri8w"]
+
+[ext_resource type="PackedScene" uid="uid://dilhbqkvei64y" path="res://scenes/buildings/building.tscn" id="1"]
+[ext_resource type="Texture2D" uid="uid://ccaxv07d2gp6t" path="res://assets/buildings/forester.svg" id="2"]
+
+[sub_resource type="CapsuleShape2D" id="CapsuleShape2D_vjvuh"]
+radius = 21.0
+height = 69.999985
+
+[node name="Forester" instance=ExtResource("1")]
+building_name = "Forester"
+footprint_cells = Vector2i(3, 2)
+inventory_capacity = 24
+recipes = Array[StringName]([&"forestry_work"])
+
+[node name="Visual" type="Sprite2D" parent="." index="0"]
+position = Vector2(4.9999995, -0.99999976)
+scale = Vector2(0.32749903, 0.32749903)
+texture = ExtResource("2")
+
+[node name="PhysicalCollision" parent="." index="1"]
+position = Vector2(-7, 10)
+rotation = 4.712389
+shape = SubResource("CapsuleShape2D_vjvuh")
+
+[node name="SelectionShape" parent="SelectionArea" index="0"]
+position = Vector2(-6, 24.5)
+
+[node name="InteractionArea" parent="." index="3"]
+position = Vector2(0, 20)

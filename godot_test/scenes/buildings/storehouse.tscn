@@ -1,0 +1,26 @@
+[gd_scene load_steps=4 format=3 uid="uid://dx0v17r8emi0j"]
+
+[ext_resource type="PackedScene" uid="uid://dilhbqkvei64y" path="res://scenes/buildings/building.tscn" id="1"]
+[ext_resource type="Texture2D" uid="uid://cigxc63ha03or" path="res://assets/buildings/storehouse.svg" id="2"]
+
+[sub_resource type="CapsuleShape2D" id="CapsuleShape2D_lkfbw"]
+radius = 16.0
+height = 80.0
+
+[node name="Storehouse" instance=ExtResource("1")]
+building_name = "Storehouse"
+footprint_cells = Vector2i(3, 2)
+inventory_capacity = 60
+
+[node name="Visual" type="Sprite2D" parent="." index="0"]
+position = Vector2(24, -16)
+scale = Vector2(0.295, 0.295)
+texture = ExtResource("2")
+
+[node name="PhysicalCollision" parent="." index="1"]
+position = Vector2(8, -8)
+rotation = 1.5707964
+shape = SubResource("CapsuleShape2D_lkfbw")
+
+[node name="SelectionShape" parent="SelectionArea" index="0"]
+position = Vector2(8, 4)

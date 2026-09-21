@@ -24,4 +24,17 @@ static func generate(settings: TerrainGenerationSettings) -> TerrainMapData:
 			var value := noise.get_noise_2d(float(x), float(y))
 			if value >= settings.soil_threshold:
 				result.set_terrain(Vector2i(x, y), TerrainMapData.Terrain.SOIL)
+
+	if settings.height_enabled:
+		var height_noise := FastNoiseLite.new()
+		height_noise.seed = settings.seed + 7919
+		height_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+		height_noise.frequency = settings.height_frequency
+		height_noise.fractal_type = FastNoiseLite.FRACTAL_FBM
+		height_noise.fractal_octaves = 3
+		for vertex_y in settings.rows + 1:
+			for vertex_x in settings.columns + 1:
+				var noise_value := height_noise.get_noise_2d(float(vertex_x), float(vertex_y))
+				var height := settings.height_amplitude * smoothstep(-0.65, 0.75, noise_value)
+				result.set_corner_height(Vector2i(vertex_x, vertex_y), height)
 	return result

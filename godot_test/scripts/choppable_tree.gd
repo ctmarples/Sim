@@ -4,6 +4,7 @@ extends StaticBody2D
 @export var hits_required := 3
 var hits_remaining := 3
 var cell_size := 40.0
+var falling := false
 
 
 func _ready() -> void:
@@ -11,17 +12,21 @@ func _ready() -> void:
 	add_to_group(&"interactables")
 
 
-func interact(player: Player) -> void:
-	if not player.inventory.equipped_supports(&"chop"):
-		player.show_status("Equip an axe to chop")
+func interact(actor: Node) -> void:
+	if falling:
+		return
+	if not actor.inventory.equipped_supports(&"chop"):
+		actor.show_status("Equip an axe to chop")
 		return
 	hits_remaining -= 1
-	player.show_status("Chopping tree… %d/%d" % [hits_required - hits_remaining, hits_required])
+	actor.show_status("Chopping tree… %d/%d" % [hits_required - hits_remaining, hits_required])
 	var tween := create_tween()
 	tween.tween_property(self, "rotation", 0.06, 0.06)
 	tween.tween_property(self, "rotation", -0.06, 0.08)
 	tween.tween_property(self, "rotation", 0.0, 0.06)
 	if hits_remaining <= 0:
+		falling = true
+		remove_from_group(&"interactables")
 		tween.finished.connect(_fell)
 
 

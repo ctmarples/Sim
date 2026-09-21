@@ -24,7 +24,9 @@ func _ready() -> void:
 	add_child(sprite)
 
 
-func interact(player: Player) -> void:
-	player.inventory.add_item(item_id, amount)
-	player.show_status("Picked up %s" % ItemDatabase.display_name(item_id))
-	queue_free()
+func interact(actor: Node) -> void:
+	if actor.inventory.add_item(item_id, amount):
+		actor.show_status("Picked up %s" % ItemDatabase.display_name(item_id))
+		queue_free()
+	else:
+		actor.show_status("Inventory is full")

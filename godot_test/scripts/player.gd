@@ -3,11 +3,16 @@ extends CharacterBody2D
 
 signal inventory_toggle_requested
 signal status_requested(message: String)
+signal container_open_requested(container_inventory: ItemInventory, container_name: String)
 
 @export var speed := 210.0
 var map_bounds := Rect2(20.0, 20.0, 1160.0, 760.0)
 var interaction_range := 60.0
-var inventory := PlayerInventory.new()
+var inventory := ItemInventory.new()
+
+
+func open_container(container_inventory: ItemInventory, container_name: String) -> void:
+	container_open_requested.emit(container_inventory, container_name)
 
 @onready var animated_sprite: AnimatedSprite2D = $AnimatedSprite2D
 
@@ -57,7 +62,10 @@ func _interact() -> void:
 	var nearest: Node2D
 	var nearest_distance := interaction_range
 	for candidate in get_tree().get_nodes_in_group(&"interactables"):
-		var distance := global_position.distance_to(candidate.global_position)
+		if candidate.has_method("can_interact") and not candidate.can_interact(self):
+			continue
+		var target_position: Vector2 = candidate.get_interaction_position() if candidate.has_method("get_interaction_position") else candidate.global_position
+		var distance := global_position.distance_to(target_position)
 		if distance <= nearest_distance:
 			nearest = candidate
 			nearest_distance = distance

@@ -13,3 +13,9 @@ extends Resource
 @export_range(-1.0, 1.0, 0.01) var soil_threshold := -0.08
 @export_range(1, 8, 1) var fractal_octaves := 3
 @export_range(0, 4, 1) var grass_border_cells := 1
+
+@export_category("Height Test")
+@export var height_enabled := true
+@export_range(0.0, 80.0, 1.0) var height_amplitude := 32.0
+@export_range(0.005, 0.25, 0.005) var height_frequency := 0.035
+@export_range(0.0, 4.0, 0.1) var height_lift_pixels := 1.0
