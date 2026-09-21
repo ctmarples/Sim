@@ -408,6 +408,7 @@ def apply_building_storage(building: Building) -> None:
     building.output_capacity = spec.output_capacity
     building.fuel_capacity = spec.fuel_capacity
     building.seed_capacity = spec.seed_capacity
+    apply_default_cap_policy(building)
     building._invalidate_recipe_policy()
 
 
@@ -418,6 +419,35 @@ def default_item_mins(kind: BuildingKind) -> dict[str, int]:
             "hardwood_logs": FORESTER_DEFAULT_HARDWOOD_LOGS_MIN,
         }
     return {}
+
+
+# Cap policy modes for production Max (village) and storage Cap (local).
+CAP_MODE_NONE = "none"
+CAP_MODE_GLOBAL = "global"
+CAP_MODE_PER_ITEM = "per_item"
+CAP_MODE_LABELS: dict[str, str] = {
+    CAP_MODE_NONE: "No limit",
+    CAP_MODE_GLOBAL: "Global max",
+    CAP_MODE_PER_ITEM: "Set resource max",
+}
+
+
+def default_cap_policy(kind: BuildingKind) -> tuple[str, int, str, int]:
+    """Return (production_mode, production_global, storage_mode, storage_global)."""
+    if kind == BuildingKind.KITCHEN:
+        return CAP_MODE_GLOBAL, 10, CAP_MODE_GLOBAL, 50
+    if kind == BuildingKind.FORAGER:
+        return CAP_MODE_GLOBAL, 50, CAP_MODE_GLOBAL, 10
+    return CAP_MODE_PER_ITEM, 0, CAP_MODE_PER_ITEM, 0
+
+
+def apply_default_cap_policy(building: Building) -> None:
+    """Apply kind-specific production/storage cap defaults."""
+    p_mode, p_max, s_mode, s_max = default_cap_policy(building.kind)
+    building.production_cap_mode = p_mode
+    building.production_global_max = int(p_max)
+    building.storage_cap_mode = s_mode
+    building.storage_global_max = int(s_max)
 
 
 class VillagerState(Enum):
@@ -1650,9 +1680,16 @@ class Building:
     seed_capacity: int = 0
     fuel_wood: int = 0
     # Per-resource stock limits (omit key = unlimited within the pool).
+    # Used when production/storage cap mode is ``per_item``.
     item_caps: dict[str, int] = field(default_factory=dict)
     # Minimum stock haulers must leave for recipes / splitting.
     item_mins: dict[str, int] = field(default_factory=dict)
+    # Production Max policy (village-wide Sto): none | global | per_item.
+    production_cap_mode: str = CAP_MODE_PER_ITEM
+    production_global_max: int = 0
+    # Local storage Cap policy (building deposit room): none | global | per_item.
+    storage_cap_mode: str = CAP_MODE_PER_ITEM
+    storage_global_max: int = 0
     food_quality: dict[str, float] = field(default_factory=dict)
     # recipe name → enabled; progress steps toward recipe.work_steps().
     recipe_enabled: dict[str, bool] = field(default_factory=dict)
@@ -2401,6 +2438,28 @@ class Building:
             self.recipe_progress[name] = 0
         self._invalidate_recipe_policy()
 
+    def enable_all_recipes(self) -> int:
+        """Turn every known/addon/split/plant recipe on. Returns how many flipped."""
+        self.ensure_recipe_state()
+        flipped = 0
+        for group in (
+            self.known_recipes(),
+            self.addon_craft_recipes(),
+            self.split_recipes(),
+            self.plant_recipes(),
+        ):
+            for recipe in group:
+                if recipe.name not in self.recipe_enabled:
+                    self.recipe_enabled[recipe.name] = True
+                    flipped += 1
+                elif not self.recipe_enabled[recipe.name]:
+                    self.recipe_enabled[recipe.name] = True
+                    self.recipe_progress[recipe.name] = 0
+                    flipped += 1
+        if flipped:
+            self._invalidate_recipe_policy()
+        return flipped
+
     def _recipes_by_priority(self, recipes: tuple[Recipe, ...]) -> tuple[Recipe, ...]:
         """Stable sort: priority 1 first, then 2, then 3."""
         indexed = list(enumerate(recipes))
@@ -2984,7 +3043,7 @@ class Building:
         have = int(getattr(self, key, 0))
         if stack_size(key) is not None:
             room = items_for_stack_room(key, have, room)
-        cap = self.item_caps.get(key)
+        cap = self.effective_storage_cap(key)
         if cap is not None:
             room = min(room, max(0, int(cap) - have))
         elif (
@@ -3000,6 +3059,56 @@ class Building:
         """Return the per-item cap, or None if unlimited."""
         cap = self.item_caps.get(key)
         return int(cap) if cap is not None else None
+
+    def effective_production_cap(self, key: str) -> int | None:
+        """Village-wide production Max for ``key`` (None = unlimited)."""
+        mode = self.production_cap_mode or CAP_MODE_PER_ITEM
+        if mode == CAP_MODE_NONE:
+            return None
+        if mode == CAP_MODE_GLOBAL:
+            n = int(self.production_global_max or 0)
+            return n if n > 0 else None
+        return self.item_cap(key)
+
+    def effective_storage_cap(self, key: str) -> int | None:
+        """Local building Cap for ``key`` (None = unlimited within the pool)."""
+        mode = self.storage_cap_mode or CAP_MODE_PER_ITEM
+        if mode == CAP_MODE_NONE:
+            return None
+        if mode == CAP_MODE_GLOBAL:
+            n = int(self.storage_global_max or 0)
+            return n if n > 0 else None
+        return self.item_cap(key)
+
+    def storage_caps_for_display(self, keys: tuple[str, ...] | list[str]) -> dict[str, int]:
+        """Caps dict for inventory Cap badges under the active storage mode."""
+        mode = self.storage_cap_mode or CAP_MODE_PER_ITEM
+        if mode == CAP_MODE_NONE:
+            return {}
+        if mode == CAP_MODE_GLOBAL:
+            n = int(self.storage_global_max or 0)
+            return {k: n for k in keys} if n > 0 else {}
+        return dict(self.item_caps)
+
+    def set_production_cap_mode(self, mode: str) -> None:
+        if mode not in CAP_MODE_LABELS:
+            return
+        self.production_cap_mode = mode
+        self._invalidate_recipe_policy()
+
+    def set_storage_cap_mode(self, mode: str) -> None:
+        if mode not in CAP_MODE_LABELS:
+            return
+        self.storage_cap_mode = mode
+        self._invalidate_recipe_policy()
+
+    def set_production_global_max(self, value: int) -> None:
+        self.production_global_max = max(0, int(value))
+        self._invalidate_recipe_policy()
+
+    def set_storage_global_max(self, value: int) -> None:
+        self.storage_global_max = max(0, int(value))
+        self._invalidate_recipe_policy()
 
     def max_item_cap(self, key: str) -> int:
         """Upper bound when setting a cap.

@@ -2263,7 +2263,7 @@ class Game:
 
     def _under_production_max(self, building: Building, key: str) -> bool:
         """True when village stock is still below this building's Max for ``key``."""
-        cap = building.item_cap(key)
+        cap = building.effective_production_cap(key)
         if cap is None:
             return True
         return int(self._village_stock_amounts().get(key, 0)) < int(cap)
@@ -2877,6 +2877,16 @@ class Game:
             cap = building.item_cap(key)
             tip = "∞" if cap is None else str(cap)
             self._set_status(f"{resource_label(key)} max: {tip}")
+            return
+        if ctx == "production_global_max":
+            building.set_production_global_max(value)
+            tip = "∞" if value <= 0 else str(int(building.production_global_max))
+            self._set_status(f"Global production max: {tip}")
+            return
+        if ctx == "storage_global_max":
+            building.set_storage_global_max(value)
+            tip = "∞" if value <= 0 else str(int(building.storage_global_max))
+            self._set_status(f"Global storage cap: {tip}")
             return
         if ctx.startswith("item_reserve:"):
             key = ctx.split(":", 1)[1]
@@ -8298,9 +8308,102 @@ class Game:
                         building.set_item_cap(out_key, None)
             self._set_status(f"{BUILDING_LABELS[building.kind]}: {label} {state}.")
             return
+        if action == "recipes_all_on":
+            building = self._inspect_building()
+            if building is None:
+                return
+            n = building.enable_all_recipes()
+            self._wake_building_workers(building.id)
+            self._set_status(
+                f"{BUILDING_LABELS[building.kind]}: all recipes on"
+                + (f" ({n} reset)" if n else "")
+            )
+            return
+        if action.startswith("cap_mode:"):
+            building = self._inspect_building()
+            if building is None:
+                return
+            parts = action.split(":")
+            if len(parts) != 3:
+                return
+            _, kind, mode = parts
+            from entities import CAP_MODE_LABELS
+
+            if mode not in CAP_MODE_LABELS:
+                return
+            if kind == "production":
+                building.set_production_cap_mode(mode)
+                self._set_status(
+                    f"{BUILDING_LABELS[building.kind]} order cap: {CAP_MODE_LABELS[mode]}"
+                )
+                if mode == "global":
+                    self.number_input.begin(
+                        title="Global production max (0 = ∞)",
+                        initial=int(building.production_global_max or 0),
+                        context="production_global_max",
+                        max_value=9999,
+                        anchor=self.building_inspect.panel_rect(),
+                    )
+            elif kind == "storage":
+                building.set_storage_cap_mode(mode)
+                self._set_status(
+                    f"{BUILDING_LABELS[building.kind]} storage cap: {CAP_MODE_LABELS[mode]}"
+                )
+                if mode == "global":
+                    self.number_input.begin(
+                        title="Global storage cap (0 = ∞)",
+                        initial=int(building.storage_global_max or 0),
+                        context="storage_global_max",
+                        max_value=9999,
+                        anchor=self.building_inspect.panel_rect(),
+                    )
+            return
+        if action == "edit_production_global_max":
+            building = self._inspect_building()
+            if building is None:
+                return
+            from entities import CAP_MODE_GLOBAL
+
+            building.set_production_cap_mode(CAP_MODE_GLOBAL)
+            self.number_input.begin(
+                title="Global production max (0 = ∞)",
+                initial=int(building.production_global_max or 0),
+                context="production_global_max",
+                max_value=9999,
+                anchor=self.building_inspect.panel_rect(),
+            )
+            return
+        if action == "edit_storage_global_max":
+            building = self._inspect_building()
+            if building is None:
+                return
+            from entities import CAP_MODE_GLOBAL
+
+            building.set_storage_cap_mode(CAP_MODE_GLOBAL)
+            self.number_input.begin(
+                title="Global storage cap (0 = ∞)",
+                initial=int(building.storage_global_max or 0),
+                context="storage_global_max",
+                max_value=9999,
+                anchor=self.building_inspect.panel_rect(),
+            )
+            return
         if action.startswith("edit_recipe_max:"):
             building = self._inspect_building()
             if building is None:
+                return
+            from entities import CAP_MODE_GLOBAL, CAP_MODE_NONE
+
+            if building.production_cap_mode == CAP_MODE_NONE:
+                return
+            if building.production_cap_mode == CAP_MODE_GLOBAL:
+                self.number_input.begin(
+                    title="Global production max (0 = ∞)",
+                    initial=int(building.production_global_max or 0),
+                    context="production_global_max",
+                    max_value=9999,
+                    anchor=self.building_inspect.panel_rect(),
+                )
                 return
             key = action.split(":", 1)[1]
             from resources import resource_label
@@ -8319,6 +8422,19 @@ class Game:
         if action.startswith("edit_item_cap:"):
             building = self._inspect_building()
             if building is None:
+                return
+            from entities import CAP_MODE_GLOBAL, CAP_MODE_NONE
+
+            if building.storage_cap_mode == CAP_MODE_NONE:
+                return
+            if building.storage_cap_mode == CAP_MODE_GLOBAL:
+                self.number_input.begin(
+                    title="Global storage cap (0 = ∞)",
+                    initial=int(building.storage_global_max or 0),
+                    context="storage_global_max",
+                    max_value=9999,
+                    anchor=self.building_inspect.panel_rect(),
+                )
                 return
             key = action.split(":", 1)[1]
             from resources import resource_label
@@ -8416,8 +8532,9 @@ class Game:
         if action.startswith("recipe_category:"):
             raw = action.split(":", 1)[1]
             self.building_inspect.recipe_category_tab = raw or None
-            # Reset scroll so switching tabs doesn't leave a blank view.
-            self.building_inspect._scroll.pop("craft_recipes", None)
+            # Reset scroll so switching categories doesn't leave a blank view.
+            self.building_inspect._scroll.pop("tab_body", None)
+            self.building_inspect._scroll_velocity.pop("tab_body", None)
             return
         if action.startswith("toggle_market_supply_key:"):
             building = self._inspect_building()

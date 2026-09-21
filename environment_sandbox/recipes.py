@@ -770,20 +770,23 @@ def recipe_output_fits(
             delta += cargo_units_after_add(key, have, n)
         if stored + delta > capacity:
             return False
-    # Per-item caps (Building.item_caps). When ``stock_amounts`` is provided
-    # (village-wide totals matching the Sto: UI), enforce Max against that.
-    caps = getattr(storage, "item_caps", None)
-    if isinstance(caps, dict) and caps:
-        for key, n in recipe.outputs.items():
-            cap = caps.get(key)
-            if cap is None:
-                continue
-            if stock_amounts is not None:
-                have = int(stock_amounts.get(key, 0))
-            else:
-                have = int(getattr(storage, key, 0))
-            if have + n > int(cap):
-                return False
+    # Per-item caps (Building.item_caps / production cap policy). When
+    # ``stock_amounts`` is provided (village-wide totals matching the Sto: UI),
+    # enforce Max against that.
+    for key, n in recipe.outputs.items():
+        if hasattr(storage, "effective_production_cap"):
+            cap = storage.effective_production_cap(key)
+        else:
+            caps = getattr(storage, "item_caps", None)
+            cap = caps.get(key) if isinstance(caps, dict) else None
+        if cap is None:
+            continue
+        if stock_amounts is not None:
+            have = int(stock_amounts.get(key, 0))
+        else:
+            have = int(getattr(storage, key, 0))
+        if have + n > int(cap):
+            return False
     return True
 
 

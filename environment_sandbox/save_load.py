@@ -533,6 +533,10 @@ def serialize_game(game: Game) -> dict[str, Any]:
             "fuel_wood": b.fuel_wood,
             "item_caps": {k: int(v) for k, v in b.item_caps.items()},
             "item_mins": {k: int(v) for k, v in b.item_mins.items()},
+            "production_cap_mode": b.production_cap_mode,
+            "production_global_max": int(b.production_global_max),
+            "storage_cap_mode": b.storage_cap_mode,
+            "storage_global_max": int(b.storage_global_max),
             "market_demand": {k: int(v) for k, v in b.market_demand.items()},
             "market_supply_mins": {k: int(v) for k, v in b.market_supply_mins.items()},
             "market_supply_stocks": {
@@ -1397,6 +1401,30 @@ def apply_save(game: Game, data: dict[str, Any]) -> None:
             from entities import default_item_mins
 
             building.item_mins = dict(default_item_mins(kind))
+        from entities import (
+            CAP_MODE_LABELS,
+            apply_default_cap_policy,
+        )
+
+        # apply_building_storage already seeded kind defaults; restore saved policy.
+        raw_prod_mode = bdata.get("production_cap_mode")
+        raw_stor_mode = bdata.get("storage_cap_mode")
+        if raw_prod_mode in CAP_MODE_LABELS or raw_stor_mode in CAP_MODE_LABELS:
+            if raw_prod_mode in CAP_MODE_LABELS:
+                building.production_cap_mode = str(raw_prod_mode)
+            if "production_global_max" in bdata:
+                building.production_global_max = max(
+                    0, int(bdata.get("production_global_max") or 0)
+                )
+            if raw_stor_mode in CAP_MODE_LABELS:
+                building.storage_cap_mode = str(raw_stor_mode)
+            if "storage_global_max" in bdata:
+                building.storage_global_max = max(
+                    0, int(bdata.get("storage_global_max") or 0)
+                )
+        else:
+            # Older saves: re-apply kind defaults (kitchen/forager globals).
+            apply_default_cap_policy(building)
         raw_demand = bdata.get("market_demand") or {}
         raw_supply = bdata.get("market_supply_mins") or {}
         raw_provide = bdata.get("market_provide") or {}
