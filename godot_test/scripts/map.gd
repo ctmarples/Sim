@@ -38,6 +38,9 @@ func _process(_delta: float) -> void:
 func _update_projected_actor_visuals() -> void:
 	var terrain: TerrainRenderer = $Ground/ProceduralTerrain
 	for actor in $Actors.get_children():
+		var dynamic_projection := actor is Player or actor is Villager
+		if not dynamic_projection and actor.has_meta(&"terrain_projection_complete"):
+			continue
 		var visual: Node2D
 		var selection_area: Node2D
 		var projection_sample: Vector2 = (actor as Node2D).global_position
@@ -60,11 +63,19 @@ func _update_projected_actor_visuals() -> void:
 			_project_canvas_item(selection_area, projection_sample, terrain, &"projection_base_position")
 		if actor is Player:
 			actor.set_camera_projection_offset(terrain.projection_offset_at_global(projection_sample))
+		if not dynamic_projection:
+			actor.set_meta(&"terrain_projection_complete", true)
 
 
 func _project_canvas_item(item: Node2D, logical_position: Vector2, terrain: TerrainRenderer, metadata_key: StringName) -> void:
 	if not item.has_meta(metadata_key):
 		item.set_meta(metadata_key, item.position)
+	var position_key := StringName(String(metadata_key) + "_logical_position")
+	if item.has_meta(position_key):
+		var previous_position: Vector2 = item.get_meta(position_key)
+		if previous_position.is_equal_approx(logical_position):
+			return
+	item.set_meta(position_key, logical_position)
 	var base_position: Vector2 = item.get_meta(metadata_key)
 	item.position = base_position + terrain.projection_offset_at_global(logical_position)
 	# The exact raised-surface mesh is an occluder above lower actors. Promote

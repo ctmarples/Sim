@@ -17,6 +17,7 @@ var cliff_curve_progresses: Array[PackedFloat32Array] = []
 var cliff_curve_lengths := PackedFloat32Array()
 var cliff_cell_candidates: Dictionary = {}
 var cliff_vertex_offset_cache: Dictionary = {}
+var terrain_height_cache: Dictionary = {}
 var cliff_edge_bottoms: Array[PackedVector2Array] = []
 var cliff_edge_tops: Array[PackedVector2Array] = []
 var debug_base_surface_polygons: Array[PackedVector2Array] = []
@@ -68,6 +69,7 @@ func _build_map_mesh() -> void:
 	debug_base_surface_polygons.clear()
 	debug_cliff_bottom_polygons.clear()
 	debug_cliff_top_polygons.clear()
+	terrain_height_cache.clear()
 	for cell_y in map_data.rows:
 		for cell_x in map_data.columns:
 			var origin := Vector2(cell_x, cell_y)
@@ -81,7 +83,9 @@ func _build_map_mesh() -> void:
 						debug_cliff_bottom_polygons.append(_project_clipped_polygon(lower_polygon, crossing_cliff, false))
 					for upper_polygon in Geometry2D.intersect_polygons(square, cliff_curves[crossing_cliff]):
 						_append_terrain_polygon(upper_polygon, crossing_cliff, true, vertices, uvs, indices)
-						_append_terrain_polygon(upper_polygon, crossing_cliff, true, foreground_vertices, foreground_uvs, foreground_indices)
+						var occluding_cliff := _far_occluder_cliff_for_polygon(upper_polygon)
+						if occluding_cliff >= 0:
+							_append_terrain_polygon(upper_polygon, occluding_cliff, true, foreground_vertices, foreground_uvs, foreground_indices)
 						debug_cliff_top_polygons.append(_project_clipped_polygon(upper_polygon, crossing_cliff, true))
 					continue
 				var seam := _cliff_intersections_for_polygon(corners, crossing_cliff)
@@ -89,7 +93,9 @@ func _build_map_mesh() -> void:
 				var upper_polygon := _clip_polygon_to_cliff_side(corners, crossing_cliff, true, seam)
 				_append_terrain_polygon(lower_polygon, crossing_cliff, false, vertices, uvs, indices)
 				_append_terrain_polygon(upper_polygon, crossing_cliff, true, vertices, uvs, indices)
-				_append_terrain_polygon(upper_polygon, crossing_cliff, true, foreground_vertices, foreground_uvs, foreground_indices)
+				var occluding_cliff := _far_occluder_cliff_for_polygon(upper_polygon)
+				if occluding_cliff >= 0:
+					_append_terrain_polygon(upper_polygon, occluding_cliff, true, foreground_vertices, foreground_uvs, foreground_indices)
 				debug_cliff_bottom_polygons.append(_project_clipped_polygon(lower_polygon, crossing_cliff, false))
 				debug_cliff_top_polygons.append(_project_clipped_polygon(upper_polygon, crossing_cliff, true))
 				continue
@@ -99,9 +105,12 @@ func _build_map_mesh() -> void:
 				var height := _terrain_height_at_grid_position(grid_position)
 				projected_square.append(logical - Vector2(0.0, height * generation_settings.height_lift_pixels))
 			debug_base_surface_polygons.append(projected_square)
-			var elevated_cliff := _elevated_cliff_at(origin + Vector2(0.5, 0.5))
-			if elevated_cliff >= 0:
-				_append_terrain_polygon(PackedVector2Array(corners), elevated_cliff, true, foreground_vertices, foreground_uvs, foreground_indices)
+			# Only duplicate terrain that can actually occlude an actor across a
+			# far-side rim. Duplicating/scanning every elevated interior cell caused
+			# the large generation-time regression on full maps.
+			var foreground_cliff := _far_occluder_cliff_for_polygon(PackedVector2Array(corners))
+			if foreground_cliff >= 0:
+				_append_terrain_polygon(PackedVector2Array(corners), foreground_cliff, true, foreground_vertices, foreground_uvs, foreground_indices)
 			for triangle in [[0, 1, 2], [0, 2, 3]]:
 				var first := vertices.size()
 				for corner_index in triangle:
@@ -136,6 +145,8 @@ func _build_map_mesh() -> void:
 
 
 func _terrain_height_at_grid_position(grid_position: Vector2) -> float:
+	if terrain_height_cache.has(grid_position):
+		return terrain_height_cache[grid_position]
 	var height := map_data.height_at_world(grid_position * map_data.cell_size)
 	var cliff_height := 0.0
 	for curve_index in cliff_curves.size():
@@ -143,7 +154,9 @@ func _terrain_height_at_grid_position(grid_position: Vector2) -> float:
 		if elevated:
 			var nearest := _nearest_cliff_point(grid_position, curve_index)
 			cliff_height = maxf(cliff_height, _cliff_separation_at_progress(curve_index, nearest.z))
-	return height + cliff_height
+	var result := height + cliff_height
+	terrain_height_cache[grid_position] = result
+	return result
 
 
 func _elevated_cliff_at(grid_position: Vector2) -> int:
