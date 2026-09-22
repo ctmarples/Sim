@@ -67,6 +67,9 @@ func _project_canvas_item(item: Node2D, logical_position: Vector2, terrain: Terr
 		item.set_meta(metadata_key, item.position)
 	var base_position: Vector2 = item.get_meta(metadata_key)
 	item.position = base_position + terrain.projection_offset_at_global(logical_position)
+	# The exact raised-surface mesh is an occluder above lower actors. Promote
+	# only visuals logically standing on raised terrain above that foreground.
+	item.z_index = 3 if terrain.should_actor_render_above_cliff(logical_position) else 0
 
 
 func _build_trees() -> void:

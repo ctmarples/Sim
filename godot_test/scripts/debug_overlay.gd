@@ -39,20 +39,25 @@ func _draw() -> void:
 
 
 func _draw_grid() -> void:
-	var width := map_data.columns * map_data.cell_size
-	var height := map_data.rows * map_data.cell_size
-	var colour := Color(1.0, 1.0, 1.0, 0.22)
-	for x in map_data.columns + 1:
+	if terrain_renderer == null:
+		return
+	# These are the exact polygons used by TerrainRenderer's indexed mesh. No
+	# curve reconstruction, angle classification, or candidate-cell display is
+	# performed here.
+	_draw_surface_polygons(terrain_renderer.debug_base_surface_polygons, Color(1.0, 1.0, 1.0, 0.22), 1.0)
+	_draw_surface_polygons(terrain_renderer.debug_cliff_bottom_polygons, Color(0.15, 0.75, 1.0, 0.72), 1.4)
+	_draw_surface_polygons(terrain_renderer.debug_cliff_top_polygons, Color(1.0, 0.82, 0.18, 0.78), 1.4)
+
+
+func _draw_surface_polygons(polygons: Array[PackedVector2Array], colour: Color, width: float) -> void:
+	for renderer_polygon in polygons:
+		if renderer_polygon.size() < 3:
+			continue
 		var points := PackedVector2Array()
-		for y in map_data.rows + 1:
-			points.append(_project_map_point(Vector2(x, y) * map_data.cell_size))
-		draw_polyline(points, colour, 1.0)
-	for y in map_data.rows + 1:
-		var points := PackedVector2Array()
-		for x in map_data.columns + 1:
-			points.append(_project_map_point(Vector2(x, y) * map_data.cell_size))
-		draw_polyline(points, colour, 1.0)
-	_draw_cliff_debug()
+		for renderer_point in renderer_polygon:
+			points.append(to_local(terrain_renderer.to_global(renderer_point)))
+		points.append(points[0])
+		draw_polyline(points, colour, width, true)
 
 
 func _draw_cliff_debug() -> void:

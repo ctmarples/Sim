@@ -19,6 +19,9 @@ var cliff_cell_candidates: Dictionary = {}
 var cliff_vertex_offset_cache: Dictionary = {}
 var cliff_edge_bottoms: Array[PackedVector2Array] = []
 var cliff_edge_tops: Array[PackedVector2Array] = []
+var debug_base_surface_polygons: Array[PackedVector2Array] = []
+var debug_cliff_bottom_polygons: Array[PackedVector2Array] = []
+var debug_cliff_top_polygons: Array[PackedVector2Array] = []
 
 
 func _ready() -> void:
@@ -53,21 +56,52 @@ func _build_map_mesh() -> void:
 	var old_occluder := get_node_or_null("CliffFarSurface")
 	if old_occluder:
 		old_occluder.free()
+	var old_foreground := get_node_or_null("CliffRaisedForeground")
+	if old_foreground:
+		old_foreground.free()
 	var vertices := PackedVector2Array()
 	var uvs := PackedVector2Array()
 	var indices := PackedInt32Array()
+	var foreground_vertices := PackedVector2Array()
+	var foreground_uvs := PackedVector2Array()
+	var foreground_indices := PackedInt32Array()
+	debug_base_surface_polygons.clear()
+	debug_cliff_bottom_polygons.clear()
+	debug_cliff_top_polygons.clear()
 	for cell_y in map_data.rows:
 		for cell_x in map_data.columns:
 			var origin := Vector2(cell_x, cell_y)
 			var corners: Array = [origin, origin + Vector2.RIGHT, origin + Vector2.ONE, origin + Vector2.DOWN]
 			var crossing_cliff := _crossing_cliff_for_polygon(corners)
 			if crossing_cliff >= 0:
+				if _is_closed_cliff(crossing_cliff):
+					var square := PackedVector2Array(corners)
+					for lower_polygon in Geometry2D.clip_polygons(square, cliff_curves[crossing_cliff]):
+						_append_terrain_polygon(lower_polygon, crossing_cliff, false, vertices, uvs, indices)
+						debug_cliff_bottom_polygons.append(_project_clipped_polygon(lower_polygon, crossing_cliff, false))
+					for upper_polygon in Geometry2D.intersect_polygons(square, cliff_curves[crossing_cliff]):
+						_append_terrain_polygon(upper_polygon, crossing_cliff, true, vertices, uvs, indices)
+						_append_terrain_polygon(upper_polygon, crossing_cliff, true, foreground_vertices, foreground_uvs, foreground_indices)
+						debug_cliff_top_polygons.append(_project_clipped_polygon(upper_polygon, crossing_cliff, true))
+					continue
 				var seam := _cliff_intersections_for_polygon(corners, crossing_cliff)
 				var lower_polygon := _clip_polygon_to_cliff_side(corners, crossing_cliff, false, seam)
 				var upper_polygon := _clip_polygon_to_cliff_side(corners, crossing_cliff, true, seam)
 				_append_terrain_polygon(lower_polygon, crossing_cliff, false, vertices, uvs, indices)
 				_append_terrain_polygon(upper_polygon, crossing_cliff, true, vertices, uvs, indices)
+				_append_terrain_polygon(upper_polygon, crossing_cliff, true, foreground_vertices, foreground_uvs, foreground_indices)
+				debug_cliff_bottom_polygons.append(_project_clipped_polygon(lower_polygon, crossing_cliff, false))
+				debug_cliff_top_polygons.append(_project_clipped_polygon(upper_polygon, crossing_cliff, true))
 				continue
+			var projected_square := PackedVector2Array()
+			for grid_position: Vector2 in corners:
+				var logical := grid_position * map_data.cell_size
+				var height := _terrain_height_at_grid_position(grid_position)
+				projected_square.append(logical - Vector2(0.0, height * generation_settings.height_lift_pixels))
+			debug_base_surface_polygons.append(projected_square)
+			var elevated_cliff := _elevated_cliff_at(origin + Vector2(0.5, 0.5))
+			if elevated_cliff >= 0:
+				_append_terrain_polygon(PackedVector2Array(corners), elevated_cliff, true, foreground_vertices, foreground_uvs, foreground_indices)
 			for triangle in [[0, 1, 2], [0, 2, 3]]:
 				var first := vertices.size()
 				for corner_index in triangle:
@@ -85,6 +119,20 @@ func _build_map_mesh() -> void:
 	var terrain_mesh := ArrayMesh.new()
 	terrain_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	mesh = terrain_mesh
+	if not foreground_vertices.is_empty():
+		var foreground_arrays := []
+		foreground_arrays.resize(Mesh.ARRAY_MAX)
+		foreground_arrays[Mesh.ARRAY_VERTEX] = foreground_vertices
+		foreground_arrays[Mesh.ARRAY_TEX_UV] = foreground_uvs
+		foreground_arrays[Mesh.ARRAY_INDEX] = foreground_indices
+		var foreground_mesh := ArrayMesh.new()
+		foreground_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, foreground_arrays)
+		var foreground := MeshInstance2D.new()
+		foreground.name = "CliffRaisedForeground"
+		foreground.z_index = 12
+		foreground.mesh = foreground_mesh
+		foreground.material = material
+		add_child(foreground)
 
 
 func _terrain_height_at_grid_position(grid_position: Vector2) -> float:
@@ -96,6 +144,21 @@ func _terrain_height_at_grid_position(grid_position: Vector2) -> float:
 			var nearest := _nearest_cliff_point(grid_position, curve_index)
 			cliff_height = maxf(cliff_height, _cliff_separation_at_progress(curve_index, nearest.z))
 	return height + cliff_height
+
+
+func _elevated_cliff_at(grid_position: Vector2) -> int:
+	var selected := -1
+	var selected_height := 0.0
+	for curve_index in cliff_curves.size():
+		var elevated := _point_inside_cliff(grid_position, curve_index) if _is_closed_cliff(curve_index) else _nearest_cliff_point(grid_position, curve_index).w < 0.0
+		if not elevated:
+			continue
+		var nearest := _nearest_cliff_point(grid_position, curve_index)
+		var height := _cliff_separation_at_progress(curve_index, nearest.z)
+		if height > selected_height:
+			selected = curve_index
+			selected_height = height
+	return selected
 
 
 func _build_map_mesh_legacy() -> void:
@@ -193,6 +256,8 @@ func _crossing_cliff_for_polygon(polygon: Array) -> int:
 	for curve_index: int in candidates:
 		if not _curve_intersects_cell(curve_index, cell):
 			continue
+		if _is_closed_cliff(curve_index):
+			return curve_index
 		var has_lower := false
 		var has_upper := false
 		for point: Vector2 in polygon:
@@ -374,6 +439,13 @@ func _project_cliff_surface_point(grid_position: Vector2, forced_curve_index: in
 	var logical := grid_position * map_data.cell_size
 	var projected_height := _clipped_terrain_height(grid_position, forced_curve_index, elevated_side)
 	return logical - Vector2(0.0, projected_height * generation_settings.height_lift_pixels)
+
+
+func _project_clipped_polygon(polygon: PackedVector2Array, curve_index: int, elevated_side: bool) -> PackedVector2Array:
+	var projected := PackedVector2Array()
+	for grid_position in polygon:
+		projected.append(_project_cliff_surface_point(grid_position, curve_index, elevated_side))
+	return projected
 
 
 ## Match a cell's triangle seam to any 45-degree cliff segment crossing it.
@@ -832,6 +904,25 @@ func _cliff_offset_at_world(local_position: Vector2) -> float:
 
 func project_global_position(logical_global_position: Vector2) -> Vector2:
 	return logical_global_position + projection_offset_at_global(logical_global_position)
+
+
+func should_actor_render_above_cliff(logical_global_position: Vector2) -> bool:
+	var grid_position := to_local(logical_global_position) / map_data.cell_size
+	if _elevated_cliff_at(grid_position) >= 0:
+		return true
+	for curve_index in cliff_curves.size():
+		var segment_index := _nearest_cliff_segment_index(grid_position, curve_index)
+		if segment_index < 0:
+			continue
+		var curve := cliff_curves[curve_index]
+		if _cliff_view_side(curve_index, curve[segment_index], curve[segment_index + 1]) <= 0:
+			continue
+		var nearest := _nearest_cliff_point(grid_position, curve_index)
+		var distance := grid_position.distance_to(Vector2(nearest.x, nearest.y))
+		var visible_depth := _cliff_separation_at_progress(curve_index, nearest.z) * generation_settings.height_lift_pixels / map_data.cell_size
+		if distance <= visible_depth + 1.0:
+			return true
+	return false
 
 
 func relief_shade_at_global(logical_global_position: Vector2) -> float:
