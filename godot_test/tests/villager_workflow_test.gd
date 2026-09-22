@@ -2,7 +2,7 @@ extends SceneTree
 
 
 func _init() -> void:
-	var scene: Node = load("res://scenes/game.tscn").instantiate()
+	var scene: Node = load("res://app/game/game.tscn").instantiate()
 	root.add_child(scene)
 	await process_frame
 	# Bypass UI only; exercise the same assignment and inventory/job paths.

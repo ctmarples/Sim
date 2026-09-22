@@ -1,0 +1,138 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://ui/hud/hud.gd" id="1_hud"]
+[ext_resource type="Script" uid="uid://ddxs24vmq477q" path="res://ui/inventory/inventory_panel.gd" id="2_inventory"]
+[ext_resource type="Script" path="res://ui/villagers/villager_panel.gd" id="3_villagers"]
+
+[node name="HUD" type="CanvasLayer"]
+script = ExtResource("1_hud")
+
+[node name="Instructions" type="Label" parent="."]
+z_index = 20
+offset_left = 16.0
+offset_top = 14.0
+offset_right = 330.0
+offset_bottom = 48.0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
+theme_override_constants/shadow_offset_x = 2
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 22
+text = "Move: WASD/arrows   E interact   I inventory   V villagers   +/- or wheel zoom   G grid   O objects"
+
+[node name="InventoryPanel" type="PanelContainer" parent="."]
+visible = false
+offset_left = 16.0
+offset_top = 58.0
+offset_right = 586.0
+offset_bottom = 350.0
+script = ExtResource("2_inventory")
+
+[node name="Margin" type="MarginContainer" parent="InventoryPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 10
+
+[node name="Root" type="VBoxContainer" parent="InventoryPanel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Title" type="Label" parent="InventoryPanel/Margin/Root"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Inventory"
+
+[node name="Hint" type="Label" parent="InventoryPanel/Margin/Root"]
+layout_mode = 2
+text = "Click a tool to equip it"
+
+[node name="Panes" type="HBoxContainer" parent="InventoryPanel/Margin/Root"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="PlayerPane" type="VBoxContainer" parent="InventoryPanel/Margin/Root/Panes"]
+custom_minimum_size = Vector2(250, 0)
+layout_mode = 2
+
+[node name="Name" type="Label" parent="InventoryPanel/Margin/Root/Panes/PlayerPane"]
+layout_mode = 2
+text = "Player"
+
+[node name="Items" type="VBoxContainer" parent="InventoryPanel/Margin/Root/Panes/PlayerPane"]
+layout_mode = 2
+
+[node name="ContainerPane" type="VBoxContainer" parent="InventoryPanel/Margin/Root/Panes"]
+visible = false
+custom_minimum_size = Vector2(250, 0)
+layout_mode = 2
+
+[node name="Name" type="Label" parent="InventoryPanel/Margin/Root/Panes/ContainerPane"]
+layout_mode = 2
+text = "Building"
+
+[node name="Items" type="VBoxContainer" parent="InventoryPanel/Margin/Root/Panes/ContainerPane"]
+layout_mode = 2
+
+[node name="VillagerPanel" type="PanelContainer" parent="."]
+visible = false
+offset_left = 700.0
+offset_top = 58.0
+offset_right = 944.0
+offset_bottom = 280.0
+script = ExtResource("3_villagers")
+
+[node name="Margin" type="MarginContainer" parent="VillagerPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 10
+
+[node name="Rows" type="VBoxContainer" parent="VillagerPanel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 7
+
+[node name="Title" type="Label" parent="VillagerPanel/Margin/Rows"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Villagers"
+
+[node name="List" type="VBoxContainer" parent="VillagerPanel/Margin/Rows"]
+layout_mode = 2
+
+[node name="Selected" type="Label" parent="VillagerPanel/Margin/Rows"]
+layout_mode = 2
+text = "Selected: none"
+
+[node name="Status" type="Label" parent="VillagerPanel/Margin/Rows"]
+layout_mode = 2
+text = "Select a villager"
+autowrap_mode = 2
+
+[node name="Assign" type="Button" parent="VillagerPanel/Margin/Rows"]
+layout_mode = 2
+disabled = true
+text = "Assign"
+
+[node name="Status" type="Label" parent="."]
+visible = false
+offset_left = 330.0
+offset_top = 480.0
+offset_right = 630.0
+offset_bottom = 520.0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.85)
+theme_override_constants/shadow_offset_x = 2
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 20
+text = "Status"
+horizontal_alignment = 1
+
+[node name="StatusTimer" type="Timer" parent="."]
+wait_time = 1.5
+one_shot = true
+
+[connection signal="pressed" from="VillagerPanel/Margin/Rows/Assign" to="VillagerPanel" method="_on_assign_pressed"]
+[connection signal="timeout" from="StatusTimer" to="." method="_on_status_timer_timeout"]

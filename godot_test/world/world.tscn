@@ -1,0 +1,53 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://world/world.gd" id="1_world"]
+[ext_resource type="PackedScene" uid="uid://cvdj5ktgqxhgj" path="res://scenes/player.tscn" id="2_player"]
+[ext_resource type="Shader" uid="uid://b1ixiw5tjd78m" path="res://shaders/grass.gdshader" id="3_grass"]
+[ext_resource type="Script" uid="uid://cqblwqmoeono" path="res://world/terrain/terrain_renderer.gd" id="4_renderer"]
+[ext_resource type="Script" uid="uid://br4v6b328j0ff" path="res://world/terrain/terrain_generation_settings.gd" id="5_settings"]
+[ext_resource type="Script" uid="uid://cwnn3blop1qjl" path="res://presentation/debug/debug_overlay.gd" id="6_debug"]
+[ext_resource type="Script" path="res://world/population/prototype_world_populator.gd" id="7_population"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_grass"]
+shader = ExtResource("3_grass")
+shader_parameter/terrain_grid_size = Vector2i(30, 20)
+shader_parameter/terrain_cell_size = 40.0
+shader_parameter/height_lift_pixels = 1.0
+shader_parameter/terrain_max_height = 32.0
+
+[sub_resource type="Resource" id="TerrainGenerationSettings_map"]
+script = ExtResource("5_settings")
+columns = 100
+rows = 100
+seed = 3889
+soil_threshold = 0.24
+rock_threshold = 1.0
+height_amplitude = 100.0
+cliff_paths = null
+cliff_heights = null
+cliff_transition_cells = null
+cliff_corner_smoothing_cells = 6.0
+
+[node name="World" type="Node2D"]
+script = ExtResource("1_world")
+
+[node name="Ground" type="Node2D" parent="."]
+
+[node name="ProceduralTerrain" type="MeshInstance2D" parent="Ground"]
+z_index = -10
+material = SubResource("ShaderMaterial_grass")
+script = ExtResource("4_renderer")
+generation_settings = SubResource("TerrainGenerationSettings_map")
+
+[node name="Actors" type="Node2D" parent="."]
+y_sort_enabled = true
+
+[node name="Player" parent="Actors" instance=ExtResource("2_player")]
+position = Vector2(600, 400)
+
+[node name="DebugOverlay" type="Node2D" parent="."]
+z_index = 100
+script = ExtResource("6_debug")
+
+[node name="Population" type="Node" parent="."]
+script = ExtResource("7_population")

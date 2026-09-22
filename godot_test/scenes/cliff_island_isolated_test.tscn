@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3]
 
-[ext_resource type="Script" path="res://scripts/cliff_island_isolated_test.gd" id="1"]
+[ext_resource type="Script" path="res://tests/scenes/cliff_island_isolated_test.gd" id="1"]
 
 [node name="CliffIslandIsolatedTest" type="Node2D"]
 script = ExtResource("1")

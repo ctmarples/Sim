@@ -1,7 +1,7 @@
 [gd_scene load_steps=6 format=3 uid="uid://dilhbqkvei64y"]
 
-[ext_resource type="Script" uid="uid://6fd1vtc07bgy" path="res://scripts/container_building.gd" id="1"]
-[ext_resource type="Script" path="res://scripts/footprint_preview.gd" id="2"]
+[ext_resource type="Script" uid="uid://6fd1vtc07bgy" path="res://buildings/shared/container_building.gd" id="1"]
+[ext_resource type="Script" path="res://buildings/shared/footprint_preview.gd" id="2"]
 
 [sub_resource type="RectangleShape2D" id="physical_shape"]
 size = Vector2(76, 34)

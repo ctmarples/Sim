@@ -5,14 +5,16 @@ This is a deliberately small Godot 4 project for testing the existing game's vis
 ## Run
 
 1. Open this `godot_test` folder in Godot 4.
-2. Press **F6** or **F5**. The main scene is already set to `scenes/game.tscn`.
+2. Press **F6** or **F5**. The main scene is already set to `app/game/game.tscn`.
 3. Move with **WASD** or the **arrow keys**, interact/chop with **E**, and toggle inventory with **I**.
 
 The map is a procedurally generated square terrain grid. Its authoritative resolution is 40 pixels per cell, matching `CELL_SIZE` in the Pygame game. `MapGenerator` uses seeded coherent fields and editable `TerrainGenerationSettings` to assign terrain and trees to every logical cell. `TerrainMapData` is the authoritative map queried by gameplay code. `TerrainRenderer` builds its mesh from `columns × rows × cell_size` and uploads the generated terrain-cell data to the GPU; the shader contains no map-size or biome-placement rules.
 
 Grass and soil rendering ports their current world-space noise settings, 48-colour palettes, base-colour shading, spatial palette mixing, and speckles from `environment_sandbox/terrain_mottle.py`. Shared tile corners use the same bilinear coverage and smooth land-to-land blend as `compose_cell_fills`, so boundaries are continuous instead of visibly tiled.
 
-Select `Ground/ProceduralTerrain` in the Godot editor and expand **Generation Settings** to change the seed, distribution frequency, soil threshold, fractal octaves, dimensions, cell size, grass border, or height-test settings. `Height Amplitude` controls generated corner heights, while `Height Lift Pixels` controls their visual projection without changing logical map coordinates. Call `regenerate()` on that node after changing settings at runtime. Do not scale the renderer node: its scale is fixed to 1 at runtime, and its render area is regenerated from the map settings.
+Select `World/Ground/ProceduralTerrain` in the Godot editor and expand **Generation Settings** to change the seed, distribution frequency, soil threshold, fractal octaves, dimensions, cell size, grass border, or height-test settings. `Height Amplitude` controls generated corner heights, while `Height Lift Pixels` controls their visual projection without changing logical map coordinates. Call `regenerate()` on that node after changing settings at runtime. Do not scale the renderer node: its scale is fixed to 1 at runtime, and its render area is regenerated from the map settings.
+
+The main scene is a composition root. `app/game` wires a session together, `world` owns the terrain and runtime-object containers, and `ui/hud` owns the HUD scene and its internal controls. The current concept-test population is isolated in `world/population/prototype_world_populator.gd`; it owns the demo scenes, spawn coordinates, and construction of trees, buildings, pickups, and the villager. Gameplay domains should be added outside `app/game`; the game script should remain limited to high-level session setup and signal wiring.
 
 The height controls intentionally allow values beyond their displayed slider ranges: type a value above 512 for `Height Amplitude` or above 16 for `Height Lift Pixels` to stress-test projection. These are not engine limits. `Height Amplitude` controls the generated elevation range; `Height Lift Pixels` converts one logical height unit into upward screen pixels. Corner gradients are left unconstrained so the procedural heightfield retains its full variation. Reduce amplitude or lift if vertically projected rows become too tight or overlap.
 

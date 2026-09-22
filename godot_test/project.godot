@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="Sim Godot Movement Test"
-run/main_scene="res://scenes/game.tscn"
+run/main_scene="res://app/game/game.tscn"
 config/features=PackedStringArray("4.5")
 
 [display]

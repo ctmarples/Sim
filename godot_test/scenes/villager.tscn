@@ -1,6 +1,6 @@
 [gd_scene load_steps=8 format=3 uid="uid://b2sfl8t8mxiqm"]
 
-[ext_resource type="Script" uid="uid://d36o6i3sm6w5v" path="res://scripts/villager.gd" id="1"]
+[ext_resource type="Script" uid="uid://d36o6i3sm6w5v" path="res://actors/villagers/villager.gd" id="1"]
 [ext_resource type="Texture2D" uid="uid://8f84fbp42ff4" path="res://assets/player/villager_dog_left_1.svg" id="2"]
 [ext_resource type="Texture2D" uid="uid://vl2wavyoeq61" path="res://assets/player/villager_dog_left_2.svg" id="3"]
 [ext_resource type="Texture2D" uid="uid://kjuprdv4rhli" path="res://assets/player/villager_dog_right_1.svg" id="4"]

@@ -1,13 +1,13 @@
-[gd_scene load_steps=11 format=3 uid="uid://di2fo8ba1j26s"]
+[gd_scene load_steps=11 format=3 uid="uid://bf5hu7jryr7yn"]
 
-[ext_resource type="Script" uid="uid://bptktfxumv5uj" path="res://scripts/map.gd" id="1_map"]
+[ext_resource type="Script" path="res://scripts/map.gd" id="1_map"]
 [ext_resource type="PackedScene" uid="uid://cvdj5ktgqxhgj" path="res://scenes/player.tscn" id="2_player"]
 [ext_resource type="Shader" uid="uid://b1ixiw5tjd78m" path="res://shaders/grass.gdshader" id="3_grass"]
-[ext_resource type="Script" uid="uid://cqblwqmoeono" path="res://scripts/terrain_renderer.gd" id="4_renderer"]
-[ext_resource type="Script" uid="uid://br4v6b328j0ff" path="res://scripts/terrain_generation_settings.gd" id="5_settings"]
-[ext_resource type="Script" uid="uid://ddxs24vmq477q" path="res://scripts/inventory_panel.gd" id="6_inventory"]
+[ext_resource type="Script" path="res://scripts/terrain_renderer.gd" id="4_renderer"]
+[ext_resource type="Script" path="res://scripts/terrain_generation_settings.gd" id="5_settings"]
+[ext_resource type="Script" path="res://scripts/inventory_panel.gd" id="6_inventory"]
 [ext_resource type="Script" path="res://scripts/villager_panel.gd" id="7_villager_panel"]
-[ext_resource type="Script" uid="uid://cwnn3blop1qjl" path="res://scripts/debug_overlay.gd" id="8_debug"]
+[ext_resource type="Script" path="res://scripts/debug_overlay.gd" id="8_debug"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_grass"]
 shader = ExtResource("3_grass")

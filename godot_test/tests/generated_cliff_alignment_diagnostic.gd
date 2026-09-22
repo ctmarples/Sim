@@ -2,11 +2,11 @@ extends SceneTree
 
 
 func _init() -> void:
-	var scene: PackedScene = load("res://scenes/game.tscn")
+	var scene: PackedScene = load("res://app/game/game.tscn")
 	var game: Node = scene.instantiate()
 	root.add_child(game)
 	await process_frame
-	var renderer: TerrainRenderer = game.get_node("Ground/ProceduralTerrain")
+	var renderer: TerrainRenderer = game.get_node("World/Ground/ProceduralTerrain")
 	var maximum_error := 0.0
 	var worst_point := Vector2.ZERO
 	var seam_count := 0
