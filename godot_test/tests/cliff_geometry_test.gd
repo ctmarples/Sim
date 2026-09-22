@@ -51,6 +51,17 @@ func _init() -> void:
 		if not point.is_equal_approx(point.round()):
 			has_fractional_sample = true
 	assert(has_fractional_sample)
+	var rounded_closed := renderer._rounded_cliff_controls(PackedVector2Array([
+		Vector2(1, 1), Vector2(5, 1), Vector2(5, 5), Vector2(1, 5), Vector2(1, 1),
+	]))
+	assert(rounded_closed[0].is_equal_approx(rounded_closed[-1]))
+	assert(not Vector2(1, 1) in rounded_closed)
+	renderer.cliff_curves = [PackedVector2Array([
+		Vector2(1, 1), Vector2(5, 1), Vector2(5, 5), Vector2(1, 5), Vector2(1, 1),
+	])]
+	assert(renderer._cliff_view_side(0, Vector2(1, 1), Vector2(5, 1)) == -1)
+	assert(renderer._cliff_view_side(0, Vector2(5, 5), Vector2(1, 5)) == 1)
+	assert(renderer._cliff_view_side(0, Vector2(5, 1), Vector2(5, 5)) == 0)
 
 	renderer.free()
 	print("cliff geometry tests passed")

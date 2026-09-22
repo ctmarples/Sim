@@ -52,6 +52,56 @@ func _draw_grid() -> void:
 		for x in map_data.columns + 1:
 			points.append(_project_map_point(Vector2(x, y) * map_data.cell_size))
 		draw_polyline(points, colour, 1.0)
+	_draw_cliff_debug()
+
+
+func _draw_cliff_debug() -> void:
+	if terrain_renderer == null or terrain_renderer.cliff_curves.is_empty():
+		return
+	var cell_classes := {}
+	for curve_index in terrain_renderer.cliff_curves.size():
+		var curve := terrain_renderer.cliff_curves[curve_index]
+		for index in range(curve.size() - 1):
+			var start: Vector2 = curve[index]
+			var finish: Vector2 = curve[index + 1]
+			var view_side: int = terrain_renderer._cliff_view_side(curve_index, start, finish)
+			var colour := Color(1.0, 0.25, 0.15, 0.95) if view_side > 0 else (Color(0.15, 0.65, 1.0, 0.95) if view_side < 0 else Color(1.0, 0.9, 0.15, 0.95))
+			var screen_start := _project_cliff_point(start, curve_index, false)
+			var screen_finish := _project_cliff_point(finish, curve_index, false)
+			draw_line(screen_start, screen_finish, colour, 3.0, true)
+			draw_circle(screen_start, 2.5, colour)
+			var tangent := (finish - start).normalized()
+			var angle_to_y := rad_to_deg(acos(clampf(absf(tangent.dot(Vector2.DOWN)), 0.0, 1.0)))
+			var label := ("N" if view_side > 0 else ("F" if view_side < 0 else "E")) + " %.1f°" % angle_to_y
+			draw_string(ThemeDB.fallback_font, (screen_start + screen_finish) * 0.5 + Vector2(3, -3), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, colour)
+			var minimum := Vector2i(floori(minf(start.x, finish.x)), floori(minf(start.y, finish.y))) - Vector2i.ONE
+			var maximum := Vector2i(floori(maxf(start.x, finish.x)), floori(maxf(start.y, finish.y))) + Vector2i.ONE
+			for cell_y in range(maxi(0, minimum.y), mini(map_data.rows - 1, maximum.y) + 1):
+				for cell_x in range(maxi(0, minimum.x), mini(map_data.columns - 1, maximum.x) + 1):
+					var cell := Vector2i(cell_x, cell_y)
+					if not terrain_renderer._curve_intersects_cell(curve_index, cell):
+						continue
+					var classes: Dictionary = cell_classes.get(cell, {})
+					classes[view_side] = true
+					cell_classes[cell] = classes
+	for cell: Vector2i in cell_classes:
+		var classes: Dictionary = cell_classes[cell]
+		var fill := Color(0.8, 0.2, 0.8, 0.18) if classes.size() > 1 else (Color(1.0, 0.25, 0.15, 0.15) if classes.has(1) else (Color(0.15, 0.65, 1.0, 0.15) if classes.has(-1) else Color(1.0, 0.9, 0.15, 0.15)))
+		var polygon := PackedVector2Array([
+			_project_map_point(Vector2(cell) * map_data.cell_size),
+			_project_map_point(Vector2(cell + Vector2i.RIGHT) * map_data.cell_size),
+			_project_map_point(Vector2(cell + Vector2i.ONE) * map_data.cell_size),
+			_project_map_point(Vector2(cell + Vector2i.DOWN) * map_data.cell_size),
+		])
+		draw_colored_polygon(polygon, fill)
+		draw_polyline(PackedVector2Array([polygon[0], polygon[1], polygon[2], polygon[3], polygon[0]]), Color(fill, 0.8), 1.5)
+
+
+func _project_cliff_point(grid_position: Vector2, curve_index: int, elevated_side: bool) -> Vector2:
+	var logical := grid_position * map_data.cell_size
+	var height := terrain_renderer._clipped_terrain_height(grid_position, curve_index, elevated_side)
+	var projected_local := logical - Vector2(0.0, height * terrain_renderer.generation_settings.height_lift_pixels)
+	return to_local(terrain_renderer.to_global(projected_local))
 
 
 func _project_map_point(map_position: Vector2) -> Vector2:

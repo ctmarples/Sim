@@ -45,7 +45,9 @@ func _init() -> void:
 							first_missing = projected
 						missing_projected_vertices += 1
 	var wall_vertex_keys := {}
-	for wall_name in ["CliffFaceBacking", "CliffFaceForeground"]:
+	var near_wall: MeshInstance2D = renderer.get_node_or_null("CliffFaceNear")
+	assert(near_wall != null and near_wall.z_index == 1)
+	for wall_name in ["CliffFaceNear"]:
 		var wall: MeshInstance2D = renderer.get_node_or_null(wall_name)
 		if wall == null:
 			continue
@@ -54,19 +56,23 @@ func _init() -> void:
 			wall_vertex_keys[Vector2i(roundi(vertex.x * 1000.0), roundi(vertex.y * 1000.0))] = true
 	var missing_wall_vertices := 0
 	for curve_index in renderer.cliff_render_curves.size():
-		for point in renderer.cliff_render_curves[curve_index]:
-			var progress := renderer._nearest_cliff_point(point, curve_index).z
-			if renderer._cliff_separation_at_progress(curve_index, progress) <= 0.001:
+		var curve := renderer.cliff_render_curves[curve_index]
+		for index in range(curve.size() - 1):
+			if renderer._cliff_view_side(curve_index, curve[index], curve[index + 1]) <= 0:
 				continue
-			var logical := point * renderer.map_data.cell_size
-			for height in [
-				renderer._clipped_terrain_height(point, curve_index, false),
-				renderer._clipped_terrain_height(point, curve_index, true),
-			]:
-				var projected := logical - Vector2(0.0, height * renderer.generation_settings.height_lift_pixels)
-				var key := Vector2i(roundi(projected.x * 1000.0), roundi(projected.y * 1000.0))
-				if not wall_vertex_keys.has(key):
-					missing_wall_vertices += 1
+			for point: Vector2 in [curve[index], curve[index + 1]]:
+				var progress := renderer._nearest_cliff_point(point, curve_index).z
+				if renderer._cliff_separation_at_progress(curve_index, progress) <= 0.001:
+					continue
+				var logical: Vector2 = point * renderer.map_data.cell_size
+				for height in [
+					renderer._clipped_terrain_height(point, curve_index, false),
+					renderer._clipped_terrain_height(point, curve_index, true),
+				]:
+					var projected: Vector2 = logical - Vector2(0.0, height * renderer.generation_settings.height_lift_pixels)
+					var key := Vector2i(roundi(projected.x * 1000.0), roundi(projected.y * 1000.0))
+					if not wall_vertex_keys.has(key):
+						missing_wall_vertices += 1
 	print("generated cliff alignment: seams=", seam_count,
 		" max_error_cells=", maximum_error,
 		" max_error_pixels=", maximum_error * renderer.map_data.cell_size,

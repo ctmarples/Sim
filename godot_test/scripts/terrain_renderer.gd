@@ -48,9 +48,15 @@ func regenerate() -> void:
 
 
 func _build_map_mesh() -> void:
+	var old_occluder := get_node_or_null("CliffFarSurface")
+	if old_occluder:
+		old_occluder.free()
 	var vertices := PackedVector2Array()
 	var uvs := PackedVector2Array()
 	var indices := PackedInt32Array()
+	var occluder_vertices := PackedVector2Array()
+	var occluder_uvs := PackedVector2Array()
+	var occluder_indices := PackedInt32Array()
 	cliff_surface_segments.clear()
 	cliff_surface_segments.resize(cliff_curves.size())
 	for cell_y in map_data.rows:
@@ -82,12 +88,21 @@ func _build_map_mesh() -> void:
 						var upper_polygon := _clip_polygon_to_cliff_side(corner_ids, crossing_cliff, true, seam)
 						_append_terrain_polygon(lower_polygon, crossing_cliff, false, vertices, uvs, indices)
 						_append_terrain_polygon(upper_polygon, crossing_cliff, true, vertices, uvs, indices)
+						var occluding_cliff := _far_occluder_cliff_for_polygon(upper_polygon)
+						if occluding_cliff >= 0:
+							_append_terrain_polygon(upper_polygon, occluding_cliff, true, occluder_vertices, occluder_uvs, occluder_indices)
 						continue
 					for triangle in triangle_corners:
 						var owner_position := Vector2.ZERO
 						for corner_index in triangle:
 							owner_position += corner_ids[corner_index]
 						owner_position /= 3.0
+						var triangle_polygon := PackedVector2Array([
+							corner_ids[triangle[0]], corner_ids[triangle[1]], corner_ids[triangle[2]],
+						])
+						var occluding_cliff := _far_occluder_cliff_for_polygon(triangle_polygon)
+						if occluding_cliff >= 0:
+							_append_terrain_polygon(triangle_polygon, occluding_cliff, true, occluder_vertices, occluder_uvs, occluder_indices)
 						for corner_index in triangle:
 							var height := map_data.height_at_world(corner_ids[corner_index] * map_data.cell_size) + _cliff_offset_for_vertex(owner_position, corner_ids[corner_index])
 							var logical: Vector2 = logical_corners[corner_index]
@@ -102,6 +117,20 @@ func _build_map_mesh() -> void:
 	var terrain_mesh := ArrayMesh.new()
 	terrain_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	mesh = terrain_mesh
+	if not occluder_vertices.is_empty():
+		var occluder_arrays := []
+		occluder_arrays.resize(Mesh.ARRAY_MAX)
+		occluder_arrays[Mesh.ARRAY_VERTEX] = occluder_vertices
+		occluder_arrays[Mesh.ARRAY_TEX_UV] = occluder_uvs
+		occluder_arrays[Mesh.ARRAY_INDEX] = occluder_indices
+		var occluder_mesh := ArrayMesh.new()
+		occluder_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, occluder_arrays)
+		var occluder := MeshInstance2D.new()
+		occluder.name = "CliffFarSurface"
+		occluder.z_index = 12
+		occluder.mesh = occluder_mesh
+		occluder.material = material
+		add_child(occluder)
 
 
 func _signed_distance_to_cliff(grid_position: Vector2, curve_index: int) -> float:
@@ -376,8 +405,11 @@ func _index_cliff_cells() -> void:
 		for index in range(curve.size() - 1):
 			var start := curve[index]
 			var finish := curve[index + 1]
-			var minimum := Vector2i(floori(minf(start.x, finish.x)), floori(minf(start.y, finish.y))) - Vector2i.ONE
-			var maximum := Vector2i(floori(maxf(start.x, finish.x)), floori(maxf(start.y, finish.y))) + Vector2i.ONE
+			# Includes the maximum far-side occlusion reach (2.5 cells) plus the
+			# one-cell safety extension used by _far_occluder_cliff_for_polygon.
+			var candidate_margin := Vector2i.ONE * 4
+			var minimum := Vector2i(floori(minf(start.x, finish.x)), floori(minf(start.y, finish.y))) - candidate_margin
+			var maximum := Vector2i(floori(maxf(start.x, finish.x)), floori(maxf(start.y, finish.y))) + candidate_margin
 			for y in range(maxi(0, minimum.y), mini(map_data.rows - 1, maximum.y) + 1):
 				for x in range(maxi(0, minimum.x), mini(map_data.columns - 1, maximum.x) + 1):
 					var cell := Vector2i(x, y)
@@ -391,6 +423,27 @@ func _rounded_cliff_controls(controls: PackedVector2Array) -> PackedVector2Array
 	var radius := generation_settings.cliff_corner_smoothing_cells
 	if radius <= 0.001 or controls.size() < 3:
 		return controls
+	var closed := controls[0].is_equal_approx(controls[controls.size() - 1])
+	if closed:
+		var samples := PackedVector2Array()
+		var corner_count := controls.size() - 1
+		for index in corner_count:
+			var previous := controls[(index - 1 + corner_count) % corner_count]
+			var corner := controls[index]
+			var following := controls[(index + 1) % corner_count]
+			var incoming := corner - previous
+			var outgoing := following - corner
+			var trim := minf(radius, minf(incoming.length(), outgoing.length()) * 0.45)
+			var entry := corner - incoming.normalized() * trim
+			var exit_point := corner + outgoing.normalized() * trim
+			for step in range(9):
+				var t := float(step) / 8.0
+				var sample := entry * (1.0 - t) * (1.0 - t) + corner * 2.0 * (1.0 - t) * t + exit_point * t * t
+				if samples.is_empty() or not samples[samples.size() - 1].is_equal_approx(sample):
+					samples.append(sample)
+		if not samples.is_empty():
+			samples.append(samples[0])
+		return samples
 	var samples := PackedVector2Array([controls[0]])
 	for index in range(1, controls.size() - 1):
 		var previous := controls[index - 1]
@@ -435,6 +488,78 @@ func _nearest_cliff_point(grid_position: Vector2, curve_index: int) -> Vector4:
 			var path_progress := lerpf(progress[index], progress[index + 1], segment_progress)
 			best = Vector4(nearest.x, nearest.y, path_progress, segment.cross(grid_position - nearest))
 	return best
+
+
+## 1 is a visible near-side wall, -1 is a far-side rim, and 0 is edge-on.
+func _cliff_view_side(curve_index: int, start: Vector2, finish: Vector2) -> int:
+	var delta := finish - start
+	if delta.length_squared() <= 0.000001 or absf(delta.x) <= 0.0001:
+		return 0
+	var near_determinant := delta.x
+	if _is_closed_cliff(curve_index):
+		var area_twice := 0.0
+		var curve := cliff_curves[curve_index]
+		for index in range(curve.size() - 1):
+			area_twice += curve[index].cross(curve[index + 1])
+		# Positive signed area in screen coordinates places the interior on the
+		# screen-left normal; reverse-wound islands invert the determinant.
+		near_determinant *= -1.0 if area_twice > 0.0 else 1.0
+	return 1 if near_determinant > 0.0 else -1
+
+
+func _nearest_cliff_segment_index(grid_position: Vector2, curve_index: int) -> int:
+	var best_index := -1
+	var best_distance_squared := INF
+	var curve := cliff_curves[curve_index]
+	for index in range(curve.size() - 1):
+		var start := curve[index]
+		var finish := curve[index + 1]
+		var segment := finish - start
+		var length_squared := segment.length_squared()
+		if length_squared <= 0.000001:
+			continue
+		var amount := clampf((grid_position - start).dot(segment) / length_squared, 0.0, 1.0)
+		var distance_squared := grid_position.distance_squared_to(start + segment * amount)
+		if distance_squared < best_distance_squared:
+			best_distance_squared = distance_squared
+			best_index = index
+	return best_index
+
+
+func _far_occluder_cliff_for_polygon(polygon: PackedVector2Array) -> int:
+	if polygon.is_empty():
+		return -1
+	var centre := Vector2.ZERO
+	for point in polygon:
+		centre += point
+	centre /= polygon.size()
+	var cell := Vector2i(floori(centre.x), floori(centre.y))
+	var candidates: Array = cliff_cell_candidates.get(cell, [])
+	for curve_index: int in candidates:
+		var elevated := _point_inside_cliff(centre, curve_index) if _is_closed_cliff(curve_index) else _nearest_cliff_point(centre, curve_index).w < 0.0
+		if not elevated:
+			continue
+		var segment_index := _nearest_cliff_segment_index(centre, curve_index)
+		if segment_index < 0:
+			continue
+		var curve := cliff_curves[curve_index]
+		# Edge-on segments belong to the far-side surface mask. Excluding them
+		# leaves a wedge precisely where a curve changes from near to far.
+		var has_far_or_edge_segment := _cliff_view_side(curve_index, curve[segment_index], curve[segment_index + 1]) <= 0
+		for neighbour_offset in [-1, 1]:
+			var neighbour: int = segment_index + neighbour_offset
+			if _is_closed_cliff(curve_index):
+				neighbour = posmod(neighbour, curve.size() - 1)
+			if neighbour >= 0 and neighbour < curve.size() - 1:
+				has_far_or_edge_segment = has_far_or_edge_segment or _cliff_view_side(curve_index, curve[neighbour], curve[neighbour + 1]) <= 0
+		if not has_far_or_edge_segment:
+			continue
+		var nearest := _nearest_cliff_point(centre, curve_index)
+		var distance := centre.distance_to(Vector2(nearest.x, nearest.y))
+		var projected_depth := _cliff_separation_at_progress(curve_index, nearest.z) * generation_settings.height_lift_pixels / map_data.cell_size
+		if distance <= projected_depth + 1.0:
+			return curve_index
+	return -1
 
 
 func _cliff_setting(values: PackedFloat32Array, index: int, fallback: float) -> float:
@@ -502,7 +627,7 @@ func _cliff_offset_for_vertex(owner_position: Vector2, vertex: Vector2) -> float
 
 
 func _build_cliff_test() -> void:
-	for old_node_name in [&"CliffFaceBacking", &"CliffFaceForeground", &"CliffFaces", &"CliffFacesForeground", &"CliffTopOccluders", &"CliffCollision"]:
+	for old_node_name in [&"CliffFaceBacking", &"CliffFaceForeground", &"CliffFaceNear", &"CliffFaces", &"CliffFacesForeground", &"CliffTopOccluders", &"CliffCollision"]:
 		var old_node := get_node_or_null(NodePath(old_node_name))
 		if old_node:
 			old_node.free()
@@ -559,7 +684,7 @@ func _build_cliff_test() -> void:
 				Vector2(start_progress, 0), Vector2(finish_progress, 0),
 				Vector2(finish_progress, 1), Vector2(start_progress, 1),
 			])
-			if finish.x > start.x + 0.0001:
+			if _cliff_view_side(curve_index, start, finish) > 0:
 				var first := backing_foreground_vertices.size()
 				backing_foreground_vertices.append_array(quad)
 				backing_foreground_uvs.append_array(quad_uvs)
@@ -569,10 +694,11 @@ func _build_cliff_test() -> void:
 				backing_vertices.append_array(quad)
 				backing_uvs.append_array(quad_uvs)
 				backing_indices.append_array(PackedInt32Array([first, first + 1, first + 2, first, first + 2, first + 3]))
-	# The ordered source curve is the sole wall geometry. Cell seam fragments are
-	# used only to clip terrain and must never interrupt the visible cliff edge.
-	_add_cliff_face_mesh(&"CliffFaceBacking", backing_vertices, backing_uvs, backing_indices, -1)
-	_add_cliff_face_mesh(&"CliffFaceForeground", backing_foreground_vertices, backing_foreground_uvs, backing_foreground_indices, 12)
+	# Only the screen-near wall is visible, and it remains behind actors standing
+	# on the lower/southern side. Far-side depth comes from CliffFarSurface.
+	# ProceduralTerrain is z=-10 in the scene. Relative z=1 places the wall at
+	# effective z=-9: above overlapping terrain, but still below actors at z=0.
+	_add_cliff_face_mesh(&"CliffFaceNear", backing_foreground_vertices, backing_foreground_uvs, backing_foreground_indices, 1)
 
 
 func _add_cliff_face_mesh(node_name: StringName, vertices: PackedVector2Array, uvs: PackedVector2Array, indices: PackedInt32Array, draw_z: int) -> void:
