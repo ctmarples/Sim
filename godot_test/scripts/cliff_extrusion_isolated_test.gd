@@ -23,7 +23,13 @@ var circle_polygon := PackedVector2Array()
 var shallow_s_line := PackedVector2Array()
 var right_angle_s_line := PackedVector2Array()
 var raised_grid_lines: Array[Line2D] = []
-var raised_fill_triangles: Array[Polygon2D] = []
+var raised_fill_triangles: Array[CanvasItem] = []
+var lower_mesh_vertices := PackedVector2Array()
+var lower_mesh_uvs := PackedVector2Array()
+var lower_mesh_indices := PackedInt32Array()
+var raised_mesh_vertices := PackedVector2Array()
+var raised_mesh_uvs := PackedVector2Array()
+var raised_mesh_indices := PackedInt32Array()
 var player_grid_position := Vector2(1.0, 4.0)
 var player_row := 0
 var cliff_surface_layer: Node2D
@@ -318,11 +324,13 @@ func _create_grass_material() -> ShaderMaterial:
 	empty_weights.fill(Color(0.0, 0.0, 0.0, 0.0))
 	var empty_scalar := Image.create(texture_size.x, texture_size.y, false, Image.FORMAT_RF)
 	empty_scalar.fill(Color(0.0, 0.0, 0.0, 1.0))
+	var neutral_relief := Image.create(texture_size.x, texture_size.y, false, Image.FORMAT_RF)
+	neutral_relief.fill(Color(1.0, 0.0, 0.0, 1.0))
 	material.set_shader_parameter("terrain_weight_map_a", ImageTexture.create_from_image(weights_a))
 	material.set_shader_parameter("terrain_weight_map_b", ImageTexture.create_from_image(empty_weights))
 	material.set_shader_parameter("terrain_weight_map_c", ImageTexture.create_from_image(empty_weights))
 	material.set_shader_parameter("height_corner_map", ImageTexture.create_from_image(empty_scalar))
-	material.set_shader_parameter("relief_corner_map", ImageTexture.create_from_image(empty_scalar))
+	material.set_shader_parameter("relief_corner_map", ImageTexture.create_from_image(neutral_relief))
 	material.set_shader_parameter("cliff_shadow_map", ImageTexture.create_from_image(empty_scalar))
 	material.set_shader_parameter("terrain_grid_size", Vector2i(STAGE_CELLS.x * 4, STAGE_CELLS.y * 3))
 	material.set_shader_parameter("terrain_cell_size", CELL_SIZE)
@@ -364,6 +372,8 @@ func _build_textured_surface_layers() -> void:
 						_add_textured_polygon(stage, row, lower, false)
 					for upper in Geometry2D.intersect_polygons(square, clip_shape):
 						_add_textured_polygon(stage, row, upper, true)
+	_add_grass_mesh(terrain_surface_layer, "LowerTerrainMesh", lower_mesh_vertices, lower_mesh_uvs, lower_mesh_indices)
+	_add_grass_mesh(raised_surface_layer, "RaisedTerrainMesh", raised_mesh_vertices, raised_mesh_uvs, raised_mesh_indices)
 
 
 func _add_textured_polygon(stage: int, row: int, polygon: PackedVector2Array, raised: bool) -> void:
@@ -378,18 +388,20 @@ func _add_textured_polygon(stage: int, row: int, polygon: PackedVector2Array, ra
 		projected.append(_project_row(stage, row, point, raised, warped, variable_extrusion))
 		logical_uvs.append((point + Vector2(stage * STAGE_CELLS.x, row * STAGE_CELLS.y)) * CELL_SIZE)
 	var indices := Geometry2D.triangulate_polygon(projected)
-	var target_layer := raised_surface_layer if raised else terrain_surface_layer
 	for triangle_index in range(0, indices.size(), 3):
-		var triangle := Polygon2D.new()
 		var a := indices[triangle_index]
 		var b := indices[triangle_index + 1]
 		var c := indices[triangle_index + 2]
-		triangle.polygon = PackedVector2Array([projected[a], projected[b], projected[c]])
-		triangle.uv = PackedVector2Array([logical_uvs[a], logical_uvs[b], logical_uvs[c]])
-		triangle.material = grass_material
-		triangle.visible = show_grass_surface
-		target_layer.add_child(triangle)
-		raised_fill_triangles.append(triangle)
+		if raised:
+			var first := raised_mesh_vertices.size()
+			raised_mesh_vertices.append_array(PackedVector2Array([projected[a], projected[b], projected[c]]))
+			raised_mesh_uvs.append_array(PackedVector2Array([logical_uvs[a], logical_uvs[b], logical_uvs[c]]))
+			raised_mesh_indices.append_array(PackedInt32Array([first, first + 1, first + 2]))
+		else:
+			var first := lower_mesh_vertices.size()
+			lower_mesh_vertices.append_array(PackedVector2Array([projected[a], projected[b], projected[c]]))
+			lower_mesh_uvs.append_array(PackedVector2Array([logical_uvs[a], logical_uvs[b], logical_uvs[c]]))
+			lower_mesh_indices.append_array(PackedInt32Array([first, first + 1, first + 2]))
 	var grid_line := Line2D.new()
 	grid_line.points = projected
 	grid_line.closed = true
@@ -399,6 +411,23 @@ func _add_textured_polygon(stage: int, row: int, polygon: PackedVector2Array, ra
 	grid_line.visible = show_grid
 	terrain_grid_layer.add_child(grid_line)
 	raised_grid_lines.append(grid_line)
+
+
+func _add_grass_mesh(parent: Node2D, node_name: String, vertices: PackedVector2Array, uvs: PackedVector2Array, indices: PackedInt32Array) -> void:
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var surface_mesh := ArrayMesh.new()
+	surface_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var surface := MeshInstance2D.new()
+	surface.name = node_name
+	surface.mesh = surface_mesh
+	surface.material = grass_material
+	surface.visible = show_grass_surface
+	parent.add_child(surface)
+	raised_fill_triangles.append(surface)
 
 
 func _make_shallow_s_line() -> PackedVector2Array:
