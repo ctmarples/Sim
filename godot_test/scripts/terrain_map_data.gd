@@ -1,7 +1,7 @@
 class_name TerrainMapData
 extends Resource
 
-enum Terrain { GRASS, SOIL }
+enum Terrain { SOIL, FOREST_FLOOR, GRASS, MEADOW, RIPARIAN, WATER, RIVER, ROCK, URBAN, PATH }
 
 var columns: int
 var rows: int
@@ -9,6 +9,8 @@ var cell_size: float
 var cells := PackedInt32Array()
 var corner_heights := PackedFloat32Array()
 var height_peak := 0.0
+var tree_cells: Array[Vector2i] = []
+var tree_variants := PackedInt32Array()
 
 
 func configure(new_columns: int, new_rows: int, new_cell_size: float) -> void:
@@ -17,6 +19,8 @@ func configure(new_columns: int, new_rows: int, new_cell_size: float) -> void:
 	cell_size = new_cell_size
 	cells.resize(columns * rows)
 	cells.fill(Terrain.GRASS)
+	tree_cells.clear()
+	tree_variants.clear()
 	corner_heights.resize((columns + 1) * (rows + 1))
 	corner_heights.fill(0.0)
 	height_peak = 0.0

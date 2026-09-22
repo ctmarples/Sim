@@ -73,9 +73,12 @@ const vec3 SOIL_PALETTE[48] = {
 
 varying vec2 terrain_world_position;
 varying float terrain_relief_shade;
-uniform sampler2D soil_corner_map : filter_nearest, repeat_disable;
+uniform sampler2D terrain_weight_map_a : filter_linear, repeat_disable;
+uniform sampler2D terrain_weight_map_b : filter_linear, repeat_disable;
+uniform sampler2D terrain_weight_map_c : filter_linear, repeat_disable;
 uniform sampler2D height_corner_map : filter_nearest, repeat_disable;
 uniform sampler2D relief_corner_map : filter_linear, repeat_disable;
+uniform sampler2D cliff_shadow_map : filter_linear, repeat_disable;
 uniform ivec2 terrain_grid_size = ivec2(12, 8);
 uniform float terrain_cell_size = 100.0;
 uniform float height_lift_pixels = 1.0;
@@ -84,8 +87,8 @@ uniform float terrain_max_height = 32.0;
 void vertex() {
 	// Preserve flat logical coordinates before the mesh is height-projected so
 	// terrain texture scale and terrain boundaries do not stretch with relief.
-	terrain_world_position = VERTEX;
-	ivec2 corner = clamp(ivec2(round(VERTEX / terrain_cell_size)), ivec2(0), terrain_grid_size);
+	terrain_world_position = UV;
+	ivec2 corner = clamp(ivec2(round(UV / terrain_cell_size)), ivec2(0), terrain_grid_size);
 	float h = texelFetch(height_corner_map, corner, 0).r;
 	float he = texelFetch(height_corner_map, min(corner + ivec2(1, 0), terrain_grid_size), 0).r;
 	float hw = texelFetch(height_corner_map, max(corner - ivec2(1, 0), ivec2(0)), 0).r;
@@ -99,7 +102,6 @@ void vertex() {
 		response *= 1.5;
 	}
 	terrain_relief_shade = clamp(1.0 + response, 0.55, 1.10);
-	VERTEX.y -= h * height_lift_pixels;
 }
 
 float hash_2d(ivec2 cell, int salt) {
@@ -176,22 +178,64 @@ vec3 sample_soil(vec2 world) {
 	return colour;
 }
 
-float soil_at_corner(ivec2 vertex) {
-	ivec2 safe_vertex = clamp(vertex, ivec2(0), terrain_grid_size);
-	return texelFetch(soil_corner_map, safe_vertex, 0).r;
+vec3 terrain_base(int terrain) {
+	if (terrain == 0) return SOIL_BASE;
+	if (terrain == 1) return vec3(95.0, 68.0, 42.0) / 255.0;
+	if (terrain == 2) return BASE;
+	if (terrain == 3) return vec3(100.0, 175.0, 85.0) / 255.0;
+	if (terrain == 4) return vec3(148.0, 142.0, 158.0) / 255.0;
+	if (terrain == 5 || terrain == 6) return vec3(60.0, 120.0, 190.0) / 255.0;
+	if (terrain == 7) return vec3(118.0, 118.0, 124.0) / 255.0;
+	if (terrain == 8) return vec3(105.0, 105.0, 108.0) / 255.0;
+	return vec3(120.0, 118.0, 112.0) / 255.0;
+}
+
+vec3 sample_terrain(int terrain, vec2 world) {
+	if (terrain == 0) return sample_soil(world);
+	if (terrain == 2) return sample_grass(world);
+	int salt = 1000 + terrain * 97;
+	float coarse = value_noise(world * 0.035, salt);
+	const mat2 ROTATION = mat2(vec2(0.7986355, 0.6018150), vec2(-0.6018150, 0.7986355));
+	float middle = value_noise((ROTATION * world) * 0.11, salt + 3);
+	float fine = value_noise(world * 0.38, salt + 7);
+	float amount = (coarse - 0.5) * 0.22 + (middle - 0.5) * 0.12 + (fine - 0.5) * 0.07;
+	vec3 colour = shift_colour(terrain_base(terrain), amount);
+	if (hash_2d(ivec2(floor(world)), salt + 40) > 0.86) {
+		colour = shift_colour(colour, (hash_2d(ivec2(floor(world)), salt + 41) - 0.5) * 0.28);
+	}
+	return colour;
 }
 
 void fragment() {
 	vec2 world = floor(terrain_world_position);
-	ivec2 cell = ivec2(floor(world / terrain_cell_size));
-	vec2 local_uv = fract(world / terrain_cell_size);
-	float top = mix(soil_at_corner(cell), soil_at_corner(cell + ivec2(1, 0)), local_uv.x);
-	float bottom = mix(soil_at_corner(cell + ivec2(0, 1)), soil_at_corner(cell + ivec2(1, 1)), local_uv.x);
-	float field = mix(top, bottom, local_uv.y);
-	// Exact soft land-to-land band used by compose_cell_fills.
-	float soil_blend = clamp((field - 0.08) / 0.84, 0.0, 1.0);
-	soil_blend = soil_blend * soil_blend * (3.0 - 2.0 * soil_blend);
-	vec3 colour = mix(sample_grass(world), sample_soil(world), soil_blend);
+	vec2 corner_coordinate = terrain_world_position / terrain_cell_size;
+	vec2 weight_uv = (corner_coordinate + vec2(0.5)) / (vec2(terrain_grid_size) + vec2(1.0));
+	weight_uv = clamp(weight_uv, vec2(0.0), vec2(1.0));
+	vec4 weights_a = texture(terrain_weight_map_a, weight_uv);
+	vec4 weights_b = texture(terrain_weight_map_b, weight_uv);
+	vec2 weights_c = texture(terrain_weight_map_c, weight_uv).rg;
+	float water_weight = weights_b.y + weights_b.z;
+	float land_total = dot(weights_a, vec4(1.0)) + weights_b.x + weights_b.w + weights_c.x + weights_c.y;
+	land_total = max(land_total, 0.0001);
+	vec3 colour = vec3(0.0);
+	if (weights_a.x > 0.001) colour += sample_terrain(0, world) * weights_a.x;
+	if (weights_a.y > 0.001) colour += sample_terrain(1, world) * weights_a.y;
+	if (weights_a.z > 0.001) colour += sample_terrain(2, world) * weights_a.z;
+	if (weights_a.w > 0.001) colour += sample_terrain(3, world) * weights_a.w;
+	if (weights_b.x > 0.001) colour += sample_terrain(4, world) * weights_b.x;
+	if (weights_b.w > 0.001) colour += sample_terrain(7, world) * weights_b.w;
+	if (weights_c.x > 0.001) colour += sample_terrain(8, world) * weights_c.x;
+	if (weights_c.y > 0.001) colour += sample_terrain(9, world) * weights_c.y;
+	colour /= land_total;
+	float water_mix_total = max(water_weight, 0.0001);
+	vec3 water_colour = vec3(0.0);
+	if (weights_b.y > 0.001) water_colour += sample_terrain(5, world) * weights_b.y;
+	if (weights_b.z > 0.001) water_colour += sample_terrain(6, world) * weights_b.z;
+	water_colour /= water_mix_total;
+	// Water uses a narrow marching-squares threshold instead of the broad
+	// land-to-land blend. Shared corner values naturally produce diagonal cuts.
+	float shoreline = smoothstep(0.20, 0.30, water_weight);
+	colour = mix(colour, water_colour, shoreline);
 	vec2 relief_coordinate = terrain_world_position / terrain_cell_size;
 	vec2 relief_uv = (relief_coordinate + vec2(0.5)) / (vec2(terrain_grid_size) + vec2(1.0));
 	float visible_relief_shade = texture(relief_corner_map, clamp(relief_uv, vec2(0.0), vec2(1.0))).r;
@@ -202,5 +246,7 @@ void fragment() {
 		float shadow = clamp((1.0 - visible_relief_shade) / 0.28, 0.0, 1.0) * 0.25;
 		colour = mix(colour, vec3(72.0, 46.0, 28.0) / 255.0, shadow);
 	}
+	float cliff_shadow = texture(cliff_shadow_map, clamp(relief_uv, vec2(0.0), vec2(1.0))).r;
+	colour *= 1.0 - cliff_shadow;
 	COLOR = vec4(colour, 1.0);
 }

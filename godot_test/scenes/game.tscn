@@ -22,7 +22,12 @@ columns = 100
 rows = 100
 seed = 3889
 soil_threshold = 0.24
+rock_threshold = 1.0
 height_amplitude = 100.0
+cliff_paths = null
+cliff_heights = null
+cliff_transition_cells = null
+cliff_corner_smoothing_cells = 6.0
 
 [node name="Game" type="Node2D"]
 script = ExtResource("1_map")

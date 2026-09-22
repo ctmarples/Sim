@@ -8,8 +8,6 @@ var storehouse: ContainerBuilding
 var villager: Villager
 var pending_assignment: Villager
 
-const RELIEF_TINT_SHADER := preload("res://shaders/relief_tint.gdshader")
-
 const TREE_TEXTURES: Array[Texture2D] = [
 	preload("res://assets/trees/tree_round_1.svg"),
 	preload("res://assets/trees/tree_round_2.svg"),
@@ -18,14 +16,6 @@ const TREE_TEXTURES: Array[Texture2D] = [
 	preload("res://assets/trees/tree_cone_2.svg"),
 	preload("res://assets/trees/tree_cone_3.svg"),
 ]
-const TREE_CELLS := [
-	Vector2i(2, 2), Vector2i(6, 2), Vector2i(10, 3),
-	Vector2i(18, 2), Vector2i(23, 3), Vector2i(27, 2),
-	Vector2i(2, 9), Vector2i(27, 8),
-	Vector2i(3, 16), Vector2i(7, 17), Vector2i(12, 16),
-	Vector2i(19, 17), Vector2i(24, 16), Vector2i(27, 17),
-]
-
 func _ready() -> void:
 	_build_trees()
 	forester = _build_container_building(FORESTER_SCENE, Vector2i(18, 10))
@@ -66,7 +56,6 @@ func _update_projected_actor_visuals() -> void:
 		if visual == null:
 			continue
 		_project_canvas_item(visual, projection_sample, terrain, &"projection_base_position")
-		_apply_relief_tint(visual, terrain, terrain.projection_offset_at_global(projection_sample))
 		if selection_area:
 			_project_canvas_item(selection_area, projection_sample, terrain, &"projection_base_position")
 		if actor is Player:
@@ -80,30 +69,19 @@ func _project_canvas_item(item: Node2D, logical_position: Vector2, terrain: Terr
 	item.position = base_position + terrain.projection_offset_at_global(logical_position)
 
 
-func _apply_relief_tint(item: CanvasItem, terrain: TerrainRenderer, projection_offset: Vector2) -> void:
-	var shader_material := item.material as ShaderMaterial
-	if shader_material == null or shader_material.shader != RELIEF_TINT_SHADER:
-		shader_material = ShaderMaterial.new()
-		shader_material.shader = RELIEF_TINT_SHADER
-		item.material = shader_material
-	shader_material.set_shader_parameter("relief_corner_map", terrain.relief_shade_texture)
-	shader_material.set_shader_parameter("terrain_origin", terrain.global_position)
-	shader_material.set_shader_parameter("terrain_grid_size", Vector2(terrain.map_data.columns, terrain.map_data.rows))
-	shader_material.set_shader_parameter("terrain_cell_size", terrain.map_data.cell_size)
-	shader_material.set_shader_parameter("projection_offset", projection_offset)
-
-
 func _build_trees() -> void:
-	var cell_size: float = $Ground/ProceduralTerrain.map_data.cell_size
-	for index in TREE_CELLS.size():
+	var terrain: TerrainRenderer = $Ground/ProceduralTerrain
+	var cell_size: float = terrain.map_data.cell_size
+	for index in terrain.map_data.tree_cells.size():
+		var tree_cell := terrain.map_data.tree_cells[index]
 		var tree := ChoppableTree.new()
 		tree.cell_size = cell_size
-		tree.position = Vector2(TREE_CELLS[index]) * cell_size + Vector2.ONE * cell_size * 0.5
+		tree.position = Vector2(tree_cell) * cell_size + Vector2.ONE * cell_size * 0.5
 		tree.collision_layer = 1
 		tree.collision_mask = 2
 
 		var sprite := Sprite2D.new()
-		sprite.texture = TREE_TEXTURES[index % TREE_TEXTURES.size()]
+		sprite.texture = TREE_TEXTURES[terrain.map_data.tree_variants[index] % TREE_TEXTURES.size()]
 		# SVG anchor (20, 60) in an 80×80 canvas lands on the trunk origin.
 		sprite.position = Vector2(cell_size * 0.5, -cell_size * 0.5)
 		# The SVG canvas is two cells tall; its trunk occupies the home cell.
