@@ -787,21 +787,6 @@ func _build_cliff_geometry() -> void:
 	var backing_foreground_vertices := PackedVector2Array()
 	var backing_foreground_uvs := PackedVector2Array()
 	var backing_foreground_indices := PackedInt32Array()
-	var collision_body := StaticBody2D.new()
-	collision_body.name = "CliffCollision"
-	collision_body.collision_layer = 1
-	collision_body.collision_mask = 2
-	add_child(collision_body)
-	# Physics follows the complete ordered curve. Render seam fragments are
-	# cell-local and can be absent where a curve merely touches a cell corner.
-	for curve in cliff_curves:
-		for index in range(curve.size() - 1):
-			var collision := CollisionShape2D.new()
-			var shape := SegmentShape2D.new()
-			shape.a = curve[index] * map_data.cell_size
-			shape.b = curve[index + 1] * map_data.cell_size
-			collision.shape = shape
-			collision_body.add_child(collision)
 	for curve_index in cliff_curves.size():
 		var curve := cliff_curves[curve_index]
 		var edge_bottoms := cliff_edge_bottoms[curve_index]
@@ -940,6 +925,32 @@ func should_actor_render_above_cliff(logical_global_position: Vector2) -> bool:
 		if distance <= visible_depth + 1.0:
 			return true
 	return false
+
+
+func would_climb_cliff(from_global: Vector2, to_global: Vector2) -> bool:
+	var from_grid := to_local(from_global) / map_data.cell_size
+	var to_grid := to_local(to_global) / map_data.cell_size
+	for curve_index in cliff_curves.size():
+		var from_elevated := _point_inside_cliff(from_grid, curve_index) if _is_closed_cliff(curve_index) else _nearest_cliff_point(from_grid, curve_index).w < 0.0
+		var to_nearest := _nearest_cliff_point(to_grid, curve_index)
+		var to_elevated := _point_inside_cliff(to_grid, curve_index) if _is_closed_cliff(curve_index) else to_nearest.w < 0.0
+		if not from_elevated and to_elevated and _cliff_separation_at_progress(curve_index, to_nearest.z) > 0.001:
+			return true
+	return false
+
+
+func constrain_cliff_velocity(global_start: Vector2, requested_velocity: Vector2, delta: float) -> Vector2:
+	if requested_velocity.is_zero_approx() or delta <= 0.0:
+		return requested_velocity
+	if not would_climb_cliff(global_start, global_start + requested_velocity * delta):
+		return requested_velocity
+	var horizontal := Vector2(requested_velocity.x, 0.0)
+	if not horizontal.is_zero_approx() and not would_climb_cliff(global_start, global_start + horizontal * delta):
+		return horizontal
+	var vertical := Vector2(0.0, requested_velocity.y)
+	if not vertical.is_zero_approx() and not would_climb_cliff(global_start, global_start + vertical * delta):
+		return vertical
+	return Vector2.ZERO
 
 
 func relief_shade_at_global(logical_global_position: Vector2) -> float:

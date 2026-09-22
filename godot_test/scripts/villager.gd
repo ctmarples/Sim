@@ -22,6 +22,8 @@ var building_path: PackedVector2Array = []
 var building_path_index := 0
 var building_path_target := Vector2(INF, INF)
 var building_blocked_frames := 0
+var terrain_renderer: TerrainRenderer
+var physics_delta := 0.0
 
 @onready var animated_sprite: AnimatedSprite2D = $AnimatedSprite2D
 
@@ -32,7 +34,8 @@ func _ready() -> void:
 	$SelectionArea.input_event.connect(_on_selection_input_event)
 
 
-func configure(cell_size: float, available_storehouse: ContainerBuilding, map_rect: Rect2) -> void:
+func configure(cell_size: float, available_storehouse: ContainerBuilding, map_rect: Rect2, terrain: TerrainRenderer = null) -> void:
+	terrain_renderer = terrain
 	storehouse = available_storehouse
 	navigation_cell_size = cell_size
 	navigation_bounds = map_rect
@@ -47,6 +50,7 @@ func assign_to_forester(forester: ContainerBuilding) -> void:
 
 
 func _physics_process(delta: float) -> void:
+	physics_delta = delta
 	action_cooldown = maxf(0.0, action_cooldown - delta)
 	avoidance_time = maxf(0.0, avoidance_time - delta)
 	if workplace == null:
@@ -160,6 +164,8 @@ func _move_to(destination: Vector2, arrival_distance: float) -> bool:
 	elif velocity.x > 0.0:
 		animated_sprite.play(&"walk_right")
 	var before_move := global_position
+	if terrain_renderer:
+		velocity = terrain_renderer.constrain_cliff_velocity(global_position, velocity, physics_delta)
 	move_and_slide()
 	if global_position.distance_squared_to(before_move) < 0.01 and avoidance_time <= 0.0:
 		avoidance_sign *= -1.0
@@ -207,6 +213,8 @@ func _move_to_path_waypoint(waypoint: Vector2) -> void:
 		animated_sprite.play(&"walk_left")
 	elif velocity.x > 0.0:
 		animated_sprite.play(&"walk_right")
+	if terrain_renderer:
+		velocity = terrain_renderer.constrain_cliff_velocity(global_position, velocity, physics_delta)
 	move_and_slide()
 
 

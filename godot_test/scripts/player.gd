@@ -15,6 +15,7 @@ var interaction_range := 60.0
 var inventory := ItemInventory.new()
 var target_zoom := 1.0
 var camera_base_position := Vector2.ZERO
+var terrain_renderer: TerrainRenderer
 
 
 func open_container(container_inventory: ItemInventory, container_name: String) -> void:
@@ -59,13 +60,15 @@ func set_camera_projection_offset(offset: Vector2) -> void:
 	$Camera2D.position = camera_base_position + offset
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	if Input.is_action_just_pressed("inventory"):
 		inventory_toggle_requested.emit()
 	if Input.is_action_just_pressed("interact"):
 		_interact()
 	var direction := Input.get_vector("move_left", "move_right", "move_up", "move_down")
 	velocity = direction * speed
+	if terrain_renderer:
+		velocity = terrain_renderer.constrain_cliff_velocity(global_position, velocity, delta)
 
 	if direction.x < 0.0:
 		animated_sprite.play("walk_left")
@@ -82,7 +85,8 @@ func _physics_process(_delta: float) -> void:
 	position.y = clampf(position.y, map_bounds.position.y, map_bounds.end.y)
 
 
-func configure_for_map(map_rect: Rect2, cell_size: float, projected_map_rect: Rect2 = Rect2()) -> void:
+func configure_for_map(map_rect: Rect2, cell_size: float, projected_map_rect: Rect2 = Rect2(), terrain: TerrainRenderer = null) -> void:
+	terrain_renderer = terrain
 	map_bounds = map_rect.grow(-cell_size * 0.5)
 	interaction_range = cell_size * 1.5
 	# Dog SVG import is 400px around a 40-unit logical viewBox.

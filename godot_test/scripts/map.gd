@@ -114,7 +114,7 @@ func _build_trees() -> void:
 
 func _configure_player_for_map() -> void:
 	var terrain: TerrainRenderer = $Ground/ProceduralTerrain
-	$Actors/Player.configure_for_map(terrain.get_map_rect(), terrain.map_data.cell_size, terrain.get_projected_map_rect())
+	$Actors/Player.configure_for_map(terrain.get_map_rect(), terrain.map_data.cell_size, terrain.get_projected_map_rect(), terrain)
 	$DebugOverlay.bind(terrain)
 
 
@@ -134,7 +134,7 @@ func _build_villager(cell: Vector2i) -> void:
 	villager = VILLAGER_SCENE.instantiate()
 	villager.position = Vector2(cell) * cell_size + Vector2.ONE * cell_size * 0.5
 	$Actors.add_child(villager)
-	villager.configure(cell_size, storehouse, $Ground/ProceduralTerrain.get_map_rect())
+	villager.configure(cell_size, storehouse, $Ground/ProceduralTerrain.get_map_rect(), $Ground/ProceduralTerrain)
 	villager.selected.connect($HUD/VillagerPanel.select_villager)
 
 
