@@ -825,9 +825,13 @@ func _build_cliff_geometry() -> void:
 				edge_bottoms[index + 1] + Vector2(0.0, CLIFF_SEAM_OVERLAP_PIXELS),
 				edge_bottoms[index] + Vector2(0.0, CLIFF_SEAM_OVERLAP_PIXELS),
 			])
+			var start_path_pixel := start_progress * cliff_curve_lengths[curve_index] * map_data.cell_size
+			var finish_path_pixel := finish_progress * cliff_curve_lengths[curve_index] * map_data.cell_size
+			var start_depth_pixel := start_separation * generation_settings.height_lift_pixels
+			var finish_depth_pixel := finish_separation * generation_settings.height_lift_pixels
 			var quad_uvs := PackedVector2Array([
-				Vector2(start_progress, 0), Vector2(finish_progress, 0),
-				Vector2(finish_progress, 1), Vector2(start_progress, 1),
+				Vector2(start_path_pixel, 0), Vector2(finish_path_pixel, 0),
+				Vector2(finish_path_pixel, finish_depth_pixel), Vector2(start_path_pixel, start_depth_pixel),
 			])
 			if _cliff_view_side(curve_index, start, finish) > 0:
 				var first := backing_foreground_vertices.size()

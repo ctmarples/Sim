@@ -145,8 +145,10 @@ func _build_cliff_mesh() -> void:
 	var uvs := PackedVector2Array()
 	var indices := PackedInt32Array()
 	var area := 0.0
+	var curve_pixel_length := 0.0
 	for index in curve.size() - 1:
 		area += curve[index].cross(curve[index + 1])
+		curve_pixel_length += curve[index].distance_to(curve[index + 1]) * CELL_SIZE
 	for stage in range(1, 4):
 		for index in curve.size() - 1:
 			var start := curve[index]
@@ -161,7 +163,14 @@ func _build_cliff_mesh() -> void:
 				_project(stage, finish, false) + Vector2(0, OVERLAP),
 				_project(stage, start, false) + Vector2(0, OVERLAP),
 			]))
-			uvs.append_array(PackedVector2Array([Vector2(curve_progress[index], 0), Vector2(curve_progress[index + 1], 0), Vector2(curve_progress[index + 1], 1), Vector2(curve_progress[index], 1)]))
+			var start_depth := _project(stage, start, false).y - _project(stage, start, true).y
+			var finish_depth := _project(stage, finish, false).y - _project(stage, finish, true).y
+			uvs.append_array(PackedVector2Array([
+				Vector2(curve_progress[index] * curve_pixel_length, 0),
+				Vector2(curve_progress[index + 1] * curve_pixel_length, 0),
+				Vector2(curve_progress[index + 1] * curve_pixel_length, finish_depth),
+				Vector2(curve_progress[index] * curve_pixel_length, start_depth),
+			]))
 			indices.append_array(PackedInt32Array([first, first + 1, first + 2, first, first + 2, first + 3]))
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)

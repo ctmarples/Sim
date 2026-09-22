@@ -295,8 +295,11 @@ func _build_cliff_surface_layer() -> void:
 		var top_finish := _project_row(stage, row, finish, true, warped, variable_extrusion) - Vector2(0, CLIFF_SEAM_OVERLAP)
 		var first := vertices.size()
 		vertices.append_array(PackedVector2Array([top_start, top_finish, bottom_finish, bottom_start]))
-		var u_start := float(segment_index)
-		uvs.append_array(PackedVector2Array([Vector2(u_start, 0), Vector2(u_start + 1.0, 0), Vector2(u_start + 1.0, 1), Vector2(u_start, 1)]))
+		var u_start := float(segment_index) * CELL_SIZE * 0.25
+		var u_finish := u_start + start.distance_to(finish) * CELL_SIZE
+		var start_depth := bottom_start.y - top_start.y
+		var finish_depth := bottom_finish.y - top_finish.y
+		uvs.append_array(PackedVector2Array([Vector2(u_start, 0), Vector2(u_finish, 0), Vector2(u_finish, finish_depth), Vector2(u_start, start_depth)]))
 		indices.append_array(PackedInt32Array([first, first + 1, first + 2, first, first + 2, first + 3]))
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
