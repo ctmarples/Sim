@@ -66,8 +66,8 @@ func _draw_cliff_debug() -> void:
 			var finish: Vector2 = curve[index + 1]
 			var view_side: int = terrain_renderer._cliff_view_side(curve_index, start, finish)
 			var colour := Color(1.0, 0.25, 0.15, 0.95) if view_side > 0 else (Color(0.15, 0.65, 1.0, 0.95) if view_side < 0 else Color(1.0, 0.9, 0.15, 0.95))
-			var screen_start := _project_cliff_point(start, curve_index, false)
-			var screen_finish := _project_cliff_point(finish, curve_index, false)
+			var screen_start := to_local(terrain_renderer.to_global(terrain_renderer.cliff_edge_bottoms[curve_index][index]))
+			var screen_finish := to_local(terrain_renderer.to_global(terrain_renderer.cliff_edge_bottoms[curve_index][index + 1]))
 			draw_line(screen_start, screen_finish, colour, 3.0, true)
 			draw_circle(screen_start, 2.5, colour)
 			var tangent := (finish - start).normalized()
@@ -95,13 +95,6 @@ func _draw_cliff_debug() -> void:
 		])
 		draw_colored_polygon(polygon, fill)
 		draw_polyline(PackedVector2Array([polygon[0], polygon[1], polygon[2], polygon[3], polygon[0]]), Color(fill, 0.8), 1.5)
-
-
-func _project_cliff_point(grid_position: Vector2, curve_index: int, elevated_side: bool) -> Vector2:
-	var logical := grid_position * map_data.cell_size
-	var height := terrain_renderer._clipped_terrain_height(grid_position, curve_index, elevated_side)
-	var projected_local := logical - Vector2(0.0, height * terrain_renderer.generation_settings.height_lift_pixels)
-	return to_local(terrain_renderer.to_global(projected_local))
 
 
 func _project_map_point(map_position: Vector2) -> Vector2:

@@ -19,6 +19,8 @@ var cliff_render_progresses: Array[PackedFloat32Array] = []
 var cliff_cell_candidates: Dictionary = {}
 var cliff_vertex_offset_cache: Dictionary = {}
 var cliff_surface_segments: Array[Array] = []
+var cliff_edge_bottoms: Array[PackedVector2Array] = []
+var cliff_edge_tops: Array[PackedVector2Array] = []
 
 
 func _ready() -> void:
@@ -28,6 +30,7 @@ func _ready() -> void:
 		generation_settings = TerrainGenerationSettings.new()
 	map_data = MapGenerator.generate(generation_settings)
 	_build_cliff_curve()
+	_build_cliff_edge_geometry()
 	_build_map_mesh()
 	_upload_terrain_cells()
 	_upload_heights()
@@ -39,6 +42,7 @@ func _ready() -> void:
 func regenerate() -> void:
 	map_data = MapGenerator.generate(generation_settings)
 	_build_cliff_curve()
+	_build_cliff_edge_geometry()
 	_build_map_mesh()
 	_upload_terrain_cells()
 	_upload_heights()
@@ -48,6 +52,59 @@ func regenerate() -> void:
 
 
 func _build_map_mesh() -> void:
+	var old_occluder := get_node_or_null("CliffFarSurface")
+	if old_occluder:
+		old_occluder.free()
+	var vertices := PackedVector2Array()
+	var uvs := PackedVector2Array()
+	var indices := PackedInt32Array()
+	cliff_surface_segments.clear()
+	cliff_surface_segments.resize(cliff_curves.size())
+	for cell_y in map_data.rows:
+		for cell_x in map_data.columns:
+			var origin := Vector2(cell_x, cell_y)
+			var corners: Array = [origin, origin + Vector2.RIGHT, origin + Vector2.ONE, origin + Vector2.DOWN]
+			var crossing_cliff := _crossing_cliff_for_polygon(corners)
+			if crossing_cliff >= 0:
+				var seam := _cliff_intersections_for_polygon(corners, crossing_cliff)
+				if seam.size() == 2:
+					cliff_surface_segments[crossing_cliff].append(_curve_section_between(seam[0], seam[1], crossing_cliff))
+				var lower_polygon := _clip_polygon_to_cliff_side(corners, crossing_cliff, false, seam)
+				var upper_polygon := _clip_polygon_to_cliff_side(corners, crossing_cliff, true, seam)
+				_append_terrain_polygon(lower_polygon, crossing_cliff, false, vertices, uvs, indices)
+				_append_terrain_polygon(upper_polygon, crossing_cliff, true, vertices, uvs, indices)
+				continue
+			for triangle in [[0, 1, 2], [0, 2, 3]]:
+				var first := vertices.size()
+				for corner_index in triangle:
+					var grid_position: Vector2 = corners[corner_index]
+					var logical := grid_position * map_data.cell_size
+					var height := _terrain_height_at_grid_position(grid_position)
+					vertices.append(logical - Vector2(0.0, height * generation_settings.height_lift_pixels))
+					uvs.append(logical)
+				indices.append_array(PackedInt32Array([first, first + 1, first + 2]))
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var terrain_mesh := ArrayMesh.new()
+	terrain_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	mesh = terrain_mesh
+
+
+func _terrain_height_at_grid_position(grid_position: Vector2) -> float:
+	var height := map_data.height_at_world(grid_position * map_data.cell_size)
+	var cliff_height := 0.0
+	for curve_index in cliff_curves.size():
+		var elevated := _point_inside_cliff(grid_position, curve_index) if _is_closed_cliff(curve_index) else _nearest_cliff_point(grid_position, curve_index).w < 0.0
+		if elevated:
+			var nearest := _nearest_cliff_point(grid_position, curve_index)
+			cliff_height = maxf(cliff_height, _cliff_separation_at_progress(curve_index, nearest.z))
+	return height + cliff_height
+
+
+func _build_map_mesh_legacy() -> void:
 	var old_occluder := get_node_or_null("CliffFarSurface")
 	if old_occluder:
 		old_occluder.free()
@@ -312,12 +369,13 @@ func _append_terrain_polygon(polygon: PackedVector2Array, curve_index: int, elev
 
 func _clipped_terrain_height(grid_position: Vector2, forced_curve_index: int, elevated_side: bool) -> float:
 	var height := map_data.height_at_world(grid_position * map_data.cell_size)
+	var cliff_height := 0.0
 	for curve_index in cliff_curves.size():
 		var elevated := elevated_side if curve_index == forced_curve_index else _signed_distance_to_cliff(grid_position, curve_index) < 0.0
 		if elevated:
 			var nearest := _nearest_cliff_point(grid_position, curve_index)
-			height += _cliff_separation_at_progress(curve_index, nearest.z)
-	return height
+			cliff_height = maxf(cliff_height, _cliff_separation_at_progress(curve_index, nearest.z))
+	return height + cliff_height
 
 
 ## Match a cell's triangle seam to any 45-degree cliff segment crossing it.
@@ -396,6 +454,22 @@ func _build_cliff_curve() -> void:
 		cliff_render_curves.append(curve)
 		cliff_render_progresses.append(progress)
 	_index_cliff_cells()
+
+
+func _build_cliff_edge_geometry() -> void:
+	cliff_edge_bottoms.clear()
+	cliff_edge_tops.clear()
+	for curve_index in cliff_curves.size():
+		var bottoms := PackedVector2Array()
+		var tops := PackedVector2Array()
+		for grid_position in cliff_curves[curve_index]:
+			var logical := grid_position * map_data.cell_size
+			var lower_height := _clipped_terrain_height(grid_position, curve_index, false)
+			var upper_height := _clipped_terrain_height(grid_position, curve_index, true)
+			bottoms.append(logical - Vector2(0.0, lower_height * generation_settings.height_lift_pixels))
+			tops.append(logical - Vector2(0.0, upper_height * generation_settings.height_lift_pixels))
+		cliff_edge_bottoms.append(bottoms)
+		cliff_edge_tops.append(tops)
 
 
 func _index_cliff_cells() -> void:
@@ -620,7 +694,7 @@ func _cliff_offset_for_vertex(owner_position: Vector2, vertex: Vector2) -> float
 		else:
 			elevated = (_nearest_cliff_point(owner_position, curve_index).w < 0.0) if on_boundary else nearest.w < 0.0
 		if elevated:
-			offset += _cliff_separation_at_progress(curve_index, nearest.z)
+			offset = maxf(offset, _cliff_separation_at_progress(curve_index, nearest.z))
 	if not touches_boundary:
 		cliff_vertex_offset_cache[vertex] = offset
 	return offset
@@ -656,6 +730,8 @@ func _build_cliff_test() -> void:
 			collision_body.add_child(collision)
 	for curve_index in cliff_curves.size():
 		var curve := cliff_render_curves[curve_index]
+		var edge_bottoms := cliff_edge_bottoms[curve_index]
+		var edge_tops := cliff_edge_tops[curve_index]
 		# A complete wall behind the terrain fills corner-touch cases. The clipped
 		# seam faces below remain the visible edge wherever terrain overlaps it.
 		for index in range(curve.size() - 1):
@@ -663,22 +739,13 @@ func _build_cliff_test() -> void:
 			var finish := curve[index + 1]
 			var start_progress := _nearest_cliff_point(start, curve_index).z
 			var finish_progress := _nearest_cliff_point(finish, curve_index).z
-			var start_logical := start * map_data.cell_size
-			var finish_logical := finish * map_data.cell_size
-			var lift := generation_settings.height_lift_pixels
 			var start_separation := _cliff_separation_at_progress(curve_index, start_progress)
 			var finish_separation := _cliff_separation_at_progress(curve_index, finish_progress)
 			if start_separation <= 0.001 and finish_separation <= 0.001:
 				continue
-			var start_lower_height := _clipped_terrain_height(start, curve_index, false)
-			var finish_lower_height := _clipped_terrain_height(finish, curve_index, false)
-			var start_upper_height := _clipped_terrain_height(start, curve_index, true)
-			var finish_upper_height := _clipped_terrain_height(finish, curve_index, true)
 			var quad := PackedVector2Array([
-				start_logical - Vector2(0.0, start_upper_height * lift),
-				finish_logical - Vector2(0.0, finish_upper_height * lift),
-				finish_logical - Vector2(0.0, finish_lower_height * lift),
-				start_logical - Vector2(0.0, start_lower_height * lift),
+				edge_tops[index], edge_tops[index + 1],
+				edge_bottoms[index + 1], edge_bottoms[index],
 			])
 			var quad_uvs := PackedVector2Array([
 				Vector2(start_progress, 0), Vector2(finish_progress, 0),
@@ -766,7 +833,7 @@ func _cliff_offset_at_world(local_position: Vector2) -> float:
 		var nearest := _nearest_cliff_point(grid_position, curve_index)
 		var elevated := _point_inside_cliff(grid_position, curve_index) if _is_closed_cliff(curve_index) else nearest.w < 0.0
 		if elevated:
-			offset += _cliff_separation_at_progress(curve_index, nearest.z)
+			offset = maxf(offset, _cliff_separation_at_progress(curve_index, nearest.z))
 	return offset
 
 

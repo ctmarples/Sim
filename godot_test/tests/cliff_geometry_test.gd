@@ -21,6 +21,7 @@ func _init() -> void:
 	renderer.map_data = TerrainMapData.new()
 	renderer.map_data.configure(8, 8, settings.cell_size)
 	renderer._build_cliff_curve()
+	renderer._build_cliff_edge_geometry()
 	renderer._build_map_mesh()
 	renderer._build_cliff_test()
 	assert(renderer.get_node("CliffCollision").get_child_count() == renderer.cliff_render_curves[0].size() - 1)
